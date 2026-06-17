@@ -613,7 +613,7 @@ function toggleTheme() {
 // Initialize theme（默认浅色，贴合参考站点；仅手动选过 dark 才用暗色）
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
-  if (savedTheme === 'dark') {
+  if (savedTheme === 'dark' || !savedTheme) {
     isDark.value = true
     document.documentElement.classList.add('dark')
   }

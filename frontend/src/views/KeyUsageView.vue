@@ -907,13 +907,15 @@ async function queryKey() {
 
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
-  if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  if (
+    savedTheme === 'dark' ||
+    !savedTheme
+  ) {
     isDark.value = true
     document.documentElement.classList.add('dark')
   }
 }
 
-function formatResetTime(resetAt: string | null | undefined): string {
   if (!resetAt) return ''
   const diff = new Date(resetAt).getTime() - now.value.getTime()
   if (diff <= 0) return t('keyUsage.resetNow')
