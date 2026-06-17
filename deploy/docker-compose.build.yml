@@ -1,0 +1,15 @@
+# =============================================================================
+# NoWind API - 从源码构建覆盖文件（配合 docker-compose.local.yml 使用）
+# =============================================================================
+# 作用：把 sub2api 服务从“拉取官方预编译镜像”改为“用本仓库 Dockerfile 本地构建”，
+# 这样部署的就是本 fork 修改后的前端界面，而不是上游官方镜像。
+#
+# 用法：
+#   docker compose -f docker-compose.local.yml -f docker-compose.build.yml up -d --build
+# =============================================================================
+services:
+  sub2api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nowind-api:latest
