@@ -4,13 +4,13 @@
 # 从你的 fork 源码构建（含定制前端），自带 PostgreSQL + Redis，Docker 部署。
 #
 # 用法：
-#   curl -fsSL https://raw.githubusercontent.com/xyf0104/sub2api/main/deploy/nowind-install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-install.sh | sudo bash
 # 可选环境变量：
 #   INSTALL_DIR=/opt/nowind-api  SERVER_PORT=8080  BRANCH=main
 # =============================================================================
 set -euo pipefail
 
-REPO_URL="https://github.com/xyf0104/sub2api.git"
+REPO_URL="https://github.com/xyf0104/nowind-api.git"
 INSTALL_DIR="${INSTALL_DIR:-/opt/nowind-api}"
 BRANCH="${BRANCH:-main}"
 SERVER_PORT="${SERVER_PORT:-8080}"
