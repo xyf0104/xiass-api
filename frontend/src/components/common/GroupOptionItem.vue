@@ -16,7 +16,7 @@
       <!-- Row 2: description with top spacing -->
       <span
         v-if="description"
-        class="mt-1.5 w-full text-left text-xs leading-relaxed text-gray-500 dark:text-gray-400 line-clamp-2"
+        class="mt-1.5 w-full text-left text-sm leading-relaxed text-gray-500 dark:text-gray-400 line-clamp-2"
       >
         {{ description }}
       </span>
@@ -25,9 +25,9 @@
     <!-- Right: rate pill + checkmark (vertically centered to first row) -->
     <div class="flex shrink-0 items-center gap-2 pt-0.5">
       <!-- Rate pill (platform color) -->
-      <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+      <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-semibold', ratePillClass]">
         <template v-if="hasCustomRate">
-          <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
+          <span class="mr-1.5 line-through opacity-50">{{ rateMultiplier }}x</span>
           <span class="font-bold">{{ userRateMultiplier }}x</span>
         </template>
         <template v-else>
@@ -37,11 +37,11 @@
       <!-- Checkmark -->
       <svg
         v-if="showCheckmark && selected"
-        class="h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400"
+        class="h-5 w-5 shrink-0 text-primary-600 dark:text-primary-400"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
-        stroke-width="2"
+        stroke-width="2.5"
       >
         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
       </svg>
