@@ -1,0 +1,14 @@
+# =============================================================================
+# NoWind API - GHCR 镜像覆盖文件（配合 docker-compose.local.yml 使用）
+# =============================================================================
+# 作用：把 sub2api 服务的镜像从上游官方 DockerHub (weishaw/sub2api)
+#       替换为你的定制版 GHCR 镜像 (ghcr.io/xyf0104/nowind-api)，
+#       确保拉取的是包含品牌化前端的版本。
+#
+# 用法：
+#   docker compose -f docker-compose.local.yml -f docker-compose.nowind.yml up -d
+#   docker compose -f docker-compose.local.yml -f docker-compose.nowind.yml pull
+# =============================================================================
+services:
+  sub2api:
+    image: ghcr.io/xyf0104/nowind-api:latest
