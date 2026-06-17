@@ -7,10 +7,9 @@ import { useAppStore } from '@/stores/app'
 import './style.css'
 
 function initThemeClass() {
+  // 默认浅色主题（贴合参考站点的明亮风格）；仅当用户手动切到 dark 才用暗色。
   const savedTheme = localStorage.getItem('theme')
-  const shouldUseDark =
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const shouldUseDark = savedTheme === 'dark'
   document.documentElement.classList.toggle('dark', shouldUseDark)
 }
 
