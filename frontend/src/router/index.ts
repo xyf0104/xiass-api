@@ -175,6 +175,15 @@ const routes: RouteRecordRaw[] = [
       title: 'Legal Document'
     }
   },
+  {
+    path: '/docs',
+    name: 'Docs',
+    component: () => import('@/views/public/DocsView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'API Documentation'
+    }
+  },
 
   // ==================== User Routes ====================
   {
