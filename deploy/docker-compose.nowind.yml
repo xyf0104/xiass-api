@@ -11,4 +11,4 @@
 # =============================================================================
 services:
   sub2api:
-    image: ghcr.io/xyf0104/nowind-api:latest
+    image: ghcr.io/xyf0104/sub2api:latest
