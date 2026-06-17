@@ -916,6 +916,7 @@ function initTheme() {
   }
 }
 
+function formatResetTime(resetAt: string | null | undefined): string {
   if (!resetAt) return ''
   const diff = new Date(resetAt).getTime() - now.value.getTime()
   if (diff <= 0) return t('keyUsage.resetNow')
