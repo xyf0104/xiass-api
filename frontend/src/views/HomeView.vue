@@ -15,15 +15,16 @@
   <!-- Default Home Page -->
   <div
     v-else
-    class="relative flex min-h-screen flex-col overflow-hidden bg-[#0a0e1a]"
+    class="relative flex min-h-screen flex-col overflow-hidden bg-slate-50 text-gray-800 dark:bg-[#0a0e1a] dark:text-gray-200 transition-colors duration-300"
   >
-    <!-- 深色科技感背景：粒子 Canvas + 光球 -->
+    <!-- 科技感自适应粒子背景：粒子 Canvas + 光球 -->
     <canvas ref="homeCanvasRef" class="pointer-events-none absolute inset-0 h-full w-full"></canvas>
     <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <div class="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-primary-500/8 blur-[100px] animate-pulse-slow"></div>
-      <div class="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-cyan-500/6 blur-[80px] animate-pulse-slow [animation-delay:2s]"></div>
-      <div class="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full bg-primary-400/5 blur-[60px] animate-pulse-slow [animation-delay:4s]"></div>
+      <div class="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-primary-500/[0.04] dark:bg-primary-500/8 blur-[100px] animate-pulse-slow"></div>
+      <div class="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-cyan-500/[0.03] dark:bg-cyan-500/6 blur-[80px] animate-pulse-slow [animation-delay:2s]"></div>
+      <div class="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full bg-primary-400/[0.02] dark:bg-primary-400/5 blur-[60px] animate-pulse-slow [animation-delay:4s]"></div>
     </div>
+
 
     <!-- Header -->
     <header class="relative z-20 px-6 py-4">
@@ -125,7 +126,7 @@
               <span class="block">连接全球顶级</span>
               <span class="mt-5 block text-primary-500 dark:text-primary-400">AI 大模型</span>
             </h1>
-            <p class="mb-9 max-w-xl text-base leading-[1.9] text-gray-500 dark:text-dark-300 md:text-[1.0625rem]">
+            <p class="mb-9 max-w-xl text-base leading-[1.9] text-gray-600 dark:text-dark-300 md:text-[1.0625rem]">
               为开发者与团队而生 —— 高速直连、稳定可靠、余额永不过期。支持支付宝 / 微信支付，低延迟调用 Claude、ChatGPT、Gemini 等主流模型。
             </p>
 
@@ -239,7 +240,7 @@
         <div class="mb-12 grid gap-6 md:grid-cols-3">
           <!-- Feature 1: Unified Gateway -->
           <div
-            class="group rounded-2xl border border-gray-200/50 bg-white/60 p-6 backdrop-blur-sm transition-all duration-300 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/50 dark:bg-dark-800/60"
+            class="group rounded-2xl border border-gray-200 bg-white/70 p-6 backdrop-blur-sm transition-all duration-300 hover:border-primary-400 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500"
           >
             <div
               class="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/30 transition-transform group-hover:scale-110"
@@ -249,14 +250,14 @@
             <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('home.features.unifiedGateway') }}
             </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
+            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-300">
               {{ t('home.features.unifiedGatewayDesc') }}
             </p>
           </div>
 
           <!-- Feature 2: Account Pool -->
           <div
-            class="group rounded-2xl border border-gray-200/50 bg-white/60 p-6 backdrop-blur-sm transition-all duration-300 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/50 dark:bg-dark-800/60"
+            class="group rounded-2xl border border-gray-200 bg-white/70 p-6 backdrop-blur-sm transition-all duration-300 hover:border-primary-400 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500"
           >
             <div
               class="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg shadow-primary-500/30 transition-transform group-hover:scale-110"
@@ -278,14 +279,14 @@
             <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('home.features.multiAccount') }}
             </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
+            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-300">
               {{ t('home.features.multiAccountDesc') }}
             </p>
           </div>
 
           <!-- Feature 3: Billing & Quota -->
           <div
-            class="group rounded-2xl border border-gray-200/50 bg-white/60 p-6 backdrop-blur-sm transition-all duration-300 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/50 dark:bg-dark-800/60"
+            class="group rounded-2xl border border-gray-200 bg-white/70 p-6 backdrop-blur-sm transition-all duration-300 hover:border-primary-400 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary-500/10 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500"
           >
             <div
               class="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 shadow-lg shadow-purple-500/30 transition-transform group-hover:scale-110"
@@ -307,7 +308,7 @@
             <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('home.features.balanceQuota') }}
             </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
+            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-300">
               {{ t('home.features.balanceQuotaDesc') }}
             </p>
           </div>
@@ -326,7 +327,7 @@
         <div class="mb-16 flex flex-wrap items-center justify-center gap-4">
           <!-- Claude - Supported -->
           <div
-            class="flex items-center gap-2 rounded-xl border border-primary-200 bg-white/60 px-5 py-3 ring-1 ring-primary-500/20 backdrop-blur-sm dark:border-primary-800 dark:bg-dark-800/60"
+            class="group flex items-center gap-2 rounded-xl border border-primary-200 bg-white/70 px-5 py-3 ring-1 ring-primary-500/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:shadow-primary-500/5 dark:border-primary-800/80 dark:bg-dark-800/60 dark:ring-primary-500/20"
           >
             <div
               class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-400 to-orange-500"
@@ -341,7 +342,7 @@
           </div>
           <!-- GPT - Supported -->
           <div
-            class="flex items-center gap-2 rounded-xl border border-primary-200 bg-white/60 px-5 py-3 ring-1 ring-primary-500/20 backdrop-blur-sm dark:border-primary-800 dark:bg-dark-800/60"
+            class="group flex items-center gap-2 rounded-xl border border-primary-200 bg-white/70 px-5 py-3 ring-1 ring-primary-500/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:shadow-primary-500/5 dark:border-primary-800/80 dark:bg-dark-800/60 dark:ring-primary-500/20"
           >
             <div
               class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-green-500 to-green-600"
@@ -356,7 +357,7 @@
           </div>
           <!-- Gemini - Supported -->
           <div
-            class="flex items-center gap-2 rounded-xl border border-primary-200 bg-white/60 px-5 py-3 ring-1 ring-primary-500/20 backdrop-blur-sm dark:border-primary-800 dark:bg-dark-800/60"
+            class="group flex items-center gap-2 rounded-xl border border-primary-200 bg-white/70 px-5 py-3 ring-1 ring-primary-500/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:shadow-primary-500/5 dark:border-primary-800/80 dark:bg-dark-800/60 dark:ring-primary-500/20"
           >
             <div
               class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600"
@@ -371,7 +372,7 @@
           </div>
           <!-- Antigravity - Supported -->
           <div
-            class="flex items-center gap-2 rounded-xl border border-primary-200 bg-white/60 px-5 py-3 ring-1 ring-primary-500/20 backdrop-blur-sm dark:border-primary-800 dark:bg-dark-800/60"
+            class="group flex items-center gap-2 rounded-xl border border-primary-200 bg-white/70 px-5 py-3 ring-1 ring-primary-500/10 backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:shadow-primary-500/5 dark:border-primary-800/80 dark:bg-dark-800/60 dark:ring-primary-500/20"
           >
             <div
               class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500 to-pink-600"
@@ -386,7 +387,7 @@
           </div>
           <!-- More - Coming Soon -->
           <div
-            class="flex items-center gap-2 rounded-xl border border-gray-200/50 bg-white/40 px-5 py-3 opacity-60 backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/40"
+            class="group flex items-center gap-2 rounded-xl border border-gray-200 bg-white/40 px-5 py-3 opacity-60 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-sm dark:border-dark-700/50 dark:bg-dark-800/40"
           >
             <div
               class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-gray-500 to-gray-600"
@@ -412,11 +413,11 @@
         </div>
         <div class="grid gap-6 md:grid-cols-3">
           <!-- PAYGO -->
-          <div class="card card-hover relative flex flex-col p-6">
+          <div class="group relative flex flex-col p-6 rounded-2xl border border-gray-200 bg-white/75 shadow-sm backdrop-blur-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:border-primary-400 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500">
             <span class="absolute right-4 top-4 rounded-full bg-primary-100 px-2.5 py-0.5 text-[11px] font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">推荐</span>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">PAYGO 按量付费</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">充值即用 · 永不过期</p>
-            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-600 dark:text-dark-300">
+            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-700 dark:text-dark-300">
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />充值金额获得等价人民币额度</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />按实际使用量计费</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />余额永不过期</li>
@@ -424,10 +425,10 @@
             <router-link :to="isAuthenticated ? dashboardPath : '/register'" class="btn btn-primary mt-6">立即充值</router-link>
           </div>
           <!-- Claude -->
-          <div class="card card-hover flex flex-col p-6">
+          <div class="group relative flex flex-col p-6 rounded-2xl border border-gray-200 bg-white/75 shadow-sm backdrop-blur-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:border-primary-400 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Claude 按需付费</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">1:1（RMB:USD） · 无需订阅</p>
-            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-600 dark:text-dark-300">
+            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-700 dark:text-dark-300">
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />官方价格同步</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />支持 Claude 全系列模型</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />专为 Claude Code 优化</li>
@@ -435,10 +436,10 @@
             <router-link :to="isAuthenticated ? dashboardPath : '/register'" class="btn btn-secondary mt-6">立即开始</router-link>
           </div>
           <!-- ChatGPT -->
-          <div class="card card-hover flex flex-col p-6">
+          <div class="group relative flex flex-col p-6 rounded-2xl border border-gray-200 bg-white/75 shadow-sm backdrop-blur-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:border-primary-400 dark:border-dark-700/80 dark:bg-dark-800/60 dark:hover:border-primary-500">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">ChatGPT 按需付费</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">1:1（RMB:USD） · 灵活计费</p>
-            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-600 dark:text-dark-300">
+            <ul class="mt-5 flex-1 space-y-2.5 text-sm text-gray-700 dark:text-dark-300">
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />官方价格同步</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />支持 GPT 全系列模型</li>
               <li class="flex items-start gap-2"><Icon name="check" size="sm" class="mt-0.5 text-primary-500" />专为 Codex 优化</li>
@@ -455,25 +456,25 @@
           <p class="text-sm text-gray-600 dark:text-dark-400">稳定、专业的 AI API 基础设施</p>
         </div>
         <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <div class="card p-6 text-center">
+          <div class="group p-6 text-center rounded-2xl border border-gray-200 bg-white/60 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lg hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800/50 dark:hover:border-primary-500">
             <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"><Icon name="cloud" size="lg" /></div>
             <h3 class="mb-2 font-semibold text-gray-900 dark:text-white">全球直连</h3>
-            <p class="text-sm text-gray-500 dark:text-dark-400">无论身处何地都能稳定访问，减少等待与中断。</p>
+            <p class="text-sm text-gray-600 dark:text-dark-400">无论身处何地都能稳定访问，减少等待与中断。</p>
           </div>
-          <div class="card p-6 text-center">
+          <div class="group p-6 text-center rounded-2xl border border-gray-200 bg-white/60 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lg hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800/50 dark:hover:border-primary-500">
             <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"><Icon name="server" size="lg" /></div>
             <h3 class="mb-2 font-semibold text-gray-900 dark:text-white">高可用架构</h3>
-            <p class="text-sm text-gray-500 dark:text-dark-400">分布式设计与自动故障转移，关键时刻依然可用。</p>
+            <p class="text-sm text-gray-600 dark:text-dark-400">分布式设计与自动故障转移，关键时刻依然可用。</p>
           </div>
-          <div class="card p-6 text-center">
+          <div class="group p-6 text-center rounded-2xl border border-gray-200 bg-white/60 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lg hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800/50 dark:hover:border-primary-500">
             <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"><Icon name="swap" size="lg" /></div>
             <h3 class="mb-2 font-semibold text-gray-900 dark:text-white">简单集成</h3>
-            <p class="text-sm text-gray-500 dark:text-dark-400">只需修改 API 地址即可使用，无需重写业务逻辑。</p>
+            <p class="text-sm text-gray-600 dark:text-dark-400">只需修改 API 地址即可使用，无需重写业务逻辑。</p>
           </div>
-          <div class="card p-6 text-center">
+          <div class="group p-6 text-center rounded-2xl border border-gray-200 bg-white/60 shadow-sm transition-all duration-300 hover:-translate-y-1.5 hover:shadow-lg hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800/50 dark:hover:border-primary-500">
             <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"><Icon name="shield" size="lg" /></div>
             <h3 class="mb-2 font-semibold text-gray-900 dark:text-white">完整兼容</h3>
-            <p class="text-sm text-gray-500 dark:text-dark-400">兼容官方 API 行为，保留主流模型常用能力。</p>
+            <p class="text-sm text-gray-600 dark:text-dark-400">兼容官方 API 行为，保留主流 model 常用能力。</p>
           </div>
         </div>
       </section>
@@ -484,21 +485,21 @@
           <h2 class="mb-3 text-3xl font-bold text-gray-900 dark:text-white">常见问题</h2>
         </div>
         <div class="space-y-3">
-          <details class="card group p-5">
-            <summary class="flex cursor-pointer list-none items-center justify-between font-medium text-gray-900 dark:text-white">支持哪些模型？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
-            <p class="mt-3 text-sm text-gray-600 dark:text-dark-400">支持 Claude、ChatGPT、Gemini 等主流模型全系列，兼容 Claude Code、Codex、Gemini CLI 等主流工具。</p>
+          <details class="group rounded-2xl border border-gray-200 bg-white/60 p-5 shadow-sm transition-all duration-200 hover:shadow-md dark:border-dark-700 dark:bg-dark-800/50">
+            <summary class="flex cursor-pointer list-none items-center justify-between font-semibold text-gray-900 dark:text-white">支持哪些模型？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
+            <p class="mt-3 text-sm text-gray-600 dark:text-dark-300">支持 Claude、ChatGPT、Gemini 等主流模型全系列，兼容 Claude Code、Codex、Gemini CLI 等主流工具。</p>
           </details>
-          <details class="card group p-5">
-            <summary class="flex cursor-pointer list-none items-center justify-between font-medium text-gray-900 dark:text-white">额度会过期吗？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
-            <p class="mt-3 text-sm text-gray-600 dark:text-dark-400">不会。充值获得的额度永不过期，按实际使用量扣费。</p>
+          <details class="group rounded-2xl border border-gray-200 bg-white/60 p-5 shadow-sm transition-all duration-200 hover:shadow-md dark:border-dark-700 dark:bg-dark-800/50">
+            <summary class="flex cursor-pointer list-none items-center justify-between font-semibold text-gray-900 dark:text-white">额度会过期吗？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
+            <p class="mt-3 text-sm text-gray-600 dark:text-dark-300">不会。充值获得的额度永不过期，按实际使用量扣费。</p>
           </details>
-          <details class="card group p-5">
-            <summary class="flex cursor-pointer list-none items-center justify-between font-medium text-gray-900 dark:text-white">如何接入？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
-            <p class="mt-3 text-sm text-gray-600 dark:text-dark-400">注册账号、充值、生成 API Key，把客户端的 API 地址改成本站地址即可，无需改动业务代码。</p>
+          <details class="group rounded-2xl border border-gray-200 bg-white/60 p-5 shadow-sm transition-all duration-200 hover:shadow-md dark:border-dark-700 dark:bg-dark-800/50">
+            <summary class="flex cursor-pointer list-none items-center justify-between font-semibold text-gray-900 dark:text-white">如何接入？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
+            <p class="mt-3 text-sm text-gray-600 dark:text-dark-300">注册账号、充值、生成 API Key，把客户端的 API 地址改成本站地址即可，无需改动业务代码。</p>
           </details>
-          <details class="card group p-5">
-            <summary class="flex cursor-pointer list-none items-center justify-between font-medium text-gray-900 dark:text-white">支持哪些支付方式？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
-            <p class="mt-3 text-sm text-gray-600 dark:text-dark-400">支持支付宝、微信支付与 Stripe 等多种支付方式，自助充值实时到账。</p>
+          <details class="group rounded-2xl border border-gray-200 bg-white/60 p-5 shadow-sm transition-all duration-200 hover:shadow-md dark:border-dark-700 dark:bg-dark-800/50">
+            <summary class="flex cursor-pointer list-none items-center justify-between font-semibold text-gray-900 dark:text-white">支持哪些支付方式？<Icon name="arrowRight" size="sm" class="text-gray-400 transition-transform group-open:rotate-90" /></summary>
+            <p class="mt-3 text-sm text-gray-600 dark:text-dark-300">支持支付宝、微信支付与 Stripe 等多种支付方式，自助充值实时到账。</p>
           </details>
         </div>
       </section>
@@ -637,7 +638,6 @@ function initHomeParticles() {
   const count = Math.min(100, Math.floor(window.innerWidth / 12))
   const particles: HomeParticle[] = []
   const maxDist = 160
-  const color = { r: 14, g: 165, b: 233 }
 
   for (let i = 0; i < count; i++) {
     particles.push({
@@ -654,6 +654,13 @@ function initHomeParticles() {
     if (!ctx) return
     const w = window.innerWidth, h = window.innerHeight
     ctx.clearRect(0, 0, w, h)
+
+    // 动态检测深色模式并适配粒子与连线
+    const isDark = document.documentElement.classList.contains('dark')
+    const color = isDark ? { r: 14, g: 165, b: 233 } : { r: 37, g: 99, b: 235 }
+    const lineOpacity = isDark ? 0.12 : 0.18
+    const pOpacityMult = isDark ? 1.0 : 1.4
+
     for (const p of particles) {
       p.x += p.vx; p.y += p.vy
       if (p.x < 0 || p.x > w) p.vx *= -1
@@ -665,7 +672,7 @@ function initHomeParticles() {
         const dist = Math.sqrt(dx * dx + dy * dy)
         if (dist < maxDist) {
           ctx.beginPath()
-          ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(1 - dist / maxDist) * 0.12})`
+          ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(1 - dist / maxDist) * lineOpacity})`
           ctx.lineWidth = 0.5
           ctx.moveTo(particles[i].x, particles[i].y)
           ctx.lineTo(particles[j].x, particles[j].y)
@@ -676,7 +683,7 @@ function initHomeParticles() {
     for (const p of particles) {
       ctx.beginPath()
       ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
-      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},${p.opacity})`
+      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},${p.opacity * pOpacityMult})`
       ctx.fill()
     }
     homeAnimationId = requestAnimationFrame(draw)

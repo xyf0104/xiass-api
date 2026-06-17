@@ -10,16 +10,16 @@
       </div>
 
       <!-- 产品类别 Tab -->
-      <div class="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center gap-3 rounded-xl border border-gray-200/60 bg-white/40 p-2 dark:border-dark-700/60 dark:bg-dark-800/40 shadow-sm backdrop-blur-sm">
         <button
           v-for="cat in productCategories"
           :key="cat.platform"
           @click="activePlatform = cat.platform"
           :class="[
-            'flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold transition-all',
+            'flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold transition-all border duration-300 hover:-translate-y-0.5',
             activePlatform === cat.platform
-              ? 'bg-primary-500 text-white shadow-md shadow-primary-500/30'
-              : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700'
+              ? 'bg-primary-500 text-white border-primary-500 shadow-lg shadow-primary-500/25'
+              : 'text-gray-600 border-gray-200/80 bg-gray-50/40 hover:bg-gray-100 hover:border-gray-300 hover:shadow dark:text-gray-400 dark:border-dark-700/80 dark:bg-dark-800/30 dark:hover:bg-dark-700/50 dark:hover:border-dark-600'
           ]"
         >
           <BrandIcon :name="cat.icon" class="h-5 w-5" />
@@ -85,16 +85,16 @@
           </div>
 
           <!-- 分组卡片区域 -->
-          <div class="flex flex-wrap gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700">
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700">
             <button
               v-for="group in activeGroups"
               :key="group.id"
               @click="activeGroupId = group.id"
               :class="[
-                'group relative flex min-w-[220px] flex-1 flex-col rounded-xl border-2 px-5 py-4 text-left transition-all',
+                'group relative flex w-full flex-col rounded-xl border-2 px-5 py-4 text-left transition-all duration-300 hover:-translate-y-1',
                 activeGroupId === group.id
-                  ? 'border-primary-500 bg-primary-50 shadow-md shadow-primary-500/20 dark:border-primary-400 dark:bg-primary-500/10'
-                  : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm dark:border-dark-600 dark:bg-dark-800 dark:hover:border-dark-500'
+                  ? 'border-primary-500 bg-primary-50/80 shadow-lg shadow-primary-500/20 dark:border-primary-400 dark:bg-primary-500/10'
+                  : 'border-gray-200 bg-white hover:border-primary-400 hover:shadow-md dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500'
               ]"
             >
               <!-- 分组名 + 折扣标签 -->
