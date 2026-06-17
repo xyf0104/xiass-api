@@ -85,30 +85,30 @@
           </div>
 
           <!-- 分组卡片区域 -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700">
+          <div class="flex flex-wrap gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700">
             <button
               v-for="group in activeGroups"
               :key="group.id"
               @click="activeGroupId = group.id"
               :class="[
-                'group relative flex w-full flex-col rounded-xl border-2 px-5 py-4 text-left transition-all duration-300 hover:-translate-y-1',
+                'group relative flex flex-col rounded-xl border-2 px-5 py-4 text-left transition-all duration-300 hover:-translate-y-1 shrink-0 md:min-w-[calc(25%-12px)] min-w-[220px]',
                 activeGroupId === group.id
                   ? 'border-primary-500 bg-primary-50/80 shadow-lg shadow-primary-500/20 dark:border-primary-400 dark:bg-primary-500/10'
                   : 'border-gray-200 bg-white hover:border-primary-400 hover:shadow-md dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500'
               ]"
             >
               <!-- 分组名 + 折扣标签 -->
-              <div class="flex items-center gap-3">
-                <span class="text-base font-bold text-gray-900 dark:text-white">
+              <div class="flex items-center gap-3 whitespace-nowrap w-full">
+                <span class="text-base font-bold text-gray-900 dark:text-white shrink-0">
                   {{ group.name }}
                 </span>
-                <span class="rounded-full bg-primary-500 px-2.5 py-0.5 text-xs font-bold text-white">
+                <span class="rounded-full bg-primary-500 px-2.5 py-0.5 text-xs font-bold text-white shrink-0 whitespace-nowrap">
                   {{ formatDiscount(group.rate_multiplier) }}折
                 </span>
                 <!-- 选中勾选 -->
                 <div
                   v-if="activeGroupId === group.id"
-                  class="ml-auto flex h-6 w-6 items-center justify-center rounded-full bg-primary-500 text-white"
+                  class="ml-auto flex h-6 w-6 items-center justify-center rounded-full bg-primary-500 text-white shrink-0"
                 >
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
@@ -116,7 +116,7 @@
                 </div>
               </div>
               <!-- 倍率描述 -->
-              <span class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
                 {{ group.rate_multiplier }}x 倍率 · 相当于约 {{ formatDiscount(group.rate_multiplier) }}折
               </span>
             </button>
