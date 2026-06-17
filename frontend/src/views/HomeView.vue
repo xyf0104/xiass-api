@@ -15,25 +15,14 @@
   <!-- Default Home Page -->
   <div
     v-else
-    class="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-br from-primary-50 via-white to-primary-50/60 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
+    class="relative flex min-h-screen flex-col overflow-hidden bg-[#0a0e1a]"
   >
-    <!-- Background Decorations -->
+    <!-- 深色科技感背景：粒子 Canvas + 光球 -->
+    <canvas ref="homeCanvasRef" class="pointer-events-none absolute inset-0 h-full w-full"></canvas>
     <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <div
-        class="absolute -right-40 -top-40 h-[28rem] w-[28rem] rounded-full bg-primary-400/30 blur-3xl dark:bg-primary-500/25"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-[28rem] w-[28rem] rounded-full bg-primary-500/25 blur-3xl dark:bg-primary-600/20"
-      ></div>
-      <div
-        class="absolute left-1/3 top-1/4 h-80 w-80 rounded-full bg-primary-300/20 blur-3xl dark:bg-primary-400/15"
-      ></div>
-      <div
-        class="absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-primary-400/15 blur-3xl dark:bg-primary-500/15"
-      ></div>
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(14,165,233,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(14,165,233,0.06)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
+      <div class="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-primary-500/8 blur-[100px] animate-pulse-slow"></div>
+      <div class="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-cyan-500/6 blur-[80px] animate-pulse-slow [animation-delay:2s]"></div>
+      <div class="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full bg-primary-400/5 blur-[60px] animate-pulse-slow [animation-delay:4s]"></div>
     </div>
 
     <!-- Header -->
@@ -561,7 +550,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
@@ -619,16 +608,94 @@ function initTheme() {
   }
 }
 
+// ==================== Canvas 粒子动画 ====================
+
+const homeCanvasRef = ref<HTMLCanvasElement | null>(null)
+let homeAnimationId = 0
+
+interface HomeParticle {
+  x: number; y: number; vx: number; vy: number; radius: number; opacity: number
+}
+
+function initHomeParticles() {
+  const canvas = homeCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const resize = () => {
+    canvas.width = window.innerWidth * dpr
+    canvas.height = window.innerHeight * dpr
+    canvas.style.width = window.innerWidth + 'px'
+    canvas.style.height = window.innerHeight + 'px'
+    ctx.scale(dpr, dpr)
+  }
+  resize()
+  window.addEventListener('resize', resize)
+
+  const count = Math.min(100, Math.floor(window.innerWidth / 12))
+  const particles: HomeParticle[] = []
+  const maxDist = 160
+  const color = { r: 14, g: 165, b: 233 }
+
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: (Math.random() - 0.5) * 0.4,
+      radius: Math.random() * 1.8 + 0.3,
+      opacity: Math.random() * 0.5 + 0.15,
+    })
+  }
+
+  function draw() {
+    if (!ctx) return
+    const w = window.innerWidth, h = window.innerHeight
+    ctx.clearRect(0, 0, w, h)
+    for (const p of particles) {
+      p.x += p.vx; p.y += p.vy
+      if (p.x < 0 || p.x > w) p.vx *= -1
+      if (p.y < 0 || p.y > h) p.vy *= -1
+    }
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x, dy = particles[i].y - particles[j].y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < maxDist) {
+          ctx.beginPath()
+          ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(1 - dist / maxDist) * 0.12})`
+          ctx.lineWidth = 0.5
+          ctx.moveTo(particles[i].x, particles[i].y)
+          ctx.lineTo(particles[j].x, particles[j].y)
+          ctx.stroke()
+        }
+      }
+    }
+    for (const p of particles) {
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},${p.opacity})`
+      ctx.fill()
+    }
+    homeAnimationId = requestAnimationFrame(draw)
+  }
+  draw()
+}
+
 onMounted(() => {
   initTheme()
-
-  // Check auth state
   authStore.checkAuth()
-
-  // Ensure public settings are loaded (will use cache if already loaded from injected config)
   if (!appStore.publicSettingsLoaded) {
     appStore.fetchPublicSettings()
   }
+  // 启动粒子动画
+  initHomeParticles()
+})
+
+onUnmounted(() => {
+  cancelAnimationFrame(homeAnimationId)
 })
 </script>
 
@@ -792,5 +859,15 @@ onMounted(() => {
     0 0 0 1px rgba(14, 165, 233, 0.30),
     0 0 40px rgba(14, 165, 233, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* 慢脉冲动画 */
+.animate-pulse-slow {
+  animation: pulse-slow 6s ease-in-out infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
 }
 </style>

@@ -1,7 +1,11 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-dark-950">
-    <!-- Background Decoration -->
-    <div class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
+  <div class="app-layout min-h-screen bg-[#0c1021] text-gray-200">
+    <!-- 科技感背景纹理 -->
+    <div class="pointer-events-none fixed inset-0">
+      <div class="absolute inset-0 bg-[linear-gradient(rgba(14,165,233,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(14,165,233,0.03)_1px,transparent_1px)] bg-[size:48px_48px]"></div>
+      <div class="absolute -top-40 right-0 h-[400px] w-[400px] rounded-full bg-primary-500/[0.04] blur-[100px]"></div>
+      <div class="absolute bottom-0 left-0 h-[300px] w-[300px] rounded-full bg-cyan-500/[0.03] blur-[80px]"></div>
+    </div>
 
     <!-- Sidebar -->
     <AppSidebar />
