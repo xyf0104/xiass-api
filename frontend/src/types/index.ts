@@ -528,6 +528,8 @@ export interface Group {
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   require_oauth_only: boolean
   require_privacy_set: boolean
+  /** 成本比例（成本价/官方价），用于前端展示成本价倍数；null/0 表示不启用 */
+  cost_ratio?: number | null
   created_at: string
   updated_at: string
 }
@@ -650,6 +652,7 @@ export interface CreateGroupRequest {
   rpm_limit?: number
   require_oauth_only?: boolean
   require_privacy_set?: boolean
+  cost_ratio?: number | null
   // 从指定分组复制账号
   copy_accounts_from_group_ids?: number[]
 }
@@ -685,6 +688,7 @@ export interface UpdateGroupRequest {
   rpm_limit?: number
   require_oauth_only?: boolean
   require_privacy_set?: boolean
+  cost_ratio?: number | null
   copy_accounts_from_group_ids?: number[]
 }
 
