@@ -16,6 +16,8 @@ export interface UserAvailableGroup {
   rate_multiplier: number
   /** true = 专属分组（小范围授权）；false = 公开分组。 */
   is_exclusive: boolean
+  /** 成本比例（成本价/官方价），用于前端展示成本价倍数；null/0 表示不启用。 */
+  cost_ratio?: number | null
 }
 
 export interface UserPricingInterval {

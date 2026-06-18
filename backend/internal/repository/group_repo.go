@@ -82,6 +82,12 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		groupIn.ID = created.ID
 		groupIn.CreatedAt = created.CreatedAt
 		groupIn.UpdatedAt = created.UpdatedAt
+		// NOTE: cost_ratio 的 ent setter 未生成，通过原生 SQL 设置
+		if groupIn.CostRatio != nil {
+			if _, sqlErr := r.sql.ExecContext(ctx, "UPDATE groups SET cost_ratio = $1 WHERE id = $2", *groupIn.CostRatio, groupIn.ID); sqlErr != nil {
+				logger.LegacyPrintf("repository.group", "[Create] set cost_ratio failed: group=%d err=%v", groupIn.ID, sqlErr)
+			}
+		}
 		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 			logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
 		}
@@ -205,6 +211,17 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
 	}
 	groupIn.UpdatedAt = updated.UpdatedAt
+	// NOTE: cost_ratio 的 ent setter 未生成，通过原生 SQL 设置
+	if groupIn.CostRatio != nil {
+		if _, sqlErr := r.sql.ExecContext(ctx, "UPDATE groups SET cost_ratio = $1 WHERE id = $2", *groupIn.CostRatio, groupIn.ID); sqlErr != nil {
+			logger.LegacyPrintf("repository.group", "[Update] set cost_ratio failed: group=%d err=%v", groupIn.ID, sqlErr)
+		}
+	} else {
+		// nil 表示清除 cost_ratio
+		if _, sqlErr := r.sql.ExecContext(ctx, "UPDATE groups SET cost_ratio = NULL WHERE id = $1", groupIn.ID); sqlErr != nil {
+			logger.LegacyPrintf("repository.group", "[Update] clear cost_ratio failed: group=%d err=%v", groupIn.ID, sqlErr)
+		}
+	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group update failed: group=%d err=%v", groupIn.ID, err)
 	}

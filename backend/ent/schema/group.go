@@ -164,6 +164,14 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
+
+		// 成本比例：成本价占官方价的比例，用于前端将 rate_multiplier 展示为"成本价倍数"
+		// NULL 表示不启用，前端沿用原有的 rate_multiplier 直接展示
+		field.Float("cost_ratio").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
+			Comment("成本比例（成本价/官方价），用于前端展示成本价倍数；NULL 表示不启用"),
 	}
 }
 

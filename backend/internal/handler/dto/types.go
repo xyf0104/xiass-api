@@ -120,6 +120,9 @@ type Group struct {
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制），设置后覆盖用户级 rpm_limit。
 	RPMLimit int `json:"rpm_limit"`
 
+	// CostRatio 成本比例（成本价/官方价），用于前端展示成本价倍数；nil 表示不启用
+	CostRatio *float64 `json:"cost_ratio"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

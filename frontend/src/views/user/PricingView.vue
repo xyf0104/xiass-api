@@ -102,8 +102,8 @@
                 <span class="text-base font-bold text-gray-900 dark:text-white shrink-0">
                   {{ group.name }}
                 </span>
-                <span class="rounded-full bg-primary-500 px-2.5 py-0.5 text-xs font-bold text-white shrink-0 whitespace-nowrap">
-                  {{ formatDiscount(group.rate_multiplier) }}折
+              <span class="rounded-full bg-primary-500 px-2.5 py-0.5 text-xs font-bold text-white shrink-0 whitespace-nowrap">
+                  {{ formatDisplayDiscount(group) }}折
                 </span>
                 <!-- 选中勾选 -->
                 <div
@@ -117,7 +117,7 @@
               </div>
               <!-- 倍率描述 -->
               <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                {{ group.rate_multiplier }}x 倍率 · 相当于约 {{ formatDiscount(group.rate_multiplier) }}折
+                {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
               </span>
             </button>
           </div>
@@ -202,10 +202,10 @@
                   <!-- 节省幅度 -->
                   <td class="px-6 py-5 text-right">
                     <span
-                      v-if="savingsPercent(activeGroup?.rate_multiplier) > 0"
+                      v-if="savingsPercent(activeGroup?.rate_multiplier, activeGroup?.cost_ratio) > 0"
                       class="inline-flex items-center gap-1 text-base font-bold text-primary-500"
                     >
-                      省 {{ savingsPercent(activeGroup?.rate_multiplier) }}%
+                      省 {{ savingsPercent(activeGroup?.rate_multiplier, activeGroup?.cost_ratio) }}%
                     </span>
                     <span v-else class="text-sm text-gray-400">-</span>
                   </td>
@@ -317,9 +317,36 @@ function formatGroupPrice(pricePerToken?: number | null, multiplier?: number): s
   return pricePerMillion.toFixed(2)
 }
 
-function savingsPercent(multiplier?: number): number {
+/**
+ * 当分组设置了 cost_ratio 时，将 rate_multiplier 换算为“成本价倍数”展示。
+ * 展示倍率 = rate_multiplier / cost_ratio
+ * 展示折扣 = rate_multiplier * 10（相对于官方价的折扣保持不变）
+ */
+function formatDisplayMultiplier(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
+  if (group.cost_ratio && group.cost_ratio > 0) {
+    const displayRate = group.rate_multiplier / group.cost_ratio
+    return displayRate % 1 === 0 ? displayRate.toFixed(0) : displayRate.toFixed(1)
+  }
+  return group.rate_multiplier.toString()
+}
+
+function formatDisplayDiscount(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
+  if (group.cost_ratio && group.cost_ratio > 0) {
+    // 相对于成本价的折扣：(rate_multiplier / cost_ratio) * 10 ▪ 但实际意义是“用户付的钱相当于成本的多少倍”
+    // 更直观的折扣：rate_multiplier * 10（相对于官方价）
+    const discount = group.rate_multiplier * 10
+    return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
+  }
+  return formatDiscount(group.rate_multiplier)
+}
+
+function savingsPercent(multiplier?: number, costRatio?: number | null): number {
   if (!multiplier || multiplier >= 1) return 0
-  return Math.round((1 - multiplier * 0.14) * 100)
+  if (costRatio && costRatio > 0) {
+    // 相对于官方价的节省百分比
+    return Math.round((1 - multiplier) * 100)
+  }
+  return Math.round((1 - multiplier) * 100)
 }
 
 async function copyModelId(modelId: string) {
