@@ -50,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+/**
  * 登录页布局 — 赛博朋克科技感
  * 特色：Canvas 粒子连线动画 + 毛玻璃登录卡片 + 渐变发光品牌文字
  */
