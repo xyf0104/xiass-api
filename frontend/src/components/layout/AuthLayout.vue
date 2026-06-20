@@ -55,15 +55,11 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
-import { sanitizeUrl } from '@/utils/url'
 import AuthCharacters from '@/components/auth/AuthCharacters.vue'
 
 const appStore = useAppStore()
 
 const siteName = computed(() => appStore.siteName || 'Sub2API')
-const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
-const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 const currentYear = computed(() => new Date().getFullYear())
 
 // ==================== Canvas 粒子动画 ====================
