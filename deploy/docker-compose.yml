@@ -13,6 +13,21 @@
 
 services:
   # ===========================================================================
+  # Watchtower (For Auto-Updates)
+  # ===========================================================================
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: sub2api-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --http-api-update --http-api-token sub2api-update-token sub2api
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    networks:
+      - sub2api-network
+
+  # ===========================================================================
   # Sub2API Application
   # ===========================================================================
   sub2api:
@@ -274,17 +289,3 @@ networks:
   sub2api-network:
     driver: bridge
 
-  # ===========================================================================
-  # Watchtower (For Auto-Updates)
-  # ===========================================================================
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: sub2api-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --http-api-update --http-api-token sub2api-update-token sub2api
-    environment:
-      - TZ=${TZ:-Asia/Shanghai}
-    networks:
-      - sub2api-network
