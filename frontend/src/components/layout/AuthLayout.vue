@@ -79,7 +79,7 @@ function initParticleAnimation() {
   const particleCount = Math.min(80, Math.floor(window.innerWidth / 15))
   const particles: Particle[] = []
   const connectionDist = 150
-  const primaryColor = { r: 14, g: 165, b: 233 } // primary-500 色
+  const primaryColor = { r: 255, g: 255, b: 255 } // white color to match original
 
   for (let i = 0; i < particleCount; i++) {
     particles.push({

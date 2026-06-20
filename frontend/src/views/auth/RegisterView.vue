@@ -2,11 +2,11 @@
   <AuthLayout>
     <div class="space-y-6">
       <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+      <div class="text-center mb-10">
+        <h1 class="text-3xl font-bold tracking-tight mb-2 text-white">
           {{ t('auth.createAccount') }}
-        </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+        </h1>
+        <p class="text-gray-400 text-sm">
           {{ t('auth.signUpToStart', { siteName }) }}
         </p>
       </div>
@@ -30,12 +30,12 @@
       <form v-else @submit.prevent="handleRegister" class="space-y-5">
         <!-- Email Input -->
         <div>
-          <label for="email" class="input-label">
+          <label for="email" class="text-sm font-medium text-gray-200 block mb-2">
             {{ t('auth.emailLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
+              <Icon name="mail" size="md" class="text-gray-400" />
             </div>
             <input
               id="email"
@@ -45,8 +45,8 @@
               autofocus
               autocomplete="email"
               :disabled="registrationActionDisabled"
-              class="input pl-11"
-              :class="{ 'input-error': errors.email }"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl px-4 pl-11 transition-colors"
+              :class="{ 'ring-1 ring-red-500 border-red-500': errors.email }"
               :placeholder="t('auth.emailPlaceholder')"
             />
           </div>
@@ -54,12 +54,12 @@
 
         <!-- Password Input -->
         <div>
-          <label for="password" class="input-label">
+          <label for="password" class="text-sm font-medium text-gray-200 block mb-2">
             {{ t('auth.passwordLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
+              <Icon name="lock" size="md" class="text-gray-400" />
             </div>
             <input
               id="password"
@@ -68,15 +68,15 @@
               required
               autocomplete="new-password"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-11"
-              :class="{ 'input-error': errors.password }"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl px-4 pl-11 pr-11 transition-colors"
+              :class="{ 'ring-1 ring-red-500 border-red-500': errors.password }"
               :placeholder="t('auth.createPasswordPlaceholder')"
             />
             <button
               type="button"
               :disabled="registrationActionDisabled"
               @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-white"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -89,22 +89,22 @@
 
         <!-- Invitation Code Input (Required when enabled) -->
         <div v-if="invitationCodeEnabled">
-          <label for="invitation_code" class="input-label">
+          <label for="invitation_code" class="text-sm font-medium text-gray-200 block mb-2">
             {{ t('auth.invitationCodeLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="key" size="md" :class="invitationValidation.valid ? 'text-green-500' : 'text-gray-400 dark:text-dark-500'" />
+              <Icon name="key" size="md" :class="invitationValidation.valid ? 'text-green-500' : 'text-gray-400'" />
             </div>
             <input
               id="invitation_code"
               v-model="formData.invitation_code"
               type="text"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-10"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl px-4 pl-11 pr-10 transition-colors"
               :class="{
-                'border-green-500 focus:border-green-500 focus:ring-green-500': invitationValidation.valid,
-                'border-red-500 focus:border-red-500 focus:ring-red-500': invitationValidation.invalid || errors.invitation_code
+                'border-green-500 focus:border-green-500': invitationValidation.valid,
+                'border-red-500 focus:border-red-500': invitationValidation.invalid || errors.invitation_code
               }"
               :placeholder="t('auth.invitationCodePlaceholder')"
               @input="handleInvitationCodeInput"
@@ -136,23 +136,23 @@
 
         <!-- Promo Code Input (Optional) -->
         <div v-if="promoCodeEnabled">
-          <label for="promo_code" class="input-label">
+          <label for="promo_code" class="text-sm font-medium text-gray-200 block mb-2">
             {{ t('auth.promoCodeLabel') }}
-            <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
+            <span class="ml-1 text-xs font-normal text-gray-500">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="gift" size="md" :class="promoValidation.valid ? 'text-green-500' : 'text-gray-400 dark:text-dark-500'" />
+              <Icon name="gift" size="md" :class="promoValidation.valid ? 'text-green-500' : 'text-gray-400'" />
             </div>
             <input
               id="promo_code"
               v-model="formData.promo_code"
               type="text"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-10"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl px-4 pl-11 pr-10 transition-colors"
               :class="{
-                'border-green-500 focus:border-green-500 focus:ring-green-500': promoValidation.valid,
-                'border-red-500 focus:border-red-500 focus:ring-red-500': promoValidation.invalid
+                'border-green-500 focus:border-green-500': promoValidation.valid,
+                'border-red-500 focus:border-red-500': promoValidation.invalid
               }"
               :placeholder="t('auth.promoCodePlaceholder')"
               @input="handlePromoCodeInput"
@@ -209,11 +209,11 @@
         <button
           type="submit"
           :disabled="registrationActionDisabled || (turnstileEnabled && !turnstileToken)"
-          class="btn btn-primary w-full"
+          class="w-full bg-white text-black hover:bg-gray-200 font-medium h-12 rounded-xl transition-colors mt-6 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg
             v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+            class="-ml-1 mr-2 h-4 w-4 animate-spin text-black"
             fill="none"
             viewBox="0 0 24 24"
           >

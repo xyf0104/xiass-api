@@ -1,107 +1,168 @@
 <template>
-  <div class="relative w-full h-[600px] flex items-end justify-center perspective-1000">
-    <!-- Purple Character -->
-    <div
-      class="absolute left-[-10%] bottom-0 w-64 h-[500px] bg-[#7C3AED] rounded-t-[40px] shadow-2xl transition-transform duration-300"
-      :style="{ transform: `translateY(${purpleY}px) scale(${isLookingAtEachOther ? 1.05 : 1}) rotate(${isLookingAtEachOther ? 5 : 0}deg)` }"
+  <div class="relative w-[550px] h-[400px]">
+    <!-- Purple tall rectangle character -->
+    <div 
+      class="absolute bottom-0 transition-all duration-700 ease-in-out z-10"
+      :style="{
+        left: '70px',
+        width: '180px',
+        height: (isTyping || (passwordLength > 0 && !showPassword)) ? '440px' : '400px',
+        backgroundColor: '#6C3FF5',
+        borderRadius: '10px 10px 0 0',
+        transform: (passwordLength > 0 && showPassword)
+          ? `skewX(0deg)`
+          : (isTyping || (passwordLength > 0 && !showPassword))
+            ? `skewX(${(purplePos.bodySkew || 0) - 12}deg) translateX(40px)` 
+            : `skewX(${purplePos.bodySkew || 0}deg)`,
+        transformOrigin: 'bottom center',
+      }"
     >
-      <div class="absolute top-24 left-1/2 -translate-x-1/2 flex space-x-6">
-        <AuthEyeBall
-          :size="24"
-          :pupil-size="8"
-          :max-distance="6"
+      <!-- Eyes -->
+      <div 
+        class="absolute flex gap-8 transition-all duration-700 ease-in-out"
+        :style="{
+          left: (passwordLength > 0 && showPassword) ? `${20}px` : isLookingAtEachOther ? `${55}px` : `${45 + purplePos.faceX}px`,
+          top: (passwordLength > 0 && showPassword) ? `${35}px` : isLookingAtEachOther ? `${65}px` : `${40 + purplePos.faceY}px`,
+        }"
+      >
+        <AuthEyeBall 
+          :size="18" 
+          :pupil-size="7" 
+          :max-distance="5" 
+          eye-color="white" 
+          pupil-color="#2D2D2D" 
           :is-blinking="isPurpleBlinking"
-          :force-look-x="isLookingAtEachOther ? 10 : (isTyping ? 5 : undefined)"
-          :force-look-y="isLookingAtEachOther ? 5 : (isTyping ? 5 : undefined)"
+          :force-look-x="(passwordLength > 0 && showPassword) ? (isPurplePeeking ? 4 : -4) : isLookingAtEachOther ? 3 : undefined"
+          :force-look-y="(passwordLength > 0 && showPassword) ? (isPurplePeeking ? 5 : -4) : isLookingAtEachOther ? 4 : undefined"
         />
-        <AuthEyeBall
-          :size="24"
-          :pupil-size="8"
-          :max-distance="6"
+        <AuthEyeBall 
+          :size="18" 
+          :pupil-size="7" 
+          :max-distance="5" 
+          eye-color="white" 
+          pupil-color="#2D2D2D" 
           :is-blinking="isPurpleBlinking"
-          :force-look-x="isLookingAtEachOther ? 10 : (isTyping ? 5 : undefined)"
-          :force-look-y="isLookingAtEachOther ? 5 : (isTyping ? 5 : undefined)"
+          :force-look-x="(passwordLength > 0 && showPassword) ? (isPurplePeeking ? 4 : -4) : isLookingAtEachOther ? 3 : undefined"
+          :force-look-y="(passwordLength > 0 && showPassword) ? (isPurplePeeking ? 5 : -4) : isLookingAtEachOther ? 4 : undefined"
         />
       </div>
     </div>
 
-    <!-- Black Character -->
-    <div
-      class="absolute left-[30%] bottom-0 w-48 h-[350px] bg-[#1F2937] rounded-t-[30px] shadow-2xl z-10 transition-transform duration-300"
-      :style="{ transform: `translateY(${blackY}px) scale(${isLookingAtEachOther ? 0.95 : 1}) rotate(${isLookingAtEachOther ? -5 : 0}deg)` }"
+    <!-- Black tall rectangle character -->
+    <div 
+      class="absolute bottom-0 transition-all duration-700 ease-in-out z-20"
+      :style="{
+        left: '240px',
+        width: '120px',
+        height: '310px',
+        backgroundColor: '#2D2D2D',
+        borderRadius: '8px 8px 0 0',
+        transform: (passwordLength > 0 && showPassword)
+          ? `skewX(0deg)`
+          : isLookingAtEachOther
+            ? `skewX(${(blackPos.bodySkew || 0) * 1.5 + 10}deg) translateX(20px)`
+            : (isTyping || (passwordLength > 0 && !showPassword))
+              ? `skewX(${(blackPos.bodySkew || 0) * 1.5}deg)` 
+              : `skewX(${blackPos.bodySkew || 0}deg)`,
+        transformOrigin: 'bottom center',
+      }"
     >
-      <div class="absolute top-16 left-1/2 -translate-x-1/2 flex space-x-4">
-        <AuthEyeBall
-          :size="20"
-          :pupil-size="6"
-          :max-distance="5"
+      <!-- Eyes -->
+      <div 
+        class="absolute flex gap-6 transition-all duration-700 ease-in-out"
+        :style="{
+          left: (passwordLength > 0 && showPassword) ? `${10}px` : isLookingAtEachOther ? `${32}px` : `${26 + blackPos.faceX}px`,
+          top: (passwordLength > 0 && showPassword) ? `${28}px` : isLookingAtEachOther ? `${12}px` : `${32 + blackPos.faceY}px`,
+        }"
+      >
+        <AuthEyeBall 
+          :size="16" 
+          :pupil-size="6" 
+          :max-distance="4" 
+          eye-color="white" 
+          pupil-color="#2D2D2D" 
           :is-blinking="isBlackBlinking"
-          :force-look-x="isLookingAtEachOther ? -10 : (isTyping ? 8 : undefined)"
-          :force-look-y="isLookingAtEachOther ? -5 : (isTyping ? -2 : undefined)"
+          :force-look-x="(passwordLength > 0 && showPassword) ? -4 : isLookingAtEachOther ? 0 : undefined"
+          :force-look-y="(passwordLength > 0 && showPassword) ? -4 : isLookingAtEachOther ? -4 : undefined"
         />
-        <AuthEyeBall
-          :size="20"
-          :pupil-size="6"
-          :max-distance="5"
+        <AuthEyeBall 
+          :size="16" 
+          :pupil-size="6" 
+          :max-distance="4" 
+          eye-color="white" 
+          pupil-color="#2D2D2D" 
           :is-blinking="isBlackBlinking"
-          :force-look-x="isLookingAtEachOther ? -10 : (isTyping ? 8 : undefined)"
-          :force-look-y="isLookingAtEachOther ? -5 : (isTyping ? -2 : undefined)"
+          :force-look-x="(passwordLength > 0 && showPassword) ? -4 : isLookingAtEachOther ? 0 : undefined"
+          :force-look-y="(passwordLength > 0 && showPassword) ? -4 : isLookingAtEachOther ? -4 : undefined"
         />
       </div>
     </div>
 
-    <!-- Orange Character -->
-    <div
-      class="absolute left-[5%] bottom-0 w-72 h-[250px] bg-[#FB923C] rounded-t-full shadow-2xl z-20 transition-transform duration-300"
-      :style="{ transform: `translateY(${orangeY}px) scale(${isLookingAtEachOther ? 1.02 : 1})` }"
+    <!-- Orange semi-circle character -->
+    <div 
+      class="absolute bottom-0 transition-all duration-700 ease-in-out z-30"
+      :style="{
+        left: '0px',
+        width: '240px',
+        height: '200px',
+        backgroundColor: '#FF9B6B',
+        borderRadius: '120px 120px 0 0',
+        transform: (passwordLength > 0 && showPassword) ? `skewX(0deg)` : `skewX(${orangePos.bodySkew || 0}deg)`,
+        transformOrigin: 'bottom center',
+      }"
     >
-      <div class="absolute top-20 left-1/2 -translate-x-1/2 flex space-x-12">
-        <AuthPupil
-          :size="10"
-          :max-distance="4"
-          :force-look-x="isTyping ? 4 : undefined"
-          :force-look-y="isTyping ? -4 : undefined"
-        />
-        <AuthPupil
-          :size="10"
-          :max-distance="4"
-          :force-look-x="isTyping ? 4 : undefined"
-          :force-look-y="isTyping ? -4 : undefined"
-        />
+      <!-- Eyes -->
+      <div 
+        class="absolute flex gap-8 transition-all duration-200 ease-out"
+        :style="{
+          left: (passwordLength > 0 && showPassword) ? `${50}px` : `${82 + (orangePos.faceX || 0)}px`,
+          top: (passwordLength > 0 && showPassword) ? `${85}px` : `${90 + (orangePos.faceY || 0)}px`,
+        }"
+      >
+        <AuthPupil :size="12" :max-distance="5" pupil-color="#2D2D2D" :force-look-x="(passwordLength > 0 && showPassword) ? -5 : undefined" :force-look-y="(passwordLength > 0 && showPassword) ? -4 : undefined" />
+        <AuthPupil :size="12" :max-distance="5" pupil-color="#2D2D2D" :force-look-x="(passwordLength > 0 && showPassword) ? -5 : undefined" :force-look-y="(passwordLength > 0 && showPassword) ? -4 : undefined" />
       </div>
     </div>
 
-    <!-- Yellow Character -->
-    <div
-      class="absolute right-[0%] bottom-0 w-56 h-[300px] bg-[#FCD34D] rounded-t-[80px] shadow-2xl z-30 transition-transform duration-300"
-      :style="{ transform: `translateY(${yellowY}px) scale(${isLookingAtEachOther ? 0.98 : 1}) rotate(${isLookingAtEachOther ? -8 : 0}deg)` }"
+    <!-- Yellow tall rectangle character -->
+    <div 
+      class="absolute bottom-0 transition-all duration-700 ease-in-out z-40"
+      :style="{
+        left: '310px',
+        width: '140px',
+        height: '230px',
+        backgroundColor: '#E8D754',
+        borderRadius: '70px 70px 0 0',
+        transform: (passwordLength > 0 && showPassword) ? `skewX(0deg)` : `skewX(${yellowPos.bodySkew || 0}deg)`,
+        transformOrigin: 'bottom center',
+      }"
     >
-      <div class="absolute top-16 left-1/2 -translate-x-1/2 flex space-x-8">
-        <AuthEyeBall
-          :size="16"
-          :pupil-size="6"
-          :max-distance="4"
-          :is-blinking="isYellowBlinking"
-          :force-look-x="isLookingAtEachOther ? -8 : (showPassword ? -5 : (isTyping ? 6 : undefined))"
-          :force-look-y="isLookingAtEachOther ? 2 : (showPassword ? 5 : (isTyping ? 2 : undefined))"
-        />
-        <AuthEyeBall
-          :size="16"
-          :pupil-size="6"
-          :max-distance="4"
-          :is-blinking="isYellowBlinking"
-          :force-look-x="isLookingAtEachOther ? -8 : (showPassword ? -5 : (isTyping ? 6 : undefined))"
-          :force-look-y="isLookingAtEachOther ? 2 : (showPassword ? 5 : (isTyping ? 2 : undefined))"
-        />
+      <!-- Eyes -->
+      <div 
+        class="absolute flex gap-6 transition-all duration-200 ease-out"
+        :style="{
+          left: (passwordLength > 0 && showPassword) ? `${20}px` : `${52 + (yellowPos.faceX || 0)}px`,
+          top: (passwordLength > 0 && showPassword) ? `${35}px` : `${40 + (yellowPos.faceY || 0)}px`,
+        }"
+      >
+        <AuthPupil :size="12" :max-distance="5" pupil-color="#2D2D2D" :force-look-x="(passwordLength > 0 && showPassword) ? -5 : undefined" :force-look-y="(passwordLength > 0 && showPassword) ? -4 : undefined" />
+        <AuthPupil :size="12" :max-distance="5" pupil-color="#2D2D2D" :force-look-x="(passwordLength > 0 && showPassword) ? -5 : undefined" :force-look-y="(passwordLength > 0 && showPassword) ? -4 : undefined" />
       </div>
-      <!-- Yellow character's mouth -->
-      <div class="absolute top-28 left-1/2 -translate-x-1/2 w-16 h-1 bg-black rounded-full transition-all duration-300" :class="{'h-4 rounded-full': showPassword, 'w-8 h-8 rounded-full': isLookingAtEachOther}"></div>
+      <!-- Mouth -->
+      <div 
+        class="absolute h-[4px] bg-[#2D2D2D] rounded-full transition-all duration-200 ease-out"
+        :style="{
+          width: '80px',
+          left: (passwordLength > 0 && showPassword) ? `${10}px` : `${40 + (yellowPos.faceX || 0)}px`,
+          top: (passwordLength > 0 && showPassword) ? `${88}px` : `${88 + (yellowPos.faceY || 0)}px`,
+        }"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthInteractionStore } from '@/stores/authInteraction'
 import AuthEyeBall from './AuthEyeBall.vue'
@@ -110,76 +171,86 @@ import AuthPupil from './AuthPupil.vue'
 const authInteraction = useAuthInteractionStore()
 const { isTyping, showPassword, passwordLength } = storeToRefs(authInteraction)
 
-const purpleY = ref(0)
-const blackY = ref(0)
-const orangeY = ref(0)
-const yellowY = ref(0)
+const mouseX = ref(0)
+const mouseY = ref(0)
 
 const isPurpleBlinking = ref(false)
 const isBlackBlinking = ref(false)
-const isYellowBlinking = ref(false)
+const isPurplePeeking = ref(false)
 const isLookingAtEachOther = ref(false)
 
 let intervals: number[] = []
+let timeouts: number[] = []
 
+const handleMouseMove = (e: MouseEvent) => {
+  mouseX.value = e.clientX
+  mouseY.value = e.clientY
+}
+
+const calculatePosition = (centerX: number, centerY: number) => {
+  const deltaX = mouseX.value - centerX
+  const deltaY = mouseY.value - centerY
+  
+  const faceX = Math.max(-15, Math.min(15, deltaX / 20))
+  const faceY = Math.max(-10, Math.min(10, deltaY / 30))
+  const bodySkew = Math.max(-6, Math.min(6, -deltaX / 120))
+  
+  return { faceX, faceY, bodySkew }
+}
+
+const purplePos = computed(() => calculatePosition(window.innerWidth * 0.25 + 70 + 90, window.innerHeight / 2 + 100))
+const blackPos = computed(() => calculatePosition(window.innerWidth * 0.25 + 240 + 60, window.innerHeight / 2 + 150))
+const orangePos = computed(() => calculatePosition(window.innerWidth * 0.25 + 120, window.innerHeight / 2 + 200))
+const yellowPos = computed(() => calculatePosition(window.innerWidth * 0.25 + 310 + 70, window.innerHeight / 2 + 180))
+
+// Blinking logic
+const scheduleBlink = (setBlinking: (val: boolean) => void) => {
+  const blinkTimeout = window.setTimeout(() => {
+    setBlinking(true)
+    timeouts.push(window.setTimeout(() => {
+      setBlinking(false)
+      scheduleBlink(setBlinking)
+    }, 150))
+  }, Math.random() * 4000 + 3000)
+  timeouts.push(blinkTimeout)
+}
+
+// Looking at each other
 watch(isTyping, (typing) => {
   if (typing) {
-    purpleY.value = 20
-    blackY.value = 10
-    orangeY.value = 5
-    yellowY.value = 15
-  } else {
-    purpleY.value = 0
-    blackY.value = 0
-    orangeY.value = 0
-    yellowY.value = 0
-  }
-})
-
-watch(showPassword, (showing) => {
-  if (showing) {
-    yellowY.value = -20
-  } else {
-    yellowY.value = isTyping.value ? 15 : 0
-  }
-})
-
-watch(passwordLength, (len) => {
-  if (isTyping.value) {
-    const bounce = (len % 3) * 5
-    purpleY.value = 20 + bounce
-    blackY.value = 10 - bounce
-    orangeY.value = 5 + bounce
-    yellowY.value = 15 - bounce
-  }
-})
-
-const blink = (setBlink: (val: boolean) => void) => {
-  setBlink(true)
-  setTimeout(() => setBlink(false), 150)
-}
-
-const randomBlink = () => {
-  if (Math.random() > 0.7) blink(isPurpleBlinking.value ? () => {} : (val) => isPurpleBlinking.value = val)
-  if (Math.random() > 0.8) blink(isBlackBlinking.value ? () => {} : (val) => isBlackBlinking.value = val)
-  if (Math.random() > 0.6) blink(isYellowBlinking.value ? () => {} : (val) => isYellowBlinking.value = val)
-}
-
-const randomInteraction = () => {
-  if (Math.random() > 0.8 && !isTyping.value && !showPassword.value) {
     isLookingAtEachOther.value = true
-    setTimeout(() => {
+    timeouts.push(window.setTimeout(() => {
       isLookingAtEachOther.value = false
-    }, 2000)
+    }, 800))
+  } else {
+    isLookingAtEachOther.value = false
   }
-}
+})
+
+// Purple sneaking peek
+watch([passwordLength, showPassword], ([len, show]) => {
+  if (len > 0 && show) {
+    const peekInterval = window.setTimeout(() => {
+      isPurplePeeking.value = true
+      timeouts.push(window.setTimeout(() => {
+        isPurplePeeking.value = false
+      }, 800))
+    }, Math.random() * 3000 + 2000)
+    timeouts.push(peekInterval)
+  } else {
+    isPurplePeeking.value = false
+  }
+})
 
 onMounted(() => {
-  intervals.push(window.setInterval(randomBlink, 3000))
-  intervals.push(window.setInterval(randomInteraction, 8000))
+  window.addEventListener("mousemove", handleMouseMove)
+  scheduleBlink((val) => isPurpleBlinking.value = val)
+  scheduleBlink((val) => isBlackBlinking.value = val)
 })
 
 onUnmounted(() => {
+  window.removeEventListener("mousemove", handleMouseMove)
   intervals.forEach(clearInterval)
+  timeouts.forEach(clearTimeout)
 })
 </script>
