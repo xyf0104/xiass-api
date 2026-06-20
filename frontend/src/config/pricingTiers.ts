@@ -24,12 +24,12 @@ export const TOPUP_TIERS: PricingTier[] = [
       zh: {
         title: "体验",
         subtitle: "适合初次体验",
-        features: ["获得 $50 额度", "永不过期", "支持全部模型"],
+        features: ["获得 $50.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Trial",
         subtitle: "For first-time users",
-        features: ["Get $50 credit", "Never expires", "All models supported"],
+        features: ["Get $50.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -37,17 +37,17 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_2",
     priceRMB: 100,
     creditUSD: 100,
-    bonusUSD: 2.99,
+    bonusUSD: 0,
     locales: {
       zh: {
         title: "标准",
         subtitle: "开发者常用",
-        features: ["获得 $102.99 额度", "永不过期", "支持全部模型"],
+        features: ["获得 $100.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Standard",
         subtitle: "For regular developers",
-        features: ["Get $102.99 credit", "Never expires", "All models supported"],
+        features: ["Get $100.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -55,19 +55,19 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_3",
     priceRMB: 500,
     creditUSD: 500,
-    bonusUSD: 19.9,
+    bonusUSD: 0,
     locales: {
       zh: {
         title: "进阶",
         subtitle: "高频使用",
         tag: "人气推荐",
-        features: ["获得 $519.90 额度", "永不过期", "支持全部模型"],
+        features: ["获得 $500.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Advanced",
         subtitle: "For frequent users",
         tag: "Popular",
-        features: ["Get $519.90 credit", "Never expires", "All models supported"],
+        features: ["Get $500.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -75,20 +75,20 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_4",
     priceRMB: 1000,
     creditUSD: 1000,
-    bonusUSD: 49.9,
+    bonusUSD: 0,
     tagColor: "bg-orange-600",
     locales: {
       zh: {
         title: "专业",
         subtitle: "专业开发者",
         tag: "最佳价值",
-        features: ["获得 $1049.90 额度", "永不过期", "支持全部模型"],
+        features: ["获得 $1000.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Professional",
         subtitle: "For pro developers",
         tag: "Best Value",
-        features: ["Get $1049.90 credit", "Never expires", "All models supported"],
+        features: ["Get $1000.00 credit", "Never expires", "All models supported"],
       }
     }
   },

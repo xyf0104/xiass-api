@@ -4,10 +4,10 @@
       <!-- Title -->
       <div class="mb-8">
         <h2 class="text-3xl font-bold text-white mb-2">
-          Welcome back!
+          欢迎回来！
         </h2>
         <p class="text-sm text-gray-400">
-          Please enter your details
+          请输入您的详细信息
         </p>
       </div>
 
@@ -16,7 +16,7 @@
         <!-- Email Input -->
         <div>
           <label for="email" class="block text-sm font-medium text-gray-300 mb-2">
-            Email
+            邮箱
           </label>
           <div class="relative">
             <input
@@ -39,7 +39,7 @@
         <!-- Password Input -->
         <div>
           <label for="password" class="block text-sm font-medium text-gray-300 mb-2">
-            Password
+            密码
           </label>
           <div class="relative">
             <input
@@ -71,14 +71,14 @@
         <div class="flex items-center justify-between pt-1">
           <label class="flex items-center text-sm text-gray-400 cursor-pointer">
             <input type="checkbox" class="form-checkbox bg-[#1A1C23] border-gray-600 rounded text-white focus:ring-0 w-4 h-4 mr-2" />
-            Remember for 30 days
+            保持登录 30 天
           </label>
           <router-link
             v-if="passwordResetEnabled && !backendModeEnabled"
             to="/forgot-password"
             class="text-sm font-medium text-white hover:text-gray-300 transition-colors"
           >
-            Forgot password?
+            忘记密码？
           </router-link>
         </div>
 
@@ -109,7 +109,7 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ isLoading ? 'Logging in...' : 'Log in' }}
+            {{ isLoading ? '正在登录...' : '登录' }}
           </button>
         </div>
 
@@ -149,12 +149,12 @@
     <!-- Footer -->
     <template v-if="!backendModeEnabled" #footer>
       <p class="text-sm text-gray-400 text-center mt-8">
-        Don't have an account?
+        还没有账户？
         <router-link
           to="/register"
           class="font-medium text-white hover:text-gray-300 transition-colors ml-1"
         >
-          Sign Up
+          注册
         </router-link>
       </p>
     </template>

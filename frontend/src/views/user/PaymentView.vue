@@ -51,14 +51,21 @@
               <div class="h-px flex-grow bg-gray-200 dark:bg-dark-700"></div>
             </div>
 
-            <!-- Original Custom Amount Input -->
+            <!-- Custom Amount Input -->
             <div class="card p-6">
-              <AmountInput
-                v-model="amount"
-                :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
-                :min="globalMinAmount"
-                :max="globalMaxAmount"
-              />
+              <div class="relative">
+                <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                  <span class="text-gray-500 dark:text-gray-400 font-medium">$</span>
+                </div>
+                <input
+                  v-model.number="amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="block w-full rounded-xl border border-gray-200 bg-gray-50 py-3.5 pl-8 pr-4 text-gray-900 transition-colors focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 dark:border-dark-700 dark:bg-dark-800 dark:text-white dark:focus:border-primary-500 dark:focus:bg-dark-900"
+                  placeholder="输入金额"
+                />
+              </div>
               <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{ amountError }}</p>
             </div>
             <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="validAmount <= 0" @click="showCheckoutModal = true">
@@ -755,6 +762,7 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
     }
 
     const result = await paymentStore.createOrder(payload) as CreateOrderResult & { resume_token?: string }
+    showCheckoutModal.value = false // Close the modal upon successful order creation
     const openWindow = (url: string) => {
       const win = window.open(url, 'paymentPopup', getPaymentPopupFeatures())
       if (!win || win.closed) {
