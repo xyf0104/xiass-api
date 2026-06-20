@@ -16,8 +16,16 @@
       <div class="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full bg-primary-400/5 blur-[60px] animate-pulse-slow [animation-delay:4s]"></div>
     </div>
 
-    <!-- 登录内容区 -->
-    <div class="relative z-10 w-full max-w-md">
+    <!-- 登录内容区 (2 Column Layout on large screens) -->
+    <div class="relative z-10 w-full max-w-[1200px] grid lg:grid-cols-2 gap-8 items-center justify-center">
+      
+      <!-- 左侧：卡通人物动画 -->
+      <div class="hidden lg:flex justify-center items-end h-[600px] relative pointer-events-none">
+        <AuthCharacters class="scale-90 xl:scale-100 origin-bottom" />
+      </div>
+
+      <!-- 右侧：登录表单卡片 -->
+      <div class="w-full max-w-md mx-auto">
       <!-- Logo/品牌 -->
       <div class="mb-8 text-center">
         <template v-if="settingsLoaded">
@@ -49,6 +57,7 @@
       <div class="mt-8 text-center text-xs text-gray-600">
         &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
       </div>
+      </div>
     </div>
   </div>
 </template>
@@ -61,6 +70,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import AuthCharacters from '@/components/auth/AuthCharacters.vue'
 
 const appStore = useAppStore()
 

@@ -42,6 +42,16 @@
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
             </div>
             <template v-else>
+            <!-- Custom Quick Tiers -->
+            <TopupTiers @select="handleTierSelect" />
+
+            <div class="mt-8 flex items-center mb-4">
+              <div class="h-px flex-grow bg-gray-200 dark:bg-dark-700"></div>
+              <span class="px-4 text-sm text-gray-500 font-medium">{{ t('payment.topup.orCustomAmount', '或输入自定义金额') }}</span>
+              <div class="h-px flex-grow bg-gray-200 dark:bg-dark-700"></div>
+            </div>
+
+            <!-- Original Custom Amount Input -->
             <div class="card p-6">
               <AmountInput
                 v-model="amount"
@@ -51,42 +61,8 @@
               />
               <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{ amountError }}</p>
             </div>
-            <div v-if="enabledMethods.length >= 1" class="card p-6">
-              <PaymentMethodSelector
-                :methods="methodOptions"
-                :selected="selectedMethod"
-                @select="selectedMethod = $event"
-              />
-            </div>
-            <div v-if="validAmount > 0" class="card p-6">
-              <div class="space-y-2 text-sm">
-                <div class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.paymentAmount') }}</span>
-                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(validAmount) }}</span>
-                </div>
-                <div v-if="feeRate > 0" class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
-                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(feeAmount) }}</span>
-                </div>
-                <div v-if="feeRate > 0" class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
-                  <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                  <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
-                </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
-                  <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
-                </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { usd: balanceRechargeMultiplier.toFixed(2) }) }}
-                </p>
-              </div>
-            </div>
-            <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
-              <span v-if="submitting" class="flex items-center justify-center gap-2">
-                <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                {{ t('common.processing') }}
-              </span>
-              <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(totalAmount) }}</span>
+            <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="validAmount <= 0" @click="showCheckoutModal = true">
+              <span>{{ t('payment.topup.continueToCheckout', '继续支付') }}</span>
             </button>
             </template>
           </template>
@@ -242,6 +218,59 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Checkout Modal for Top-up -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showCheckoutModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showCheckoutModal = false">
+          <div class="relative w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-900">
+            <!-- Close button -->
+            <button class="absolute right-4 top-4 rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-200" @click="showCheckoutModal = false">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            
+            <h3 class="mb-6 text-xl font-bold text-gray-900 dark:text-white">{{ t('payment.topup.selectPaymentMethod', '选择支付方式') }}</h3>
+            
+            <!-- Summary Box -->
+            <div class="bg-[#FBF9F6] dark:bg-dark-800 rounded-2xl p-6 border border-[#F0EBE1] dark:border-dark-700 mb-6">
+              <div class="text-gray-500 dark:text-gray-400 text-sm mb-1">{{ t('payment.topup.paymentInfo', '支付信息') }}</div>
+              <div class="text-4xl font-bold text-gray-900 dark:text-white mb-2">
+                <span class="text-2xl mr-1">{{ selectedCurrency === 'CNY' ? '¥' : '$' }}</span>{{ formatSelectedPaymentAmount(totalAmount).replace(/[^0-9.]/g, '') }}
+              </div>
+              <div class="text-gray-500 dark:text-gray-400 text-sm flex justify-between items-center">
+                <span>{{ t('payment.creditedBalance', '到账余额') }} ${{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
+                <span v-if="feeRate > 0" class="text-xs">含手续费: {{ formatSelectedPaymentAmount(feeAmount) }}</span>
+              </div>
+            </div>
+
+            <div class="space-y-4">
+              <div class="text-gray-900 dark:text-gray-300 font-semibold text-sm">{{ t('payment.topup.paymentMethod', '支付方式') }}</div>
+              <div v-if="enabledMethods.length >= 1">
+                <PaymentMethodSelector
+                  :methods="methodOptions"
+                  :selected="selectedMethod"
+                  @select="selectedMethod = $event"
+                />
+              </div>
+
+              <div class="text-center mt-6">
+                <button 
+                  :class="['btn w-full h-12 rounded-xl text-base font-medium shadow-md', paymentButtonClass]" 
+                  :disabled="!canSubmit || submitting" 
+                  @click="handleSubmitRecharge"
+                >
+                  <span v-if="submitting" class="flex items-center justify-center gap-2">
+                    <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                    {{ t('common.processing') }}
+                  </span>
+                  <span v-else>{{ t('payment.topup.goToPay', '前往付款') }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </AppLayout>
 </template>
 
@@ -258,6 +287,8 @@ import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiErro
 import { isMobileDevice } from '@/utils/device'
 import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import TopupTiers from '@/components/payment/TopupTiers.vue'
+import type { PricingTier } from '@/config/pricingTiers'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
 import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
@@ -309,6 +340,20 @@ const selectedPlan = ref<SubscriptionPlan | null>(null)
 const previewImage = ref('')
 
 const paymentPhase = ref<'select' | 'paying'>('select')
+const showCheckoutModal = ref(false)
+const selectedTier = ref<PricingTier | null>(null)
+
+function handleTierSelect(tier: PricingTier) {
+  selectedTier.value = tier
+  amount.value = tier.priceRMB
+  showCheckoutModal.value = true
+}
+
+watch(amount, () => {
+  if (selectedTier.value && amount.value !== selectedTier.value.priceRMB) {
+    selectedTier.value = null
+  }
+})
 
 interface CreateOrderOptions {
   openid?: string
@@ -458,6 +503,7 @@ function buildWechatOAuthAuthorizeUrl(
 function onPaymentDone() {
   const wasSubscription = paymentState.value.orderType === 'subscription'
   resetPayment()
+  showCheckoutModal.value = false
   selectedPlan.value = null
   if (wasSubscription) {
     subscriptionStore.fetchActiveSubscriptions(true).catch(() => {})

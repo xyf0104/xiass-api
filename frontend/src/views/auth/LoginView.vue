@@ -32,6 +32,8 @@
               class="input pl-11"
               :class="{ 'input-error': errors.email }"
               :placeholder="t('auth.emailPlaceholder')"
+              @focus="authInteraction.isTyping = true"
+              @blur="authInteraction.isTyping = false"
             />
           </div>
         </div>
@@ -55,6 +57,8 @@
               class="input pl-11 pr-11"
               :class="{ 'input-error': errors.password }"
               :placeholder="t('auth.passwordPlaceholder')"
+              @focus="authInteraction.isTyping = true"
+              @blur="authInteraction.isTyping = false"
             />
             <button
               type="button"
@@ -198,9 +202,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useAppStore, useAuthStore } from '@/stores'
+import { useAuthInteractionStore } from '@/stores/authInteraction'
 import { AuthLayout } from '@/components/layout'
 import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
 import DingTalkOAuthSection from '@/components/auth/DingTalkOAuthSection.vue'
@@ -211,7 +217,6 @@ import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
-import { useAuthStore, useAppStore } from '@/stores'
 import { getPublicSettings, isTotp2FARequired, isWeChatWebOAuthEnabled } from '@/api/auth'
 import type { LoginAgreementDocument, TotpLoginResponse } from '@/types'
 import { extractI18nErrorMessage } from '@/utils/apiError'
@@ -221,10 +226,19 @@ const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 
 // ==================== Router & Stores ====================
-
 const router = useRouter()
-const authStore = useAuthStore()
 const appStore = useAppStore()
+const authStore = useAuthStore()
+const authInteraction = useAuthInteractionStore()
+
+// Sync showPassword and password length with interaction store
+watch(() => showPassword.value, (val) => {
+  authInteraction.showPassword = val
+})
+
+watch(() => formData.password, (val) => {
+  authInteraction.passwordLength = val.length
+})
 
 // ==================== State ====================
 
