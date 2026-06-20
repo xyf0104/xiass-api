@@ -7,7 +7,7 @@
     <div class="relative hidden lg:flex flex-col justify-between p-12 text-white z-10 bg-transparent">
       <!-- Logo/Brand (Top Left) -->
       <div class="relative z-20">
-        <div class="flex items-center gap-2 text-lg font-semibold cursor-pointer" @click="router.push('/')">
+        <div class="flex items-center gap-2 text-lg font-semibold cursor-pointer" @click="$router.push('/')">
           <span>NoWind API</span>
         </div>
       </div>
@@ -36,14 +36,11 @@
  * 登录页布局 — 赛博朋克科技感
  * 特色：Canvas 粒子连线动画 + 毛玻璃登录卡片 + 渐变发光品牌文字
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import AuthCharacters from '@/components/auth/AuthCharacters.vue'
 
 const appStore = useAppStore()
-
-const siteName = computed(() => appStore.siteName || 'Sub2API')
-const currentYear = computed(() => new Date().getFullYear())
 
 // ==================== Canvas 粒子动画 ====================
 
