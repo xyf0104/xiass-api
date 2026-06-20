@@ -1,26 +1,24 @@
 <template>
   <AuthLayout>
-    <div class="space-y-6">
+    <div class="w-full">
       <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('auth.welcomeBack') }}
+      <div class="mb-8">
+        <h2 class="text-3xl font-bold text-white mb-2">
+          Welcome back!
         </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ t('auth.signInToAccount') }}
+        <p class="text-sm text-gray-400">
+          Please enter your details
         </p>
       </div>
+
       <!-- Login Form -->
       <form @submit.prevent="handleLogin" class="space-y-5">
         <!-- Email Input -->
         <div>
-          <label for="email" class="input-label">
-            {{ t('auth.emailLabel') }}
+          <label for="email" class="block text-sm font-medium text-gray-300 mb-2">
+            Email
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
             <input
               id="email"
               v-model="formData.email"
@@ -29,9 +27,9 @@
               autofocus
               autocomplete="email"
               :disabled="authActionDisabled"
-              class="input pl-11"
-              :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
+              class="w-full bg-[#1A1C23] border-none text-white rounded-xl py-3 px-4 focus:ring-1 focus:ring-gray-500 outline-none placeholder-gray-500 transition-shadow"
+              :class="{ 'ring-1 ring-red-500': errors.email }"
+              placeholder="anna@gmail.com"
               @focus="authInteraction.isTyping = true"
               @blur="authInteraction.isTyping = false"
             />
@@ -40,13 +38,10 @@
 
         <!-- Password Input -->
         <div>
-          <label for="password" class="input-label">
-            {{ t('auth.passwordLabel') }}
+          <label for="password" class="block text-sm font-medium text-gray-300 mb-2">
+            Password
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
             <input
               id="password"
               v-model="formData.password"
@@ -54,9 +49,9 @@
               required
               autocomplete="current-password"
               :disabled="authActionDisabled"
-              class="input pl-11 pr-11"
-              :class="{ 'input-error': errors.password }"
-              :placeholder="t('auth.passwordPlaceholder')"
+              class="w-full bg-[#1A1C23] border-none text-white rounded-xl py-3 px-4 pr-12 focus:ring-1 focus:ring-gray-500 outline-none placeholder-gray-500 transition-shadow"
+              :class="{ 'ring-1 ring-red-500': errors.password }"
+              placeholder="••••••••"
               @focus="authInteraction.isTyping = true"
               @blur="authInteraction.isTyping = false"
             />
@@ -64,26 +59,31 @@
               type="button"
               @click="showPassword = !showPassword"
               :disabled="authActionDisabled"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              class="absolute inset-y-0 right-0 flex items-center pr-4 text-gray-500 hover:text-gray-300 transition-colors"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
             </button>
           </div>
-          <div class="mt-1 flex items-center justify-between">
-            <span></span>
-            <router-link
-              v-if="passwordResetEnabled && !backendModeEnabled"
-              to="/forgot-password"
-              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              {{ t('auth.forgotPassword') }}
-            </router-link>
-          </div>
+        </div>
+
+        <!-- Options (Remember & Forgot) -->
+        <div class="flex items-center justify-between pt-1">
+          <label class="flex items-center text-sm text-gray-400 cursor-pointer">
+            <input type="checkbox" class="form-checkbox bg-[#1A1C23] border-gray-600 rounded text-white focus:ring-0 w-4 h-4 mr-2" />
+            Remember for 30 days
+          </label>
+          <router-link
+            v-if="passwordResetEnabled && !backendModeEnabled"
+            to="/forgot-password"
+            class="text-sm font-medium text-white hover:text-gray-300 transition-colors"
+          >
+            Forgot password?
+          </router-link>
         </div>
 
         <!-- Turnstile Widget -->
-        <div v-if="turnstileEnabled && turnstileSiteKey">
+        <div v-if="turnstileEnabled && turnstileSiteKey" class="pt-2">
           <TurnstileWidget
             ref="turnstileRef"
             :site-key="turnstileSiteKey"
@@ -94,34 +94,24 @@
         </div>
 
         <!-- Submit Button -->
-        <button
-          type="submit"
-          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
-          class="btn btn-primary w-full"
-        >
-          <svg
-            v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-            fill="none"
-            viewBox="0 0 24 24"
+        <div class="pt-2">
+          <button
+            type="submit"
+            :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
+            class="w-full bg-white text-black font-semibold py-3.5 rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <Icon v-else name="login" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
-        </button>
+            <svg
+              v-if="isLoading"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin text-black"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            {{ isLoading ? 'Logging in...' : 'Log in' }}
+          </button>
+        </div>
 
         <LoginAgreementPrompt
           v-if="loginAgreementEnabled"
@@ -135,56 +125,36 @@
           @open="showAgreementModal = true"
         />
 
-        <div v-if="showOAuthLogin" class="space-y-3 pt-1">
-          <div class="flex items-center gap-3">
-            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-            <span class="text-xs text-gray-500 dark:text-dark-400">
-              {{ t('auth.oauthOrContinue') }}
-            </span>
-            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-          </div>
-
+        <!-- Google OAuth Button -->
+        <div v-if="showOAuthLogin" class="pt-2">
           <EmailOAuthButtons
             :disabled="authActionDisabled"
             :github-enabled="githubOAuthEnabled"
             :google-enabled="googleOAuthEnabled"
             :show-divider="false"
+            custom-class="w-full bg-transparent border border-gray-600 text-white font-medium py-3.5 rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
           />
 
-          <LinuxDoOAuthSection
-            v-if="linuxdoOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-          />
-          <DingTalkOAuthSection
-            v-if="dingtalkOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-          />
-          <WechatOAuthSection
-            v-if="wechatOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-          />
-          <OidcOAuthSection
-            v-if="oidcOAuthEnabled"
-            :disabled="authActionDisabled"
-            :provider-name="oidcOAuthProviderName"
-            :show-divider="false"
-          />
+          <!-- Other OAuth -->
+          <div class="space-y-3 mt-3">
+            <LinuxDoOAuthSection v-if="linuxdoOAuthEnabled" :disabled="authActionDisabled" :show-divider="false" />
+            <DingTalkOAuthSection v-if="dingtalkOAuthEnabled" :disabled="authActionDisabled" :show-divider="false" />
+            <WechatOAuthSection v-if="wechatOAuthEnabled" :disabled="authActionDisabled" :show-divider="false" />
+            <OidcOAuthSection v-if="oidcOAuthEnabled" :disabled="authActionDisabled" :provider-name="oidcOAuthProviderName" :show-divider="false" />
+          </div>
         </div>
       </form>
     </div>
 
     <!-- Footer -->
     <template v-if="!backendModeEnabled" #footer>
-      <p class="text-gray-500 dark:text-dark-400">
-        {{ t('auth.dontHaveAccount') }}
+      <p class="text-sm text-gray-400 text-center mt-8">
+        Don't have an account?
         <router-link
           to="/register"
-          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+          class="font-medium text-white hover:text-gray-300 transition-colors ml-1"
         >
-          {{ t('auth.signUp') }}
+          Sign Up
         </router-link>
       </p>
     </template>

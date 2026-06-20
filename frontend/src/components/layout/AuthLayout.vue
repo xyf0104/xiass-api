@@ -1,23 +1,26 @@
 <template>
-  <div class="auth-layout relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- 深色科技感背景 -->
-    <div class="absolute inset-0 bg-gradient-to-br from-[#0a0e1a] via-[#0f1629] to-[#0a0e1a]"></div>
+  <div class="auth-layout relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-[#0B0D17]">
+    
+    <!-- Top Left Brand -->
+    <div class="absolute top-8 left-8 z-50 flex items-center gap-3">
+      <div class="flex h-8 w-8 items-center justify-center rounded bg-white">
+        <svg class="h-5 w-5 text-black" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L2 22h20L12 2zm0 4.5l6.5 13h-13L12 6.5z"/>
+        </svg>
+      </div>
+      <span class="text-xl font-semibold text-white tracking-wide">
+        {{ siteName }}
+      </span>
+    </div>
 
     <!-- 动态粒子网格动画 (Canvas) -->
     <canvas
       ref="canvasRef"
-      class="pointer-events-none absolute inset-0 h-full w-full"
+      class="pointer-events-none absolute inset-0 h-full w-full opacity-60"
     ></canvas>
 
-    <!-- 装饰性光球 -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <div class="absolute -right-20 -top-20 h-[500px] w-[500px] rounded-full bg-primary-500/8 blur-[100px] animate-pulse-slow"></div>
-      <div class="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-cyan-500/6 blur-[80px] animate-pulse-slow [animation-delay:2s]"></div>
-      <div class="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full bg-primary-400/5 blur-[60px] animate-pulse-slow [animation-delay:4s]"></div>
-    </div>
-
     <!-- 登录内容区 (2 Column Layout on large screens) -->
-    <div class="relative z-10 w-full max-w-[1200px] grid lg:grid-cols-2 gap-8 items-center justify-center">
+    <div class="relative z-10 w-full max-w-[1200px] grid lg:grid-cols-2 gap-12 items-center justify-between">
       
       <!-- 左侧：卡通人物动画 -->
       <div class="hidden lg:flex justify-center items-end h-[600px] relative pointer-events-none">
@@ -25,38 +28,21 @@
       </div>
 
       <!-- 右侧：登录表单卡片 -->
-      <div class="w-full max-w-md mx-auto">
-      <!-- Logo/品牌 -->
-      <div class="mb-8 text-center">
-        <template v-if="settingsLoaded">
-          <!-- Logo 带发光边框 -->
-          <div class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-primary-500/20 to-cyan-500/20 shadow-lg shadow-primary-500/20 ring-1 ring-primary-500/30 backdrop-blur-sm">
-            <img :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <!-- 品牌名 渐变发光 -->
-          <h1 class="text-gradient-glow mb-2 text-3xl font-bold">
-            {{ siteName }}
-          </h1>
-          <p class="text-sm text-gray-400">
-            {{ siteSubtitle }}
-          </p>
-        </template>
-      </div>
+      <div class="w-full max-w-md mx-auto lg:ml-auto lg:mr-8">
+        <!-- 登录卡片：极简深色卡片 -->
+        <div class="auth-card rounded-3xl bg-[#13151A] p-10 shadow-2xl">
+          <slot />
+        </div>
 
-      <!-- 登录卡片：毛玻璃 + 微光边框 -->
-      <div class="auth-card rounded-2xl border border-white/[0.06] bg-white/[0.03] p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
-        <slot />
-      </div>
+        <!-- 底部链接 -->
+        <div class="mt-4 text-center text-sm">
+          <slot name="footer" />
+        </div>
 
-      <!-- 底部链接 -->
-      <div class="mt-6 text-center text-sm">
-        <slot name="footer" />
-      </div>
-
-      <!-- 版权 -->
-      <div class="mt-8 text-center text-xs text-gray-600">
-        &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
-      </div>
+        <!-- 版权 -->
+        <div class="mt-12 text-center text-xs text-gray-600">
+          &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
+        </div>
       </div>
     </div>
   </div>
@@ -190,52 +176,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 品牌名渐变发光 */
-.text-gradient-glow {
-  background: linear-gradient(135deg, #38bdf8, #0ea5e9, #06b6d4, #38bdf8);
-  background-size: 200% 200%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: gradient-shift 4s ease infinite;
-}
-
-@keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-}
-
-/* 登录卡片微光边框动画 */
-.auth-card {
-  position: relative;
-}
-
-.auth-card::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 1rem;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    rgba(14, 165, 233, 0.3),
-    transparent 40%,
-    transparent 60%,
-    rgba(6, 182, 212, 0.2)
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-/* 慢脉冲动画 */
-.animate-pulse-slow {
-  animation: pulse-slow 6s ease-in-out infinite;
-}
-
-@keyframes pulse-slow {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(1.05); }
-}
+/* Remove the gradient glow and border animations to match the clean design */
 </style>
