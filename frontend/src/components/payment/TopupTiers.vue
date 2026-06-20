@@ -12,7 +12,7 @@
           {{ t('payment.topup.promoTitle', '多充多送，充值越高赠送越多') }}
         </h2>
         <p class="text-gray-500 dark:text-gray-400 text-sm">
-          {{ t('payment.topup.promoDesc', '选择更高档位可获得额外赠送余额。') }}
+          {{ t('payment.topup.promoDesc', '选择更高档位可获得额外赠送余额，最高赠送 $49.90。') }}
         </p>
       </div>
     </div>
@@ -61,7 +61,7 @@
         </div>
 
         <button 
-          class="w-full bg-primary-600 hover:bg-primary-700 text-white rounded-xl py-3 font-semibold shadow-md transition-all group-hover:shadow-lg"
+          :class="['w-full rounded-xl py-3 font-semibold transition-all group-hover:shadow-lg', plan.buttonClass || 'bg-primary-600 hover:bg-primary-700 text-white shadow-md']"
           @click.stop="$emit('select', plan)"
         >
           {{ t('payment.topup.rechargeNow', '立即充值') }}

@@ -4,6 +4,7 @@ export interface PricingTier {
   creditUSD: number;
   bonusUSD: number;
   tagColor?: string;
+  buttonClass?: string;
   locales: {
     [key: string]: {
       title: string;
@@ -37,7 +38,7 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_2",
     priceRMB: 100,
     creditUSD: 100,
-    bonusUSD: 0,
+    bonusUSD: 2.99,
     locales: {
       zh: {
         title: "标准",
@@ -55,7 +56,7 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_3",
     priceRMB: 500,
     creditUSD: 500,
-    bonusUSD: 0,
+    bonusUSD: 19.90,
     locales: {
       zh: {
         title: "进阶",
@@ -75,8 +76,9 @@ export const TOPUP_TIERS: PricingTier[] = [
     id: "plan_4",
     priceRMB: 1000,
     creditUSD: 1000,
-    bonusUSD: 0,
+    bonusUSD: 49.90,
     tagColor: "bg-orange-600",
+    buttonClass: "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-500/30",
     locales: {
       zh: {
         title: "专业",

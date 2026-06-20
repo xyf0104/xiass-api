@@ -165,7 +165,18 @@
 
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
+      
+      <!-- Version & Update (Admin Only) -->
+      <div v-if="isAdmin && currentVersion" class="mb-2 w-full px-3 py-2 text-xs flex flex-col items-center justify-center border border-gray-100 dark:border-dark-700 rounded-xl bg-gray-50 dark:bg-dark-800" :class="{ 'hidden': sidebarCollapsed }">
+        <div class="text-gray-500 font-medium">v{{ currentVersion }}</div>
+        <button v-if="hasUpdate" @click="performUpdate" :disabled="isUpdating" class="mt-1 px-2 py-1 bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30 rounded text-[10px] font-bold transition-colors w-full flex items-center justify-center">
+          <span v-if="isUpdating" class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1"></span>
+          {{ isUpdating ? '正在更新...' : '发现新版 v' + latestVersion }}
+        </button>
+      </div>
+
       <!-- Theme Toggle -->
+
       <button
         @click="toggleTheme"
         class="sidebar-link mb-2 w-full"
@@ -207,6 +218,7 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { apiClient } from '@/api/client'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
@@ -896,22 +908,54 @@ if (
   document.documentElement.classList.add('dark')
 }
 
-// Fetch admin settings (for feature-gated nav items like Ops).
-watch(
-  isAdmin,
-  (v) => {
-    if (v) {
-      adminSettingsStore.fetch()
-    }
-  },
-  { immediate: true }
-)
+
+// --- Admin Auto Update Logic ---
+const currentVersion = ref('')
+const latestVersion = ref('')
+const hasUpdate = ref(false)
+const isUpdating = ref(false)
+
+async function checkVersion() {
+  if (!isAdmin.value) return
+  try {
+    const { data } = await apiClient.get('/admin/system/version')
+    currentVersion.value = data.version || 'unknown'
+    // check latest
+    const { data: updateData } = await apiClient.get('/admin/system/check-updates')
+    latestVersion.value = updateData.latest_version
+    hasUpdate.value = updateData.has_update
+  } catch (err) {
+    console.error('Failed to check version:', err)
+  }
+}
+
+async function performUpdate() {
+  if (!confirm(t('admin.system.confirmUpdate', '确定要更新到最新版本并重启容器吗？'))) return
+  isUpdating.value = true
+  try {
+    await apiClient.post('/admin/system/update')
+    appStore.showSuccess(t('admin.system.updateInitiated', '更新已启动，稍后将自动重启...'))
+  } catch (err: any) {
+    appStore.showError(err?.response?.data?.message || '更新失败')
+  } finally {
+    isUpdating.value = false
+  }
+}
+
+watch(isAdmin, (v) => {
+  if (v) {
+    adminSettingsStore.fetch()
+    checkVersion()
+  }
+}, { immediate: true })
 
 onMounted(() => {
   if (isAdmin.value) {
     adminSettingsStore.fetch()
+    checkVersion()
   }
 })
+// ------------------------------
 </script>
 
 <style scoped>

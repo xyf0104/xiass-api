@@ -58,6 +58,14 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		limitAmount = plan.Price
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
+		// Limited-time bonus mapping based on frontend defined top-up tiers in RMB
+		if req.Amount == 100 {
+			orderAmount = 102.99
+		} else if req.Amount == 500 {
+			orderAmount = 519.90
+		} else if req.Amount == 1000 {
+			orderAmount = 1049.90
+		}
 	}
 	feeRate := cfg.RechargeFeeRate
 	methodCurrency := payment.DefaultPaymentCurrency

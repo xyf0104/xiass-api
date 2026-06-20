@@ -78,7 +78,8 @@ func ProvideAdminHandlers(
 
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
 func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
-	return admin.NewSystemHandler(updateService, lockService)
+	dockerUpdateService := service.NewDockerUpdateService(updateService)
+	return admin.NewSystemHandler(dockerUpdateService, lockService)
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
