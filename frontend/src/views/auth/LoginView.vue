@@ -2,12 +2,12 @@
   <AuthLayout>
     <div class="w-full">
       <!-- Title -->
-      <div class="mb-8">
-        <h2 class="text-3xl font-bold text-white mb-2">
-          欢迎回来！
-        </h2>
-        <p class="text-sm text-gray-400">
-          请输入您的详细信息
+      <div class="text-center mb-10">
+        <h1 class="text-3xl font-bold tracking-tight mb-2 text-white">
+          Welcome back!
+        </h1>
+        <p class="text-gray-400 text-sm">
+          Please enter your details
         </p>
       </div>
 
@@ -15,8 +15,8 @@
       <form @submit.prevent="handleLogin" class="space-y-5">
         <!-- Email Input -->
         <div>
-          <label for="email" class="block text-sm font-medium text-gray-300 mb-2">
-            邮箱
+          <label for="email" class="text-sm font-medium text-gray-200 block mb-2">
+            Email
           </label>
           <div class="relative">
             <input
@@ -26,10 +26,9 @@
               required
               autofocus
               autocomplete="email"
-              :disabled="authActionDisabled"
-              class="w-full bg-[#1A1C23] border-none text-white rounded-xl py-3 px-4 focus:ring-1 focus:ring-gray-500 outline-none placeholder-gray-500 transition-shadow"
-              :class="{ 'ring-1 ring-red-500': errors.email }"
               placeholder="anna@gmail.com"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl px-4 transition-colors"
+              :class="{ 'ring-1 ring-red-500': errors.email }"
               @focus="authInteraction.isTyping = true"
               @blur="authInteraction.isTyping = false"
             />
@@ -38,8 +37,8 @@
 
         <!-- Password Input -->
         <div>
-          <label for="password" class="block text-sm font-medium text-gray-300 mb-2">
-            密码
+          <label for="password" class="text-sm font-medium text-gray-200 block mb-2">
+            Password
           </label>
           <div class="relative">
             <input
@@ -48,10 +47,9 @@
               :type="showPassword ? 'text' : 'password'"
               required
               autocomplete="current-password"
-              :disabled="authActionDisabled"
-              class="w-full bg-[#1A1C23] border-none text-white rounded-xl py-3 px-4 pr-12 focus:ring-1 focus:ring-gray-500 outline-none placeholder-gray-500 transition-shadow"
-              :class="{ 'ring-1 ring-red-500': errors.password }"
               placeholder="••••••••"
+              class="w-full h-12 bg-black/40 border border-white/10 focus:border-white focus:outline-none focus:ring-0 text-white placeholder:text-gray-500 rounded-xl pl-4 pr-10 transition-colors"
+              :class="{ 'ring-1 ring-red-500': errors.password }"
               @focus="authInteraction.isTyping = true"
               @blur="authInteraction.isTyping = false"
             />
@@ -61,8 +59,8 @@
               :disabled="authActionDisabled"
               class="absolute inset-y-0 right-0 flex items-center pr-4 text-gray-500 hover:text-gray-300 transition-colors"
             >
-              <Icon v-if="showPassword" name="eyeOff" size="md" />
-              <Icon v-else name="eye" size="md" />
+              <svg v-if="showPassword" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+              <svg v-else class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
             </button>
           </div>
         </div>
@@ -70,15 +68,15 @@
         <!-- Options (Remember & Forgot) -->
         <div class="flex items-center justify-between pt-1">
           <label class="flex items-center text-sm text-gray-400 cursor-pointer">
-            <input type="checkbox" class="form-checkbox bg-[#1A1C23] border-gray-600 rounded text-white focus:ring-0 w-4 h-4 mr-2" />
-            保持登录 30 天
+            <input type="checkbox" class="form-checkbox bg-transparent border-gray-500 rounded focus:ring-0 w-4 h-4 mr-2 checked:bg-white checked:text-black transition-colors" />
+            <span class="text-sm font-normal text-gray-300">Remember for 30 days</span>
           </label>
           <router-link
             v-if="passwordResetEnabled && !backendModeEnabled"
             to="/forgot-password"
-            class="text-sm font-medium text-white hover:text-gray-300 transition-colors"
+            class="text-sm text-white hover:underline font-medium"
           >
-            忘记密码？
+            Forgot password?
           </router-link>
         </div>
 
@@ -98,7 +96,7 @@
           <button
             type="submit"
             :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
-            class="w-full bg-white text-black font-semibold py-3.5 rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full bg-white text-black font-semibold h-12 rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg
               v-if="isLoading"
@@ -109,7 +107,7 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ isLoading ? '正在登录...' : '登录' }}
+            {{ isLoading ? 'Signing in...' : 'Log in' }}
           </button>
         </div>
 
@@ -148,15 +146,35 @@
 
     <!-- Footer -->
     <template v-if="!backendModeEnabled" #footer>
-      <p class="text-sm text-gray-400 text-center mt-8">
-        还没有账户？
+      <!-- Social Login Buttons -->
+      <div class="mt-6 flex gap-4">
+        <button v-if="githubOauthEnabled" @click="handleOauth('github')" type="button" class="flex-1 flex items-center justify-center h-12 bg-transparent border border-white/20 text-white hover:bg-white/10 hover:text-white rounded-xl transition-colors">
+          <svg class="size-5 mr-2" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+          </svg>
+          GitHub
+        </button>
+        <button v-if="larkOauthEnabled" @click="handleOauth('lark')" type="button" class="flex-1 flex items-center justify-center h-12 bg-transparent border border-white/20 text-white hover:bg-white/10 hover:text-white rounded-xl transition-colors">
+          <svg class="size-5 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM13 17H11V15H13V17ZM13 13H11V7H13V13Z" fill="currentColor"/>
+          </svg>
+          Lark
+        </button>
+        <button v-if="!githubOauthEnabled && !larkOauthEnabled" type="button" class="w-full flex items-center justify-center h-12 bg-transparent border border-white/20 text-white hover:bg-white/10 hover:text-white rounded-xl transition-colors">
+          <svg class="size-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+          Log in with Email
+        </button>
+      </div>
+
+      <div class="text-center text-sm text-gray-400 mt-8">
+        Don't have an account?
         <router-link
           to="/register"
-          class="font-medium text-white hover:text-gray-300 transition-colors ml-1"
+          class="font-medium text-white hover:underline transition-colors ml-1"
         >
-          注册
+          Sign Up
         </router-link>
-      </p>
+      </div>
     </template>
   </AuthLayout>
 

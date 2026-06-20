@@ -1,46 +1,47 @@
 <template>
-  <div class="auth-layout relative flex min-h-screen items-center justify-center overflow-hidden p-4 bg-[#0B0D17]">
-    
-    <!-- Top Left Brand -->
-    <div class="absolute top-8 left-8 z-50 flex items-center gap-3">
-      <div class="flex h-8 w-8 items-center justify-center rounded bg-white">
-        <svg class="h-5 w-5 text-black" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2L2 22h20L12 2zm0 4.5l6.5 13h-13L12 6.5z"/>
-        </svg>
+  <div class="min-h-screen grid lg:grid-cols-2 bg-[#050B14] text-white relative overflow-hidden">
+    <!-- Canvas for particle background -->
+    <canvas ref="canvasRef" class="absolute inset-0 w-full h-full pointer-events-none z-0"></canvas>
+
+    <!-- Left side: Branding and Interactive Characters -->
+    <div class="relative hidden lg:flex flex-col justify-between p-12 text-white z-10 bg-transparent">
+      <!-- Logo/Brand (Top Left) -->
+      <div class="relative z-20">
+        <div class="flex items-center gap-2 text-lg font-semibold cursor-pointer" @click="router.push('/')">
+          <!-- User's Logo Icon -->
+          <div class="size-8 rounded-lg bg-white/10 backdrop-blur-sm flex items-center justify-center">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="size-4">
+              <path d="M12 2L2 22H22L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span>{{ siteName }}</span>
+        </div>
       </div>
-      <span class="text-xl font-semibold text-white tracking-wide">
-        {{ siteName }}
-      </span>
+
+      <div class="relative z-20 flex items-end justify-center h-[500px]">
+        <AuthCharacters />
+      </div>
+
+      <!-- Footer links (Bottom Left) -->
+      <div class="relative z-20 flex items-center gap-8 text-sm text-gray-400">
+        <a href="#" class="hover:text-white transition-colors">Privacy Policy</a>
+        <a href="#" class="hover:text-white transition-colors">Terms of Service</a>
+        <a href="#" class="hover:text-white transition-colors">Contact</a>
+      </div>
     </div>
 
-    <!-- 动态粒子网格动画 (Canvas) -->
-    <canvas
-      ref="canvasRef"
-      class="pointer-events-none absolute inset-0 h-full w-full opacity-60"
-    ></canvas>
-
-    <!-- 登录内容区 (2 Column Layout on large screens) -->
-    <div class="relative z-10 w-full max-w-[1200px] grid lg:grid-cols-2 gap-12 items-center justify-between">
-      
-      <!-- 左侧：卡通人物动画 -->
-      <div class="hidden lg:flex justify-center items-end h-[600px] relative pointer-events-none">
-        <AuthCharacters class="scale-90 xl:scale-100 origin-bottom" />
-      </div>
-
-      <!-- 右侧：登录表单卡片 -->
-      <div class="w-full max-w-md mx-auto lg:ml-auto lg:mr-8">
-        <!-- 登录卡片：极简深色卡片 -->
-        <div class="auth-card rounded-3xl bg-[#13151A] p-10 shadow-2xl">
-          <slot />
-        </div>
-
+    <!-- Right side: Content Area (Login/Register Form) -->
+    <div class="flex items-center justify-center p-8 bg-transparent z-10 w-full">
+      <div class="w-full max-w-[420px] bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl">
+        <slot />
+        
         <!-- 底部链接 -->
         <div class="mt-4 text-center text-sm">
           <slot name="footer" />
         </div>
 
         <!-- 版权 -->
-        <div class="mt-12 text-center text-xs text-gray-600">
+        <div class="mt-8 text-center text-xs text-gray-500">
           &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
         </div>
       </div>
@@ -49,7 +50,6 @@
 </template>
 
 <script setup lang="ts">
-/**
  * 登录页布局 — 赛博朋克科技感
  * 特色：Canvas 粒子连线动画 + 毛玻璃登录卡片 + 渐变发光品牌文字
  */
