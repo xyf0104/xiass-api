@@ -64,6 +64,9 @@
               <span>{{ t('payment.topup.continueToCheckout', '继续支付') }}</span>
             </button>
             </template>
+        </template>
+      </template>
+    </div>
           <!-- Image Preview Overlay -->
     <Teleport to="body">
       <Transition name="modal">
