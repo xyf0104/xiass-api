@@ -74,6 +74,9 @@
       <div class="card p-6">
         <div class="flex flex-col items-center space-y-4">
           <p class="text-lg font-semibold text-gray-900 dark:text-white">{{ scanTitle }}</p>
+          <div v-if="payAmount" class="flex items-baseline gap-1">
+            <span class="text-3xl font-bold text-gray-900 dark:text-white">{{ formatGatewayAmount(payAmount) }}</span>
+          </div>
           <div :class="['relative rounded-lg border-2 p-4', qrBorderClass]">
             <canvas ref="qrCanvas" class="mx-auto"></canvas>
             <!-- Brand logo overlay -->
@@ -144,6 +147,7 @@ const props = defineProps<{
   payUrl?: string
   orderType?: string
   currency?: string
+  payAmount?: number
 }>()
 
 type PaymentOutcome = 'success' | 'cancelled' | 'expired'
