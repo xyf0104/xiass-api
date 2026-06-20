@@ -8,25 +8,12 @@
       <!-- Logo/Brand (Top Left) -->
       <div class="relative z-20">
         <div class="flex items-center gap-2 text-lg font-semibold cursor-pointer" @click="router.push('/')">
-          <!-- User's Logo Icon -->
-          <div class="size-8 rounded-lg bg-white/10 backdrop-blur-sm flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="size-4">
-              <path d="M12 2L2 22H22L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <span>{{ siteName }}</span>
+          <span>NoWind API</span>
         </div>
       </div>
 
       <div class="relative z-20 flex items-end justify-center h-[500px]">
         <AuthCharacters />
-      </div>
-
-      <!-- Footer links (Bottom Left) -->
-      <div class="relative z-20 flex items-center gap-8 text-sm text-gray-400">
-        <a href="#" class="hover:text-white transition-colors">Privacy Policy</a>
-        <a href="#" class="hover:text-white transition-colors">Terms of Service</a>
-        <a href="#" class="hover:text-white transition-colors">Contact</a>
       </div>
     </div>
 
@@ -38,11 +25,6 @@
         <!-- 底部链接 -->
         <div class="mt-4 text-center text-sm">
           <slot name="footer" />
-        </div>
-
-        <!-- 版权 -->
-        <div class="mt-8 text-center text-xs text-gray-500">
-          &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
         </div>
       </div>
     </div>

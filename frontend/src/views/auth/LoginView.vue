@@ -4,10 +4,10 @@
       <!-- Title -->
       <div class="text-center mb-10">
         <h1 class="text-3xl font-bold tracking-tight mb-2 text-white">
-          Welcome back!
+          欢迎回来！
         </h1>
         <p class="text-gray-400 text-sm">
-          Please enter your details
+          请输入您的详细信息
         </p>
       </div>
 
@@ -16,7 +16,7 @@
         <!-- Email Input -->
         <div>
           <label for="email" class="text-sm font-medium text-gray-200 block mb-2">
-            Email
+            邮箱
           </label>
           <div class="relative">
             <input
@@ -38,7 +38,7 @@
         <!-- Password Input -->
         <div>
           <label for="password" class="text-sm font-medium text-gray-200 block mb-2">
-            Password
+            密码
           </label>
           <div class="relative">
             <input
@@ -69,14 +69,14 @@
         <div class="flex items-center justify-between pt-1">
           <label class="flex items-center text-sm text-gray-400 cursor-pointer">
             <input type="checkbox" class="form-checkbox bg-transparent border-gray-500 rounded focus:ring-0 w-4 h-4 mr-2 checked:bg-white checked:text-black transition-colors" />
-            <span class="text-sm font-normal text-gray-300">Remember for 30 days</span>
+            <span class="text-sm font-normal text-gray-300">保持登录 30 天</span>
           </label>
           <router-link
             v-if="passwordResetEnabled && !backendModeEnabled"
             to="/forgot-password"
             class="text-sm text-white hover:underline font-medium"
           >
-            Forgot password?
+            忘记密码？
           </router-link>
         </div>
 
@@ -107,7 +107,7 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ isLoading ? 'Signing in...' : 'Log in' }}
+            {{ isLoading ? '正在登录...' : '登录' }}
           </button>
         </div>
 
@@ -162,17 +162,17 @@
         </button>
         <button v-if="!githubOauthEnabled && !larkOauthEnabled" type="button" class="w-full flex items-center justify-center h-12 bg-transparent border border-white/20 text-white hover:bg-white/10 hover:text-white rounded-xl transition-colors">
           <svg class="size-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-          Log in with Email
+          使用邮箱登录
         </button>
       </div>
 
       <div class="text-center text-sm text-gray-400 mt-8">
-        Don't have an account?
+        还没有账户？
         <router-link
           to="/register"
           class="font-medium text-white hover:underline transition-colors ml-1"
         >
-          Sign Up
+          注册
         </router-link>
       </div>
     </template>
