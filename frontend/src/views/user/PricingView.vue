@@ -237,7 +237,7 @@
  * 模型定价页面 — 对标 apikey.fun 的分组卡片 + 定价表格布局
  * 数据来源：复用 /channels/available API（需登录），按平台聚合展示
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BrandIcon from '@/components/icons/BrandIcon.vue'
@@ -279,12 +279,14 @@ const activeChannel = computed(() => {
 /** 当前平台下的分组列表 */
 const activeGroups = computed((): (UserAvailableGroup & { description?: string })[] => {
   if (!activeChannel.value) return []
-  const groups = activeChannel.value.section.groups
+  return activeChannel.value.section.groups
+})
+
+watch(activeGroups, (groups) => {
   if (groups.length > 0 && !groups.find(g => g.id === activeGroupId.value)) {
     activeGroupId.value = groups[0].id
   }
-  return groups
-})
+}, { immediate: true })
 
 /** 当前选中的分组 */
 const activeGroup = computed(() => {
