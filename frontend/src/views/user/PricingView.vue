@@ -202,10 +202,10 @@
                   <!-- 节省幅度 -->
                   <td class="px-6 py-5 text-right">
                     <span
-                      v-if="savingsPercent(activeGroup?.rate_multiplier, activeGroup?.cost_ratio) > 0"
+                      v-if="savingsPercent(activeGroup?.rate_multiplier) > 0"
                       class="inline-flex items-center gap-1 text-base font-bold text-primary-500"
                     >
-                      省 {{ savingsPercent(activeGroup?.rate_multiplier, activeGroup?.cost_ratio) }}%
+                      省 {{ savingsPercent(activeGroup?.rate_multiplier) }}%
                     </span>
                     <span v-else class="text-sm text-gray-400">-</span>
                   </td>
@@ -299,12 +299,6 @@ const activeModels = computed((): UserSupportedModel[] => {
 
 // ==================== 格式化方法 ====================
 
-function formatDiscount(multiplier?: number): string {
-  if (!multiplier) return '0'
-  const discount = multiplier * 10
-  return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
-}
-
 function formatOfficialPrice(pricePerToken?: number | null): string {
   if (pricePerToken == null) return '-'
   const pricePerMillion = pricePerToken * 1_000_000 * 7
@@ -333,7 +327,7 @@ function formatDisplayDiscount(group: { rate_multiplier: number; cost_ratio?: nu
   return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
 }
 
-function savingsPercent(multiplier?: number, costRatio?: number | null): number {
+function savingsPercent(multiplier?: number): number {
   if (!multiplier) return 0
   const ratio = multiplier / 7
   if (ratio >= 1) return 0

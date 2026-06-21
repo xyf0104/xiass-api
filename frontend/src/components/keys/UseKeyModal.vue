@@ -365,7 +365,7 @@ const escapeHtml = (value: string) => value
   .replace(/'/g, '&#39;')
 
 const wrapToken = (className: string, value: string) =>
-  `<span class="${className}">¥{escapeHtml(value)}</span>`
+  `<span class="${className}">${escapeHtml(value)}</span>`
 
 const keyword = (value: string) => wrapToken('text-emerald-300', value)
 const variable = (value: string) => wrapToken('text-sky-200', value)
