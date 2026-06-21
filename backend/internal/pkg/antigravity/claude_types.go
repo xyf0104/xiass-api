@@ -162,6 +162,16 @@ var claudeModels = []modelDef{
 
 // Antigravity 支持的 Gemini 模型
 var geminiModels = []modelDef{
+	{ID: "gemini-1.5-flash", DisplayName: "Gemini 1.5 Flash", CreatedAt: "2024-05-14T00:00:00Z"},
+	{ID: "gemini-1.5-flash-8b", DisplayName: "Gemini 1.5 Flash 8B", CreatedAt: "2024-10-03T00:00:00Z"},
+	{ID: "gemini-1.5-pro", DisplayName: "Gemini 1.5 Pro", CreatedAt: "2024-05-14T00:00:00Z"},
+	{ID: "gemini-2.0-flash", DisplayName: "Gemini 2.0 Flash", CreatedAt: "2024-12-11T00:00:00Z"},
+	{ID: "gemini-2.0-flash-lite", DisplayName: "Gemini 2.0 Flash Lite", CreatedAt: "2024-12-11T00:00:00Z"},
+	{ID: "gemini-2.0-flash-thinking-exp", DisplayName: "Gemini 2.0 Flash Thinking Exp", CreatedAt: "2024-12-19T00:00:00Z"},
+	{ID: "gemini-2.0-flash-thinking-exp-0121", DisplayName: "Gemini 2.0 Flash Thinking Exp 0121", CreatedAt: "2025-01-21T00:00:00Z"},
+	{ID: "gemini-2.0-pro-exp-0205", DisplayName: "Gemini 2.0 Pro Exp 0205", CreatedAt: "2025-02-05T00:00:00Z"},
+	{ID: "gemini-exp-1206", DisplayName: "Gemini Exp 1206", CreatedAt: "2024-12-06T00:00:00Z"},
+	{ID: "learnlm-1.5-pro-experimental", DisplayName: "LearnLM 1.5 Pro Experimental", CreatedAt: "2024-05-14T00:00:00Z"},
 	{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash", CreatedAt: "2025-01-01T00:00:00Z"},
 	{ID: "gemini-2.5-flash-image", DisplayName: "Gemini 2.5 Flash Image", CreatedAt: "2025-01-01T00:00:00Z"},
 	{ID: "gemini-2.5-flash-image-preview", DisplayName: "Gemini 2.5 Flash Image Preview", CreatedAt: "2025-01-01T00:00:00Z"},

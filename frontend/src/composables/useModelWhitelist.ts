@@ -38,14 +38,23 @@ export const claudeModels = [
 const geminiModels = [
   // Keep in sync with backend curated Gemini lists.
   // This list is intentionally conservative (models commonly available across OAuth/API key).
-  'gemini-3.1-flash-image',
-  'gemini-2.5-flash-image',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-1.5-flash-8b',
   'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash-thinking-exp',
+  'gemini-2.0-flash-thinking-exp-0121',
+  'gemini-2.0-pro-exp-0205',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
+  'gemini-2.5-flash-image',
+  'gemini-3.1-flash-image',
   'gemini-3.5-flash',
   'gemini-3-flash-preview',
-  'gemini-3-pro-preview'
+  'gemini-3-pro-preview',
+  'gemini-exp-1206',
+  'learnlm-1.5-pro-experimental'
 ]
 
 // Antigravity 官方支持的模型（精确匹配）
@@ -61,7 +70,17 @@ const antigravityModels = [
   'claude-sonnet-4-6',
   'claude-sonnet-4-5',
   'claude-sonnet-4-5-thinking',
-  // Gemini 2.5 系列
+  // Gemini 2.5 系列及旧版
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-1.5-flash-8b',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash-thinking-exp',
+  'gemini-2.0-flash-thinking-exp-0121',
+  'gemini-2.0-pro-exp-0205',
+  'gemini-exp-1206',
+  'learnlm-1.5-pro-experimental',
   'gemini-3.1-flash-image',
   'gemini-2.5-flash-image',
   'gemini-2.5-flash',
