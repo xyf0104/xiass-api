@@ -43,7 +43,7 @@ func (s *DockerUpdateService) PerformUpdate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to contact watchtower (is it running?): %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("watchtower returned status: %d", resp.StatusCode)
