@@ -42,13 +42,13 @@
             <span class="text-gray-400 font-semibold mr-1">¥</span>
             <span class="text-4xl font-extrabold text-gray-900 dark:text-white tracking-tight">{{ plan.priceRMB }}</span>
             <span v-if="plan.bonusUSD > 0" class="ml-2 bg-orange-100 text-orange-700 text-xs font-bold px-2 py-1 rounded-full dark:bg-orange-500/20 dark:text-orange-400">
-              +${{ plan.bonusUSD }}
+              +¥{{ plan.bonusUSD }}
             </span>
           </div>
           <div class="text-xs text-gray-500 dark:text-gray-400 mt-2">
             {{ t('payment.topup.getCredit', '获得') }} 
-            <span :class="{'line-through opacity-50': plan.bonusUSD > 0}">${{ plan.creditUSD.toFixed(2) }}</span>
-            <span v-if="plan.bonusUSD > 0" class="text-orange-600 dark:text-orange-400 font-semibold ml-1">${{ (plan.creditUSD + plan.bonusUSD).toFixed(2) }}</span>
+            <span :class="{'line-through opacity-50': plan.bonusUSD > 0}">¥{{ plan.creditUSD.toFixed(2) }}</span>
+            <span v-if="plan.bonusUSD > 0" class="text-orange-600 dark:text-orange-400 font-semibold ml-1">¥{{ (plan.creditUSD + plan.bonusUSD).toFixed(2) }}</span>
             {{ t('payment.topup.creditUnit', '额度') }}
           </div>
         </div>

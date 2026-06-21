@@ -47,7 +47,7 @@
             <div class="card p-6">
               <div class="relative">
                 <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
-                  <span class="text-gray-500 dark:text-gray-400 font-medium">$</span>
+                  <span class="text-gray-500 dark:text-gray-400 font-medium">¥</span>
                 </div>
                 <input
                   v-model.number="amount"
@@ -92,10 +92,10 @@
             <div class="bg-[#FBF9F6] dark:bg-dark-800 rounded-2xl p-6 border border-[#F0EBE1] dark:border-dark-700 mb-6">
               <div class="text-gray-500 dark:text-gray-400 text-sm mb-1">{{ t('payment.topup.paymentInfo', '支付信息') }}</div>
               <div class="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                <span class="text-2xl mr-1">{{ selectedCurrency === 'CNY' ? '¥' : '$' }}</span>{{ formatSelectedPaymentAmount(totalAmount).replace(/[^0-9.]/g, '') }}
+                <span class="text-2xl mr-1">{{ selectedCurrency === 'CNY' ? '¥' : '¥' }}</span>{{ formatSelectedPaymentAmount(totalAmount).replace(/[^0-9.]/g, '') }}
               </div>
               <div class="text-gray-500 dark:text-gray-400 text-sm flex justify-between items-center">
-                <span>{{ t('payment.creditedBalance', '到账余额') }} ${{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
+                <span>{{ t('payment.creditedBalance', '到账余额') }} ¥{{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
                 <span v-if="feeRate > 0" class="text-xs">含手续费: {{ formatSelectedPaymentAmount(feeAmount) }}</span>
               </div>
             </div>

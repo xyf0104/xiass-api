@@ -51,7 +51,7 @@ const officialPriceFormatted = computed(() => {
 
 const groupPriceFormatted = computed(() => {
   if (props.basePrice == null) return '-'
-  const price = props.basePrice * 1_000_000 * USD_TO_CNY * props.multiplier
+  const price = props.basePrice * 1_000_000 * props.multiplier
   return formatPrice(price)
 })
 

@@ -32,7 +32,7 @@
         <div class="flex items-center gap-3 text-sm text-amber-700 dark:text-amber-400">
           <Icon name="bolt" size="md" />
           <span class="font-bold">计价规则</span>
-          <span>官方价格按 $1 = ¥7 折算 &nbsp; 分组价格 = 官方价格 × 分组倍率 × 7</span>
+          <span>官方价格仅供参考参考 &nbsp; 分组价格 = 官方价格（美元计价时）× 7 × 分组倍率</span>
         </div>
         <div v-if="activeModels.length > 0 && activeGroups.length > 0" class="text-sm text-gray-600 dark:text-gray-400">
           示例：{{ activeModels[0].name }} 输入价，官方 ¥{{ formatOfficialPrice(activeModels[0].pricing?.input_price) }}，{{ activeGroups[0]?.name }} ¥{{ formatGroupPrice(activeModels[0].pricing?.input_price, activeGroups[0]?.rate_multiplier) }}
@@ -313,40 +313,31 @@ function formatOfficialPrice(pricePerToken?: number | null): string {
 
 function formatGroupPrice(pricePerToken?: number | null, multiplier?: number): string {
   if (pricePerToken == null || !multiplier) return '-'
-  const pricePerMillion = pricePerToken * 1_000_000 * 7 * multiplier
+  // 已经是真实扣除余额了，所以直接是 price * multiplier * 1000000 （不再乘7）
+  const pricePerMillion = pricePerToken * 1_000_000 * multiplier
   return pricePerMillion.toFixed(2)
 }
 
 /**
- * 当分组设置了 cost_ratio 时，将 rate_multiplier 换算为“成本价倍数”展示。
- * 展示倍率 = rate_multiplier / cost_ratio
- * 展示折扣 = rate_multiplier * 10（相对于官方价的折扣保持不变）
+ * 在纯人民币系统中，用户的 rate_multiplier 就是最终展示的倍率。
+ * 不需要通过 cost_ratio 进行换算了。
  */
 function formatDisplayMultiplier(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
-  if (group.cost_ratio && group.cost_ratio > 0) {
-    const displayRate = group.rate_multiplier / group.cost_ratio
-    return displayRate % 1 === 0 ? displayRate.toFixed(0) : displayRate.toFixed(1)
-  }
   return group.rate_multiplier.toString()
 }
 
 function formatDisplayDiscount(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
-  if (group.cost_ratio && group.cost_ratio > 0) {
-    // 相对于成本价的折扣：(rate_multiplier / cost_ratio) * 10 ▪ 但实际意义是“用户付的钱相当于成本的多少倍”
-    // 更直观的折扣：rate_multiplier * 10（相对于官方价）
-    const discount = group.rate_multiplier * 10
-    return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
-  }
-  return formatDiscount(group.rate_multiplier)
+  // 折扣计算：(groupPrice / officialPrice) * 10
+  // officialPrice 包含 *7 的换算，groupPrice 是真实的，所以折扣是 (multiplier / 7) * 10
+  const discount = (group.rate_multiplier / 7) * 10
+  return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
 }
 
 function savingsPercent(multiplier?: number, costRatio?: number | null): number {
-  if (!multiplier || multiplier >= 1) return 0
-  if (costRatio && costRatio > 0) {
-    // 相对于官方价的节省百分比
-    return Math.round((1 - multiplier) * 100)
-  }
-  return Math.round((1 - multiplier) * 100)
+  if (!multiplier) return 0
+  const ratio = multiplier / 7
+  if (ratio >= 1) return 0
+  return Math.round((1 - ratio) * 100)
 }
 
 async function copyModelId(modelId: string) {

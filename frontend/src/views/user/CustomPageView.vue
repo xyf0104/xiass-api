@@ -255,7 +255,7 @@ async function fetchAndRenderMarkdown(slug: string) {
         const text = content.replace(/<[^>]+>/g, '').trim()
         const id = generateHeadingId(text, headingIndex++)
         toc.push({ id, text, level })
-        return `<${tag} id="${id}">${content}</${tag}>`
+        return `<${tag} id="${id}">¥{content}</${tag}>`
       }
     )
 
