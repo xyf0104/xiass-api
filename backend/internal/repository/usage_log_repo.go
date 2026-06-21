@@ -1697,7 +1697,7 @@ func (r *usageLogRepository) fillDashboardUsageStatsFromUsageLogs(ctx context.Co
 				cache_read_tokens,
 				total_cost,
 				actual_cost,
-				total_cost * COALESCE(account_rate_multiplier, 1) AS account_cost,
+				total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1) AS account_cost,
 				COALESCE(duration_ms, 0) AS duration_ms
 			FROM usage_logs
 			WHERE created_at >= LEAST($1::timestamptz, $3::timestamptz)
@@ -2074,7 +2074,7 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 		SELECT
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as cost,
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
 		FROM usage_logs
@@ -2104,7 +2104,7 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		SELECT
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as cost,
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
 		FROM usage_logs
@@ -2141,7 +2141,7 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 			account_id,
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as cost,
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
 		FROM usage_logs
@@ -2755,7 +2755,7 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			COALESCE(SUM(actual_cost), 0) as actual_cost,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as account_cost
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as account_cost
 		FROM usage_logs
 		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
 		GROUP BY model
@@ -3178,7 +3178,7 @@ func (r *usageLogRepository) getModelStatsWithFiltersBySource(ctx context.Contex
 	if accountID > 0 && userID == 0 && apiKeyID == 0 {
 		actualCostExpr = "COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost"
 	}
-	accountCostExpr := "COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as account_cost"
+	accountCostExpr := "COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as account_cost"
 	modelExpr := resolveModelDimensionExpression(source)
 
 	query := fmt.Sprintf(`
@@ -3251,7 +3251,7 @@ func (r *usageLogRepository) GetGroupStatsWithFilters(ctx context.Context, start
 			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(ul.total_cost), 0) as cost,
 			COALESCE(SUM(ul.actual_cost), 0) as actual_cost,
-			COALESCE(SUM(ul.total_cost * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost
+			COALESCE(SUM(ul.total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = ul.group_id), ul.account_rate_multiplier, 1)), 0) as account_cost
 		FROM usage_logs ul
 		LEFT JOIN groups g ON g.id = ul.group_id
 		WHERE ul.created_at >= $1 AND ul.created_at < $2
@@ -3324,7 +3324,7 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(ul.total_cost), 0) as cost,
 			COALESCE(SUM(ul.actual_cost), 0) as actual_cost,
-			COALESCE(SUM(ul.total_cost * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost
+			COALESCE(SUM(ul.total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = ul.group_id), ul.account_rate_multiplier, 1)), 0) as account_cost
 		FROM usage_logs ul
 		LEFT JOIN users u ON u.id = ul.user_id
 		WHERE ul.created_at >= $1 AND ul.created_at < $2
@@ -3547,7 +3547,7 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			COALESCE(SUM(cache_creation_tokens + cache_read_tokens), 0) as total_cache_tokens,
 			COALESCE(SUM(total_cost), 0) as total_cost,
 			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as total_account_cost,
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as total_account_cost,
 			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
 		FROM usage_logs
 		%s
@@ -3815,7 +3815,7 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
-			COALESCE(SUM(total_cost * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost,
+			COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) as actual_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
 		FROM usage_logs
 		WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
