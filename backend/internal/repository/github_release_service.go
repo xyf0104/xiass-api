@@ -85,6 +85,10 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "Sub2API-Updater")
 
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
