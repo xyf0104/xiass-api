@@ -169,7 +169,7 @@
       <!-- Version & Update (Admin Only) -->
       <div v-if="isAdmin && currentVersion" class="mb-2 w-full px-3 py-2 text-xs flex flex-col items-center justify-center border border-gray-100 dark:border-dark-700 rounded-xl bg-gray-50 dark:bg-dark-800" :class="{ 'hidden': sidebarCollapsed }">
         <div class="text-gray-500 font-medium">v{{ currentVersion }}</div>
-        <button v-if="hasUpdate" @click="performUpdate" :disabled="isUpdating" class="mt-1 px-2 py-1 bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30 rounded text-[10px] font-bold transition-colors w-full flex items-center justify-center">
+        <button v-if="hasUpdate" @click="triggerUpdateConfirm" :disabled="isUpdating" class="mt-1 px-2 py-1 bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30 rounded text-[10px] font-bold transition-colors w-full flex items-center justify-center">
           <span v-if="isUpdating" class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1"></span>
           {{ isUpdating ? '正在更新...' : '发现新版 v' + latestVersion }}
         </button>
@@ -212,6 +212,15 @@
       @click="closeMobile"
     ></div>
   </transition>
+
+  <ConfirmDialog
+    :show="showUpdateConfirm"
+    title="确认更新"
+    :message="`确定要更新到最新版本 v${latestVersion} 并重启容器吗？更新过程中服务将短暂不可用。`"
+    confirm-text="确认更新"
+    @confirm="performUpdate"
+    @cancel="showUpdateConfirm = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -222,6 +231,7 @@ import { apiClient } from '@/api/client'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 interface NavItem {
   path: string
@@ -929,8 +939,14 @@ async function checkVersion() {
   }
 }
 
+const showUpdateConfirm = ref(false)
+
+function triggerUpdateConfirm() {
+  showUpdateConfirm.value = true
+}
+
 async function performUpdate() {
-  if (!confirm(t('admin.system.confirmUpdate', '确定要更新到最新版本并重启容器吗？'))) return
+  showUpdateConfirm.value = false
   isUpdating.value = true
   try {
     await apiClient.post('/admin/system/update')
