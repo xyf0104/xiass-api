@@ -207,35 +207,64 @@ func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
 	headClose := []byte("</head>")
 	result := bytes.Replace(s.baseHTML, headClose, append(script, headClose...), 1)
 
-	// Replace <title> with custom site name so the browser tab shows it immediately
-	result = injectSiteTitle(result, settingsJSON)
+	// Replace <title> and <link rel="icon"> with custom site metadata so the browser tab shows them immediately
+	result = injectSiteMetadata(result, settingsJSON)
 
 	return result
 }
 
-// injectSiteTitle replaces the static <title> in HTML with the configured site name.
-// This ensures the browser tab shows the correct title before JS executes.
-func injectSiteTitle(html, settingsJSON []byte) []byte {
+// injectSiteMetadata replaces the static <title> and <link rel="icon"> in HTML with the configured site metadata.
+// This ensures the browser tab shows the correct title and favicon before JS executes.
+func injectSiteMetadata(html, settingsJSON []byte) []byte {
 	var cfg struct {
 		SiteName string `json:"site_name"`
+		SiteLogo string `json:"site_logo"`
 	}
-	if err := json.Unmarshal(settingsJSON, &cfg); err != nil || cfg.SiteName == "" {
+	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
 		return html
 	}
 
-	// Find and replace the existing <title>...</title>
-	titleStart := bytes.Index(html, []byte("<title>"))
-	titleEnd := bytes.Index(html, []byte("</title>"))
-	if titleStart == -1 || titleEnd == -1 || titleEnd <= titleStart {
-		return html
+	result := html
+
+	// Replace Title
+	if cfg.SiteName != "" {
+		titleStart := bytes.Index(result, []byte("<title>"))
+		titleEnd := bytes.Index(result, []byte("</title>"))
+		if titleStart != -1 && titleEnd != -1 && titleEnd > titleStart {
+			newTitle := []byte("<title>" + cfg.SiteName + " - AI API Gateway</title>")
+			var buf bytes.Buffer
+			buf.Write(result[:titleStart])
+			buf.Write(newTitle)
+			buf.Write(result[titleEnd+len("</title>"):])
+			result = buf.Bytes()
+		}
 	}
 
-	newTitle := []byte("<title>" + cfg.SiteName + " - AI API Gateway</title>")
-	var buf bytes.Buffer
-	buf.Write(html[:titleStart])
-	buf.Write(newTitle)
-	buf.Write(html[titleEnd+len("</title>"):])
-	return buf.Bytes()
+	// Replace Favicon
+	if cfg.SiteLogo != "" {
+		iconStart := bytes.Index(result, []byte(`<link rel="icon"`))
+		if iconStart != -1 {
+			iconEnd := bytes.Index(result[iconStart:], []byte(">"))
+			if iconEnd != -1 {
+				iconEnd += iconStart
+
+				// Determine type based on logo content (svg vs png/ico)
+				iconType := "image/x-icon"
+				if strings.Contains(cfg.SiteLogo, "image/svg+xml") || strings.HasSuffix(cfg.SiteLogo, ".svg") {
+					iconType = "image/svg+xml"
+				}
+
+				newIcon := []byte(`<link rel="icon" type="` + iconType + `" href="` + cfg.SiteLogo + `">`)
+				var buf bytes.Buffer
+				buf.Write(result[:iconStart])
+				buf.Write(newIcon)
+				buf.Write(result[iconEnd+1:])
+				result = buf.Bytes()
+			}
+		}
+	}
+
+	return result
 }
 
 // replaceNoncePlaceholder replaces the nonce placeholder with actual nonce value
