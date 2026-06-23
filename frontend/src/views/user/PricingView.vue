@@ -27,17 +27,7 @@
         </button>
       </div>
 
-      <!-- 计价规则提示 -->
-      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/40 bg-amber-50 px-5 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
-        <div class="flex items-center gap-3 text-sm text-amber-700 dark:text-amber-400">
-          <Icon name="bolt" size="md" />
-          <span class="font-bold">计价规则</span>
-          <span>官方价格仅供参考参考 &nbsp; 分组价格 = 官方价格（美元计价时）× 7 × 分组倍率</span>
-        </div>
-        <div v-if="activeModels.length > 0 && activeGroups.length > 0" class="text-sm text-gray-600 dark:text-gray-400">
-          示例：{{ activeModels[0].name }} 输入价，官方 ¥{{ formatOfficialPrice(activeModels[0].pricing?.input_price) }}，{{ activeGroups[0]?.name }} ¥{{ formatGroupPrice(activeModels[0].pricing?.input_price, activeGroups[0]?.rate_multiplier) }}
-        </div>
-      </div>
+
 
       <!-- 主要内容区 -->
       <div v-if="loading" class="flex items-center justify-center py-20">
@@ -85,15 +75,15 @@
           </div>
 
           <!-- 分组卡片区域 -->
-          <div class="flex flex-wrap gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700">
+          <div class="flex flex-nowrap w-full overflow-x-auto gap-4 border-b border-gray-200 px-6 py-5 dark:border-dark-700 custom-scrollbar">
             <button
               v-for="group in activeGroups"
               :key="group.id"
               @click="activeGroupId = group.id"
               :class="[
-                'group relative flex flex-col rounded-xl border-2 px-5 py-4 text-left transition-all duration-300 hover:-translate-y-1 shrink-0 md:min-w-[calc(25%-12px)] min-w-[220px]',
+                'group relative flex flex-col rounded-xl border-2 px-5 py-4 text-left transition-all duration-300 flex-1 min-w-[200px] max-w-[280px]',
                 activeGroupId === group.id
-                  ? 'border-primary-500 bg-primary-50/80 shadow-lg shadow-primary-500/20 dark:border-primary-400 dark:bg-primary-500/10'
+                  ? 'border-primary-500 bg-primary-100/70 shadow-lg shadow-primary-500/20 dark:border-primary-500 dark:bg-primary-900/40'
                   : 'border-gray-200 bg-white hover:border-primary-400 hover:shadow-md dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-500'
               ]"
             >
@@ -123,10 +113,10 @@
           </div>
 
           <!-- 分组介绍 -->
-          <div v-if="activeGroup?.description" class="border-b border-gray-200 px-6 py-4 dark:border-dark-700">
+          <div v-if="activeGroup?.description" class="border-b border-gray-200 px-6 py-4 dark:border-dark-700 bg-gray-50/50 dark:bg-dark-800/50">
             <div class="flex items-start gap-3 text-sm">
-              <span class="font-bold text-primary-500">分组介绍：</span>
-              <span class="text-gray-600 dark:text-gray-400">{{ activeGroup.description }}</span>
+              <span class="font-bold text-amber-600 dark:text-amber-500 shrink-0">分组介绍：</span>
+              <span class="text-gray-600 dark:text-gray-400 border-l-2 border-gray-300 dark:border-gray-600 pl-3 leading-relaxed">{{ activeGroup.description }}</span>
             </div>
           </div>
 
@@ -276,10 +266,10 @@ const activeChannel = computed(() => {
   return null
 })
 
-/** 当前平台下的分组列表 */
+/** 当前平台下的分组列表（已按倍率从小到大排序） */
 const activeGroups = computed((): (UserAvailableGroup & { description?: string })[] => {
   if (!activeChannel.value) return []
-  return activeChannel.value.section.groups
+  return [...activeChannel.value.section.groups].sort((a, b) => a.rate_multiplier - b.rate_multiplier)
 })
 
 watch(activeGroups, (groups) => {
@@ -300,19 +290,6 @@ const activeModels = computed((): UserSupportedModel[] => {
 })
 
 // ==================== 格式化方法 ====================
-
-function formatOfficialPrice(pricePerToken?: number | null): string {
-  if (pricePerToken == null) return '-'
-  const pricePerMillion = pricePerToken * 1_000_000 * 7
-  return pricePerMillion.toFixed(2)
-}
-
-function formatGroupPrice(pricePerToken?: number | null, multiplier?: number): string {
-  if (pricePerToken == null || !multiplier) return '-'
-  // 已经是真实扣除余额了，所以直接是 price * multiplier * 1000000 （不再乘7）
-  const pricePerMillion = pricePerToken * 1_000_000 * multiplier
-  return pricePerMillion.toFixed(2)
-}
 
 /**
  * 在纯人民币系统中，用户的 rate_multiplier 就是最终展示的倍率。
