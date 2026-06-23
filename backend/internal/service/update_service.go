@@ -28,7 +28,7 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "xyf0104/sub2api"
+	githubRepo     = "xyf0104/nowind-api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
