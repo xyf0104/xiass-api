@@ -169,9 +169,15 @@
       <!-- Version & Update (Admin Only) -->
       <div v-if="isAdmin && currentVersion" class="mb-2 w-full px-3 py-2 text-xs flex flex-col items-center justify-center border border-gray-100 dark:border-dark-700 rounded-xl bg-gray-50 dark:bg-dark-800" :class="{ 'hidden': sidebarCollapsed }">
         <div class="text-gray-500 font-medium">v{{ currentVersion }}</div>
+        
         <button v-if="hasUpdate" @click="triggerUpdateConfirm" :disabled="isUpdating" class="mt-1 px-2 py-1 bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:hover:bg-orange-500/30 rounded text-[10px] font-bold transition-colors w-full flex items-center justify-center">
           <span v-if="isUpdating" class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1"></span>
-          {{ isUpdating ? '正在更新...' : '发现新版 v' + latestVersion }}
+          {{ isUpdating ? '正在更新...' : '发现新版 v' + latestVersion + ' (点击更新)' }}
+        </button>
+
+        <button v-else @click="manualCheckVersion" :disabled="isCheckingUpdate" class="mt-1 px-2 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500 rounded text-[10px] font-bold transition-colors w-full flex items-center justify-center">
+          <span v-if="isCheckingUpdate" class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1"></span>
+          {{ isCheckingUpdate ? '正在检查...' : '检查更新' }}
         </button>
       </div>
 
@@ -936,6 +942,27 @@ async function checkVersion() {
     hasUpdate.value = updateData.has_update
   } catch (err) {
     console.error('Failed to check version:', err)
+  }
+}
+
+const isCheckingUpdate = ref(false)
+
+async function manualCheckVersion() {
+  if (isCheckingUpdate.value) return
+  isCheckingUpdate.value = true
+  try {
+    const { data: updateData } = await apiClient.get('/admin/system/check-updates?force=true')
+    latestVersion.value = updateData.latest_version
+    hasUpdate.value = updateData.has_update
+    if (hasUpdate.value) {
+      triggerUpdateConfirm()
+    } else {
+      appStore.showSuccess('已经是最新版本 (' + currentVersion.value + ')')
+    }
+  } catch (err: any) {
+    appStore.showError(err?.response?.data?.message || '检查更新失败')
+  } finally {
+    isCheckingUpdate.value = false
   }
 }
 
