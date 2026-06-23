@@ -25,12 +25,12 @@ export const TOPUP_TIERS: PricingTier[] = [
       zh: {
         title: "体验",
         subtitle: "适合初次体验",
-        features: ["获得 $50.00 额度", "永不过期", "支持全部模型"],
+        features: ["获得 ¥50.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Trial",
         subtitle: "For first-time users",
-        features: ["Get $50.00 credit", "Never expires", "All models supported"],
+        features: ["Get ¥50.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -43,12 +43,12 @@ export const TOPUP_TIERS: PricingTier[] = [
       zh: {
         title: "标准",
         subtitle: "开发者常用",
-        features: ["获得 $100.00 额度", "永不过期", "支持全部模型"],
+        features: ["获得 ¥100.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Standard",
         subtitle: "For regular developers",
-        features: ["Get $100.00 credit", "Never expires", "All models supported"],
+        features: ["Get ¥100.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -62,13 +62,13 @@ export const TOPUP_TIERS: PricingTier[] = [
         title: "进阶",
         subtitle: "高频使用",
         tag: "人气推荐",
-        features: ["获得 $500.00 额度", "永不过期", "支持全部模型"],
+        features: ["获得 ¥500.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Advanced",
         subtitle: "For frequent users",
         tag: "Popular",
-        features: ["Get $500.00 credit", "Never expires", "All models supported"],
+        features: ["Get ¥500.00 credit", "Never expires", "All models supported"],
       }
     }
   },
@@ -84,13 +84,13 @@ export const TOPUP_TIERS: PricingTier[] = [
         title: "专业",
         subtitle: "专业开发者",
         tag: "最佳价值",
-        features: ["获得 $1000.00 额度", "永不过期", "支持全部模型"],
+        features: ["获得 ¥1000.00 额度", "永不过期", "支持全部模型"],
       },
       en: {
         title: "Professional",
         subtitle: "For pro developers",
         tag: "Best Value",
-        features: ["Get $1000.00 credit", "Never expires", "All models supported"],
+        features: ["Get ¥1000.00 credit", "Never expires", "All models supported"],
       }
     }
   },

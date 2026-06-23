@@ -54,9 +54,9 @@
             <!-- Custom Amount Input -->
             <div class="card p-6">
               <div class="relative">
-                <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
-                  <span class="text-gray-500 dark:text-gray-400 font-medium">$</span>
-                </div>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2">
+                  <span class="text-gray-500 dark:text-gray-400 font-medium">¥</span>
+                </span>
                 <input
                   v-model.number="amount"
                   type="number"
@@ -245,7 +245,7 @@
                 <span class="text-2xl mr-1">{{ selectedCurrency === 'CNY' ? '¥' : '¥' }}</span>{{ formatSelectedPaymentAmount(totalAmount).replace(/[^0-9.]/g, '') }}
               </div>
               <div class="text-gray-500 dark:text-gray-400 text-sm flex justify-between items-center">
-                <span>{{ t('payment.creditedBalance', '到账余额') }} ${{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
+                <span>{{ t('payment.creditedBalance', '到账余额') }} ¥{{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
                 <span v-if="feeRate > 0" class="text-xs">含手续费: {{ formatSelectedPaymentAmount(feeAmount) }}</span>
               </div>
             </div>
