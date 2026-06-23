@@ -218,15 +218,6 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const authInteraction = useAuthInteractionStore()
 
-// Sync showPassword and password length with interaction store
-watch(() => showPassword.value, (val) => {
-  authInteraction.showPassword = val
-})
-
-watch(() => formData.password, (val) => {
-  authInteraction.passwordLength = val.length
-})
-
 // ==================== State ====================
 
 const isLoading = ref<boolean>(false)
@@ -290,6 +281,15 @@ const errors = reactive({
 const validationToastMessage = computed(
   () => errors.email || errors.password || errors.turnstile || ''
 )
+
+// Sync showPassword and password length with interaction store
+watch(() => showPassword.value, (val) => {
+  authInteraction.showPassword = val
+})
+
+watch(() => formData.password, (val) => {
+  authInteraction.passwordLength = val.length
+})
 
 const agreementGateActive = computed(
   () => loginAgreementEnabled.value && !agreementAccepted.value

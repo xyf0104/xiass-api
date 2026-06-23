@@ -1,7 +1,7 @@
 # =============================================================================
-# Sub2API Docker Compose - Standalone Configuration
+# NoWind API Docker Compose - Standalone Configuration
 # =============================================================================
-# This configuration runs only the Sub2API application.
+# This configuration runs only the NoWind API application.
 # PostgreSQL and Redis must be provided externally.
 #
 # Usage:
@@ -12,7 +12,7 @@
 
 services:
   sub2api:
-    image: weishaw/sub2api:latest
+    image: ghcr.io/xyf0104/sub2api:latest
     container_name: sub2api
     restart: unless-stopped
     ulimits:

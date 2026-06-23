@@ -55,6 +55,7 @@ func (h *AvailableChannelHandler) featureEnabled(c *gin.Context) bool {
 type userAvailableGroup struct {
 	ID               int64    `json:"id"`
 	Name             string   `json:"name"`
+	Description      string   `json:"description"`
 	Platform         string   `json:"platform"`
 	SubscriptionType string   `json:"subscription_type"`
 	RateMultiplier   float64  `json:"rate_multiplier"`
@@ -216,6 +217,7 @@ func filterUserVisibleGroups(
 		visible = append(visible, userAvailableGroup{
 			ID:               g.ID,
 			Name:             g.Name,
+			Description:      g.Description,
 			Platform:         g.Platform,
 			SubscriptionType: g.SubscriptionType,
 			RateMultiplier:   g.RateMultiplier,

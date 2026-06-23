@@ -88,11 +88,11 @@
               ]"
             >
               <!-- 分组名 + 折扣标签 -->
-              <div class="flex items-center gap-3 whitespace-nowrap w-full">
-                <span class="text-base font-bold text-gray-900 dark:text-white shrink-0">
+              <div class="flex items-center gap-2 whitespace-nowrap w-full overflow-hidden">
+                <span class="text-base font-bold text-gray-900 dark:text-white truncate">
                   {{ group.name }}
                 </span>
-              <span class="rounded-full bg-primary-500 px-2.5 py-0.5 text-xs font-bold text-white shrink-0 whitespace-nowrap">
+                <span class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
                   {{ formatDisplayDiscount(group) }}折
                 </span>
                 <!-- 选中勾选 -->
@@ -106,7 +106,7 @@
                 </div>
               </div>
               <!-- 倍率描述 -->
-              <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+              <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap truncate w-full text-left">
                 {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
               </span>
             </button>

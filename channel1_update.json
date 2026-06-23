@@ -1,0 +1,71 @@
+{
+  "id": 1,
+  "name": "Claude 官方号池",
+  "description": "Anthropic Claude 官方 API，支持 Opus/Sonnet 全系列模型",
+  "status": "active",
+  "billing_model_source": "upstream",
+  "restrict_models": false,
+  "features": "",
+  "features_config": {
+    "bedrock_cc_compat": {
+      "anthropic": false
+    },
+    "web_search_emulation": {
+      "anthropic": false
+    }
+  },
+  "group_ids": [
+    1,
+    4,
+    5,
+    13,
+    16
+  ],
+  "model_pricing": [
+    {
+      "id": 76,
+      "platform": "anthropic",
+      "models": [
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-opus-4-8-1",
+        "claude-max",
+        "opus-max"
+      ],
+      "billing_mode": "token",
+      "input_price": 0.000005,
+      "output_price": 0.000025,
+      "cache_write_price": 0.00000625,
+      "cache_read_price": 5E-7,
+      "image_output_price": 0,
+      "per_request_price": null,
+      "intervals": []
+    },
+    {
+      "id": 77,
+      "platform": "anthropic",
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "billing_mode": "token",
+      "input_price": 0.000004,
+      "output_price": 0.00002,
+      "cache_write_price": 0.000005,
+      "cache_read_price": 4E-7,
+      "image_output_price": 0,
+      "per_request_price": null,
+      "intervals": []
+    }
+  ],
+  "model_mapping": {
+    "anthropic": {
+      "claude-max": "claude-opus-4-8",
+      "opus-max": "claude-opus-4-8"
+    }
+  },
+  "apply_pricing_to_account_stats": true,
+  "account_stats_pricing_rules": [],
+  "created_at": "2026-06-17T22:30:45Z",
+  "updated_at": "2026-06-23T19:10:23Z"
+}

@@ -15,6 +15,7 @@ import (
 type AvailableGroupRef struct {
 	ID               int64
 	Name             string
+	Description      string
 	Platform         string
 	SubscriptionType string
 	RateMultiplier   float64
@@ -62,6 +63,7 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 		groupByID[g.ID] = AvailableGroupRef{
 			ID:               g.ID,
 			Name:             g.Name,
+			Description:      g.Description,
 			Platform:         g.Platform,
 			SubscriptionType: g.SubscriptionType,
 			RateMultiplier:   g.RateMultiplier,
