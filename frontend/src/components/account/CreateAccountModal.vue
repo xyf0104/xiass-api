@@ -3452,13 +3452,26 @@ const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 
 const syncPreviewCredentials = computed(() => {
-  if (!apiKeyValue.value) return undefined
-  return {
-    platform: form.platform,
-    type: form.type,
-    base_url: apiKeyBaseUrl.value || undefined,
-    api_key: apiKeyValue.value
+  // 单个模式：使用 apiKeyValue
+  if (apiKeyValue.value) {
+    return {
+      platform: form.platform,
+      type: form.type,
+      base_url: apiKeyBaseUrl.value || undefined,
+      api_key: apiKeyValue.value
+    }
   }
+  // 批量模式：随机选一个已解析的 key 去探测上游模型
+  if (isBatchMode.value && parsedBatchItems.value.length > 0) {
+    const randomItem = parsedBatchItems.value[Math.floor(Math.random() * parsedBatchItems.value.length)]
+    return {
+      platform: form.platform,
+      type: form.type,
+      base_url: apiKeyBaseUrl.value || undefined,
+      api_key: randomItem.key
+    }
+  }
+  return undefined
 })
 
 const editQuotaLimit = ref<number | null>(null)
