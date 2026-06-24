@@ -84,6 +84,29 @@
           class="input font-mono text-sm"
           placeholder="例如:&#10;账号A sk-xxx...&#10;账号B sk-yyy..."
         ></textarea>
+        
+        <!-- Parsed Items Preview Table -->
+        <div v-if="parsedBatchItems.length > 0" class="mt-4">
+          <label class="input-label flex items-center justify-between">
+            <span>识别预览 (共 {{ parsedBatchItems.length }} 个)</span>
+          </label>
+          <div class="mt-2 max-h-48 overflow-y-auto rounded-lg border border-gray-200 dark:border-dark-600">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-600">
+              <thead class="bg-gray-50 dark:bg-dark-700/50 sticky top-0 z-10">
+                <tr>
+                  <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">名称</th>
+                  <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">API Key</th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-dark-800 dark:divide-dark-600">
+                <tr v-for="(item, idx) in parsedBatchItems" :key="idx" class="hover:bg-gray-50 dark:hover:bg-dark-700/50 transition-colors">
+                  <td class="px-3 py-2 whitespace-nowrap text-xs font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px]" :title="item.name">{{ item.name }}</td>
+                  <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-[200px]" :title="item.key">{{ item.key }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <div v-if="!isBatchMode">
@@ -3388,6 +3411,33 @@ interface TempUnschedRuleForm {
 const step = ref(1)
 const isBatchMode = ref(false)
 const batchText = ref('')
+
+const parsedBatchItems = computed(() => {
+  if (!batchText.value.trim()) return []
+  const lines = batchText.value.split('\n')
+  const items: {name: string, key: string}[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length === 0) continue
+    if (parts.length === 1) {
+      items.push({ name: 'Untitled Account', key: parts[0] })
+      continue
+    }
+    let longestIdx = 0
+    for (let i = 1; i < parts.length; i++) {
+      if (parts[i].length > parts[longestIdx].length) {
+        longestIdx = i
+      }
+    }
+    const key = parts[longestIdx]
+    parts.splice(longestIdx, 1)
+    const name = parts.join(' ')
+    items.push({ name, key })
+  }
+  return items
+})
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
@@ -4498,36 +4548,11 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleBatchSubmit = async () => {
-  if (!batchText.value.trim()) {
+  const items = parsedBatchItems.value
+  if (items.length === 0) {
     appStore.showError('请输入要批量添加的账号数据')
     return
   }
-
-  const lines = batchText.value.split('\n')
-  const items: {name: string, key: string}[] = []
-  
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length === 0) continue
-    if (parts.length === 1) {
-      items.push({ name: 'Untitled Account', key: parts[0] })
-      continue
-    }
-    let longestIdx = 0
-    for (let i = 1; i < parts.length; i++) {
-      if (parts[i].length > parts[longestIdx].length) {
-        longestIdx = i
-      }
-    }
-    const key = parts[longestIdx]
-    parts.splice(longestIdx, 1)
-    const name = parts.join(' ')
-    items.push({ name, key })
-  }
-
-  if (items.length === 0) return
 
   submitting.value = true
   try {
