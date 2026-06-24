@@ -45,18 +45,48 @@
       @submit.prevent="handleSubmit"
       class="space-y-5"
     >
-      <div>
+      <!-- Batch Mode Toggle -->
+      <div v-if="!isOAuthFlow" class="flex items-center justify-between">
+        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+          批量添加 (智能识别名称与密钥)
+        </label>
+        <button
+          type="button"
+          class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+          :class="[isBatchMode ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-600']"
+          @click="isBatchMode = !isBatchMode"
+        >
+          <span
+            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+            :class="[isBatchMode ? 'translate-x-5' : 'translate-x-0']"
+          />
+        </button>
+      </div>
+
+      <div v-if="!isBatchMode">
         <label class="input-label">{{ t('admin.accounts.accountName') }}</label>
         <input
           v-model="form.name"
           type="text"
-          required
+          :required="!isBatchMode"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
         />
       </div>
-      <div>
+
+      <div v-if="isBatchMode">
+        <label class="input-label">批量粘贴 (名称 和 API Key，以空格/换行分隔)</label>
+        <textarea
+          v-model="batchText"
+          rows="5"
+          :required="isBatchMode"
+          class="input font-mono text-sm"
+          placeholder="例如:&#10;账号A sk-xxx...&#10;账号B sk-yyy..."
+        ></textarea>
+      </div>
+
+      <div v-if="!isBatchMode">
         <label class="input-label">{{ t('admin.accounts.notes') }}</label>
         <textarea
           v-model="form.notes"
@@ -3356,6 +3386,8 @@ interface TempUnschedRuleForm {
 
 // State
 const step = ref(1)
+const isBatchMode = ref(false)
+const batchText = ref('')
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
@@ -4465,7 +4497,150 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
   applyVertexServiceAccountJson(await file.text())
 }
 
+const handleBatchSubmit = async () => {
+  if (!batchText.value.trim()) {
+    appStore.showError('请输入要批量添加的账号数据')
+    return
+  }
+
+  const lines = batchText.value.split('\n')
+  const items: {name: string, key: string}[] = []
+  
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length === 0) continue
+    if (parts.length === 1) {
+      items.push({ name: 'Untitled Account', key: parts[0] })
+      continue
+    }
+    let longestIdx = 0
+    for (let i = 1; i < parts.length; i++) {
+      if (parts[i].length > parts[longestIdx].length) {
+        longestIdx = i
+      }
+    }
+    const key = parts[longestIdx]
+    parts.splice(longestIdx, 1)
+    const name = parts.join(' ')
+    items.push({ name, key })
+  }
+
+  if (items.length === 0) return
+
+  submitting.value = true
+  try {
+    let successCount = 0
+    let failCount = 0
+
+    // Build payload template parts
+    let baseCredentials: Record<string, unknown> = {}
+    let payloadType: AccountType = form.type
+    let platform = form.platform
+    let extra: Record<string, unknown> | undefined = undefined
+
+    // Determine default base URL
+    const defaultBaseUrl =
+      form.platform === 'openai'
+        ? 'https://api.openai.com'
+        : form.platform === 'gemini'
+          ? 'https://generativelanguage.googleapis.com'
+          : 'https://api.anthropic.com'
+
+    if (platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
+      payloadType = 'apikey'
+      baseCredentials.base_url = upstreamBaseUrl.value.trim()
+      const antigravityModelMapping = buildModelMappingObject('mapping', [], antigravityModelMappings.value)
+      if (antigravityModelMapping) baseCredentials.model_mapping = antigravityModelMapping
+      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
+      extra = buildAntigravityExtra()
+    } else if (platform === 'anthropic' && accountCategory.value === 'bedrock') {
+      payloadType = 'bedrock'
+      baseCredentials.auth_mode = bedrockAuthMode.value
+      baseCredentials.aws_region = bedrockRegion.value.trim() || 'us-east-1'
+      if (bedrockForceGlobal.value) baseCredentials.aws_force_global = 'true'
+      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      if (modelMapping) baseCredentials.model_mapping = modelMapping
+      if (poolModeEnabled.value) {
+        baseCredentials.pool_mode = true
+        baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+        const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
+        if (parsedRetryStatusCodes.length > 0) baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
+      }
+      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
+    } else {
+      // standard apikey
+      payloadType = 'apikey'
+      baseCredentials.base_url = apiKeyBaseUrl.value.trim() || defaultBaseUrl
+      if (form.platform === 'gemini') baseCredentials.tier_id = geminiTierAIStudio.value
+      if (!isOpenAIModelRestrictionDisabled.value) {
+        const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+        if (modelMapping) baseCredentials.model_mapping = modelMapping
+      }
+      if (form.platform === 'openai') {
+        applyOpenAIEndpointCapabilities(baseCredentials)
+        const compactModelMapping = buildOpenAICompactModelMapping()
+        if (compactModelMapping) baseCredentials.compact_model_mapping = compactModelMapping
+      }
+      if (poolModeEnabled.value) {
+        baseCredentials.pool_mode = true
+        baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+        const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
+        if (parsedRetryStatusCodes.length > 0) baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
+      }
+      if (customErrorCodesEnabled.value) {
+        baseCredentials.custom_error_codes_enabled = true
+        baseCredentials.custom_error_codes = [...selectedErrorCodes.value]
+      }
+      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
+      applyTempUnschedConfig(baseCredentials)
+      extra = buildAnthropicExtra(buildOpenAIExtra())
+    }
+
+    for (const item of items) {
+      const credentials = JSON.parse(JSON.stringify(baseCredentials))
+      credentials.api_key = item.key
+
+      const payload = {
+        ...form,
+        name: item.name,
+        type: payloadType,
+        credentials,
+        group_ids: form.group_ids,
+        extra,
+        auto_pause_on_expired: autoPauseOnExpired.value
+      }
+
+      try {
+         await adminAPI.accounts.create(payload as any)
+         successCount++
+      } catch (err: any) {
+         failCount++
+         console.error('Failed to create account:', err)
+      }
+    }
+    
+    if (failCount > 0) {
+       appStore.showError(`批量创建完成: 成功 ${successCount} 个, 失败 ${failCount} 个`)
+    } else {
+       appStore.showSuccess(`成功批量创建 ${successCount} 个账号`)
+    }
+    emit('created')
+    handleClose()
+  } catch (err: any) {
+    appStore.showError(err.message || '批量创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
 const handleSubmit = async () => {
+  if (isBatchMode.value && !isOAuthFlow.value) {
+    await handleBatchSubmit()
+    return
+  }
+
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!form.name.trim()) {

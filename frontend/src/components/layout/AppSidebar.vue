@@ -977,12 +977,21 @@ async function performUpdate() {
   isUpdating.value = true
   try {
     await apiClient.post('/admin/system/update')
-    appStore.showSuccess(t('admin.system.updateInitiated', '更新已启动，稍后将自动重启...'))
   } catch (err: any) {
-    appStore.showError(err?.response?.data?.message || '更新失败')
-  } finally {
-    isUpdating.value = false
+    // Watchtower restarts the container, causing network drops
+    if (err.code === 'ECONNABORTED' || err.message === 'Network Error' || !err.response) {
+      console.log('Expected network drop during update')
+    } else {
+      appStore.showError(err?.response?.data?.message || '更新失败')
+      isUpdating.value = false
+      return
+    }
   }
+  
+  appStore.showSuccess('更新成功，正在刷新页面...')
+  setTimeout(() => {
+    window.location.reload()
+  }, 3000)
 }
 
 watch(isAdmin, (v) => {
