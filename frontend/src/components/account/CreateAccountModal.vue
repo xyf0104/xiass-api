@@ -45,70 +45,18 @@
       @submit.prevent="handleSubmit"
       class="space-y-5"
     >
-      <!-- Batch Mode Toggle -->
-      <div v-if="!isOAuthFlow" class="flex items-center justify-between">
-        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-          批量添加 (智能识别名称与密钥)
-        </label>
-        <button
-          type="button"
-          class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-          :class="[isBatchMode ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-600']"
-          @click="isBatchMode = !isBatchMode"
-        >
-          <span
-            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-            :class="[isBatchMode ? 'translate-x-5' : 'translate-x-0']"
-          />
-        </button>
-      </div>
-
-      <div v-if="!isBatchMode">
+      <div>
         <label class="input-label">{{ t('admin.accounts.accountName') }}</label>
         <input
           v-model="form.name"
           type="text"
           :required="!isBatchMode"
           class="input"
-          :placeholder="t('admin.accounts.enterAccountName')"
+          :placeholder="isBatchMode ? '批量模式下无需填写，将自动从粘贴内容中识别' : t('admin.accounts.enterAccountName')"
+          :disabled="isBatchMode"
           data-tour="account-form-name"
         />
       </div>
-
-      <div v-if="isBatchMode">
-        <label class="input-label">批量粘贴 (名称 和 API Key，以空格/换行分隔)</label>
-        <textarea
-          v-model="batchText"
-          rows="5"
-          :required="isBatchMode"
-          class="input font-mono text-sm"
-          placeholder="例如:&#10;账号A sk-xxx...&#10;账号B sk-yyy..."
-        ></textarea>
-        
-        <!-- Parsed Items Preview Table -->
-        <div v-if="parsedBatchItems.length > 0" class="mt-4">
-          <label class="input-label flex items-center justify-between">
-            <span>识别预览 (共 {{ parsedBatchItems.length }} 个)</span>
-          </label>
-          <div class="mt-2 max-h-48 overflow-y-auto rounded-lg border border-gray-200 dark:border-dark-600">
-            <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-600">
-              <thead class="bg-gray-50 dark:bg-dark-700/50 sticky top-0 z-10">
-                <tr>
-                  <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">名称</th>
-                  <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">API Key</th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-gray-200 dark:bg-dark-800 dark:divide-dark-600">
-                <tr v-for="(item, idx) in parsedBatchItems" :key="idx" class="hover:bg-gray-50 dark:hover:bg-dark-700/50 transition-colors">
-                  <td class="px-3 py-2 whitespace-nowrap text-xs font-medium text-gray-900 dark:text-gray-100 truncate max-w-[120px]" :title="item.name">{{ item.name }}</td>
-                  <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-[200px]" :title="item.key">{{ item.key }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
       <div v-if="!isBatchMode">
         <label class="input-label">{{ t('admin.accounts.notes') }}</label>
         <textarea
@@ -1080,8 +1028,28 @@
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <!-- Batch Mode Toggle -->
+          <div class="flex items-center justify-between mb-2">
+            <label class="input-label mb-0">{{ t('admin.accounts.apiKeyRequired') }}</label>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500 dark:text-gray-400">批量添加</span>
+              <button
+                type="button"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                :class="[isBatchMode ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-600']"
+                @click="isBatchMode = !isBatchMode"
+              >
+                <span
+                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                  :class="[isBatchMode ? 'translate-x-4' : 'translate-x-0']"
+                />
+              </button>
+            </div>
+          </div>
+
+          <!-- Single Key Input (default) -->
           <input
+            v-if="!isBatchMode"
             v-model="apiKeyValue"
             type="password"
             required
@@ -1094,7 +1062,46 @@
                   : 'sk-ant-...'
             "
           />
-          <p class="input-hint">{{ apiKeyHint }}</p>
+
+          <!-- Batch Key Input -->
+          <div v-if="isBatchMode">
+            <textarea
+              v-model="batchText"
+              rows="6"
+              required
+              class="input font-mono text-sm"
+              :placeholder="'每行一个，格式: 名称 API_Key\n例如:\n账号A sk-proj-xxx...\n账号B sk-proj-yyy...\n\n较长的字符串将被自动识别为 Key'"
+            ></textarea>
+            
+            <!-- Parsed Items Preview -->
+            <div v-if="parsedBatchItems.length > 0" class="mt-3">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-medium text-gray-600 dark:text-gray-300">
+                  已识别 <span class="text-primary-500 font-bold">{{ parsedBatchItems.length }}</span> 个账号
+                </span>
+              </div>
+              <div class="max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-dark-600">
+                <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-600">
+                  <thead class="bg-gray-50 dark:bg-dark-700/50 sticky top-0">
+                    <tr>
+                      <th class="px-3 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase tracking-wider w-8">#</th>
+                      <th class="px-3 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase tracking-wider">名称</th>
+                      <th class="px-3 py-1.5 text-left text-[10px] font-medium text-gray-500 uppercase tracking-wider">API Key</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                    <tr v-for="(item, idx) in parsedBatchItems" :key="idx" class="hover:bg-gray-50 dark:hover:bg-dark-700/30">
+                      <td class="px-3 py-1.5 text-[11px] text-gray-400">{{ idx + 1 }}</td>
+                      <td class="px-3 py-1.5 text-xs font-medium text-gray-900 dark:text-gray-100 truncate max-w-[140px]" :title="item.name">{{ item.name }}</td>
+                      <td class="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-[200px]" :title="item.key">{{ item.key.substring(0, 8) }}...{{ item.key.substring(item.key.length - 4) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <p class="input-hint">{{ isBatchMode ? '批量粘贴名称与 Key，较长的字符串自动识别为 Key' : apiKeyHint }}</p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -4295,6 +4302,8 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  isBatchMode.value = false
+  batchText.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4547,125 +4556,8 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
   applyVertexServiceAccountJson(await file.text())
 }
 
-const handleBatchSubmit = async () => {
-  const items = parsedBatchItems.value
-  if (items.length === 0) {
-    appStore.showError('请输入要批量添加的账号数据')
-    return
-  }
-
-  submitting.value = true
-  try {
-    let successCount = 0
-    let failCount = 0
-
-    // Build payload template parts
-    let baseCredentials: Record<string, unknown> = {}
-    let payloadType: AccountType = form.type
-    let platform = form.platform
-    let extra: Record<string, unknown> | undefined = undefined
-
-    // Determine default base URL
-    const defaultBaseUrl =
-      form.platform === 'openai'
-        ? 'https://api.openai.com'
-        : form.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
-
-    if (platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
-      payloadType = 'apikey'
-      baseCredentials.base_url = upstreamBaseUrl.value.trim()
-      const antigravityModelMapping = buildModelMappingObject('mapping', [], antigravityModelMappings.value)
-      if (antigravityModelMapping) baseCredentials.model_mapping = antigravityModelMapping
-      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
-      extra = buildAntigravityExtra()
-    } else if (platform === 'anthropic' && accountCategory.value === 'bedrock') {
-      payloadType = 'bedrock'
-      baseCredentials.auth_mode = bedrockAuthMode.value
-      baseCredentials.aws_region = bedrockRegion.value.trim() || 'us-east-1'
-      if (bedrockForceGlobal.value) baseCredentials.aws_force_global = 'true'
-      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-      if (modelMapping) baseCredentials.model_mapping = modelMapping
-      if (poolModeEnabled.value) {
-        baseCredentials.pool_mode = true
-        baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
-        const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
-        if (parsedRetryStatusCodes.length > 0) baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
-      }
-      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
-    } else {
-      // standard apikey
-      payloadType = 'apikey'
-      baseCredentials.base_url = apiKeyBaseUrl.value.trim() || defaultBaseUrl
-      if (form.platform === 'gemini') baseCredentials.tier_id = geminiTierAIStudio.value
-      if (!isOpenAIModelRestrictionDisabled.value) {
-        const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-        if (modelMapping) baseCredentials.model_mapping = modelMapping
-      }
-      if (form.platform === 'openai') {
-        applyOpenAIEndpointCapabilities(baseCredentials)
-        const compactModelMapping = buildOpenAICompactModelMapping()
-        if (compactModelMapping) baseCredentials.compact_model_mapping = compactModelMapping
-      }
-      if (poolModeEnabled.value) {
-        baseCredentials.pool_mode = true
-        baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
-        const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
-        if (parsedRetryStatusCodes.length > 0) baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
-      }
-      if (customErrorCodesEnabled.value) {
-        baseCredentials.custom_error_codes_enabled = true
-        baseCredentials.custom_error_codes = [...selectedErrorCodes.value]
-      }
-      applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
-      applyTempUnschedConfig(baseCredentials)
-      extra = buildAnthropicExtra(buildOpenAIExtra())
-    }
-
-    for (const item of items) {
-      const credentials = JSON.parse(JSON.stringify(baseCredentials))
-      credentials.api_key = item.key
-
-      const payload = {
-        ...form,
-        name: item.name,
-        type: payloadType,
-        credentials,
-        group_ids: form.group_ids,
-        extra,
-        auto_pause_on_expired: autoPauseOnExpired.value
-      }
-
-      try {
-         await adminAPI.accounts.create(payload as any)
-         successCount++
-      } catch (err: any) {
-         failCount++
-         console.error('Failed to create account:', err)
-      }
-    }
-    
-    if (failCount > 0) {
-       appStore.showError(`批量创建完成: 成功 ${successCount} 个, 失败 ${failCount} 个`)
-    } else {
-       appStore.showSuccess(`成功批量创建 ${successCount} 个账号`)
-    }
-    emit('created')
-    handleClose()
-  } catch (err: any) {
-    appStore.showError(err.message || '批量创建失败')
-  } finally {
-    submitting.value = false
-  }
-}
 
 const handleSubmit = async () => {
-  if (isBatchMode.value && !isOAuthFlow.value) {
-    await handleBatchSubmit()
-    return
-  }
-
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!form.name.trim()) {
@@ -4805,7 +4697,100 @@ const handleSubmit = async () => {
     return
   }
 
-  // For apikey type, create directly
+  // For apikey type — supports both single and batch mode
+  // NOTE: 批量模式复用完全相同的 credentials 构建逻辑，确保每个账号与单独添加效果一致
+  if (isBatchMode.value) {
+    // 批量模式: 从 parsedBatchItems 获取名称和 key
+    const items = parsedBatchItems.value
+    if (items.length === 0) {
+      appStore.showError('请输入要批量添加的账号数据')
+      return
+    }
+
+    // 构建不含 api_key 的 credentials 模板（所有账号共享）
+    const defaultBaseUrl =
+      form.platform === 'openai'
+        ? 'https://api.openai.com'
+        : form.platform === 'gemini'
+          ? 'https://generativelanguage.googleapis.com'
+          : 'https://api.anthropic.com'
+
+    const baseCredentials: Record<string, unknown> = {
+      base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
+    }
+    if (form.platform === 'gemini') {
+      baseCredentials.tier_id = geminiTierAIStudio.value
+    }
+    if (!isOpenAIModelRestrictionDisabled.value) {
+      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      if (modelMapping) {
+        baseCredentials.model_mapping = modelMapping
+      }
+    }
+    if (form.platform === 'openai') {
+      applyOpenAIEndpointCapabilities(baseCredentials)
+      const compactModelMapping = buildOpenAICompactModelMapping()
+      if (compactModelMapping) {
+        baseCredentials.compact_model_mapping = compactModelMapping
+      }
+    }
+    if (poolModeEnabled.value) {
+      baseCredentials.pool_mode = true
+      baseCredentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+      const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
+      if (parsedRetryStatusCodes.length > 0) {
+        baseCredentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
+      }
+    }
+    if (customErrorCodesEnabled.value) {
+      baseCredentials.custom_error_codes_enabled = true
+      baseCredentials.custom_error_codes = [...selectedErrorCodes.value]
+    }
+    applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
+    applyTempUnschedConfig(baseCredentials)
+
+    const extra = buildAnthropicExtra(buildOpenAIExtra())
+
+    submitting.value = true
+    try {
+      let successCount = 0
+      let failCount = 0
+
+      for (const item of items) {
+        const credentials = JSON.parse(JSON.stringify(baseCredentials))
+        credentials.api_key = item.key
+
+        try {
+          await adminAPI.accounts.create(withAntigravityConfirmFlag({
+            ...form,
+            name: item.name,
+            type: 'apikey',
+            credentials,
+            group_ids: form.group_ids,
+            extra,
+            auto_pause_on_expired: autoPauseOnExpired.value,
+          }))
+          successCount++
+        } catch (err: any) {
+          failCount++
+          console.error(`批量创建账号 "${item.name}" 失败:`, err)
+        }
+      }
+
+      if (failCount > 0) {
+        appStore.showError(`批量创建完成: 成功 ${successCount} 个, 失败 ${failCount} 个`)
+      } else {
+        appStore.showSuccess(`成功批量创建 ${successCount} 个账号`)
+      }
+      emit('created')
+      handleClose()
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
+  // 单个 apikey 模式（原有逻辑不变）
   if (!apiKeyValue.value.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
