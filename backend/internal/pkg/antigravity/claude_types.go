@@ -149,18 +149,13 @@ type modelDef struct {
 
 // Antigravity 支持的 Claude 模型
 var claudeModels = []modelDef{
-	{ID: "claude-sonnet-4-6-thinking", DisplayName: "Claude Sonnet 4.6 (Thinking)", CreatedAt: "2026-02-17T00:00:00Z"},
 	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 (Thinking)", CreatedAt: "2026-02-05T00:00:00Z"},
 }
 
 // Antigravity 支持的 Gemini 模型
 var geminiModels = []modelDef{
-	// NOTE: 保留旧模型 ID 作为别名映射目标，但不在此列表中暴露
-	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
-	{ID: "gemini-3.5-flash-high", DisplayName: "Gemini 3.5 Flash (High)", CreatedAt: "2026-06-01T00:00:00Z"},
 	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash (Low)", CreatedAt: "2026-06-01T00:00:00Z"},
 	{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro (Low)", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3.1-pro-high", DisplayName: "Gemini 3.1 Pro (High)", CreatedAt: "2026-02-19T00:00:00Z"},
 	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
 }
 

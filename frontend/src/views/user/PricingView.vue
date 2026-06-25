@@ -253,6 +253,7 @@ const productCategories = [
   { platform: 'anthropic', label: 'Claude Code', icon: 'claude' },
   { platform: 'openai', label: 'Codex', icon: 'openai' },
   { platform: 'gemini', label: 'Gemini', icon: 'gemini' },
+  { platform: 'antigravity', label: 'Antigravity', icon: 'antigravity' },
 ]
 
 // ==================== 计算属性 ====================
