@@ -113,6 +113,13 @@ var DefaultAntigravityModelMapping = map[string]string{
 	// Gemini 3 image 兼容映射（向 3.1 image 迁移）
 	"gemini-3-pro-image":         "gemini-3.1-flash-image",
 	"gemini-3-pro-image-preview": "gemini-3.1-flash-image",
+	// Gemini 3.5 Flash 白名单
+	"gemini-3.5-flash":        "gemini-3.5-flash",
+	"gemini-3.5-flash-medium": "gemini-3.5-flash-medium",
+	"gemini-3.5-flash-high":   "gemini-3.5-flash-high",
+	"gemini-3.5-flash-low":    "gemini-3.5-flash-low",
+	// Claude Sonnet 4.6 Thinking（显式映射）
+	"claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
 	// 其他官方模型
 	"gpt-oss-120b-medium":    "gpt-oss-120b-medium",
 	"tab_flash_lite_preview": "tab_flash_lite_preview",
