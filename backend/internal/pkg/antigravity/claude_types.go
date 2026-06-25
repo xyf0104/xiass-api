@@ -149,43 +149,19 @@ type modelDef struct {
 
 // Antigravity 支持的 Claude 模型
 var claudeModels = []modelDef{
-	{ID: "claude-fable-5", DisplayName: "Claude Fable 5", CreatedAt: "2026-06-09T00:00:00Z"},
-	{ID: "claude-opus-4-5-thinking", DisplayName: "Claude Opus 4.5 Thinking", CreatedAt: "2025-11-01T00:00:00Z"},
-	{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5", CreatedAt: "2025-09-29T00:00:00Z"},
-	{ID: "claude-sonnet-4-5-thinking", DisplayName: "Claude Sonnet 4.5 Thinking", CreatedAt: "2025-09-29T00:00:00Z"},
-	{ID: "claude-opus-4-6", DisplayName: "Claude Opus 4.6", CreatedAt: "2026-02-05T00:00:00Z"},
-	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 Thinking", CreatedAt: "2026-02-05T00:00:00Z"},
-	{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7", CreatedAt: "2026-04-17T00:00:00Z"},
-	{ID: "claude-opus-4-8", DisplayName: "Claude Opus 4.8", CreatedAt: "2026-05-29T00:00:00Z"},
-	{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", CreatedAt: "2026-02-17T00:00:00Z"},
+	{ID: "claude-sonnet-4-6-thinking", DisplayName: "Claude Sonnet 4.6 (Thinking)", CreatedAt: "2026-02-17T00:00:00Z"},
+	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 (Thinking)", CreatedAt: "2026-02-05T00:00:00Z"},
 }
 
 // Antigravity 支持的 Gemini 模型
 var geminiModels = []modelDef{
-	{ID: "gemini-1.5-flash", DisplayName: "Gemini 1.5 Flash", CreatedAt: "2024-05-14T00:00:00Z"},
-	{ID: "gemini-1.5-flash-8b", DisplayName: "Gemini 1.5 Flash 8B", CreatedAt: "2024-10-03T00:00:00Z"},
-	{ID: "gemini-1.5-pro", DisplayName: "Gemini 1.5 Pro", CreatedAt: "2024-05-14T00:00:00Z"},
-	{ID: "gemini-2.0-flash", DisplayName: "Gemini 2.0 Flash", CreatedAt: "2024-12-11T00:00:00Z"},
-	{ID: "gemini-2.0-flash-lite", DisplayName: "Gemini 2.0 Flash Lite", CreatedAt: "2024-12-11T00:00:00Z"},
-	{ID: "gemini-2.0-flash-thinking-exp", DisplayName: "Gemini 2.0 Flash Thinking Exp", CreatedAt: "2024-12-19T00:00:00Z"},
-	{ID: "gemini-2.0-flash-thinking-exp-0121", DisplayName: "Gemini 2.0 Flash Thinking Exp 0121", CreatedAt: "2025-01-21T00:00:00Z"},
-	{ID: "gemini-2.0-pro-exp-0205", DisplayName: "Gemini 2.0 Pro Exp 0205", CreatedAt: "2025-02-05T00:00:00Z"},
-	{ID: "gemini-exp-1206", DisplayName: "Gemini Exp 1206", CreatedAt: "2024-12-06T00:00:00Z"},
-	{ID: "learnlm-1.5-pro-experimental", DisplayName: "LearnLM 1.5 Pro Experimental", CreatedAt: "2024-05-14T00:00:00Z"},
-	{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash", CreatedAt: "2025-01-01T00:00:00Z"},
-	{ID: "gemini-2.5-flash-image", DisplayName: "Gemini 2.5 Flash Image", CreatedAt: "2025-01-01T00:00:00Z"},
-	{ID: "gemini-2.5-flash-image-preview", DisplayName: "Gemini 2.5 Flash Image Preview", CreatedAt: "2025-01-01T00:00:00Z"},
-	{ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash Lite", CreatedAt: "2025-01-01T00:00:00Z"},
-	{ID: "gemini-2.5-flash-thinking", DisplayName: "Gemini 2.5 Flash Thinking", CreatedAt: "2025-01-01T00:00:00Z"},
-	{ID: "gemini-3-flash", DisplayName: "Gemini 3 Flash", CreatedAt: "2025-06-01T00:00:00Z"},
-	{ID: "gemini-3-pro-low", DisplayName: "Gemini 3 Pro Low", CreatedAt: "2025-06-01T00:00:00Z"},
-	{ID: "gemini-3-pro-high", DisplayName: "Gemini 3 Pro High", CreatedAt: "2025-06-01T00:00:00Z"},
-	{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro Low", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3.1-pro-high", DisplayName: "Gemini 3.1 Pro High", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3.1-flash-image-preview", DisplayName: "Gemini 3.1 Flash Image Preview", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3-pro-preview", DisplayName: "Gemini 3 Pro Preview", CreatedAt: "2025-06-01T00:00:00Z"},
-	{ID: "gemini-3-pro-image", DisplayName: "Gemini 3 Pro Image", CreatedAt: "2025-06-01T00:00:00Z"},
+	// NOTE: 保留旧模型 ID 作为别名映射目标，但不在此列表中暴露
+	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
+	{ID: "gemini-3.5-flash-high", DisplayName: "Gemini 3.5 Flash (High)", CreatedAt: "2026-06-01T00:00:00Z"},
+	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash (Low)", CreatedAt: "2026-06-01T00:00:00Z"},
+	{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro (Low)", CreatedAt: "2026-02-19T00:00:00Z"},
+	{ID: "gemini-3.1-pro-high", DisplayName: "Gemini 3.1 Pro (High)", CreatedAt: "2026-02-19T00:00:00Z"},
+	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
 }
 
 // ========== Claude API 格式 (/v1/models) ==========
