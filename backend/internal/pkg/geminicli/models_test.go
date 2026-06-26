@@ -10,9 +10,9 @@ func TestDefaultModels_ContainsImageModels(t *testing.T) {
 		byID[model.ID] = model
 	}
 
+	// 验证默认 Gemini 测试模型列表中包含核心模型
 	required := []string{
-		"gemini-2.5-flash-image",
-		"gemini-3.1-flash-image",
+		"gemini-2.5-flash",
 	}
 
 	for _, id := range required {

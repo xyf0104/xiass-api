@@ -147,27 +147,20 @@ type modelDef struct {
 	CreatedAt   string // 仅 Claude API 格式使用
 }
 
-// Antigravity 支持的 Claude 模型
+// Antigravity 支持的 Claude 模型（经服务器测试验证可用）
 var claudeModels = []modelDef{
 	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 (Thinking)", CreatedAt: "2026-02-05T00:00:00Z"},
-	{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", CreatedAt: "2026-02-05T00:00:00Z"},
-	{ID: "claude-sonnet-4-6-thinking", DisplayName: "Claude Sonnet 4.6 (Thinking)", CreatedAt: "2026-02-05T00:00:00Z"},
-	{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5", CreatedAt: "2025-09-29T00:00:00Z"},
-	{ID: "claude-sonnet-4-5-thinking", DisplayName: "Claude Sonnet 4.5 (Thinking)", CreatedAt: "2025-09-29T00:00:00Z"},
 }
 
-// Antigravity 支持的 Gemini 模型
+// Antigravity 支持的 Gemini 模型（经服务器测试验证可用）
 var geminiModels = []modelDef{
 	{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash", CreatedAt: "2025-06-01T00:00:00Z"},
 	{ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash Lite", CreatedAt: "2025-06-01T00:00:00Z"},
 	{ID: "gemini-2.5-flash-thinking", DisplayName: "Gemini 2.5 Flash (Thinking)", CreatedAt: "2025-06-01T00:00:00Z"},
-	{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro", CreatedAt: "2025-06-01T00:00:00Z"},
 	{ID: "gemini-3-flash", DisplayName: "Gemini 3 Flash", CreatedAt: "2026-03-01T00:00:00Z"},
-	{ID: "gemini-3.1-pro-high", DisplayName: "Gemini 3.1 Pro (High)", CreatedAt: "2026-02-19T00:00:00Z"},
 	{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro (Low)", CreatedAt: "2026-02-19T00:00:00Z"},
-	{ID: "gemini-3.5-flash-high", DisplayName: "Gemini 3.5 Flash (High)", CreatedAt: "2026-06-01T00:00:00Z"},
-	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
 	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash (Low)", CreatedAt: "2026-06-01T00:00:00Z"},
+	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
 }
 
 // ========== Claude API 格式 (/v1/models) ==========

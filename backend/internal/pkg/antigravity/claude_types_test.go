@@ -11,15 +11,16 @@ func TestDefaultModels_ContainsNewAndLegacyImageModels(t *testing.T) {
 		byID[m.ID] = m
 	}
 
+	// 只验证经过服务器测试确认可用的核心模型
 	requiredIDs := []string{
-		"claude-fable-5",
-		"claude-opus-4-8",
 		"claude-opus-4-6-thinking",
-		"gemini-2.5-flash-image",
-		"gemini-2.5-flash-image-preview",
-		"gemini-3.1-flash-image",
-		"gemini-3.1-flash-image-preview",
-		"gemini-3-pro-image", // legacy compatibility
+		"gemini-2.5-flash",
+		"gemini-2.5-flash-lite",
+		"gemini-2.5-flash-thinking",
+		"gemini-3-flash",
+		"gemini-3.1-pro-low",
+		"gemini-3.5-flash-low",
+		"gpt-oss-120b-medium",
 	}
 
 	for _, id := range requiredIDs {

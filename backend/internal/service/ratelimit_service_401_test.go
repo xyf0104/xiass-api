@@ -106,9 +106,9 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 		require.Len(t, invalidator.accounts, 1)
 	})
 
-	t.Run("antigravity_401_uses_SetError", func(t *testing.T) {
-		// Antigravity 401 由 applyErrorPolicy 的 temp_unschedulable_rules 控制，
-		// HandleUpstreamError 中走 SetError 路径。
+	t.Run("antigravity_401_uses_temp_unschedulable", func(t *testing.T) {
+		// Antigravity OAuth 401 改为临时冷却（2分钟），不再永久 SetError。
+		// fingerprint 变化导致的暂时性 401 可通过 token_refresh_service 自动恢复。
 		repo := &rateLimitAccountRepoStub{}
 		invalidator := &tokenCacheInvalidatorRecorder{}
 		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -117,14 +117,17 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 			ID:       100,
 			Platform: PlatformAntigravity,
 			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"refresh_token": "rt-ag-100",
+			},
 		}
 
 		shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 		require.True(t, shouldDisable)
-		require.Equal(t, 1, repo.setErrorCalls)
-		require.Equal(t, 0, repo.tempCalls)
-		require.Empty(t, invalidator.accounts)
+		require.Equal(t, 0, repo.setErrorCalls, "Antigravity OAuth 401 should NOT SetError")
+		require.Equal(t, 1, repo.tempCalls, "Antigravity OAuth 401 should SetTempUnschedulable")
+		require.Len(t, invalidator.accounts, 1, "token cache should be invalidated")
 	})
 }
 
