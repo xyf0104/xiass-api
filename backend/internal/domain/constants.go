@@ -120,9 +120,6 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-3.5-flash-low":    "gemini-3.5-flash-low",
 	// Claude Sonnet 4.6 Thinking（显式映射）
 	"claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
-	// 其他官方模型
-	"gpt-oss-120b-medium":    "gpt-oss-120b-medium",
-	"tab_flash_lite_preview": "tab_flash_lite_preview",
 }
 
 // DefaultBedrockModelMapping 是 AWS Bedrock 平台的默认模型映射

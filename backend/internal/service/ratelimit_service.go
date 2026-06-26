@@ -247,8 +247,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
-		if account.Type == AccountTypeOAuth && account.Platform != PlatformAntigravity {
+		// NOTE: Antigravity OAuth 也走此路径——其 fingerprint 变化可能导致暂时性 401，
+		// 不应永久 SetError，而是临时冷却让 token_refresh_service 有机会刷新恢复。
+		if account.Type == AccountTypeOAuth {
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, account); err != nil {
@@ -283,6 +284,15 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if cooldownMinutes <= 0 {
 				cooldownMinutes = 10
 			}
+			// Antigravity 平台 401 通常是 fingerprint 变化导致的暂时性问题，
+			// 使用较短的冷却时间（2分钟），让 token 刷新后快速恢复
+			if account.Platform == PlatformAntigravity {
+				cooldownMinutes = 2
+				slog.Info("antigravity_oauth_401_temp_cooldown",
+					"account_id", account.ID,
+					"cooldown_minutes", cooldownMinutes,
+					"reason", "fingerprint change or token expiry, will auto-recover")
+			}
 			until := time.Now().Add(time.Duration(cooldownMinutes) * time.Minute)
 			s.notifyAccountSchedulingBlocked(account, until, "oauth_401")
 			if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, msg); err != nil {
@@ -290,7 +300,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			}
 			shouldDisable = true
 		} else {
-			// 非 OAuth / Antigravity OAuth：保持 SetError 行为
+			// 非 OAuth：保持 SetError 行为
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "Authentication failed (401): " + upstreamMsg
