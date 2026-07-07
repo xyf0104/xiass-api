@@ -336,7 +336,7 @@ func (r *softRouterRepository) syncReportedNodeAvailability(ctx context.Context,
 		      AND n.agent_id = $1
 		      AND n.deleted_at IS NULL
 		      AND m.deleted_at IS NULL
-		      AND (n.enabled = FALSE OR n.listen_status <> 'listening')
+		      AND n.enabled = FALSE
 		    RETURNING m.proxy_id
 		)
 		UPDATE proxies p
@@ -371,7 +371,6 @@ func (r *softRouterRepository) CleanupOrphanedGeneratedProxies(ctx context.Conte
 		                OR (
 		                    n.deleted_at IS NULL
 		                    AND n.enabled = TRUE
-		                    AND n.listen_status = 'listening'
 		                )
 		            )
 		      )
@@ -464,7 +463,6 @@ func (r *softRouterRepository) listMappings(ctx context.Context, enabledOnly boo
 		        WHERE n.id = m.node_id
 		          AND n.deleted_at IS NULL
 		          AND n.enabled = TRUE
-		          AND n.listen_status = 'listening'
 		    )
 		)`
 	}

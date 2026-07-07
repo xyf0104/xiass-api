@@ -267,6 +267,59 @@ func TestSoftRouterProxyServiceDeleteMappingRemovesGeneratedProxyWithoutAccounts
 	require.Equal(t, 1, repo.cleanupOrphanedCalls)
 }
 
+func TestSoftRouterProxyServiceReconcileKeepsClosedButEnabledNode(t *testing.T) {
+	nodeID := int64(88)
+	repo := &softRouterProxyRepoStub{
+		config: SoftRouterProxyConfig{
+			Enabled:           true,
+			GatewayListenHost: "127.0.0.1",
+			UpstreamHost:      "127.0.0.1",
+			FRPServerPort:     7010,
+			RawPortStart:      12084,
+			RawPortEnd:        12084,
+			PublicPortStart:   1102,
+			PublicPortEnd:     1102,
+			DefaultUsername:   "user",
+			DefaultPassword:   "pass",
+			AgentPollSeconds:  20,
+		},
+		nodes: []SoftRouterSocksNode{
+			{
+				ID:           nodeID,
+				AgentID:      1,
+				Name:         "Japan",
+				OpenWrtPort:  1082,
+				ListenStatus: "closed",
+				Enabled:      true,
+			},
+		},
+		mappings: []SoftRouterProxyMapping{
+			{
+				ID:            17,
+				AgentID:       1,
+				NodeID:        &nodeID,
+				Name:          "Japan",
+				OpenWrtPort:   1082,
+				RawRemotePort: 12084,
+				PublicPort:    1102,
+				Username:      "user",
+				Password:      "pass",
+				Enabled:       true,
+				Status:        SoftRouterMappingStatusRunning,
+			},
+		},
+	}
+	runtime := &softRouterRuntimeStub{}
+	svc := &SoftRouterProxyService{repo: repo, proxyRepo: &softRouterProxyProxyRepoStub{}, runtime: runtime}
+
+	err := svc.Reconcile(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, runtime.mappings, 1)
+	require.Equal(t, int64(17), runtime.mappings[0].ID)
+	require.Equal(t, 1, repo.cleanupOrphanedCalls)
+}
+
 func reserveContiguousLoopbackPorts(t *testing.T, count int) ([]int, []net.Listener) {
 	t.Helper()
 	for start := 20000; start <= 60000-count; start++ {
@@ -410,11 +463,23 @@ func (s *softRouterProxyRepoStub) ListMappings(context.Context) ([]SoftRouterPro
 func (s *softRouterProxyRepoStub) ListEnabledMappings(context.Context) ([]SoftRouterProxyMapping, error) {
 	out := make([]SoftRouterProxyMapping, 0, len(s.mappings))
 	for i := range s.mappings {
-		if s.mappings[i].Enabled {
+		if s.mappings[i].Enabled && s.nodeAllowsMapping(s.mappings[i]) {
 			out = append(out, s.mappings[i])
 		}
 	}
 	return out, nil
+}
+
+func (s *softRouterProxyRepoStub) nodeAllowsMapping(mapping SoftRouterProxyMapping) bool {
+	if mapping.NodeID == nil {
+		return true
+	}
+	for i := range s.nodes {
+		if s.nodes[i].ID == *mapping.NodeID {
+			return s.nodes[i].Enabled
+		}
+	}
+	return false
 }
 
 func (s *softRouterProxyRepoStub) GetMappingByID(_ context.Context, id int64) (*SoftRouterProxyMapping, error) {
@@ -475,6 +540,23 @@ type softRouterProxyProxyRepoStub struct {
 	deleted []int64
 	nextID  int64
 }
+
+type softRouterRuntimeStub struct {
+	cfg      SoftRouterProxyConfig
+	mappings []SoftRouterProxyMapping
+}
+
+func (s *softRouterRuntimeStub) Reconcile(_ context.Context, cfg SoftRouterProxyConfig, mappings []SoftRouterProxyMapping) error {
+	s.cfg = cfg
+	s.mappings = append([]SoftRouterProxyMapping(nil), mappings...)
+	return nil
+}
+
+func (s *softRouterRuntimeStub) Status() SoftRouterRuntimeStatus {
+	return SoftRouterRuntimeStatus{}
+}
+
+func (s *softRouterRuntimeStub) Stop() {}
 
 type softRouterFRPInstallerStub struct {
 	installCalled   bool
