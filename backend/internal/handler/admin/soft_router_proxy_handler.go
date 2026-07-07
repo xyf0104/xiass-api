@@ -247,8 +247,9 @@ func (h *SoftRouterProxyHandler) AgentReport(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Hostname string `json:"hostname"`
-		Socks    []struct {
+		Hostname         string `json:"hostname"`
+		SnapshotComplete *bool  `json:"snapshot_complete"`
+		Socks            []struct {
 			ID           string `json:"id"`
 			NodeKey      string `json:"node_key"`
 			Name         string `json:"name"`
@@ -285,8 +286,9 @@ func (h *SoftRouterProxyHandler) AgentReport(c *gin.Context) {
 		})
 	}
 	err := h.service.ReportAgent(c.Request.Context(), token, service.SoftRouterAgentReportInput{
-		Hostname: req.Hostname,
-		Nodes:    nodes,
+		Hostname:         req.Hostname,
+		SnapshotComplete: req.SnapshotComplete == nil || *req.SnapshotComplete,
+		Nodes:            nodes,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

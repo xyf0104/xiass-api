@@ -173,8 +173,9 @@ type SoftRouterListenInfo struct {
 }
 
 type SoftRouterAgentReportInput struct {
-	Hostname string
-	Nodes    []SoftRouterSocksNodeReport
+	Hostname         string
+	SnapshotComplete bool
+	Nodes            []SoftRouterSocksNodeReport
 }
 
 type SoftRouterSocksNodeReport struct {
@@ -218,7 +219,8 @@ type SoftRouterRepository interface {
 	DeleteAgent(ctx context.Context, id int64) error
 	TouchAgent(ctx context.Context, id int64, hostname string, seenAt time.Time) error
 
-	UpsertReportedNodes(ctx context.Context, agentID int64, nodes []SoftRouterSocksNodeReport, seenAt time.Time) error
+	UpsertReportedNodes(ctx context.Context, agentID int64, nodes []SoftRouterSocksNodeReport, seenAt time.Time, snapshotComplete bool) error
+	CleanupOrphanedGeneratedProxies(ctx context.Context) error
 	ListNodes(ctx context.Context) ([]SoftRouterSocksNode, error)
 	GetNodeByID(ctx context.Context, id int64) (*SoftRouterSocksNode, error)
 
@@ -478,7 +480,10 @@ func (s *SoftRouterProxyService) ReportAgent(ctx context.Context, token string, 
 	if err := s.repo.TouchAgent(ctx, agent.ID, strings.TrimSpace(input.Hostname), now); err != nil {
 		return err
 	}
-	return s.repo.UpsertReportedNodes(ctx, agent.ID, input.Nodes, now)
+	if err := s.repo.UpsertReportedNodes(ctx, agent.ID, input.Nodes, now, input.SnapshotComplete); err != nil {
+		return err
+	}
+	return s.Reconcile(ctx)
 }
 
 func (s *SoftRouterProxyService) GetDesiredConfig(ctx context.Context, token string) (*SoftRouterAgentDesiredConfig, error) {
@@ -612,9 +617,19 @@ func (s *SoftRouterProxyService) DeleteMapping(ctx context.Context, id int64) er
 			return err
 		}
 		if err == nil && proxy != nil {
-			proxy.Status = StatusDisabled
-			if err := s.proxyRepo.Update(ctx, proxy); err != nil {
-				return err
+			accountCount, countErr := s.proxyRepo.CountAccountsByProxyID(ctx, proxy.ID)
+			if countErr != nil {
+				return countErr
+			}
+			if accountCount == 0 {
+				if err := s.proxyRepo.Delete(ctx, proxy.ID); err != nil {
+					return err
+				}
+			} else {
+				proxy.Status = StatusDisabled
+				if err := s.proxyRepo.Update(ctx, proxy); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -627,6 +642,9 @@ func (s *SoftRouterProxyService) DeleteMapping(ctx context.Context, id int64) er
 func (s *SoftRouterProxyService) Reconcile(ctx context.Context) error {
 	cfg, err := s.repo.GetConfig(ctx)
 	if err != nil {
+		return err
+	}
+	if err := s.repo.CleanupOrphanedGeneratedProxies(ctx); err != nil {
 		return err
 	}
 	mappings, err := s.repo.ListEnabledMappings(ctx)

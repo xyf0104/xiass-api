@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 type softRouterRepository struct {
@@ -216,7 +217,8 @@ func (r *softRouterRepository) TouchAgent(ctx context.Context, id int64, hostnam
 	return err
 }
 
-func (r *softRouterRepository) UpsertReportedNodes(ctx context.Context, agentID int64, nodes []service.SoftRouterSocksNodeReport, seenAt time.Time) error {
+func (r *softRouterRepository) UpsertReportedNodes(ctx context.Context, agentID int64, nodes []service.SoftRouterSocksNodeReport, seenAt time.Time, snapshotComplete bool) error {
+	seenKeys := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		openwrtID := strings.TrimSpace(node.ID)
 		nodeKey := strings.TrimSpace(node.NodeKey)
@@ -234,6 +236,7 @@ func (r *softRouterRepository) UpsertReportedNodes(ctx context.Context, agentID 
 		if listen == "" {
 			listen = "unknown"
 		}
+		seenKeys = append(seenKeys, nodeKey)
 		_, err := r.sql.ExecContext(ctx, `
 			INSERT INTO soft_router_socks_nodes (
 			    agent_id, openwrt_id, node_key, name, openwrt_port, http_port, node_ref,
@@ -258,7 +261,143 @@ func (r *softRouterRepository) UpsertReportedNodes(ctx context.Context, agentID 
 			return err
 		}
 	}
-	return nil
+	if snapshotComplete {
+		if err := r.removeMissingReportedNodes(ctx, agentID, seenKeys); err != nil {
+			return err
+		}
+	}
+	return r.syncReportedNodeAvailability(ctx, agentID)
+}
+
+func (r *softRouterRepository) removeMissingReportedNodes(ctx context.Context, agentID int64, seenKeys []string) error {
+	_, err := r.sql.ExecContext(ctx, `
+		WITH stale_nodes AS (
+		    UPDATE soft_router_socks_nodes
+		    SET deleted_at = NOW(),
+		        updated_at = NOW(),
+		        enabled = FALSE,
+		        listen_status = 'missing'
+		    WHERE agent_id = $1
+		      AND deleted_at IS NULL
+		      AND NOT (node_key = ANY($2))
+		    RETURNING id
+		),
+		stale_mappings AS (
+		    UPDATE soft_router_proxy_mappings m
+		    SET deleted_at = NOW(),
+		        updated_at = NOW(),
+		        enabled = FALSE,
+		        status = $3,
+		        last_error = $4
+		    FROM stale_nodes n
+		    WHERE m.node_id = n.id
+		      AND m.deleted_at IS NULL
+		    RETURNING m.proxy_id
+		),
+		deleted_empty_proxies AS (
+		    UPDATE proxies p
+		    SET deleted_at = NOW(),
+		        status = $5,
+		        updated_at = NOW()
+		    WHERE p.id IN (SELECT proxy_id FROM stale_mappings WHERE proxy_id IS NOT NULL)
+		      AND p.deleted_at IS NULL
+		      AND NOT EXISTS (
+		          SELECT 1 FROM accounts a
+		          WHERE a.proxy_id = p.id AND a.deleted_at IS NULL
+		      )
+		    RETURNING p.id
+		)
+		UPDATE proxies p
+		SET status = $5,
+		    updated_at = NOW()
+		WHERE p.id IN (SELECT proxy_id FROM stale_mappings WHERE proxy_id IS NOT NULL)
+		  AND p.deleted_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM deleted_empty_proxies d WHERE d.id = p.id
+		  )`,
+		agentID,
+		pq.Array(seenKeys),
+		service.SoftRouterMappingStatusDisabled,
+		"OpenWrt Agent no longer reports this SOCKS node",
+		service.StatusDisabled,
+	)
+	return err
+}
+
+func (r *softRouterRepository) syncReportedNodeAvailability(ctx context.Context, agentID int64) error {
+	_, err := r.sql.ExecContext(ctx, `
+		WITH unavailable AS (
+		    UPDATE soft_router_proxy_mappings m
+		    SET status = $2,
+		        last_error = $3,
+		        updated_at = NOW()
+		    FROM soft_router_socks_nodes n
+		    WHERE m.node_id = n.id
+		      AND n.agent_id = $1
+		      AND n.deleted_at IS NULL
+		      AND m.deleted_at IS NULL
+		      AND (n.enabled = FALSE OR n.listen_status <> 'listening')
+		    RETURNING m.proxy_id
+		)
+		UPDATE proxies p
+		SET status = $4,
+		    updated_at = NOW()
+		WHERE p.id IN (SELECT proxy_id FROM unavailable WHERE proxy_id IS NOT NULL)
+		  AND p.deleted_at IS NULL`,
+		agentID,
+		service.SoftRouterMappingStatusError,
+		"OpenWrt SOCKS node is not listening",
+		service.StatusDisabled,
+	)
+	return err
+}
+
+func (r *softRouterRepository) CleanupOrphanedGeneratedProxies(ctx context.Context) error {
+	_, err := r.sql.ExecContext(ctx, `
+		WITH generated AS (
+		    SELECT p.id
+		    FROM proxies p
+		    WHERE p.deleted_at IS NULL
+		      AND p.name LIKE 'OpenWrt - %'
+		      AND NOT EXISTS (
+		          SELECT 1
+		          FROM soft_router_proxy_mappings m
+		          LEFT JOIN soft_router_socks_nodes n ON n.id = m.node_id
+		          WHERE m.proxy_id = p.id
+		            AND m.deleted_at IS NULL
+		            AND m.enabled = TRUE
+		            AND (
+		                m.node_id IS NULL
+		                OR (
+		                    n.deleted_at IS NULL
+		                    AND n.enabled = TRUE
+		                    AND n.listen_status = 'listening'
+		                )
+		            )
+		      )
+		),
+		deleted_empty AS (
+		    UPDATE proxies p
+		    SET deleted_at = NOW(),
+		        status = $1,
+		        updated_at = NOW()
+		    WHERE p.id IN (SELECT id FROM generated)
+		      AND NOT EXISTS (
+		          SELECT 1 FROM accounts a
+		          WHERE a.proxy_id = p.id AND a.deleted_at IS NULL
+		      )
+		    RETURNING p.id
+		)
+		UPDATE proxies p
+		SET status = $1,
+		    updated_at = NOW()
+		WHERE p.id IN (SELECT id FROM generated)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM deleted_empty d WHERE d.id = p.id
+		  )`,
+		service.StatusDisabled,
+	)
+	return err
 }
 
 func (r *softRouterRepository) ListNodes(ctx context.Context) ([]service.SoftRouterSocksNode, error) {
@@ -313,17 +452,29 @@ func (r *softRouterRepository) ListEnabledMappings(ctx context.Context) ([]servi
 }
 
 func (r *softRouterRepository) listMappings(ctx context.Context, enabledOnly bool) ([]service.SoftRouterProxyMapping, error) {
-	where := "deleted_at IS NULL"
+	where := "m.deleted_at IS NULL"
 	if enabledOnly {
-		where += " AND enabled = TRUE"
+		where += `
+		AND m.enabled = TRUE
+		AND (
+		    m.node_id IS NULL
+		    OR EXISTS (
+		        SELECT 1
+		        FROM soft_router_socks_nodes n
+		        WHERE n.id = m.node_id
+		          AND n.deleted_at IS NULL
+		          AND n.enabled = TRUE
+		          AND n.listen_status = 'listening'
+		    )
+		)`
 	}
 	rows, err := r.sql.QueryContext(ctx, `
-		SELECT id, agent_id, node_id, name, openwrt_port, raw_remote_port, public_port,
-		       username, password, enabled, proxy_id, status, last_error, last_test_at,
-		       last_exit_ip, created_at, updated_at
-		FROM soft_router_proxy_mappings
+		SELECT m.id, m.agent_id, m.node_id, m.name, m.openwrt_port, m.raw_remote_port, m.public_port,
+		       m.username, m.password, m.enabled, m.proxy_id, m.status, m.last_error, m.last_test_at,
+		       m.last_exit_ip, m.created_at, m.updated_at
+		FROM soft_router_proxy_mappings m
 		WHERE `+where+`
-		ORDER BY public_port ASC, id ASC`)
+		ORDER BY m.public_port ASC, m.id ASC`)
 	if err != nil {
 		return nil, err
 	}

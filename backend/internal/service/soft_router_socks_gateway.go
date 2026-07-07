@@ -14,6 +14,12 @@ import (
 )
 
 const softRouterSocksBufferSize = 64 * 1024
+const (
+	softRouterUpstreamDialTimeout      = 5 * time.Second
+	softRouterUpstreamHandshakeTimeout = 12 * time.Second
+	softRouterUpstreamConnectAttempts  = 3
+	softRouterUpstreamRetryDelay       = 300 * time.Millisecond
+)
 
 type SoftRouterSocksGateway struct {
 	mu        sync.Mutex
@@ -196,6 +202,14 @@ func (l *softRouterSocksListener) handle(client net.Conn) {
 	}
 	upstream, err := dialViaUpstreamSocks(l.cfg.UpstreamHost, l.cfg.RawRemotePort, targetHost, targetPort)
 	if err != nil {
+		slog.Warn(
+			"soft router upstream SOCKS connect failed",
+			"mapping_id", l.cfg.MappingID,
+			"name", l.cfg.Name,
+			"upstream", net.JoinHostPort(l.cfg.UpstreamHost, strconv.Itoa(l.cfg.RawRemotePort)),
+			"target", net.JoinHostPort(targetHost, strconv.Itoa(targetPort)),
+			"error", err,
+		)
 		_ = writeSocksReply(client, 5)
 		return
 	}
@@ -320,10 +334,27 @@ func readSocksConnectRequest(r io.Reader) (string, int, error) {
 }
 
 func dialViaUpstreamSocks(upstreamHost string, upstreamPort int, targetHost string, targetPort int) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(upstreamHost, strconv.Itoa(upstreamPort)), 15*time.Second)
+	var lastErr error
+	for attempt := 1; attempt <= softRouterUpstreamConnectAttempts; attempt++ {
+		conn, err := dialViaUpstreamSocksOnce(upstreamHost, upstreamPort, targetHost, targetPort)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if attempt < softRouterUpstreamConnectAttempts {
+			time.Sleep(time.Duration(attempt) * softRouterUpstreamRetryDelay)
+		}
+	}
+	return nil, lastErr
+}
+
+func dialViaUpstreamSocksOnce(upstreamHost string, upstreamPort int, targetHost string, targetPort int) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(upstreamHost, strconv.Itoa(upstreamPort)), softRouterUpstreamDialTimeout)
 	if err != nil {
 		return nil, err
 	}
+	_ = conn.SetDeadline(time.Now().Add(softRouterUpstreamHandshakeTimeout))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
 		_ = conn.Close()
 		return nil, err

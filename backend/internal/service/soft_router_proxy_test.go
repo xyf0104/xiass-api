@@ -213,6 +213,60 @@ func TestSoftRouterProxyServiceInstallFRPAllowsPublicPortsAlreadyPublished(t *te
 	require.Equal(t, publicPublished, installer.installedConfig.PublicPortStart)
 }
 
+func TestSoftRouterProxyServiceDeleteMappingRemovesGeneratedProxyWithoutAccounts(t *testing.T) {
+	proxyID := int64(37)
+	repo := &softRouterProxyRepoStub{
+		config: SoftRouterProxyConfig{
+			GatewayListenHost: "127.0.0.1",
+			UpstreamHost:      "127.0.0.1",
+			FRPServerPort:     7010,
+			RawPortStart:      12084,
+			RawPortEnd:        12084,
+			PublicPortStart:   1102,
+			PublicPortEnd:     1102,
+			DefaultUsername:   "user",
+			DefaultPassword:   "pass",
+			AgentPollSeconds:  20,
+		},
+		mappings: []SoftRouterProxyMapping{
+			{
+				ID:            12,
+				AgentID:       1,
+				Name:          "Japan",
+				OpenWrtPort:   1081,
+				RawRemotePort: 12084,
+				PublicPort:    1102,
+				Username:      "user",
+				Password:      "pass",
+				Enabled:       true,
+				Status:        SoftRouterMappingStatusRunning,
+				ProxyID:       &proxyID,
+			},
+		},
+	}
+	proxyRepo := &softRouterProxyProxyRepoStub{
+		created: []Proxy{
+			{
+				ID:       proxyID,
+				Name:     "OpenWrt - Japan",
+				Protocol: "socks5",
+				Host:     "api.example.com",
+				Port:     1102,
+				Status:   StatusActive,
+			},
+		},
+	}
+	svc := &SoftRouterProxyService{repo: repo, proxyRepo: proxyRepo}
+
+	err := svc.DeleteMapping(context.Background(), 12)
+
+	require.NoError(t, err)
+	require.Empty(t, repo.mappings)
+	require.Equal(t, []int64{proxyID}, proxyRepo.deleted)
+	require.Empty(t, proxyRepo.updated)
+	require.Equal(t, 1, repo.cleanupOrphanedCalls)
+}
+
 func reserveContiguousLoopbackPorts(t *testing.T, count int) ([]int, []net.Listener) {
 	t.Helper()
 	for start := 20000; start <= 60000-count; start++ {
@@ -249,11 +303,12 @@ func rangeText(start, end int) string {
 }
 
 type softRouterProxyRepoStub struct {
-	config   SoftRouterProxyConfig
-	agents   []SoftRouterAgent
-	nodes    []SoftRouterSocksNode
-	mappings []SoftRouterProxyMapping
-	nextID   int64
+	config               SoftRouterProxyConfig
+	agents               []SoftRouterAgent
+	nodes                []SoftRouterSocksNode
+	mappings             []SoftRouterProxyMapping
+	nextID               int64
+	cleanupOrphanedCalls int
 }
 
 func (s *softRouterProxyRepoStub) GetConfig(context.Context) (*SoftRouterProxyConfig, error) {
@@ -325,7 +380,12 @@ func (s *softRouterProxyRepoStub) TouchAgent(context.Context, int64, string, tim
 	return nil
 }
 
-func (s *softRouterProxyRepoStub) UpsertReportedNodes(context.Context, int64, []SoftRouterSocksNodeReport, time.Time) error {
+func (s *softRouterProxyRepoStub) UpsertReportedNodes(context.Context, int64, []SoftRouterSocksNodeReport, time.Time, bool) error {
+	return nil
+}
+
+func (s *softRouterProxyRepoStub) CleanupOrphanedGeneratedProxies(context.Context) error {
+	s.cleanupOrphanedCalls++
 	return nil
 }
 
@@ -412,6 +472,7 @@ func (s *softRouterProxyRepoStub) UpdateMappingProxy(_ context.Context, id int64
 type softRouterProxyProxyRepoStub struct {
 	created []Proxy
 	updated []Proxy
+	deleted []int64
 	nextID  int64
 }
 
@@ -474,7 +535,8 @@ func (s *softRouterProxyProxyRepoStub) Update(_ context.Context, proxy *Proxy) e
 	return nil
 }
 
-func (s *softRouterProxyProxyRepoStub) Delete(context.Context, int64) error {
+func (s *softRouterProxyProxyRepoStub) Delete(_ context.Context, id int64) error {
+	s.deleted = append(s.deleted, id)
 	return nil
 }
 

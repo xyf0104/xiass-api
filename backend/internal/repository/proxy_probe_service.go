@@ -48,9 +48,15 @@ const (
 // 某些 AI API 专用代理只允许访问特定域名，因此需要多个备选
 var probeURLs = []struct {
 	url    string
-	parser string // "ip-api" or "httpbin"
+	parser string // "ip-api", "plain-ip" or "httpbin"
 }{
 	{"http://ip-api.com/json/?lang=zh-CN", "ip-api"},
+	{"https://api.ipify.org", "plain-ip"},
+	{"https://ifconfig.me/ip", "plain-ip"},
+	{"https://ipinfo.io/ip", "plain-ip"},
+	{"http://api.ipify.org", "plain-ip"},
+	{"http://ifconfig.me/ip", "plain-ip"},
+	{"https://httpbin.org/ip", "httpbin"},
 	{"http://httpbin.org/ip", "httpbin"},
 }
 
@@ -119,6 +125,8 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 	switch parser {
 	case "ip-api":
 		return s.parseIPAPI(body, latencyMs)
+	case "plain-ip":
+		return s.parsePlainIP(body, latencyMs)
 	case "httpbin":
 		return s.parseHTTPBin(body, latencyMs)
 	default:
@@ -178,5 +186,18 @@ func (s *proxyProbeService) parseHTTPBin(body []byte, latencyMs int64) (*service
 	}
 	return &service.ProxyExitInfo{
 		IP: result.Origin,
+	}, latencyMs, nil
+}
+
+func (s *proxyProbeService) parsePlainIP(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
+	ip := strings.TrimSpace(string(body))
+	if idx := strings.IndexAny(ip, "\r\n\t "); idx >= 0 {
+		ip = strings.TrimSpace(ip[:idx])
+	}
+	if ip == "" {
+		return nil, latencyMs, fmt.Errorf("plain-ip: no IP found in response")
+	}
+	return &service.ProxyExitInfo{
+		IP: ip,
 	}, latencyMs, nil
 }

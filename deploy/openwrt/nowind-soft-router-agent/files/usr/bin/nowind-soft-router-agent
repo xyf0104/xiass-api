@@ -157,8 +157,8 @@ def to_port(value, default=0):
 
 
 def uci_show(package):
-    ok, out, _ = run(["uci", "-q", "show", package])
-    return out.splitlines() if ok else []
+    ok, out, err = run(["uci", "-q", "show", package])
+    return ok, out.splitlines() if ok else [], err
 
 
 def strip_uci_value(value):
@@ -169,8 +169,15 @@ def strip_uci_value(value):
 
 
 def parse_uci_package(package):
+    ok, lines, err = uci_show(package)
+    if not ok:
+        if not (Path("/etc/config") / package).exists():
+            return {}, True
+        log(f"failed to scan UCI package {package}: {err or 'uci show failed'}")
+        return {}, False
+
     sections = {}
-    for line in uci_show(package):
+    for line in lines:
         if "=" not in line:
             continue
         key, raw = line.split("=", 1)
@@ -184,25 +191,19 @@ def parse_uci_package(package):
             continue
         section, option = rest.split(".", 1)
         sections.setdefault(section, {})[option] = value
-    return sections
+    return sections, True
 
 
-def listening_ports():
-    ok, out, _ = run(["netstat", "-lnt"], timeout=6)
-    ports = set()
-    if not ok:
-        return ports
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        local = parts[3]
-        if ":" not in local:
-            continue
-        port = local.rsplit(":", 1)[-1]
-        if port.isdigit():
-            ports.add(int(port))
-    return ports
+def socks_handshake_ok(port):
+    host = uci_get("local_ip", "127.0.0.1") or "127.0.0.1"
+    try:
+        with socket.create_connection((host, int(port)), timeout=2) as sock:
+            sock.settimeout(2)
+            sock.sendall(b"\x05\x01\x00")
+            resp = sock.recv(2)
+        return len(resp) == 2 and resp[0] == 5 and resp[1] != 0xFF
+    except Exception:
+        return False
 
 
 def node_name(sections, socks_section):
@@ -218,9 +219,11 @@ def node_name(sections, socks_section):
     return ""
 
 
-def collect_passwall_package(package, ports):
+def collect_passwall_package(package):
     result = []
-    sections = parse_uci_package(package)
+    sections, complete = parse_uci_package(package)
+    if not complete:
+        return result, False
     for section_id, section in sections.items():
         if section.get(".type") != "socks":
             continue
@@ -241,14 +244,14 @@ def collect_passwall_package(package, ports):
                 "openwrt_port": port,
                 "http_port": to_port(section.get("http_port")),
                 "node_ref": node_ref,
-                "listen_status": "listening" if port in ports else "closed",
+                "listen_status": "listening" if socks_handshake_ok(port) else "closed",
                 "enabled": str(section.get("enabled", "0")).lower() in {"1", "true", "yes", "on"},
             }
         )
-    return result
+    return result, True
 
 
-def collect_extra_socks(ports):
+def collect_extra_socks():
     result = []
     extra = uci_get("extra_socks", "")
     for item in [part.strip() for part in extra.replace(";", ",").split(",") if part.strip()]:
@@ -269,7 +272,7 @@ def collect_extra_socks(ports):
                 "openwrt_port": port,
                 "http_port": 0,
                 "node_ref": "",
-                "listen_status": "listening" if port in ports else "closed",
+                "listen_status": "listening" if socks_handshake_ok(port) else "closed",
                 "enabled": True,
             }
         )
@@ -277,20 +280,26 @@ def collect_extra_socks(ports):
 
 
 def collect_socks_nodes():
-    ports = listening_ports()
     nodes = []
+    complete = True
     if cfg_bool("include_passwall", True):
-        nodes.extend(collect_passwall_package("passwall", ports))
+        found, ok = collect_passwall_package("passwall")
+        nodes.extend(found)
+        complete = complete and ok
     if cfg_bool("include_passwall2", True):
-        nodes.extend(collect_passwall_package("passwall2", ports))
-    nodes.extend(collect_extra_socks(ports))
-    return nodes
+        found, ok = collect_passwall_package("passwall2")
+        nodes.extend(found)
+        complete = complete and ok
+    nodes.extend(collect_extra_socks())
+    return nodes, complete
 
 
 def build_report():
+    nodes, snapshot_complete = collect_socks_nodes()
     return {
         "hostname": socket.gethostname(),
-        "socks": collect_socks_nodes(),
+        "snapshot_complete": snapshot_complete,
+        "socks": nodes,
     }
 
 
