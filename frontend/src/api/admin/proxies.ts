@@ -8,6 +8,11 @@ import type {
   Proxy,
   ProxyAccountSummary,
   ProxyQualityCheckResult,
+  SoftRouterAgent,
+  SoftRouterMappingRequest,
+  SoftRouterOverview,
+  SoftRouterProxyConfig,
+  SoftRouterProxyMapping,
   CreateProxyRequest,
   UpdateProxyRequest,
   PaginatedResponse,
@@ -255,6 +260,69 @@ export async function importData(payload: {
   return data
 }
 
+export async function getSoftRouterOverview(): Promise<SoftRouterOverview> {
+  const { data } = await apiClient.get<SoftRouterOverview>('/admin/proxies/soft-router')
+  return data
+}
+
+export async function updateSoftRouterConfig(
+  config: Partial<SoftRouterProxyConfig>
+): Promise<SoftRouterProxyConfig> {
+  const { data } = await apiClient.put<SoftRouterProxyConfig>('/admin/proxies/soft-router/config', config)
+  return data
+}
+
+export async function createSoftRouterAgent(payload: {
+  name: string
+  description?: string
+}): Promise<SoftRouterAgent> {
+  const { data } = await apiClient.post<SoftRouterAgent>('/admin/proxies/soft-router/agents', payload)
+  return data
+}
+
+export async function updateSoftRouterAgent(
+  id: number,
+  payload: { name: string; description?: string }
+): Promise<SoftRouterAgent> {
+  const { data } = await apiClient.put<SoftRouterAgent>(`/admin/proxies/soft-router/agents/${id}`, payload)
+  return data
+}
+
+export async function deleteSoftRouterAgent(id: number): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/proxies/soft-router/agents/${id}`)
+  return data
+}
+
+export async function rotateSoftRouterAgentToken(id: number): Promise<SoftRouterAgent> {
+  const { data } = await apiClient.post<SoftRouterAgent>(`/admin/proxies/soft-router/agents/${id}/rotate-token`)
+  return data
+}
+
+export async function createSoftRouterMapping(
+  payload: SoftRouterMappingRequest
+): Promise<SoftRouterProxyMapping> {
+  const { data } = await apiClient.post<SoftRouterProxyMapping>('/admin/proxies/soft-router/mappings', payload)
+  return data
+}
+
+export async function updateSoftRouterMapping(
+  id: number,
+  payload: SoftRouterMappingRequest
+): Promise<SoftRouterProxyMapping> {
+  const { data } = await apiClient.put<SoftRouterProxyMapping>(`/admin/proxies/soft-router/mappings/${id}`, payload)
+  return data
+}
+
+export async function deleteSoftRouterMapping(id: number): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/proxies/soft-router/mappings/${id}`)
+  return data
+}
+
+export async function reconcileSoftRouter(): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>('/admin/proxies/soft-router/reconcile')
+  return data
+}
+
 export const proxiesAPI = {
   list,
   getAll,
@@ -271,7 +339,17 @@ export const proxiesAPI = {
   batchCreate,
   batchDelete,
   exportData,
-  importData
+  importData,
+  getSoftRouterOverview,
+  updateSoftRouterConfig,
+  createSoftRouterAgent,
+  updateSoftRouterAgent,
+  deleteSoftRouterAgent,
+  rotateSoftRouterAgentToken,
+  createSoftRouterMapping,
+  updateSoftRouterMapping,
+  deleteSoftRouterMapping,
+  reconcileSoftRouter
 }
 
 export default proxiesAPI

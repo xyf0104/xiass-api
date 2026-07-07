@@ -772,6 +772,101 @@ export interface ProxyQualityCheckResult {
   items: ProxyQualityCheckItem[]
 }
 
+export interface SoftRouterProxyConfig {
+  enabled: boolean
+  public_host: string
+  gateway_listen_host: string
+  upstream_host: string
+  frp_server_host: string
+  frp_server_port: number
+  frp_token: string
+  raw_port_start: number
+  raw_port_end: number
+  public_port_start: number
+  public_port_end: number
+  default_username: string
+  default_password: string
+  agent_poll_seconds: number
+  updated_at: string
+}
+
+export interface SoftRouterAgent {
+  id: number
+  name: string
+  token?: string
+  hostname: string
+  description: string
+  status: 'online' | 'offline' | string
+  last_seen_at?: string | null
+  last_error: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SoftRouterProxyMapping {
+  id: number
+  agent_id: number
+  node_id?: number | null
+  name: string
+  openwrt_port: number
+  raw_remote_port: number
+  public_port: number
+  username: string
+  password?: string
+  enabled: boolean
+  proxy_id?: number | null
+  status: 'pending' | 'running' | 'disabled' | 'error' | string
+  last_error: string
+  last_test_at?: string | null
+  last_exit_ip: string
+  created_at: string
+  updated_at: string
+  public_url?: string
+  nowind_url?: string
+}
+
+export interface SoftRouterSocksNode {
+  id: number
+  agent_id: number
+  openwrt_id: string
+  node_key: string
+  name: string
+  openwrt_port: number
+  http_port: number
+  node_ref: string
+  listen_status: string
+  enabled: boolean
+  last_seen_at?: string | null
+  created_at: string
+  updated_at: string
+  mapping?: SoftRouterProxyMapping | null
+}
+
+export interface SoftRouterRuntimeStatus {
+  enabled: boolean
+  listeners: Record<string, { running: boolean; error?: string }>
+}
+
+export interface SoftRouterOverview {
+  config: SoftRouterProxyConfig
+  agents: SoftRouterAgent[]
+  nodes: SoftRouterSocksNode[]
+  mappings: SoftRouterProxyMapping[]
+  runtime: SoftRouterRuntimeStatus
+}
+
+export interface SoftRouterMappingRequest {
+  agent_id?: number
+  node_id?: number | null
+  name?: string
+  openwrt_port?: number
+  raw_remote_port?: number
+  public_port?: number
+  username?: string
+  password?: string
+  enabled: boolean
+}
+
 // Gemini credentials structure for OAuth and API Key authentication
 export interface GeminiCredentials {
   // API Key authentication

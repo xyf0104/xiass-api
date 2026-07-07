@@ -388,6 +388,20 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	proxies := admin.Group("/proxies")
 	{
+		softRouter := proxies.Group("/soft-router")
+		{
+			softRouter.GET("", h.Admin.SoftRouterProxy.Overview)
+			softRouter.PUT("/config", h.Admin.SoftRouterProxy.UpdateConfig)
+			softRouter.POST("/reconcile", h.Admin.SoftRouterProxy.Reconcile)
+			softRouter.POST("/agents", h.Admin.SoftRouterProxy.CreateAgent)
+			softRouter.PUT("/agents/:id", h.Admin.SoftRouterProxy.UpdateAgent)
+			softRouter.DELETE("/agents/:id", h.Admin.SoftRouterProxy.DeleteAgent)
+			softRouter.POST("/agents/:id/rotate-token", h.Admin.SoftRouterProxy.RotateAgentToken)
+			softRouter.POST("/mappings", h.Admin.SoftRouterProxy.CreateMapping)
+			softRouter.PUT("/mappings/:id", h.Admin.SoftRouterProxy.UpdateMapping)
+			softRouter.DELETE("/mappings/:id", h.Admin.SoftRouterProxy.DeleteMapping)
+		}
+
 		proxies.GET("", h.Admin.Proxy.List)
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		proxies.GET("/data", h.Admin.Proxy.ExportData)
@@ -402,6 +416,14 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		proxies.GET("/:id/accounts", h.Admin.Proxy.GetProxyAccounts)
 		proxies.POST("/batch-delete", h.Admin.Proxy.BatchDelete)
 		proxies.POST("/batch", h.Admin.Proxy.BatchCreate)
+	}
+}
+
+func RegisterSoftRouterAgentRoutes(v1 *gin.RouterGroup, h *handler.Handlers) {
+	agent := v1.Group("/soft-router/agent")
+	{
+		agent.POST("/report", h.Admin.SoftRouterProxy.AgentReport)
+		agent.GET("/config", h.Admin.SoftRouterProxy.AgentConfig)
 	}
 }
 

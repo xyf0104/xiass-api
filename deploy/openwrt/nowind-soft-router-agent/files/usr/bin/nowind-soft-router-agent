@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+CONFIG_NAME = "nowind_soft_router_agent"
+SECTION = "main"
+RUN_DIR = Path("/var/run/nowind-soft-router-agent")
+DEFAULT_LOG = Path("/var/log/nowind-soft-router-agent.log")
+
+
+def run(args, timeout=10):
+    try:
+        proc = subprocess.run(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+    except Exception as exc:
+        return False, "", str(exc)
+
+
+def uci_get(option, default=""):
+    ok, out, _ = run(["uci", "-q", "get", f"{CONFIG_NAME}.{SECTION}.{option}"])
+    return out if ok and out != "" else default
+
+
+def cfg_bool(option, default=False):
+    value = uci_get(option, "1" if default else "0").strip().lower()
+    return value in {"1", "true", "yes", "on", "enabled"}
+
+
+def cfg_int(option, default):
+    try:
+        return int(uci_get(option, str(default)))
+    except ValueError:
+        return default
+
+
+def log_file():
+    return Path(uci_get("log_file", str(DEFAULT_LOG)) or str(DEFAULT_LOG))
+
+
+def log(message):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}"
+    try:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+    try:
+        subprocess.run(["logger", "-t", "nowind-soft-router-agent", message], timeout=3)
+    except Exception:
+        pass
+    print(line, flush=True)
+
+
+def valid_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return False
+    return 1 <= port <= 65535
+
+
+def to_port(value, default=0):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
+
+
+def uci_show(package):
+    ok, out, _ = run(["uci", "-q", "show", package])
+    return out.splitlines() if ok else []
+
+
+def strip_uci_value(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        value = value[1:-1].replace("'\\''", "'")
+    return value
+
+
+def parse_uci_package(package):
+    sections = {}
+    for line in uci_show(package):
+        if "=" not in line:
+            continue
+        key, raw = line.split("=", 1)
+        value = strip_uci_value(raw)
+        prefix = package + "."
+        if not key.startswith(prefix):
+            continue
+        rest = key[len(prefix):]
+        if "." not in rest:
+            sections.setdefault(rest, {})[".type"] = value
+            continue
+        section, option = rest.split(".", 1)
+        sections.setdefault(section, {})[option] = value
+    return sections
+
+
+def listening_ports():
+    ok, out, _ = run(["netstat", "-lnt"], timeout=6)
+    ports = set()
+    if not ok:
+        return ports
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        local = parts[3]
+        if ":" not in local:
+            continue
+        port = local.rsplit(":", 1)[-1]
+        if port.isdigit():
+            ports.add(int(port))
+    return ports
+
+
+def node_name(sections, socks_section):
+    node_ref = socks_section.get("node", "")
+    if node_ref:
+        node = sections.get(node_ref, {})
+        for key in ("remarks", "remark", "name"):
+            if node.get(key):
+                return node[key]
+    for key in ("remarks", "remark", "name"):
+        if socks_section.get(key):
+            return socks_section[key]
+    return ""
+
+
+def collect_passwall_package(package, ports):
+    result = []
+    sections = parse_uci_package(package)
+    for section_id, section in sections.items():
+        if section.get(".type") != "socks":
+            continue
+        port = to_port(section.get("port"))
+        if not port:
+            continue
+        node_ref = section.get("node", "")
+        name = node_name(sections, section) or f"{package} SOCKS {port}"
+        if node_ref:
+            node_key = f"{package}:{node_ref}:{port}"
+        else:
+            node_key = f"{package}:{section_id}:{port}"
+        result.append(
+            {
+                "id": f"{package}.{section_id}",
+                "node_key": node_key,
+                "name": name,
+                "openwrt_port": port,
+                "http_port": to_port(section.get("http_port")),
+                "node_ref": node_ref,
+                "listen_status": "listening" if port in ports else "closed",
+                "enabled": str(section.get("enabled", "0")).lower() in {"1", "true", "yes", "on"},
+            }
+        )
+    return result
+
+
+def collect_extra_socks(ports):
+    result = []
+    extra = uci_get("extra_socks", "")
+    for item in [part.strip() for part in extra.replace(";", ",").split(",") if part.strip()]:
+        if ":" in item:
+            port_text, name = item.split(":", 1)
+            name = name.strip() or f"SOCKS {port_text.strip()}"
+        else:
+            port_text = item
+            name = f"SOCKS {port_text.strip()}"
+        port = to_port(port_text.strip())
+        if not port:
+            continue
+        result.append(
+            {
+                "id": f"extra.{port}",
+                "node_key": f"extra:{port}",
+                "name": name,
+                "openwrt_port": port,
+                "http_port": 0,
+                "node_ref": "",
+                "listen_status": "listening" if port in ports else "closed",
+                "enabled": True,
+            }
+        )
+    return result
+
+
+def collect_socks_nodes():
+    ports = listening_ports()
+    nodes = []
+    if cfg_bool("include_passwall", True):
+        nodes.extend(collect_passwall_package("passwall", ports))
+    if cfg_bool("include_passwall2", True):
+        nodes.extend(collect_passwall_package("passwall2", ports))
+    nodes.extend(collect_extra_socks(ports))
+    return nodes
+
+
+def build_report():
+    return {
+        "hostname": socket.gethostname(),
+        "socks": collect_socks_nodes(),
+    }
+
+
+def api_request(method, path, payload=None):
+    panel_url = uci_get("panel_url", "").rstrip("/")
+    token = uci_get("agent_token", "")
+    if not panel_url or not token:
+        raise RuntimeError("panel_url or agent_token is empty")
+
+    body = None
+    headers = {"Authorization": f"Bearer {token}"}
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(panel_url + path, data=body, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw) if raw else {}
+
+    if isinstance(data, dict) and "code" in data:
+        if data.get("code") != 0:
+            raise RuntimeError(data.get("message") or f"API error: {data.get('code')}")
+        return data.get("data") or {}
+    return data
+
+
+def frpc_pid_file():
+    return Path(uci_get("frpc_pid_file", str(RUN_DIR / "frpc.pid")) or str(RUN_DIR / "frpc.pid"))
+
+
+def read_pid():
+    try:
+        text = frpc_pid_file().read_text(encoding="utf-8").strip()
+        return int(text) if text else 0
+    except Exception:
+        return 0
+
+
+def pid_running(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def stop_frpc():
+    pid = read_pid()
+    if pid_running(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        deadline = time.time() + 3
+        while time.time() < deadline and pid_running(pid):
+            time.sleep(0.2)
+        if pid_running(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    try:
+        frpc_pid_file().unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+def frpc_running():
+    return pid_running(read_pid())
+
+
+def start_frpc():
+    frpc_bin = uci_get("frpc_bin", "/usr/bin/frpc")
+    frpc_config = Path(uci_get("frpc_config", "/etc/frp/nowind-soft-router-frpc.ini"))
+    if frpc_running():
+        return
+    if not frpc_config.exists():
+        return
+    if not Path(frpc_bin).exists():
+        log(f"frpc binary not found: {frpc_bin}")
+        return
+
+    pid_file = frpc_pid_file()
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file().parent.mkdir(parents=True, exist_ok=True)
+    log_fh = log_file().open("a", encoding="utf-8")
+    proc = subprocess.Popen([frpc_bin, "-c", str(frpc_config)], stdout=log_fh, stderr=subprocess.STDOUT)
+    pid_file.write_text(str(proc.pid), encoding="utf-8")
+    log(f"started independent frpc pid={proc.pid} config={frpc_config}")
+
+
+def restart_frpc():
+    stop_frpc()
+    start_frpc()
+
+
+def safe_frp_name(value):
+    out = []
+    for ch in str(value):
+        if ("a" <= ch <= "z") or ("A" <= ch <= "Z") or ("0" <= ch <= "9") or ch in "._-":
+            out.append(ch)
+        else:
+            out.append("-")
+    name = "".join(out).strip("-")
+    return name or "nowind-socks"
+
+
+def render_frpc_config(desired):
+    if not desired.get("enabled"):
+        return ""
+
+    host = str(desired.get("frp_server_host") or "").strip()
+    port = to_port(desired.get("frp_server_port"))
+    token = str(desired.get("frp_token") or "").strip()
+    if not host or not port or not token:
+        raise RuntimeError("desired config missing frp_server_host/frp_server_port/frp_token")
+
+    mappings = []
+    for item in desired.get("mappings") or []:
+        if not item.get("enabled", True):
+            continue
+        openwrt_port = to_port(item.get("openwrt_port"))
+        raw_port = to_port(item.get("raw_remote_port"))
+        if not openwrt_port or not raw_port:
+            continue
+        name = safe_frp_name(item.get("name") or f"nowind-{item.get('id')}-{raw_port}")
+        mappings.append((name, openwrt_port, raw_port))
+
+    if not mappings:
+        return ""
+
+    local_ip = uci_get("local_ip", "127.0.0.1") or "127.0.0.1"
+    lines = [
+        "[common]",
+        f"server_addr = {host}",
+        f"server_port = {port}",
+        f"token = {token}",
+        "tcp_mux = true",
+        "login_fail_exit = false",
+        "log_level = info",
+        "",
+    ]
+    for name, openwrt_port, raw_port in mappings:
+        lines.extend(
+            [
+                f"[{name}]",
+                "type = tcp",
+                f"local_ip = {local_ip}",
+                f"local_port = {openwrt_port}",
+                f"remote_port = {raw_port}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def apply_desired_config(desired):
+    text = render_frpc_config(desired)
+    frpc_config = Path(uci_get("frpc_config", "/etc/frp/nowind-soft-router-frpc.ini"))
+    if not text:
+        stop_frpc()
+        return
+
+    frpc_config.parent.mkdir(parents=True, exist_ok=True)
+    old = frpc_config.read_text(encoding="utf-8") if frpc_config.exists() else ""
+    if old != text:
+        frpc_config.write_text(text, encoding="utf-8")
+        os.chmod(frpc_config, 0o600)
+        log(f"frpc config changed: {frpc_config}")
+        restart_frpc()
+    else:
+        start_frpc()
+
+
+def sleep_interval(desired=None):
+    interval = cfg_int("interval", 20)
+    if isinstance(desired, dict):
+        interval = to_port(desired.get("poll_seconds"), interval)
+    if interval < 5:
+        interval = 5
+    time.sleep(interval)
+
+
+def loop():
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        if not cfg_bool("enabled", False):
+            stop_frpc()
+            sleep_interval()
+            continue
+        desired = None
+        try:
+            report = build_report()
+            api_request("POST", "/api/v1/soft-router/agent/report", report)
+            desired = api_request("GET", "/api/v1/soft-router/agent/config")
+            apply_desired_config(desired)
+        except urllib.error.HTTPError as exc:
+            log(f"agent HTTP error: {exc.code} {exc.reason}")
+        except Exception as exc:
+            log(f"agent error: {exc}")
+        sleep_interval(desired)
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--stop-frpc":
+        stop_frpc()
+        return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "--once":
+        print(json.dumps(build_report(), ensure_ascii=False, indent=2))
+        return 0
+    try:
+        loop()
+    finally:
+        stop_frpc()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

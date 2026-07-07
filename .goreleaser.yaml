@@ -42,7 +42,7 @@ archives:
     files:
       - LICENSE*
       - README*
-      - deploy/*
+      - deploy/**
 
 checksum:
   name_template: 'checksums.txt'

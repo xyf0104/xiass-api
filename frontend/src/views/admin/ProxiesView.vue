@@ -1,6 +1,33 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <div class="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200 dark:border-dark-700">
+      <button
+        type="button"
+        @click="activeTab = 'proxies'"
+        :class="[
+          '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+          activeTab === 'proxies'
+            ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+        ]"
+      >
+        代理列表
+      </button>
+      <button
+        type="button"
+        @click="activeTab = 'soft-router'"
+        :class="[
+          '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+          activeTab === 'soft-router'
+            ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+        ]"
+      >
+        代理节点
+      </button>
+    </div>
+
+    <TablePageLayout v-if="activeTab === 'proxies'">
       <template #filters>
         <div class="flex flex-wrap items-center gap-3">
           <!-- Left: Search + Filters -->
@@ -365,6 +392,8 @@
         />
       </template>
     </TablePageLayout>
+
+    <SoftRouterProxyPanel v-else @changed="loadProxies" />
 
     <!-- Create Proxy Modal -->
     <BaseDialog
@@ -978,6 +1007,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
+import SoftRouterProxyPanel from '@/components/admin/proxy/SoftRouterProxyPanel.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1038,6 +1068,7 @@ const editStatusOptions = computed(() => [
 ])
 
 const proxies = ref<Proxy[]>([])
+const activeTab = ref<'proxies' | 'soft-router'>('proxies')
 const visiblePasswordIds = reactive(new Set<number>())
 const copyMenuProxyId = ref<number | null>(null)
 const loading = ref(false)

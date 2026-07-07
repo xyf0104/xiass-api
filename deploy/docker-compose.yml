@@ -40,6 +40,9 @@ services:
         hard: 100000
     ports:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      # Public authenticated SOCKS ports for OpenWrt/PassWall proxy nodes.
+      # Keep this range aligned with the admin panel's "公网 SOCKS 端口起止".
+      - "${BIND_HOST:-0.0.0.0}:${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1081-1100}:${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1081-1100}"
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
@@ -50,6 +53,10 @@ services:
       # gateway.forced_codex_instructions_template_file at /app/data/codex-instructions.md.tmpl
       # in config.yaml.
       # - ./codex-instructions.md.tmpl:/app/data/codex-instructions.md.tmpl:ro
+    extra_hosts:
+      # Lets the container reach frps raw TCP ports listening on the Docker host.
+      # In the proxy-node panel, set "Nowind 内部访问地址" to host.docker.internal.
+      - "host.docker.internal:host-gateway"
     environment:
       # =======================================================================
       # Auto Setup (REQUIRED for Docker deployment)
@@ -293,4 +300,3 @@ volumes:
 networks:
   sub2api-network:
     driver: bridge
-

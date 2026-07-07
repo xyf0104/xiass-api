@@ -1,0 +1,30 @@
+# Example frps config for Nowind soft-router proxy nodes.
+#
+# Use this as a separate US frps service, or merge the relevant fields into an
+# existing US frps service. Do not reuse or modify an unrelated HK/OpenWrt frp
+# service if it is already serving LuCI.
+
+bindPort = 7010
+
+# Recommended:
+# - Binary/systemd Nowind on the same host: use "127.0.0.1" and set panel
+#   upstream_host to 127.0.0.1.
+# - Docker Nowind: use the Docker bridge gateway address that the container can
+#   reach, for example "172.18.0.1", and set panel upstream_host to
+#   host.docker.internal.
+# If you bind this to 0.0.0.0, block 12081-12150 from the public Internet with
+# a firewall; these raw FRP ports are internal upstream ports without SOCKS auth.
+proxyBindAddr = "172.18.0.1"
+
+auth.method = "token"
+auth.token = "change_this_frp_token"
+
+# Only allow the raw upstream ports managed by the Nowind panel.
+allowPorts = [
+  { start = 12081, end = 12150 }
+]
+
+log.to = "/var/log/frps-nowind-soft-router.log"
+log.level = "info"
+log.maxDays = 7
+

@@ -1,0 +1,800 @@
+package service
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+)
+
+const (
+	SoftRouterAgentStatusOnline  = "online"
+	SoftRouterAgentStatusOffline = "offline"
+
+	SoftRouterMappingStatusPending  = "pending"
+	SoftRouterMappingStatusRunning  = "running"
+	SoftRouterMappingStatusDisabled = "disabled"
+	SoftRouterMappingStatusError    = "error"
+)
+
+var (
+	ErrSoftRouterAgentNotFound   = infraerrors.NotFound("SOFT_ROUTER_AGENT_NOT_FOUND", "soft router agent not found")
+	ErrSoftRouterNodeNotFound    = infraerrors.NotFound("SOFT_ROUTER_NODE_NOT_FOUND", "soft router SOCKS node not found")
+	ErrSoftRouterMappingNotFound = infraerrors.NotFound("SOFT_ROUTER_MAPPING_NOT_FOUND", "soft router proxy mapping not found")
+)
+
+type SoftRouterProxyConfig struct {
+	Enabled           bool      `json:"enabled"`
+	PublicHost        string    `json:"public_host"`
+	GatewayListenHost string    `json:"gateway_listen_host"`
+	UpstreamHost      string    `json:"upstream_host"`
+	FRPServerHost     string    `json:"frp_server_host"`
+	FRPServerPort     int       `json:"frp_server_port"`
+	FRPToken          string    `json:"frp_token"`
+	RawPortStart      int       `json:"raw_port_start"`
+	RawPortEnd        int       `json:"raw_port_end"`
+	PublicPortStart   int       `json:"public_port_start"`
+	PublicPortEnd     int       `json:"public_port_end"`
+	DefaultUsername   string    `json:"default_username"`
+	DefaultPassword   string    `json:"default_password"`
+	AgentPollSeconds  int       `json:"agent_poll_seconds"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type SoftRouterAgent struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Token       string     `json:"token,omitempty"`
+	Hostname    string     `json:"hostname"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	LastError   string     `json:"last_error"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type SoftRouterSocksNode struct {
+	ID           int64                   `json:"id"`
+	AgentID      int64                   `json:"agent_id"`
+	OpenWrtID    string                  `json:"openwrt_id"`
+	NodeKey      string                  `json:"node_key"`
+	Name         string                  `json:"name"`
+	OpenWrtPort  int                     `json:"openwrt_port"`
+	HTTPPort     int                     `json:"http_port"`
+	NodeRef      string                  `json:"node_ref"`
+	ListenStatus string                  `json:"listen_status"`
+	Enabled      bool                    `json:"enabled"`
+	LastSeenAt   *time.Time              `json:"last_seen_at,omitempty"`
+	CreatedAt    time.Time               `json:"created_at"`
+	UpdatedAt    time.Time               `json:"updated_at"`
+	Mapping      *SoftRouterProxyMapping `json:"mapping,omitempty"`
+}
+
+type SoftRouterProxyMapping struct {
+	ID            int64      `json:"id"`
+	AgentID       int64      `json:"agent_id"`
+	NodeID        *int64     `json:"node_id,omitempty"`
+	Name          string     `json:"name"`
+	OpenWrtPort   int        `json:"openwrt_port"`
+	RawRemotePort int        `json:"raw_remote_port"`
+	PublicPort    int        `json:"public_port"`
+	Username      string     `json:"username"`
+	Password      string     `json:"password,omitempty"`
+	Enabled       bool       `json:"enabled"`
+	ProxyID       *int64     `json:"proxy_id,omitempty"`
+	Status        string     `json:"status"`
+	LastError     string     `json:"last_error"`
+	LastTestAt    *time.Time `json:"last_test_at,omitempty"`
+	LastExitIP    string     `json:"last_exit_ip"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	PublicURL     string     `json:"public_url,omitempty"`
+	NoWindURL     string     `json:"nowind_url,omitempty"`
+	EnabledSet    bool       `json:"-"`
+}
+
+type SoftRouterOverview struct {
+	Config   SoftRouterProxyConfig    `json:"config"`
+	Agents   []SoftRouterAgent        `json:"agents"`
+	Nodes    []SoftRouterSocksNode    `json:"nodes"`
+	Mappings []SoftRouterProxyMapping `json:"mappings"`
+	Runtime  SoftRouterRuntimeStatus  `json:"runtime"`
+}
+
+type SoftRouterRuntimeStatus struct {
+	Enabled   bool                           `json:"enabled"`
+	Listeners map[int64]SoftRouterListenInfo `json:"listeners"`
+}
+
+type SoftRouterListenInfo struct {
+	Running bool   `json:"running"`
+	Error   string `json:"error,omitempty"`
+}
+
+type SoftRouterAgentReportInput struct {
+	Hostname string
+	Nodes    []SoftRouterSocksNodeReport
+}
+
+type SoftRouterSocksNodeReport struct {
+	ID           string `json:"id"`
+	NodeKey      string `json:"node_key"`
+	Name         string `json:"name"`
+	OpenWrtPort  int    `json:"openwrt_port"`
+	HTTPPort     int    `json:"http_port"`
+	NodeRef      string `json:"node_ref"`
+	ListenStatus string `json:"listen_status"`
+	Enabled      bool   `json:"enabled"`
+}
+
+type SoftRouterAgentDesiredConfig struct {
+	Enabled       bool                           `json:"enabled"`
+	PanelURL      string                         `json:"panel_url,omitempty"`
+	FRPServerHost string                         `json:"frp_server_host"`
+	FRPServerPort int                            `json:"frp_server_port"`
+	FRPToken      string                         `json:"frp_token"`
+	PollSeconds   int                            `json:"poll_seconds"`
+	Mappings      []SoftRouterAgentMappingConfig `json:"mappings"`
+}
+
+type SoftRouterAgentMappingConfig struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Enabled       bool   `json:"enabled"`
+	OpenWrtPort   int    `json:"openwrt_port"`
+	RawRemotePort int    `json:"raw_remote_port"`
+}
+
+type SoftRouterRepository interface {
+	GetConfig(ctx context.Context) (*SoftRouterProxyConfig, error)
+	UpdateConfig(ctx context.Context, cfg *SoftRouterProxyConfig) (*SoftRouterProxyConfig, error)
+
+	ListAgents(ctx context.Context) ([]SoftRouterAgent, error)
+	GetAgentByID(ctx context.Context, id int64) (*SoftRouterAgent, error)
+	GetAgentByToken(ctx context.Context, token string) (*SoftRouterAgent, error)
+	CreateAgent(ctx context.Context, agent *SoftRouterAgent) error
+	UpdateAgent(ctx context.Context, agent *SoftRouterAgent) error
+	DeleteAgent(ctx context.Context, id int64) error
+	TouchAgent(ctx context.Context, id int64, hostname string, seenAt time.Time) error
+
+	UpsertReportedNodes(ctx context.Context, agentID int64, nodes []SoftRouterSocksNodeReport, seenAt time.Time) error
+	ListNodes(ctx context.Context) ([]SoftRouterSocksNode, error)
+	GetNodeByID(ctx context.Context, id int64) (*SoftRouterSocksNode, error)
+
+	ListMappings(ctx context.Context) ([]SoftRouterProxyMapping, error)
+	ListEnabledMappings(ctx context.Context) ([]SoftRouterProxyMapping, error)
+	GetMappingByID(ctx context.Context, id int64) (*SoftRouterProxyMapping, error)
+	CreateMapping(ctx context.Context, mapping *SoftRouterProxyMapping) error
+	UpdateMapping(ctx context.Context, mapping *SoftRouterProxyMapping) error
+	DeleteMapping(ctx context.Context, id int64) error
+	UpdateMappingProxy(ctx context.Context, id int64, proxyID *int64, status, lastError string) error
+}
+
+type SoftRouterProxyService struct {
+	repo      SoftRouterRepository
+	proxyRepo ProxyRepository
+	runtime   SoftRouterRuntime
+}
+
+type SoftRouterRuntime interface {
+	Reconcile(ctx context.Context, cfg SoftRouterProxyConfig, mappings []SoftRouterProxyMapping) error
+	Status() SoftRouterRuntimeStatus
+	Stop()
+}
+
+func NewSoftRouterProxyService(repo SoftRouterRepository, proxyRepo ProxyRepository, runtime SoftRouterRuntime) *SoftRouterProxyService {
+	svc := &SoftRouterProxyService{repo: repo, proxyRepo: proxyRepo, runtime: runtime}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = svc.Reconcile(ctx)
+	}()
+	return svc
+}
+
+func (s *SoftRouterProxyService) GetOverview(ctx context.Context) (*SoftRouterOverview, error) {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	agents, err := s.repo.ListAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := s.repo.ListNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mappings, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	attachSoftRouterURLs(*cfg, mappings)
+	attachMappingsToNodes(nodes, mappings)
+	status := SoftRouterRuntimeStatus{}
+	if s.runtime != nil {
+		status = s.runtime.Status()
+	}
+	return &SoftRouterOverview{
+		Config:   *cfg,
+		Agents:   agents,
+		Nodes:    nodes,
+		Mappings: mappings,
+		Runtime:  status,
+	}, nil
+}
+
+func (s *SoftRouterProxyService) GetConfig(ctx context.Context) (*SoftRouterProxyConfig, error) {
+	return s.repo.GetConfig(ctx)
+}
+
+func (s *SoftRouterProxyService) UpdateConfig(ctx context.Context, cfg *SoftRouterProxyConfig) (*SoftRouterProxyConfig, error) {
+	normalized, err := normalizeSoftRouterConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.repo.UpdateConfig(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	return out, s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) CreateAgent(ctx context.Context, input *SoftRouterAgent) (*SoftRouterAgent, error) {
+	if input == nil {
+		input = &SoftRouterAgent{}
+	}
+	agent := &SoftRouterAgent{
+		Name:        strings.TrimSpace(input.Name),
+		Description: strings.TrimSpace(input.Description),
+		Status:      SoftRouterAgentStatusOffline,
+	}
+	if agent.Name == "" {
+		agent.Name = "OpenWrt"
+	}
+	token, err := randomURLSecret(32)
+	if err != nil {
+		return nil, err
+	}
+	agent.Token = token
+	if err := s.repo.CreateAgent(ctx, agent); err != nil {
+		return nil, err
+	}
+	return agent, nil
+}
+
+func (s *SoftRouterProxyService) UpdateAgent(ctx context.Context, id int64, input *SoftRouterAgent) (*SoftRouterAgent, error) {
+	agent, err := s.repo.GetAgentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if input != nil {
+		if strings.TrimSpace(input.Name) != "" {
+			agent.Name = strings.TrimSpace(input.Name)
+		}
+		agent.Description = strings.TrimSpace(input.Description)
+	}
+	if err := s.repo.UpdateAgent(ctx, agent); err != nil {
+		return nil, err
+	}
+	return agent, nil
+}
+
+func (s *SoftRouterProxyService) DeleteAgent(ctx context.Context, id int64) error {
+	mappings, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range mappings {
+		if mappings[i].AgentID == id {
+			if err := s.DeleteMapping(ctx, mappings[i].ID); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.repo.DeleteAgent(ctx, id); err != nil {
+		return err
+	}
+	return s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) RotateAgentToken(ctx context.Context, id int64) (*SoftRouterAgent, error) {
+	agent, err := s.repo.GetAgentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	token, err := randomURLSecret(32)
+	if err != nil {
+		return nil, err
+	}
+	agent.Token = token
+	if err := s.repo.UpdateAgent(ctx, agent); err != nil {
+		return nil, err
+	}
+	return agent, nil
+}
+
+func (s *SoftRouterProxyService) ReportAgent(ctx context.Context, token string, input SoftRouterAgentReportInput) error {
+	agent, err := s.repo.GetAgentByToken(ctx, strings.TrimSpace(token))
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if err := s.repo.TouchAgent(ctx, agent.ID, strings.TrimSpace(input.Hostname), now); err != nil {
+		return err
+	}
+	return s.repo.UpsertReportedNodes(ctx, agent.ID, input.Nodes, now)
+}
+
+func (s *SoftRouterProxyService) GetDesiredConfig(ctx context.Context, token string) (*SoftRouterAgentDesiredConfig, error) {
+	agent, err := s.repo.GetAgentByToken(ctx, strings.TrimSpace(token))
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mappings := make([]SoftRouterAgentMappingConfig, 0, len(all))
+	for i := range all {
+		m := all[i]
+		if m.AgentID != agent.ID || !m.Enabled {
+			continue
+		}
+		mappings = append(mappings, SoftRouterAgentMappingConfig{
+			ID:            m.ID,
+			Name:          softRouterFRPProxyName(m),
+			Enabled:       m.Enabled,
+			OpenWrtPort:   m.OpenWrtPort,
+			RawRemotePort: m.RawRemotePort,
+		})
+	}
+	return &SoftRouterAgentDesiredConfig{
+		Enabled:       cfg.Enabled,
+		FRPServerHost: cfg.FRPServerHost,
+		FRPServerPort: cfg.FRPServerPort,
+		FRPToken:      cfg.FRPToken,
+		PollSeconds:   cfg.AgentPollSeconds,
+		Mappings:      mappings,
+	}, nil
+}
+
+func (s *SoftRouterProxyService) CreateMapping(ctx context.Context, input *SoftRouterProxyMapping) (*SoftRouterProxyMapping, error) {
+	if input == nil {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_MAPPING_INVALID", "mapping is required")
+	}
+	if !input.EnabledSet {
+		input.Enabled = true
+		input.EnabledSet = true
+	}
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mapping, err := s.normalizeMappingInput(ctx, *cfg, input, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.CreateMapping(ctx, mapping); err != nil {
+		return nil, err
+	}
+	if err := s.ensureProxyForMapping(ctx, *cfg, mapping); err != nil {
+		return nil, err
+	}
+	return mapping, s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) UpdateMapping(ctx context.Context, id int64, input *SoftRouterProxyMapping) (*SoftRouterProxyMapping, error) {
+	current, err := s.repo.GetMappingByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if input == nil {
+		input = &SoftRouterProxyMapping{}
+	}
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	merged := *current
+	if input.NodeID != nil {
+		merged.NodeID = input.NodeID
+	}
+	if strings.TrimSpace(input.Name) != "" {
+		merged.Name = strings.TrimSpace(input.Name)
+	}
+	if input.OpenWrtPort > 0 {
+		merged.OpenWrtPort = input.OpenWrtPort
+	}
+	if input.RawRemotePort > 0 {
+		merged.RawRemotePort = input.RawRemotePort
+	}
+	if input.PublicPort > 0 {
+		merged.PublicPort = input.PublicPort
+	}
+	if strings.TrimSpace(input.Username) != "" {
+		merged.Username = strings.TrimSpace(input.Username)
+	}
+	if strings.TrimSpace(input.Password) != "" {
+		merged.Password = strings.TrimSpace(input.Password)
+	}
+	if input.EnabledSet {
+		merged.Enabled = input.Enabled
+	}
+	normalized, err := s.normalizeMappingInput(ctx, *cfg, &merged, false)
+	if err != nil {
+		return nil, err
+	}
+	normalized.ID = id
+	normalized.ProxyID = current.ProxyID
+	if err := s.repo.UpdateMapping(ctx, normalized); err != nil {
+		return nil, err
+	}
+	if err := s.ensureProxyForMapping(ctx, *cfg, normalized); err != nil {
+		return nil, err
+	}
+	return normalized, s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) DeleteMapping(ctx context.Context, id int64) error {
+	mapping, err := s.repo.GetMappingByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if mapping.ProxyID != nil && *mapping.ProxyID > 0 {
+		proxy, err := s.proxyRepo.GetByID(ctx, *mapping.ProxyID)
+		if err != nil && !errors.Is(err, ErrProxyNotFound) {
+			return err
+		}
+		if err == nil && proxy != nil {
+			proxy.Status = StatusDisabled
+			if err := s.proxyRepo.Update(ctx, proxy); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.repo.DeleteMapping(ctx, id); err != nil {
+		return err
+	}
+	return s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) Reconcile(ctx context.Context) error {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return err
+	}
+	mappings, err := s.repo.ListEnabledMappings(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range mappings {
+		if err := s.ensureProxyForMapping(ctx, *cfg, &mappings[i]); err != nil {
+			return err
+		}
+	}
+	if s.runtime == nil {
+		return nil
+	}
+	return s.runtime.Reconcile(ctx, *cfg, mappings)
+}
+
+func (s *SoftRouterProxyService) normalizeMappingInput(ctx context.Context, cfg SoftRouterProxyConfig, input *SoftRouterProxyMapping, assignPorts bool) (*SoftRouterProxyMapping, error) {
+	agentID := input.AgentID
+	nodeID := input.NodeID
+	name := strings.TrimSpace(input.Name)
+	openwrtPort := input.OpenWrtPort
+	if nodeID != nil && *nodeID > 0 {
+		node, err := s.repo.GetNodeByID(ctx, *nodeID)
+		if err != nil {
+			return nil, err
+		}
+		agentID = node.AgentID
+		if name == "" {
+			name = node.Name
+		}
+		if openwrtPort == 0 {
+			openwrtPort = node.OpenWrtPort
+		}
+	}
+	if agentID <= 0 {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_AGENT_REQUIRED", "agent_id is required")
+	}
+	if openwrtPort <= 0 || openwrtPort > 65535 {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_OPENWRT_PORT_INVALID", "openwrt_port must be between 1 and 65535")
+	}
+	if name == "" {
+		name = "OpenWrt SOCKS " + strconv.Itoa(openwrtPort)
+	}
+	rawPort := input.RawRemotePort
+	publicPort := input.PublicPort
+	if assignPorts {
+		usedRaw, usedPublic, err := s.usedMappingPorts(ctx, input.ID)
+		if err != nil {
+			return nil, err
+		}
+		if rawPort == 0 {
+			rawPort = firstFreePort(cfg.RawPortStart, cfg.RawPortEnd, usedRaw)
+		}
+		if publicPort == 0 {
+			publicPort = firstFreePort(cfg.PublicPortStart, cfg.PublicPortEnd, usedPublic)
+		}
+	}
+	if !validPort(rawPort) || !portInRange(rawPort, cfg.RawPortStart, cfg.RawPortEnd) {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_PORT_INVALID", "raw_remote_port is outside the configured range")
+	}
+	if !validPort(publicPort) || !portInRange(publicPort, cfg.PublicPortStart, cfg.PublicPortEnd) {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_PORT_INVALID", "public_port is outside the configured range")
+	}
+	username := strings.TrimSpace(input.Username)
+	password := strings.TrimSpace(input.Password)
+	if username == "" {
+		username = strings.TrimSpace(cfg.DefaultUsername)
+	}
+	if password == "" {
+		password = strings.TrimSpace(cfg.DefaultPassword)
+	}
+	if username == "" || password == "" {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_AUTH_REQUIRED", "username and password are required for public SOCKS access")
+	}
+	status := input.Status
+	if status == "" {
+		status = SoftRouterMappingStatusPending
+	}
+	if !input.Enabled {
+		status = SoftRouterMappingStatusDisabled
+	}
+	return &SoftRouterProxyMapping{
+		ID:            input.ID,
+		AgentID:       agentID,
+		NodeID:        nodeID,
+		Name:          name,
+		OpenWrtPort:   openwrtPort,
+		RawRemotePort: rawPort,
+		PublicPort:    publicPort,
+		Username:      username,
+		Password:      password,
+		Enabled:       input.Enabled,
+		ProxyID:       input.ProxyID,
+		Status:        status,
+		LastError:     strings.TrimSpace(input.LastError),
+	}, nil
+}
+
+func (s *SoftRouterProxyService) usedMappingPorts(ctx context.Context, exceptID int64) (map[int]bool, map[int]bool, error) {
+	mappings, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw := map[int]bool{}
+	public := map[int]bool{}
+	for i := range mappings {
+		if mappings[i].ID == exceptID {
+			continue
+		}
+		raw[mappings[i].RawRemotePort] = true
+		public[mappings[i].PublicPort] = true
+	}
+	return raw, public, nil
+}
+
+func (s *SoftRouterProxyService) ensureProxyForMapping(ctx context.Context, cfg SoftRouterProxyConfig, mapping *SoftRouterProxyMapping) error {
+	if mapping == nil {
+		return nil
+	}
+	host := strings.TrimSpace(cfg.PublicHost)
+	if host == "" {
+		host = strings.TrimSpace(cfg.UpstreamHost)
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	status := StatusActive
+	if !mapping.Enabled {
+		status = StatusDisabled
+	}
+	proxy := &Proxy{
+		Name:           softRouterProxyName(mapping.Name),
+		Protocol:       "socks5",
+		Host:           host,
+		Port:           mapping.PublicPort,
+		Username:       mapping.Username,
+		Password:       mapping.Password,
+		Status:         status,
+		FallbackMode:   FallbackModeNone,
+		ExpiryWarnDays: 7,
+	}
+	if mapping.ProxyID != nil && *mapping.ProxyID > 0 {
+		existing, err := s.proxyRepo.GetByID(ctx, *mapping.ProxyID)
+		if err == nil && existing != nil {
+			existing.Name = proxy.Name
+			existing.Protocol = proxy.Protocol
+			existing.Host = proxy.Host
+			existing.Port = proxy.Port
+			existing.Username = proxy.Username
+			existing.Password = proxy.Password
+			existing.Status = proxy.Status
+			existing.FallbackMode = FallbackModeNone
+			existing.BackupProxyID = nil
+			existing.ExpiryWarnDays = 7
+			if err := s.proxyRepo.Update(ctx, existing); err != nil {
+				_ = s.repo.UpdateMappingProxy(ctx, mapping.ID, mapping.ProxyID, SoftRouterMappingStatusError, err.Error())
+				return err
+			}
+			mapping.Status = mappingStatusForEnabled(mapping.Enabled)
+			return s.repo.UpdateMappingProxy(ctx, mapping.ID, mapping.ProxyID, mapping.Status, "")
+		}
+	}
+	if err := s.proxyRepo.Create(ctx, proxy); err != nil {
+		_ = s.repo.UpdateMappingProxy(ctx, mapping.ID, nil, SoftRouterMappingStatusError, err.Error())
+		return err
+	}
+	mapping.ProxyID = &proxy.ID
+	mapping.Status = mappingStatusForEnabled(mapping.Enabled)
+	return s.repo.UpdateMappingProxy(ctx, mapping.ID, mapping.ProxyID, mapping.Status, "")
+}
+
+func normalizeSoftRouterConfig(cfg *SoftRouterProxyConfig) (*SoftRouterProxyConfig, error) {
+	if cfg == nil {
+		cfg = &SoftRouterProxyConfig{}
+	}
+	out := *cfg
+	out.PublicHost = strings.TrimSpace(out.PublicHost)
+	out.GatewayListenHost = strings.TrimSpace(out.GatewayListenHost)
+	if out.GatewayListenHost == "" {
+		out.GatewayListenHost = "0.0.0.0"
+	}
+	out.UpstreamHost = strings.TrimSpace(out.UpstreamHost)
+	if out.UpstreamHost == "" {
+		out.UpstreamHost = "127.0.0.1"
+	}
+	out.FRPServerHost = strings.TrimSpace(out.FRPServerHost)
+	if out.FRPServerPort == 0 {
+		out.FRPServerPort = 7010
+	}
+	if !validPort(out.FRPServerPort) {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_FRP_PORT_INVALID", "frp_server_port must be between 1 and 65535")
+	}
+	if out.RawPortStart == 0 {
+		out.RawPortStart = 12081
+	}
+	if out.RawPortEnd == 0 {
+		out.RawPortEnd = 12150
+	}
+	if out.PublicPortStart == 0 {
+		out.PublicPortStart = 1081
+	}
+	if out.PublicPortEnd == 0 {
+		out.PublicPortEnd = 1100
+	}
+	if !validPortRange(out.RawPortStart, out.RawPortEnd) {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_RANGE_INVALID", "raw port range is invalid")
+	}
+	if !validPortRange(out.PublicPortStart, out.PublicPortEnd) {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_RANGE_INVALID", "public port range is invalid")
+	}
+	if out.AgentPollSeconds <= 0 {
+		out.AgentPollSeconds = 20
+	}
+	if out.AgentPollSeconds < 5 {
+		out.AgentPollSeconds = 5
+	}
+	out.DefaultUsername = strings.TrimSpace(out.DefaultUsername)
+	out.DefaultPassword = strings.TrimSpace(out.DefaultPassword)
+	out.FRPToken = strings.TrimSpace(out.FRPToken)
+	return &out, nil
+}
+
+func attachMappingsToNodes(nodes []SoftRouterSocksNode, mappings []SoftRouterProxyMapping) {
+	byNodeID := map[int64]SoftRouterProxyMapping{}
+	for i := range mappings {
+		if mappings[i].NodeID != nil {
+			byNodeID[*mappings[i].NodeID] = mappings[i]
+		}
+	}
+	for i := range nodes {
+		if m, ok := byNodeID[nodes[i].ID]; ok {
+			copy := m
+			nodes[i].Mapping = &copy
+		}
+	}
+}
+
+func attachSoftRouterURLs(cfg SoftRouterProxyConfig, mappings []SoftRouterProxyMapping) {
+	for i := range mappings {
+		mappings[i].PublicURL = softRouterURL("socks5", cfg.PublicHost, mappings[i].PublicPort, mappings[i].Username, mappings[i].Password)
+		mappings[i].NoWindURL = softRouterURL("socks5", cfg.UpstreamHost, mappings[i].PublicPort, mappings[i].Username, mappings[i].Password)
+	}
+}
+
+func softRouterURL(scheme, host string, port int, username, password string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || port == 0 {
+		return ""
+	}
+	if username != "" {
+		auth := url.User(username)
+		if password != "" {
+			auth = url.UserPassword(username, password)
+		}
+		return fmt.Sprintf("%s://%s@%s", scheme, auth.String(), net.JoinHostPort(host, strconv.Itoa(port)))
+	}
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(port)))
+}
+
+func softRouterProxyName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "OpenWrt SOCKS"
+	}
+	return "OpenWrt - " + name
+}
+
+func softRouterFRPProxyName(mapping SoftRouterProxyMapping) string {
+	base := strings.ToLower(strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		case r >= '0' && r <= '9':
+			return r
+		default:
+			return '-'
+		}
+	}, mapping.Name))
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "socks"
+	}
+	return fmt.Sprintf("nowind-%d-%s-%d", mapping.ID, base, mapping.RawRemotePort)
+}
+
+func mappingStatusForEnabled(enabled bool) string {
+	if enabled {
+		return SoftRouterMappingStatusRunning
+	}
+	return SoftRouterMappingStatusDisabled
+}
+
+func randomURLSecret(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func validPort(port int) bool {
+	return port > 0 && port <= 65535
+}
+
+func validPortRange(start, end int) bool {
+	return validPort(start) && validPort(end) && start <= end
+}
+
+func portInRange(port, start, end int) bool {
+	return port >= start && port <= end
+}
+
+func firstFreePort(start, end int, used map[int]bool) int {
+	for port := start; port <= end; port++ {
+		if !used[port] {
+			return port
+		}
+	}
+	return 0
+}

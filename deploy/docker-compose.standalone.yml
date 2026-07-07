@@ -21,6 +21,9 @@ services:
         hard: 100000
     ports:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+      # Public authenticated SOCKS ports for OpenWrt/PassWall proxy nodes.
+      # Keep this range aligned with the admin panel's "公网 SOCKS 端口起止".
+      - "${BIND_HOST:-0.0.0.0}:${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1081-1100}:${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1081-1100}"
     volumes:
       - sub2api_data:/app/data
     extra_hosts:
