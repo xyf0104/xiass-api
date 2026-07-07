@@ -248,7 +248,9 @@ onMounted(() => {
   if (history) {
     try {
       baseUrlHistory.value = JSON.parse(history)
-    } catch(e){}
+    } catch {
+      baseUrlHistory.value = []
+    }
   }
 })
 

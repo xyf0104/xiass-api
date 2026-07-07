@@ -187,7 +187,7 @@ func (l *softRouterSocksListener) acceptLoop(ctx context.Context) {
 }
 
 func (l *softRouterSocksListener) handle(client net.Conn) {
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	_ = client.SetDeadline(time.Now().Add(3 * time.Minute))
 	targetHost, targetPort, err := l.acceptClient(client)
 	if err != nil {
@@ -199,7 +199,7 @@ func (l *softRouterSocksListener) handle(client net.Conn) {
 		_ = writeSocksReply(client, 5)
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if err := writeSocksReply(client, 0); err != nil {
 		return
 	}

@@ -119,7 +119,7 @@ func (r *softRouterRepository) ListAgents(ctx context.Context) ([]service.SoftRo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []service.SoftRouterAgent
 	for rows.Next() {
 		var item service.SoftRouterAgent
@@ -271,7 +271,7 @@ func (r *softRouterRepository) ListNodes(ctx context.Context) ([]service.SoftRou
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []service.SoftRouterSocksNode
 	for rows.Next() {
 		var item service.SoftRouterSocksNode
@@ -327,7 +327,7 @@ func (r *softRouterRepository) listMappings(ctx context.Context, enabledOnly boo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []service.SoftRouterProxyMapping
 	for rows.Next() {
 		var item service.SoftRouterProxyMapping
