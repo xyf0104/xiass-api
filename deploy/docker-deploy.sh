@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Sub2API Docker Deployment Preparation Script
+# NoWind API Docker Deployment Preparation Script
 # =============================================================================
-# This script prepares deployment files for Sub2API:
+# This script prepares deployment files for NoWind API:
 #   - Downloads docker-compose.local.yml and .env.example
 #   - Generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 #   - Creates necessary data directories
@@ -21,7 +21,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # GitHub raw content base URL
-GITHUB_RAW_URL="https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy"
 
 # Print colored message
 print_info() {
@@ -54,7 +54,7 @@ command_exists() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  Sub2API Deployment Preparation"
+    echo "  NoWind API Deployment Preparation"
     echo "=========================================="
     echo ""
 
@@ -114,11 +114,15 @@ main() {
         sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${JWT_SECRET}/" .env
         sed -i "s/^TOTP_ENCRYPTION_KEY=.*/TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}/" .env
         sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
+        grep -q '^SOFT_ROUTER_PROXY_RAW_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_RAW_PORT_RANGE=12083-12150' >> .env
+        grep -q '^SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=1101-1120' >> .env
     else
         # BSD sed (macOS)
         sed -i '' "s/^JWT_SECRET=.*/JWT_SECRET=${JWT_SECRET}/" .env
         sed -i '' "s/^TOTP_ENCRYPTION_KEY=.*/TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}/" .env
         sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
+        grep -q '^SOFT_ROUTER_PROXY_RAW_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_RAW_PORT_RANGE=12083-12150' >> .env
+        grep -q '^SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=1101-1120' >> .env
     fi
 
     # Create data directories
@@ -161,6 +165,9 @@ main() {
     echo ""
     echo "  4. Access Web UI:"
     echo "     http://localhost:8080"
+    echo ""
+    echo "  5. Install FRP for OpenWrt proxy nodes:"
+    echo "     Admin -> Proxies -> 代理节点 -> 安装 FRP"
     echo ""
     print_info "If admin password is not set in .env, it will be auto-generated."
     print_info "Check logs for the generated admin password on first startup."

@@ -65,6 +65,8 @@ sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=${ADMIN_PASSWORD}|" .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" .env
 sed -i "s|^TOTP_ENCRYPTION_KEY=.*|TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}|" .env
 sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" .env
+grep -q '^SOFT_ROUTER_PROXY_RAW_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_RAW_PORT_RANGE=12083-12150' >> .env
+grep -q '^SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=' .env || echo 'SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=1101-1120' >> .env
 
 echo -e "\n${YELLOW}▶ 开始拉取镜像并启动容器...${RESET}"
 docker compose pull
@@ -80,5 +82,6 @@ echo -e "📂 部署路径:   ${CYAN}${DEPLOY_DIR}${RESET}"
 echo -e "🌐 访问地址:   ${CYAN}http://${SERVER_IP}:${SERVER_PORT}${RESET}"
 echo -e "👤 管理员账号: ${CYAN}${ADMIN_EMAIL}${RESET}"
 echo -e "🔑 管理员密码: ${CYAN}${ADMIN_PASSWORD}${RESET}"
+echo -e "🧩 FRP 安装:   ${CYAN}登录后台 → 代理管理 → 代理节点 → 安装 FRP${RESET}"
 echo -e "${YELLOW}⚠️ 请妥善保管您的管理员账号密码，服务第一次启动可能需要 10-30 秒初始化。${RESET}"
 echo -e "${CYAN}======================================================${RESET}\n"

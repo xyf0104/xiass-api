@@ -88,6 +88,43 @@ func (h *SoftRouterProxyHandler) UpdateConfig(c *gin.Context) {
 	response.Success(c, cfg)
 }
 
+func (h *SoftRouterProxyHandler) FRPStatus(c *gin.Context) {
+	status, err := h.service.GetFRPStatus(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, status)
+}
+
+func (h *SoftRouterProxyHandler) InstallFRP(c *gin.Context) {
+	var req softRouterConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	result, err := h.service.InstallFRP(c.Request.Context(), service.SoftRouterFRPInstallInput{
+		PublicHost:        req.PublicHost,
+		GatewayListenHost: req.GatewayListenHost,
+		UpstreamHost:      req.UpstreamHost,
+		FRPServerHost:     req.FRPServerHost,
+		FRPServerPort:     req.FRPServerPort,
+		FRPToken:          req.FRPToken,
+		RawPortStart:      req.RawPortStart,
+		RawPortEnd:        req.RawPortEnd,
+		PublicPortStart:   req.PublicPortStart,
+		PublicPortEnd:     req.PublicPortEnd,
+		DefaultUsername:   req.DefaultUsername,
+		DefaultPassword:   req.DefaultPassword,
+		AgentPollSeconds:  req.AgentPollSeconds,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *SoftRouterProxyHandler) CreateAgent(c *gin.Context) {
 	var req softRouterAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

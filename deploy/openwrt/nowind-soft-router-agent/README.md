@@ -18,13 +18,8 @@ these paths by default:
 
 ## Server-Side Flow
 
-1. Deploy or update Nowind to v1.0.54.
-2. Make sure the Docker compose file exposes the public authenticated SOCKS
-   range, for example `1101-1120`.
-3. Run a US frps service for raw upstream ports, for example `12083-12150`.
-   See `deploy/frps-soft-router.example.toml`.
-4. In Nowind admin, open `代理管理 -> 代理节点`:
-   - Enable the feature.
+1. Deploy or update Nowind to v1.0.56 or newer.
+2. In Nowind admin, open `代理管理 -> 代理节点`:
    - `公网域名/IP`: public host such as `api.example.com`.
    - `Nowind 内部访问地址`: `host.docker.internal` for Docker, or `127.0.0.1`
      for binary/systemd deployment.
@@ -34,6 +29,11 @@ these paths by default:
    - `公网 SOCKS 端口起止`: authenticated public range, such as `1101-1120`.
    - Set a default SOCKS username and password.
    - Set the FRP token.
+3. Click `安装 FRP`. The panel installs an independent server-side frps service,
+   opens the relevant firewall ports when ufw/firewalld is active, and updates
+   the deployment `.env` ranges.
+4. Recreate the Nowind container when prompted so Docker publishes the selected
+   public SOCKS range.
 5. Create an OpenWrt Agent in the panel and copy its token.
 
 The raw FRP ports should not be opened to the public Internet. Public users

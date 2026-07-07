@@ -392,6 +392,8 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		{
 			softRouter.GET("", h.Admin.SoftRouterProxy.Overview)
 			softRouter.PUT("/config", h.Admin.SoftRouterProxy.UpdateConfig)
+			softRouter.GET("/frp/status", h.Admin.SoftRouterProxy.FRPStatus)
+			softRouter.POST("/frp/install", h.Admin.SoftRouterProxy.InstallFRP)
 			softRouter.POST("/reconcile", h.Admin.SoftRouterProxy.Reconcile)
 			softRouter.POST("/agents", h.Admin.SoftRouterProxy.CreateAgent)
 			softRouter.PUT("/agents/:id", h.Admin.SoftRouterProxy.UpdateAgent)

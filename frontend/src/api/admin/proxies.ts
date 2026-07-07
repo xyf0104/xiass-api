@@ -9,6 +9,8 @@ import type {
   ProxyAccountSummary,
   ProxyQualityCheckResult,
   SoftRouterAgent,
+  SoftRouterFRPInstallResult,
+  SoftRouterFRPStatus,
   SoftRouterMappingRequest,
   SoftRouterOverview,
   SoftRouterProxyConfig,
@@ -272,6 +274,18 @@ export async function updateSoftRouterConfig(
   return data
 }
 
+export async function getSoftRouterFRPStatus(): Promise<SoftRouterFRPStatus> {
+  const { data } = await apiClient.get<SoftRouterFRPStatus>('/admin/proxies/soft-router/frp/status')
+  return data
+}
+
+export async function installSoftRouterFRP(
+  config: Partial<SoftRouterProxyConfig>
+): Promise<SoftRouterFRPInstallResult> {
+  const { data } = await apiClient.post<SoftRouterFRPInstallResult>('/admin/proxies/soft-router/frp/install', config)
+  return data
+}
+
 export async function createSoftRouterAgent(payload: {
   name: string
   description?: string
@@ -342,6 +356,8 @@ export const proxiesAPI = {
   importData,
   getSoftRouterOverview,
   updateSoftRouterConfig,
+  getSoftRouterFRPStatus,
+  installSoftRouterFRP,
   createSoftRouterAgent,
   updateSoftRouterAgent,
   deleteSoftRouterAgent,

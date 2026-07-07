@@ -847,12 +847,34 @@ export interface SoftRouterRuntimeStatus {
   listeners: Record<string, { running: boolean; error?: string }>
 }
 
+export interface SoftRouterFRPStatus {
+  installed: boolean
+  install_supported: boolean
+  reason?: string
+  docker_socket_available: boolean
+  docker_available: boolean
+  control_port_open: boolean
+  raw_range_deployed: boolean
+  public_range_deployed: boolean
+  needs_restart: boolean
+  service_name: string
+  config_path: string
+  install_method: string
+  control_host: string
+  control_port: number
+  raw_port_range: string
+  public_port_range: string
+  deployed_raw_range?: string
+  deployed_public_range?: string
+}
+
 export interface SoftRouterOverview {
   config: SoftRouterProxyConfig
   agents: SoftRouterAgent[]
   nodes: SoftRouterSocksNode[]
   mappings: SoftRouterProxyMapping[]
   runtime: SoftRouterRuntimeStatus
+  frp_status?: SoftRouterFRPStatus
 }
 
 export interface SoftRouterMappingRequest {
@@ -865,6 +887,15 @@ export interface SoftRouterMappingRequest {
   username?: string
   password?: string
   enabled: boolean
+}
+
+export interface SoftRouterFRPInstallResult {
+  status: SoftRouterFRPStatus
+  config: SoftRouterProxyConfig
+  restart_required: boolean
+  message: string
+  log?: string
+  metadata?: Record<string, string>
 }
 
 // Gemini credentials structure for OAuth and API Key authentication

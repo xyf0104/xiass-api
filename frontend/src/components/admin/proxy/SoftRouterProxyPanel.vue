@@ -13,7 +13,11 @@
             <button class="btn btn-secondary" :disabled="loading" @click="loadOverview">
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button class="btn btn-secondary" :disabled="saving" @click="reconcile">
+            <button class="btn btn-warning" :disabled="saving || installingFRP" @click="installFRP">
+              <Icon name="download" size="md" class="mr-2" />
+              {{ frpInstallButtonText }}
+            </button>
+            <button class="btn btn-secondary" :disabled="saving || !softRouterReady" @click="reconcile">
               <Icon name="sync" size="md" class="mr-2" />
               同步监听
             </button>
@@ -22,6 +26,25 @@
               保存配置
             </button>
           </div>
+        </div>
+
+        <div
+          class="mb-4 rounded-lg border px-3 py-3 text-sm"
+          :class="frpStatus.installed && !frpStatus.needs_restart ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200'"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+              <span :class="['badge', frpStatus.installed && !frpStatus.needs_restart ? 'badge-success' : 'badge-warning']">{{ frpStatusLabel }}</span>
+              <span class="font-medium">FRP {{ frpStatus.control_host || configForm.upstream_host || '-' }}:{{ frpStatus.control_port || configForm.frp_server_port }}</span>
+              <span class="text-xs opacity-80">Raw {{ frpStatus.raw_port_range || rawRangeText }} · 公网 {{ frpStatus.public_port_range || publicRangeText }}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span :class="['badge', frpStatus.control_port_open ? 'badge-success' : 'badge-gray']">控制端口</span>
+              <span :class="['badge', frpStatus.raw_range_deployed ? 'badge-success' : 'badge-warning']">Raw 区间</span>
+              <span :class="['badge', frpStatus.public_range_deployed ? 'badge-success' : 'badge-warning']">公网区间</span>
+            </div>
+          </div>
+          <div v-if="frpStatusHint" class="mt-2 text-xs opacity-90">{{ frpStatusHint }}</div>
         </div>
 
         <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -88,13 +111,16 @@
             <h2 class="text-base font-semibold text-gray-900 dark:text-white">OpenWrt Agent</h2>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">在软路由 LuCI 里填入面板地址和 token 后会自动上报节点。</p>
           </div>
-          <button class="btn btn-primary" @click="openAgentDialog()">
+          <button class="btn btn-primary" :disabled="!softRouterReady" @click="openAgentDialog()">
             <Icon name="plus" size="md" class="mr-2" />
             新建
           </button>
         </div>
 
-        <div v-if="overview.agents.length === 0" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
+        <div v-if="!softRouterReady" class="rounded-lg border border-dashed border-amber-300 p-6 text-center text-sm text-amber-700 dark:border-amber-800 dark:text-amber-300">
+          请先安装 FRP 并重启 Nowind 容器
+        </div>
+        <div v-else-if="overview.agents.length === 0" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
           暂无 Agent
         </div>
         <div v-else class="space-y-3">
@@ -140,7 +166,7 @@
           <h2 class="text-base font-semibold text-gray-900 dark:text-white">PassWall SOCKS 节点</h2>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">新增 OpenWrt SOCKS 节点后，等待 Agent 上报即可在这里配置公网端口和认证。</p>
         </div>
-        <button class="btn btn-secondary" @click="openMappingDialog()">
+        <button class="btn btn-secondary" :disabled="!softRouterReady" @click="openMappingDialog()">
           <Icon name="plus" size="md" class="mr-2" />
           手动映射
         </button>
@@ -198,10 +224,10 @@
               </td>
               <td class="px-4 py-3 text-right">
                 <div class="flex justify-end gap-1">
-                  <button v-if="!row.mapping" class="btn btn-secondary btn-sm" @click="openMappingDialog(row.node || undefined)">
+                  <button v-if="!row.mapping" class="btn btn-secondary btn-sm" :disabled="!softRouterReady" @click="openMappingDialog(row.node || undefined)">
                     配置
                   </button>
-                  <button v-else class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700" @click="openMappingDialog(row.node || undefined, row.mapping)">
+                  <button v-else class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-dark-700" :disabled="!softRouterReady" @click="openMappingDialog(row.node || undefined, row.mapping)">
                     <Icon name="edit" size="sm" />
                   </button>
                   <button v-if="row.mapping" class="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20" @click="deleteMapping(row.mapping)">
@@ -284,6 +310,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { adminAPI } from '@/api/admin'
 import type {
   SoftRouterAgent,
+  SoftRouterFRPStatus,
   SoftRouterOverview,
   SoftRouterProxyConfig,
   SoftRouterProxyMapping,
@@ -326,11 +353,13 @@ const overview = reactive<SoftRouterOverview>({
   agents: [],
   nodes: [],
   mappings: [],
-  runtime: { enabled: false, listeners: {} }
+  runtime: { enabled: false, listeners: {} },
+  frp_status: undefined
 })
 const configForm = reactive<SoftRouterProxyConfig>(defaultConfig())
 const loading = ref(false)
 const saving = ref(false)
+const installingFRP = ref(false)
 
 const showAgentDialog = ref(false)
 const editingAgent = ref<SoftRouterAgent | null>(null)
@@ -387,6 +416,46 @@ const nodeOptions = computed(() =>
     value: node.id
   }))
 )
+
+const emptyFRPStatus = (): SoftRouterFRPStatus => ({
+  installed: false,
+  install_supported: false,
+  docker_socket_available: false,
+  docker_available: false,
+  control_port_open: false,
+  raw_range_deployed: false,
+  public_range_deployed: false,
+  needs_restart: false,
+  service_name: '',
+  config_path: '',
+  install_method: '',
+  control_host: '',
+  control_port: 0,
+  raw_port_range: '',
+  public_port_range: ''
+})
+
+const frpStatus = computed(() => overview.frp_status || emptyFRPStatus())
+const softRouterReady = computed(() => frpStatus.value.installed && !frpStatus.value.needs_restart)
+const rawRangeText = computed(() => `${configForm.raw_port_start}-${configForm.raw_port_end}`)
+const publicRangeText = computed(() => `${configForm.public_port_start}-${configForm.public_port_end}`)
+const frpStatusLabel = computed(() => {
+  if (frpStatus.value.installed && !frpStatus.value.needs_restart) return 'FRP 已就绪'
+  if (frpStatus.value.needs_restart) return '需要重启容器'
+  if (frpStatus.value.install_supported) return 'FRP 未安装'
+  return '无法自动安装'
+})
+const frpStatusHint = computed(() => {
+  if (frpStatus.value.installed && !frpStatus.value.needs_restart) return ''
+  if (frpStatus.value.needs_restart) return '宿主机 FRP 或 .env 已更新，请重启或重建当前 Nowind 容器，让新的公网 SOCKS 端口映射生效。'
+  if (!frpStatus.value.docker_socket_available) return '当前容器没有挂载 Docker Socket。新服务器请使用最新版一键安装脚本，或更新 compose 后重建容器。'
+  return frpStatus.value.reason || '填写上方端口范围和 FRP Token 后，可以从这里安装宿主机 FRP。'
+})
+const frpInstallButtonText = computed(() => {
+  if (installingFRP.value) return '安装中'
+  if (frpStatus.value.needs_restart) return '重新安装 FRP'
+  return frpStatus.value.installed ? '更新 FRP' : '安装 FRP'
+})
 
 function nextFreePort(start: number, end: number, used: number[]) {
   const taken = new Set(used.filter((port) => port > 0))
@@ -449,10 +518,27 @@ async function loadOverview() {
     overview.nodes = data.nodes || []
     overview.mappings = data.mappings || []
     overview.runtime = data.runtime || { enabled: false, listeners: {} }
+    overview.frp_status = data.frp_status || undefined
   } catch (error: any) {
     appStore.showError(error?.message || '加载代理节点失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function installFRP() {
+  installingFRP.value = true
+  try {
+    const result = await adminAPI.proxies.installSoftRouterFRP(configForm)
+    appStore.showWarning(result.message || 'FRP 已安装，请重启或重建当前 Nowind 容器')
+    if (result.config) assignConfig(result.config)
+    overview.frp_status = result.status
+    await loadOverview()
+    emit('changed')
+  } catch (error: any) {
+    appStore.showError(error?.message || '安装 FRP 失败')
+  } finally {
+    installingFRP.value = false
   }
 }
 

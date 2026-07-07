@@ -246,23 +246,31 @@ Public user -> api.example.com:1101 with SOCKS auth
 
 Setup summary:
 
-1. Expose `SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE`, for example `1101-1120`, in
-   Docker Compose. The bundled compose files already include this mapping.
-2. Set `SOFT_ROUTER_PROXY_RAW_PORT_RANGE`, for example `12083-12150`, to match
-   the raw ports allowed by the US frps service.
-   For a new server, you can install a separate frps service with:
+1. Install NoWind on the server:
    ```bash
-   cd deploy
-   FRP_TOKEN="$(openssl rand -hex 24)" sh frps-soft-router-install.sh
+   curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-install.sh | sudo bash
    ```
-   Or use `deploy/frps-soft-router.example.toml` as the starting point.
-3. In the admin panel, open `代理管理 -> 代理节点`, enable the feature, set the
-   public host, FRP server/token, raw port range, public port range, and default
-   SOCKS username/password.
+   If curl is unavailable:
+   ```bash
+   wget -qO- https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-install.sh | sudo bash
+   ```
+2. In the admin panel, open `代理管理 -> 代理节点`, fill the public host, FRP
+   control port, FRP token, Raw FRP range, public SOCKS range, and default
+   SOCKS username/password, then click `安装 FRP`.
+3. After the panel reports success, recreate the NoWind container so Docker
+   publishes the selected public SOCKS range:
+   ```bash
+   cd /opt/nowind-api/deploy
+   docker compose -f docker-compose.local.yml up -d --force-recreate sub2api
+   ```
 4. Create an OpenWrt Agent in that panel and copy its token.
 5. On OpenWrt, install the Python agent from
    `deploy/openwrt/nowind-soft-router-agent/`, then configure the panel URL and
    token in LuCI `Services -> NoWind Proxy Agent`.
+
+Manual fallback: `deploy/frps-soft-router-install.sh` and
+`deploy/frps-soft-router.example.toml` remain available for servers that cannot
+mount `/var/run/docker.sock` into the NoWind container.
 
 The OpenWrt agent writes an independent frpc config at
 `/etc/frp/nowind-soft-router-frpc.ini` and does not modify existing LuCI/FRP

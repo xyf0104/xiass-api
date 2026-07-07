@@ -54,6 +54,52 @@ type SoftRouterProxyConfig struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+type SoftRouterFRPStatus struct {
+	Installed             bool   `json:"installed"`
+	InstallSupported      bool   `json:"install_supported"`
+	Reason                string `json:"reason,omitempty"`
+	DockerSocketAvailable bool   `json:"docker_socket_available"`
+	DockerAvailable       bool   `json:"docker_available"`
+	ControlPortOpen       bool   `json:"control_port_open"`
+	RawRangeDeployed      bool   `json:"raw_range_deployed"`
+	PublicRangeDeployed   bool   `json:"public_range_deployed"`
+	NeedsRestart          bool   `json:"needs_restart"`
+	ServiceName           string `json:"service_name"`
+	ConfigPath            string `json:"config_path"`
+	InstallMethod         string `json:"install_method"`
+	ControlHost           string `json:"control_host"`
+	ControlPort           int    `json:"control_port"`
+	RawPortRange          string `json:"raw_port_range"`
+	PublicPortRange       string `json:"public_port_range"`
+	DeployedRawRange      string `json:"deployed_raw_range,omitempty"`
+	DeployedPublicRange   string `json:"deployed_public_range,omitempty"`
+}
+
+type SoftRouterFRPInstallInput struct {
+	PublicHost        string `json:"public_host"`
+	GatewayListenHost string `json:"gateway_listen_host"`
+	UpstreamHost      string `json:"upstream_host"`
+	FRPServerHost     string `json:"frp_server_host"`
+	FRPServerPort     int    `json:"frp_server_port"`
+	FRPToken          string `json:"frp_token"`
+	RawPortStart      int    `json:"raw_port_start"`
+	RawPortEnd        int    `json:"raw_port_end"`
+	PublicPortStart   int    `json:"public_port_start"`
+	PublicPortEnd     int    `json:"public_port_end"`
+	DefaultUsername   string `json:"default_username"`
+	DefaultPassword   string `json:"default_password"`
+	AgentPollSeconds  int    `json:"agent_poll_seconds"`
+}
+
+type SoftRouterFRPInstallResult struct {
+	Status          SoftRouterFRPStatus   `json:"status"`
+	Config          SoftRouterProxyConfig `json:"config"`
+	RestartRequired bool                  `json:"restart_required"`
+	Message         string                `json:"message"`
+	Log             string                `json:"log,omitempty"`
+	Metadata        map[string]string     `json:"metadata,omitempty"`
+}
+
 type SoftRouterAgent struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
@@ -113,6 +159,7 @@ type SoftRouterOverview struct {
 	Nodes    []SoftRouterSocksNode    `json:"nodes"`
 	Mappings []SoftRouterProxyMapping `json:"mappings"`
 	Runtime  SoftRouterRuntimeStatus  `json:"runtime"`
+	FRP      SoftRouterFRPStatus      `json:"frp_status"`
 }
 
 type SoftRouterRuntimeStatus struct {
@@ -185,9 +232,10 @@ type SoftRouterRepository interface {
 }
 
 type SoftRouterProxyService struct {
-	repo      SoftRouterRepository
-	proxyRepo ProxyRepository
-	runtime   SoftRouterRuntime
+	repo         SoftRouterRepository
+	proxyRepo    ProxyRepository
+	runtime      SoftRouterRuntime
+	frpInstaller SoftRouterFRPInstaller
 }
 
 type SoftRouterRuntime interface {
@@ -196,8 +244,13 @@ type SoftRouterRuntime interface {
 	Stop()
 }
 
+type SoftRouterFRPInstaller interface {
+	Status(ctx context.Context, cfg SoftRouterProxyConfig) SoftRouterFRPStatus
+	Install(ctx context.Context, cfg SoftRouterProxyConfig) (*SoftRouterFRPInstallResult, error)
+}
+
 func NewSoftRouterProxyService(repo SoftRouterRepository, proxyRepo ProxyRepository, runtime SoftRouterRuntime) *SoftRouterProxyService {
-	svc := &SoftRouterProxyService{repo: repo, proxyRepo: proxyRepo, runtime: runtime}
+	svc := &SoftRouterProxyService{repo: repo, proxyRepo: proxyRepo, runtime: runtime, frpInstaller: NewDockerSoftRouterFRPInstaller()}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -229,12 +282,17 @@ func (s *SoftRouterProxyService) GetOverview(ctx context.Context) (*SoftRouterOv
 	if s.runtime != nil {
 		status = s.runtime.Status()
 	}
+	frpStatus := SoftRouterFRPStatus{}
+	if s.frpInstaller != nil {
+		frpStatus = s.frpInstaller.Status(ctx, *cfg)
+	}
 	return &SoftRouterOverview{
 		Config:   *cfg,
 		Agents:   agents,
 		Nodes:    nodes,
 		Mappings: mappings,
 		Runtime:  status,
+		FRP:      frpStatus,
 	}, nil
 }
 
@@ -255,6 +313,86 @@ func (s *SoftRouterProxyService) UpdateConfig(ctx context.Context, cfg *SoftRout
 		return nil, err
 	}
 	return out, s.Reconcile(ctx)
+}
+
+func (s *SoftRouterProxyService) GetFRPStatus(ctx context.Context) (*SoftRouterFRPStatus, error) {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	status := SoftRouterFRPStatus{}
+	if s.frpInstaller != nil {
+		status = s.frpInstaller.Status(ctx, *cfg)
+	}
+	return &status, nil
+}
+
+func (s *SoftRouterProxyService) InstallFRP(ctx context.Context, input SoftRouterFRPInstallInput) (*SoftRouterFRPInstallResult, error) {
+	if s.frpInstaller == nil {
+		return nil, infraerrors.ServiceUnavailable("SOFT_ROUTER_FRP_INSTALL_UNSUPPORTED", "当前部署不支持从面板安装 FRP")
+	}
+	cfg := &SoftRouterProxyConfig{
+		Enabled:           true,
+		PublicHost:        input.PublicHost,
+		GatewayListenHost: input.GatewayListenHost,
+		UpstreamHost:      input.UpstreamHost,
+		FRPServerHost:     input.FRPServerHost,
+		FRPServerPort:     input.FRPServerPort,
+		FRPToken:          input.FRPToken,
+		RawPortStart:      input.RawPortStart,
+		RawPortEnd:        input.RawPortEnd,
+		PublicPortStart:   input.PublicPortStart,
+		PublicPortEnd:     input.PublicPortEnd,
+		DefaultUsername:   input.DefaultUsername,
+		DefaultPassword:   input.DefaultPassword,
+		AgentPollSeconds:  input.AgentPollSeconds,
+	}
+	normalized, err := normalizeSoftRouterConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(normalized.FRPToken) == "" {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_FRP_TOKEN_REQUIRED", "FRP Token 不能为空")
+	}
+	if strings.TrimSpace(normalized.PublicHost) == "" {
+		normalized.PublicHost = strings.TrimSpace(normalized.FRPServerHost)
+	}
+	if strings.TrimSpace(normalized.FRPServerHost) == "" {
+		normalized.FRPServerHost = strings.TrimSpace(normalized.PublicHost)
+	}
+	if strings.TrimSpace(normalized.FRPServerHost) == "" {
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_FRP_HOST_REQUIRED", "FRP 服务地址或公网域名/IP 不能为空")
+	}
+	if strings.TrimSpace(normalized.UpstreamHost) == "" || normalized.UpstreamHost == "127.0.0.1" {
+		normalized.UpstreamHost = "host.docker.internal"
+	}
+	if strings.TrimSpace(normalized.GatewayListenHost) == "" {
+		normalized.GatewayListenHost = "0.0.0.0"
+	}
+	if err := s.ensureInstallDoesNotCollide(ctx, *normalized); err != nil {
+		return nil, err
+	}
+	result, err := s.frpInstaller.Install(ctx, *normalized)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.repo.UpdateConfig(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		return nil, err
+	}
+	result.Config = *out
+	result.RestartRequired = true
+	if result.Message == "" {
+		result.Message = "FRP 已安装，已保存代理节点配置。请重启或重建当前 Nowind 容器，让新的公网 SOCKS 端口映射生效。"
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	result.Metadata["restart_hint"] = "docker compose up -d --force-recreate sub2api"
+	return result, nil
 }
 
 func (s *SoftRouterProxyService) CreateAgent(ctx context.Context, input *SoftRouterAgent) (*SoftRouterAgent, error) {
@@ -718,6 +856,29 @@ func (s *SoftRouterProxyService) validateConfigPorts(ctx context.Context, cfg So
 			return infraerrors.Conflict(
 				"SOFT_ROUTER_PUBLIC_PORT_OCCUPIED",
 				fmt.Sprintf("公网 SOCKS 端口 %d 已被占用或无法监听，请换一个端口范围", port),
+			)
+		}
+	}
+	return nil
+}
+
+func (s *SoftRouterProxyService) ensureInstallDoesNotCollide(ctx context.Context, cfg SoftRouterProxyConfig) error {
+	mappings, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return err
+	}
+	usedRaw := map[int]bool{}
+	for i := range mappings {
+		usedRaw[mappings[i].RawRemotePort] = true
+	}
+	for port := cfg.RawPortStart; port <= cfg.RawPortEnd; port++ {
+		if usedRaw[port] {
+			continue
+		}
+		if tcpPortOpen(cfg.UpstreamHost, port) {
+			return infraerrors.Conflict(
+				"SOFT_ROUTER_RAW_PORT_OCCUPIED",
+				fmt.Sprintf("Raw FRP 端口 %d 已被占用，请换一个端口范围", port),
 			)
 		}
 	}

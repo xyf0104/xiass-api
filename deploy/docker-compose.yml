@@ -46,6 +46,8 @@ services:
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
+      # Required by Admin -> Proxies -> 代理节点 to install/configure host frps.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml

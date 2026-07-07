@@ -21,6 +21,21 @@
 
 services:
   # ===========================================================================
+  # Watchtower (For Auto-Updates)
+  # ===========================================================================
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: sub2api-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --http-api-update --http-api-token sub2api-update-token sub2api
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    networks:
+      - sub2api-network
+
+  # ===========================================================================
   # NoWind API Application
   # ===========================================================================
   sub2api:
@@ -39,6 +54,8 @@ services:
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
+      # Required by Admin -> Proxies -> 代理节点 to install/configure host frps.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml

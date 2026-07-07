@@ -155,6 +155,64 @@ func TestSoftRouterProxyServiceUpdateConfigRejectsUndeployedRange(t *testing.T) 
 	require.Equal(t, "SOFT_ROUTER_PORT_RANGE_NOT_DEPLOYED", infraerrors.Reason(err))
 }
 
+func TestSoftRouterProxyServiceInstallFRPAllowsPublicPortsAlreadyPublished(t *testing.T) {
+	rawPorts, rawListeners := reserveContiguousLoopbackPorts(t, 1)
+	rawFree := rawPorts[0]
+	closeListener(t, rawListeners[0])
+
+	publicPorts, publicListeners := reserveContiguousLoopbackPorts(t, 1)
+	publicPublished := publicPorts[0]
+	defer closeListener(t, publicListeners[0])
+
+	t.Setenv(softRouterRawPortRangeEnv, strconv.Itoa(rawFree))
+	t.Setenv(softRouterPublicPortRangeEnv, strconv.Itoa(publicPublished))
+
+	repo := &softRouterProxyRepoStub{
+		config: SoftRouterProxyConfig{
+			GatewayListenHost: "127.0.0.1",
+			UpstreamHost:      "127.0.0.1",
+			FRPServerPort:     7010,
+			RawPortStart:      rawFree,
+			RawPortEnd:        rawFree,
+			PublicPortStart:   publicPublished,
+			PublicPortEnd:     publicPublished,
+			DefaultUsername:   "old",
+			DefaultPassword:   "old",
+			AgentPollSeconds:  20,
+		},
+	}
+	installer := &softRouterFRPInstallerStub{}
+	svc := &SoftRouterProxyService{
+		repo:         repo,
+		proxyRepo:    &softRouterProxyProxyRepoStub{},
+		frpInstaller: installer,
+	}
+
+	result, err := svc.InstallFRP(context.Background(), SoftRouterFRPInstallInput{
+		PublicHost:        "api.example.com",
+		GatewayListenHost: "127.0.0.1",
+		UpstreamHost:      "127.0.0.1",
+		FRPServerHost:     "api.example.com",
+		FRPServerPort:     7010,
+		FRPToken:          "token",
+		RawPortStart:      rawFree,
+		RawPortEnd:        rawFree,
+		PublicPortStart:   publicPublished,
+		PublicPortEnd:     publicPublished,
+		DefaultUsername:   "user",
+		DefaultPassword:   "pass",
+		AgentPollSeconds:  20,
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.RestartRequired)
+	require.True(t, installer.installCalled)
+	require.True(t, repo.config.Enabled)
+	require.Equal(t, "api.example.com", repo.config.PublicHost)
+	require.Equal(t, rawFree, installer.installedConfig.RawPortStart)
+	require.Equal(t, publicPublished, installer.installedConfig.PublicPortStart)
+}
+
 func reserveContiguousLoopbackPorts(t *testing.T, count int) ([]int, []net.Listener) {
 	t.Helper()
 	for start := 20000; start <= 60000-count; start++ {
@@ -355,6 +413,30 @@ type softRouterProxyProxyRepoStub struct {
 	created []Proxy
 	updated []Proxy
 	nextID  int64
+}
+
+type softRouterFRPInstallerStub struct {
+	installCalled   bool
+	installedConfig SoftRouterProxyConfig
+}
+
+func (s *softRouterFRPInstallerStub) Status(context.Context, SoftRouterProxyConfig) SoftRouterFRPStatus {
+	return SoftRouterFRPStatus{InstallSupported: true}
+}
+
+func (s *softRouterFRPInstallerStub) Install(_ context.Context, cfg SoftRouterProxyConfig) (*SoftRouterFRPInstallResult, error) {
+	s.installCalled = true
+	s.installedConfig = cfg
+	return &SoftRouterFRPInstallResult{
+		Status: SoftRouterFRPStatus{
+			Installed:           true,
+			InstallSupported:    true,
+			ControlPortOpen:     true,
+			RawRangeDeployed:    true,
+			PublicRangeDeployed: true,
+		},
+		Message: "installed",
+	}, nil
 }
 
 func (s *softRouterProxyProxyRepoStub) Create(_ context.Context, proxy *Proxy) error {

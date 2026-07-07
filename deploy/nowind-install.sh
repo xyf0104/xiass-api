@@ -9,7 +9,7 @@
 #   1. 检测系统环境、安装 Docker（若缺失）
 #   2. 交互式收集：端口、管理员邮箱、管理员密码
 #   3. 自动生成安全密钥（JWT / TOTP / PostgreSQL）
-#   4. 从源码构建（包含你的定制前端）或拉取官方镜像
+#   4. 拉取 GHCR 发布镜像，或可选从源码构建
 #   5. 启动 PostgreSQL + Redis + NoWind API
 #   6. 输出访问地址、管理员信息、Google 登录配置指引
 # =============================================================================
@@ -31,7 +31,7 @@ BRANCH="${BRANCH:-main}"
 SERVER_PORT="8080"
 ADMIN_EMAIL="admin@nowind.local"
 ADMIN_PASSWORD=""
-BUILD_MODE="image"  # image = 拉取官方镜像; source = 从源码构建（含定制前端）
+BUILD_MODE="image"  # image = 拉取 GHCR 发布镜像; source = 从源码构建
 
 # ===== 工具函数 =====
 log()  { echo -e "${CYAN}[NoWind]${NC} $*"; }
@@ -124,16 +124,16 @@ interactive_config() {
 
     # 部署模式
     echo -e "${YELLOW}部署模式：${NC}"
-    echo "  1) 从源码构建（包含你的定制前端，首次约 3-8 分钟）${GREEN}← 推荐${NC}"
-    echo "  2) 拉取官方镜像（更快，但使用官方原版界面）"
+    echo "  1) 拉取 GHCR 发布镜像（支持后台检查更新并重建容器）${GREEN}← 推荐${NC}"
+    echo "  2) 从源码构建（开发/临时测试用，首次约 3-8 分钟）"
     echo ""
     local mode_choice=""
     if [ -e /dev/tty ] && [ -r /dev/tty ]; then
         read -p "$(echo -e "${BLUE}选择部署模式${NC} [1]: ")" mode_choice < /dev/tty
     fi
     case "$mode_choice" in
-        2) BUILD_MODE="image" ;;
-        *) BUILD_MODE="source" ;;
+        2) BUILD_MODE="source" ;;
+        *) BUILD_MODE="image" ;;
     esac
     echo ""
 
@@ -150,7 +150,7 @@ interactive_config() {
 
     echo ""
     echo -e "${CYAN}──────────────────────────────────────────────${NC}"
-    echo -e "  部署模式:     ${BOLD}$([ "$BUILD_MODE" = "source" ] && echo "从源码构建" || echo "拉取官方镜像")${NC}"
+    echo -e "  部署模式:     ${BOLD}$([ "$BUILD_MODE" = "source" ] && echo "从源码构建" || echo "拉取 GHCR 发布镜像")${NC}"
     echo -e "  服务端口:     ${BOLD}${SERVER_PORT}${NC}"
     echo -e "  管理员邮箱:   ${BOLD}${ADMIN_EMAIL}${NC}"
     echo -e "  管理员密码:   ${BOLD}$([ -n "$ADMIN_PASSWORD" ] && echo "***（已设置）" || echo "（自动生成）")${NC}"
@@ -205,6 +205,11 @@ SERVER_PORT=${SERVER_PORT}
 SERVER_MODE=release
 RUN_MODE=standard
 TZ=Asia/Shanghai
+
+# 软路由代理节点端口范围
+# FRP 在代理节点页面安装；安装完成后请按页面提示重建 Nowind 容器。
+SOFT_ROUTER_PROXY_RAW_PORT_RANGE=12083-12150
+SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=1101-1120
 
 # PostgreSQL
 POSTGRES_USER=sub2api
@@ -265,7 +270,7 @@ start_services() {
                  --project-directory "$compose_dir" \
                  up -d --build
     else
-        log "拉取官方镜像并启动..."
+        log "拉取 GHCR 发布镜像并启动..."
         $COMPOSE -f "$compose_dir/docker-compose.local.yml" \
                  --project-directory "$compose_dir" \
                  up -d
@@ -313,7 +318,17 @@ print_completion() {
     echo -e "  查看日志:  cd $compose_dir && $COMPOSE $compose_files logs -f sub2api"
     echo -e "  重启服务:  cd $compose_dir && $COMPOSE $compose_files restart sub2api"
     echo -e "  停止服务:  cd $compose_dir && $COMPOSE $compose_files down"
-    echo -e "  更新重建:  cd $compose_dir && git -C $INSTALL_DIR pull && $COMPOSE $compose_files up -d --build"
+    if [ "$BUILD_MODE" = "source" ]; then
+        echo -e "  更新重建:  cd $compose_dir && git -C $INSTALL_DIR pull && $COMPOSE $compose_files up -d --build"
+    else
+        echo -e "  更新重建:  cd $compose_dir && $COMPOSE $compose_files pull sub2api && $COMPOSE $compose_files up -d --force-recreate sub2api"
+    fi
+    echo ""
+    echo -e "${CYAN}──────── 软路由代理节点 ────────${NC}"
+    echo -e "  后台入口:  代理管理 → 代理节点 → 安装 FRP"
+    echo -e "  默认 Raw FRP 区间:      12083-12150"
+    echo -e "  默认公网 SOCKS 区间:    1101-1120"
+    echo -e "  FRP 安装完成后:          cd $compose_dir && $COMPOSE $compose_files up -d --force-recreate sub2api"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}  📌 部署后必做：设置 Google 登录${NC}"
