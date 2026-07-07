@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,10 @@ const (
 	SoftRouterMappingStatusRunning  = "running"
 	SoftRouterMappingStatusDisabled = "disabled"
 	SoftRouterMappingStatusError    = "error"
+
+	softRouterPublicPortRangeEnv = "SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE"
+	softRouterRawPortRangeEnv    = "SOFT_ROUTER_PROXY_RAW_PORT_RANGE"
+	softRouterPortCheckTimeout   = 200 * time.Millisecond
 )
 
 var (
@@ -242,6 +247,9 @@ func (s *SoftRouterProxyService) UpdateConfig(ctx context.Context, cfg *SoftRout
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateConfigPorts(ctx, *normalized); err != nil {
+		return nil, err
+	}
 	out, err := s.repo.UpdateConfig(ctx, normalized)
 	if err != nil {
 		return nil, err
@@ -388,6 +396,9 @@ func (s *SoftRouterProxyService) CreateMapping(ctx context.Context, input *SoftR
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateMappingPorts(ctx, *cfg, mapping, nil); err != nil {
+		return nil, err
+	}
 	if err := s.repo.CreateMapping(ctx, mapping); err != nil {
 		return nil, err
 	}
@@ -440,6 +451,9 @@ func (s *SoftRouterProxyService) UpdateMapping(ctx context.Context, id int64, in
 	}
 	normalized.ID = id
 	normalized.ProxyID = current.ProxyID
+	if err := s.validateMappingPorts(ctx, *cfg, normalized, current); err != nil {
+		return nil, err
+	}
 	if err := s.repo.UpdateMapping(ctx, normalized); err != nil {
 		return nil, err
 	}
@@ -527,17 +541,23 @@ func (s *SoftRouterProxyService) normalizeMappingInput(ctx context.Context, cfg 
 			return nil, err
 		}
 		if rawPort == 0 {
-			rawPort = firstFreePort(cfg.RawPortStart, cfg.RawPortEnd, usedRaw)
+			rawPort = firstAvailableRawPort(cfg, usedRaw)
 		}
 		if publicPort == 0 {
-			publicPort = firstFreePort(cfg.PublicPortStart, cfg.PublicPortEnd, usedPublic)
+			publicPort = firstAvailablePublicPort(cfg, usedPublic)
 		}
 	}
+	if rawPort == 0 {
+		return nil, infraerrors.Conflict("SOFT_ROUTER_RAW_PORT_UNAVAILABLE", "Raw FRP 端口范围内没有可用端口")
+	}
+	if publicPort == 0 {
+		return nil, infraerrors.Conflict("SOFT_ROUTER_PUBLIC_PORT_UNAVAILABLE", "公网 SOCKS 端口范围内没有可用端口")
+	}
 	if !validPort(rawPort) || !portInRange(rawPort, cfg.RawPortStart, cfg.RawPortEnd) {
-		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_PORT_INVALID", "raw_remote_port is outside the configured range")
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_PORT_INVALID", "Raw FRP 端口不在配置范围内")
 	}
 	if !validPort(publicPort) || !portInRange(publicPort, cfg.PublicPortStart, cfg.PublicPortEnd) {
-		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_PORT_INVALID", "public_port is outside the configured range")
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_PORT_INVALID", "公网 SOCKS 端口不在配置范围内")
 	}
 	username := strings.TrimSpace(input.Username)
 	password := strings.TrimSpace(input.Password)
@@ -647,6 +667,108 @@ func (s *SoftRouterProxyService) ensureProxyForMapping(ctx context.Context, cfg 
 	return s.repo.UpdateMappingProxy(ctx, mapping.ID, mapping.ProxyID, mapping.Status, "")
 }
 
+func (s *SoftRouterProxyService) validateConfigPorts(ctx context.Context, cfg SoftRouterProxyConfig) error {
+	if err := validateConfiguredRangeAllowed(cfg.RawPortStart, cfg.RawPortEnd, softRouterRawPortRangeEnv, "Raw FRP"); err != nil {
+		return err
+	}
+	if err := validateConfiguredRangeAllowed(cfg.PublicPortStart, cfg.PublicPortEnd, softRouterPublicPortRangeEnv, "公网 SOCKS"); err != nil {
+		return err
+	}
+
+	mappings, err := s.repo.ListMappings(ctx)
+	if err != nil {
+		return err
+	}
+	usedRaw := map[int]bool{}
+	usedPublic := map[int]bool{}
+	for i := range mappings {
+		m := mappings[i]
+		usedRaw[m.RawRemotePort] = true
+		usedPublic[m.PublicPort] = true
+		if !portInRange(m.RawRemotePort, cfg.RawPortStart, cfg.RawPortEnd) {
+			return infraerrors.BadRequest(
+				"SOFT_ROUTER_RAW_RANGE_HAS_MAPPING_OUTSIDE",
+				fmt.Sprintf("已有映射 %q 使用 Raw FRP 端口 %d，不在新的端口范围内", m.Name, m.RawRemotePort),
+			)
+		}
+		if !portInRange(m.PublicPort, cfg.PublicPortStart, cfg.PublicPortEnd) {
+			return infraerrors.BadRequest(
+				"SOFT_ROUTER_PUBLIC_RANGE_HAS_MAPPING_OUTSIDE",
+				fmt.Sprintf("已有映射 %q 使用公网 SOCKS 端口 %d，不在新的端口范围内", m.Name, m.PublicPort),
+			)
+		}
+	}
+
+	for port := cfg.RawPortStart; port <= cfg.RawPortEnd; port++ {
+		if usedRaw[port] {
+			continue
+		}
+		if tcpPortOpen(cfg.UpstreamHost, port) {
+			return infraerrors.Conflict(
+				"SOFT_ROUTER_RAW_PORT_OCCUPIED",
+				fmt.Sprintf("Raw FRP 端口 %d 已被占用，请换一个端口范围", port),
+			)
+		}
+	}
+	for port := cfg.PublicPortStart; port <= cfg.PublicPortEnd; port++ {
+		if usedPublic[port] {
+			continue
+		}
+		if err := canListenOnTCPPort(cfg.GatewayListenHost, port); err != nil {
+			return infraerrors.Conflict(
+				"SOFT_ROUTER_PUBLIC_PORT_OCCUPIED",
+				fmt.Sprintf("公网 SOCKS 端口 %d 已被占用或无法监听，请换一个端口范围", port),
+			)
+		}
+	}
+	return nil
+}
+
+func (s *SoftRouterProxyService) validateMappingPorts(ctx context.Context, cfg SoftRouterProxyConfig, mapping *SoftRouterProxyMapping, current *SoftRouterProxyMapping) error {
+	if mapping == nil {
+		return nil
+	}
+	usedRaw, usedPublic, err := s.usedMappingPorts(ctx, mapping.ID)
+	if err != nil {
+		return err
+	}
+	if usedRaw[mapping.RawRemotePort] {
+		return infraerrors.Conflict(
+			"SOFT_ROUTER_RAW_PORT_IN_USE",
+			fmt.Sprintf("Raw FRP 端口 %d 已被其他映射使用", mapping.RawRemotePort),
+		)
+	}
+	if usedPublic[mapping.PublicPort] {
+		return infraerrors.Conflict(
+			"SOFT_ROUTER_PUBLIC_PORT_IN_USE",
+			fmt.Sprintf("公网 SOCKS 端口 %d 已被其他映射使用", mapping.PublicPort),
+		)
+	}
+	if err := validatePortAllowed(mapping.RawRemotePort, softRouterRawPortRangeEnv, "Raw FRP"); err != nil {
+		return err
+	}
+	if err := validatePortAllowed(mapping.PublicPort, softRouterPublicPortRangeEnv, "公网 SOCKS"); err != nil {
+		return err
+	}
+	if current == nil || mapping.RawRemotePort != current.RawRemotePort {
+		if tcpPortOpen(cfg.UpstreamHost, mapping.RawRemotePort) {
+			return infraerrors.Conflict(
+				"SOFT_ROUTER_RAW_PORT_OCCUPIED",
+				fmt.Sprintf("Raw FRP 端口 %d 已被占用，请换一个端口", mapping.RawRemotePort),
+			)
+		}
+	}
+	if current == nil || mapping.PublicPort != current.PublicPort {
+		if err := canListenOnTCPPort(cfg.GatewayListenHost, mapping.PublicPort); err != nil {
+			return infraerrors.Conflict(
+				"SOFT_ROUTER_PUBLIC_PORT_OCCUPIED",
+				fmt.Sprintf("公网 SOCKS 端口 %d 已被占用或无法监听，请换一个端口", mapping.PublicPort),
+			)
+		}
+	}
+	return nil
+}
+
 func normalizeSoftRouterConfig(cfg *SoftRouterProxyConfig) (*SoftRouterProxyConfig, error) {
 	if cfg == nil {
 		cfg = &SoftRouterProxyConfig{}
@@ -669,22 +791,22 @@ func normalizeSoftRouterConfig(cfg *SoftRouterProxyConfig) (*SoftRouterProxyConf
 		return nil, infraerrors.BadRequest("SOFT_ROUTER_FRP_PORT_INVALID", "frp_server_port must be between 1 and 65535")
 	}
 	if out.RawPortStart == 0 {
-		out.RawPortStart = 12081
+		out.RawPortStart = 12083
 	}
 	if out.RawPortEnd == 0 {
 		out.RawPortEnd = 12150
 	}
 	if out.PublicPortStart == 0 {
-		out.PublicPortStart = 1081
+		out.PublicPortStart = 1101
 	}
 	if out.PublicPortEnd == 0 {
-		out.PublicPortEnd = 1100
+		out.PublicPortEnd = 1120
 	}
 	if !validPortRange(out.RawPortStart, out.RawPortEnd) {
-		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_RANGE_INVALID", "raw port range is invalid")
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_RAW_RANGE_INVALID", "Raw FRP 端口范围无效")
 	}
 	if !validPortRange(out.PublicPortStart, out.PublicPortEnd) {
-		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_RANGE_INVALID", "public port range is invalid")
+		return nil, infraerrors.BadRequest("SOFT_ROUTER_PUBLIC_RANGE_INVALID", "公网 SOCKS 端口范围无效")
 	}
 	if out.AgentPollSeconds <= 0 {
 		out.AgentPollSeconds = 20
@@ -790,11 +912,151 @@ func portInRange(port, start, end int) bool {
 	return port >= start && port <= end
 }
 
-func firstFreePort(start, end int, used map[int]bool) int {
-	for port := start; port <= end; port++ {
-		if !used[port] {
-			return port
+func firstAvailableRawPort(cfg SoftRouterProxyConfig, used map[int]bool) int {
+	for port := cfg.RawPortStart; port <= cfg.RawPortEnd; port++ {
+		if used[port] || !portAllowedByDeployment(port, softRouterRawPortRangeEnv) || tcpPortOpen(cfg.UpstreamHost, port) {
+			continue
 		}
+		return port
 	}
 	return 0
+}
+
+func firstAvailablePublicPort(cfg SoftRouterProxyConfig, used map[int]bool) int {
+	for port := cfg.PublicPortStart; port <= cfg.PublicPortEnd; port++ {
+		if used[port] || !portAllowedByDeployment(port, softRouterPublicPortRangeEnv) {
+			continue
+		}
+		if err := canListenOnTCPPort(cfg.GatewayListenHost, port); err != nil {
+			continue
+		}
+		return port
+	}
+	return 0
+}
+
+type softRouterPortRange struct {
+	start int
+	end   int
+}
+
+func validateConfiguredRangeAllowed(start, end int, envName, label string) error {
+	ranges, constrained, err := deploymentPortRanges(envName)
+	if err != nil {
+		return err
+	}
+	if !constrained || rangeCovered(start, end, ranges) {
+		return nil
+	}
+	return infraerrors.BadRequest(
+		"SOFT_ROUTER_PORT_RANGE_NOT_DEPLOYED",
+		fmt.Sprintf("%s 端口范围 %d-%d 不在部署允许范围 %s=%s 内，请先放行或映射这些端口", label, start, end, envName, os.Getenv(envName)),
+	)
+}
+
+func validatePortAllowed(port int, envName, label string) error {
+	ranges, constrained, err := deploymentPortRanges(envName)
+	if err != nil {
+		return err
+	}
+	if !constrained || portInDeploymentRanges(port, ranges) {
+		return nil
+	}
+	return infraerrors.BadRequest(
+		"SOFT_ROUTER_PORT_NOT_DEPLOYED",
+		fmt.Sprintf("%s 端口 %d 不在部署允许范围 %s=%s 内，请先放行或映射这个端口", label, port, envName, os.Getenv(envName)),
+	)
+}
+
+func portAllowedByDeployment(port int, envName string) bool {
+	ranges, constrained, err := deploymentPortRanges(envName)
+	if err != nil || !constrained {
+		return true
+	}
+	return portInDeploymentRanges(port, ranges)
+}
+
+func portInDeploymentRanges(port int, ranges []softRouterPortRange) bool {
+	for i := range ranges {
+		if port >= ranges[i].start && port <= ranges[i].end {
+			return true
+		}
+	}
+	return false
+}
+
+func rangeCovered(start, end int, ranges []softRouterPortRange) bool {
+	for port := start; port <= end; port++ {
+		covered := false
+		for i := range ranges {
+			if port >= ranges[i].start && port <= ranges[i].end {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+func deploymentPortRanges(envName string) ([]softRouterPortRange, bool, error) {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return nil, false, nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	})
+	ranges := make([]softRouterPortRange, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		startText, endText, ok := strings.Cut(part, "-")
+		if !ok {
+			startText = part
+			endText = part
+		}
+		start, err := strconv.Atoi(strings.TrimSpace(startText))
+		if err != nil {
+			return nil, true, infraerrors.BadRequest("SOFT_ROUTER_DEPLOYED_RANGE_INVALID", fmt.Sprintf("%s 配置无效: %s", envName, raw))
+		}
+		end, err := strconv.Atoi(strings.TrimSpace(endText))
+		if err != nil {
+			return nil, true, infraerrors.BadRequest("SOFT_ROUTER_DEPLOYED_RANGE_INVALID", fmt.Sprintf("%s 配置无效: %s", envName, raw))
+		}
+		if !validPortRange(start, end) {
+			return nil, true, infraerrors.BadRequest("SOFT_ROUTER_DEPLOYED_RANGE_INVALID", fmt.Sprintf("%s 配置无效: %s", envName, raw))
+		}
+		ranges = append(ranges, softRouterPortRange{start: start, end: end})
+	}
+	return ranges, len(ranges) > 0, nil
+}
+
+func tcpPortOpen(host string, port int) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), softRouterPortCheckTimeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func canListenOnTCPPort(host string, port int) error {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = ""
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	return ln.Close()
 }

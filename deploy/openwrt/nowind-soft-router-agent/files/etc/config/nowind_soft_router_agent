@@ -11,4 +11,5 @@ config agent 'main'
 	option include_passwall2 '1'
 	option extra_socks ''
 	option log_file '/var/log/nowind-soft-router-agent.log'
-
+	option log_max_size '5M'
+	option log_backups '5'

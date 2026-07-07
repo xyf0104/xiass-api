@@ -4,7 +4,7 @@
 #
 # Examples:
 #   FRP_TOKEN="$(openssl rand -hex 24)" sh frps-soft-router-install.sh
-#   PROXY_BIND_ADDR=172.18.0.1 RAW_PORT_START=12081 RAW_PORT_END=12150 sh frps-soft-router-install.sh
+#   PROXY_BIND_ADDR=172.18.0.1 RAW_PORT_START=12083 RAW_PORT_END=12150 sh frps-soft-router-install.sh
 
 set -eu
 
@@ -16,7 +16,7 @@ FRPS_BIN="${FRPS_BIN:-$INSTALL_DIR/frps-nowind-soft-router}"
 FRP_VERSION="${FRP_VERSION:-}"
 FRP_TOKEN="${FRP_TOKEN:-}"
 BIND_PORT="${BIND_PORT:-7010}"
-RAW_PORT_START="${RAW_PORT_START:-12081}"
+RAW_PORT_START="${RAW_PORT_START:-12083}"
 RAW_PORT_END="${RAW_PORT_END:-12150}"
 PROXY_BIND_ADDR="${PROXY_BIND_ADDR:-}"
 RUN_USER="${RUN_USER:-root}"

@@ -20,8 +20,8 @@ these paths by default:
 
 1. Deploy or update Nowind to v1.0.54.
 2. Make sure the Docker compose file exposes the public authenticated SOCKS
-   range, for example `1081-1100`.
-3. Run a US frps service for raw upstream ports, for example `12081-12150`.
+   range, for example `1101-1120`.
+3. Run a US frps service for raw upstream ports, for example `12083-12150`.
    See `deploy/frps-soft-router.example.toml`.
 4. In Nowind admin, open `代理管理 -> 代理节点`:
    - Enable the feature.
@@ -30,8 +30,8 @@ these paths by default:
      for binary/systemd deployment.
    - `FRP 服务地址`: the US frps host, such as `api.example.com`.
    - `FRP 控制端口`: frps bind port, such as `7010`.
-   - `Raw FRP 端口起止`: internal upstream range, such as `12081-12150`.
-   - `公网 SOCKS 端口起止`: authenticated public range, such as `1081-1100`.
+   - `Raw FRP 端口起止`: internal upstream range, such as `12083-12150`.
+   - `公网 SOCKS 端口起止`: authenticated public range, such as `1101-1120`.
    - Set a default SOCKS username and password.
    - Set the FRP token.
 5. Create an OpenWrt Agent in the panel and copy its token.
@@ -40,7 +40,7 @@ The raw FRP ports should not be opened to the public Internet. Public users
 should use only Nowind's authenticated SOCKS ports, for example:
 
 ```txt
-socks5://username:password@api.example.com:1081
+socks5://username:password@api.example.com:1101
 ```
 
 ## OpenWrt Install
@@ -67,7 +67,7 @@ binary path. This agent starts its own frpc process with its own config file.
 Open:
 
 ```txt
-Services -> NoWind Proxy Agent
+Services -> NoWind 代理节点
 ```
 
 Set:
@@ -77,6 +77,13 @@ Set:
 - Agent Token: token copied from Nowind admin
 - frpc binary: usually `/usr/bin/frpc`
 - frpc config: keep `/etc/frp/nowind-soft-router-frpc.ini`
+- Extra SOCKS ports: optional. Leave empty when PassWall/PassWall2 scanning
+  already finds your SOCKS listeners. Use comma-separated values only for
+  custom local listeners, for example `1081:Japan,1082:UK`.
+- Log file: use a persistent disk path when available, for example
+  `/mnt/sdb1/nowind-soft-router-agent/nowind-soft-router-agent.log`.
+- Log max size: default `5M`. Set `0` to disable automatic rotation.
+- Log backups: default `5`, keeping rotated files such as `.1`, `.2`, etc.
 
 Save/apply, then start:
 

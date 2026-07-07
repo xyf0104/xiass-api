@@ -280,7 +280,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { adminAPI } from '@/api/admin'
 import type {
   SoftRouterAgent,
@@ -311,10 +311,10 @@ const defaultConfig = (): SoftRouterProxyConfig => ({
   frp_server_host: '',
   frp_server_port: 7010,
   frp_token: '',
-  raw_port_start: 12081,
+  raw_port_start: 12083,
   raw_port_end: 12150,
-  public_port_start: 1081,
-  public_port_end: 1100,
+  public_port_start: 1101,
+  public_port_end: 1120,
   default_username: '',
   default_password: '',
   agent_poll_seconds: 20,
@@ -396,11 +396,23 @@ function nextFreePort(start: number, end: number, used: number[]) {
   return 0
 }
 
+function mappingPortFilter(mapping: SoftRouterProxyMapping) {
+  return !editingMapping.value || mapping.id !== editingMapping.value.id
+}
+
+function usedRawPorts() {
+  return overview.mappings.filter(mappingPortFilter).map((mapping) => mapping.raw_remote_port)
+}
+
+function usedPublicPorts() {
+  return overview.mappings.filter(mappingPortFilter).map((mapping) => mapping.public_port)
+}
+
 function nextFreeRawPort() {
   return nextFreePort(
     configForm.raw_port_start,
     configForm.raw_port_end,
-    overview.mappings.map((mapping) => mapping.raw_remote_port)
+    usedRawPorts()
   )
 }
 
@@ -408,8 +420,19 @@ function nextFreePublicPort() {
   return nextFreePort(
     configForm.public_port_start,
     configForm.public_port_end,
-    overview.mappings.map((mapping) => mapping.public_port)
+    usedPublicPorts()
   )
+}
+
+function ensureMappingFreePorts() {
+  if (editingMapping.value) return
+  mappingForm.raw_remote_port = nextFreeRawPort()
+  mappingForm.public_port = nextFreePublicPort()
+}
+
+function selectedNode() {
+  const nodeID = Number(mappingForm.node_id || 0)
+  return overview.nodes.find((node) => node.id === nodeID) || null
 }
 
 function assignConfig(config: SoftRouterProxyConfig) {
@@ -530,6 +553,7 @@ function openMappingDialog(node?: SoftRouterSocksNode, mapping?: SoftRouterProxy
   mappingForm.username = mapping?.username || configForm.default_username || ''
   mappingForm.password = mapping?.password || configForm.default_password || ''
   mappingForm.enabled = mapping?.enabled ?? true
+  if (!editingMapping.value) ensureMappingFreePorts()
   showMappingDialog.value = true
 }
 
@@ -567,6 +591,19 @@ async function saveMapping() {
     saving.value = false
   }
 }
+
+watch(
+  () => mappingForm.node_id,
+  () => {
+    if (!showMappingDialog.value || editingMapping.value) return
+    const node = selectedNode()
+    if (!node) return
+    mappingForm.agent_id = node.agent_id
+    mappingForm.name = node.name
+    mappingForm.openwrt_port = node.openwrt_port
+    ensureMappingFreePorts()
+  }
+)
 
 async function deleteMapping(mapping: SoftRouterProxyMapping) {
   saving.value = true

@@ -215,7 +215,8 @@ docker compose down -v
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
 | `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
 | `SERVER_PORT` | No | `8080` | Server port |
-| `SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE` | No | `1081-1100` | Public authenticated SOCKS ports for OpenWrt/PassWall proxy nodes |
+| `SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE` | No | `1101-1120` | Public authenticated SOCKS ports for OpenWrt/PassWall proxy nodes |
+| `SOFT_ROUTER_PROXY_RAW_PORT_RANGE` | No | `12083-12150` | Raw FRP upstream ports allowed for OpenWrt/PassWall proxy nodes |
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
 | `TZ` | No | `Asia/Shanghai` | Timezone |
@@ -236,18 +237,19 @@ them as public authenticated SOCKS5 ports from the NoWind server.
 High-level path:
 
 ```txt
-Public user -> api.example.com:1081 with SOCKS auth
+Public user -> api.example.com:1101 with SOCKS auth
   -> Nowind SOCKS gateway
-  -> host.docker.internal:12081 raw FRP upstream
+  -> host.docker.internal:12083 raw FRP upstream
   -> OpenWrt frpc
   -> PassWall local SOCKS listener
 ```
 
 Setup summary:
 
-1. Expose `SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE`, for example `1081-1100`, in
+1. Expose `SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE`, for example `1101-1120`, in
    Docker Compose. The bundled compose files already include this mapping.
-2. Run a US frps service for raw upstream ports, for example `12081-12150`.
+2. Set `SOFT_ROUTER_PROXY_RAW_PORT_RANGE`, for example `12083-12150`, to match
+   the raw ports allowed by the US frps service.
    For a new server, you can install a separate frps service with:
    ```bash
    cd deploy

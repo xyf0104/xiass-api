@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -15,6 +16,9 @@ CONFIG_NAME = "nowind_soft_router_agent"
 SECTION = "main"
 RUN_DIR = Path("/var/run/nowind-soft-router-agent")
 DEFAULT_LOG = Path("/var/log/nowind-soft-router-agent.log")
+DEFAULT_LOG_MAX_SIZE = 5 * 1024 * 1024
+DEFAULT_LOG_BACKUPS = 5
+LOG_LOCK = threading.Lock()
 
 
 def run(args, timeout=10):
@@ -48,8 +52,74 @@ def cfg_int(option, default):
         return default
 
 
+def parse_size(value, default):
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+
+    multipliers = [
+        ("gib", 1024 * 1024 * 1024),
+        ("gb", 1024 * 1024 * 1024),
+        ("g", 1024 * 1024 * 1024),
+        ("mib", 1024 * 1024),
+        ("mb", 1024 * 1024),
+        ("m", 1024 * 1024),
+        ("kib", 1024),
+        ("kb", 1024),
+        ("k", 1024),
+        ("b", 1),
+    ]
+    multiplier = 1
+    for suffix, scale in multipliers:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+            multiplier = scale
+            break
+
+    try:
+        return int(float(text) * multiplier)
+    except ValueError:
+        return default
+
+
 def log_file():
     return Path(uci_get("log_file", str(DEFAULT_LOG)) or str(DEFAULT_LOG))
+
+
+def log_max_size():
+    size = parse_size(uci_get("log_max_size", "5M"), DEFAULT_LOG_MAX_SIZE)
+    return max(0, size)
+
+
+def log_backup_count():
+    count = cfg_int("log_backups", DEFAULT_LOG_BACKUPS)
+    return max(0, min(count, 20))
+
+
+def rotate_log_if_needed(path):
+    max_size = log_max_size()
+    if max_size <= 0:
+        return
+
+    try:
+        if not path.exists() or path.stat().st_size < max_size:
+            return
+
+        backups = log_backup_count()
+        if backups <= 0:
+            path.unlink()
+            return
+
+        oldest = Path(str(path) + f".{backups}")
+        if oldest.exists():
+            oldest.unlink()
+        for idx in range(backups - 1, 0, -1):
+            src = Path(str(path) + f".{idx}")
+            if src.exists():
+                os.replace(str(src), str(path) + f".{idx + 1}")
+        os.replace(str(path), str(path) + ".1")
+    except Exception:
+        pass
 
 
 def log(message):
@@ -57,8 +127,10 @@ def log(message):
     try:
         path = log_file()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        with LOG_LOCK:
+            rotate_log_if_needed(path)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
     except Exception:
         pass
     try:
@@ -295,6 +367,18 @@ def frpc_running():
     return pid_running(read_pid())
 
 
+def pump_frpc_output(proc):
+    try:
+        if proc.stdout is None:
+            return
+        for raw in proc.stdout:
+            text = raw.rstrip()
+            if text:
+                log(f"frpc: {text}")
+    except Exception:
+        pass
+
+
 def start_frpc():
     frpc_bin = uci_get("frpc_bin", "/usr/bin/frpc")
     frpc_config = Path(uci_get("frpc_config", "/etc/frp/nowind-soft-router-frpc.ini"))
@@ -309,8 +393,14 @@ def start_frpc():
     pid_file = frpc_pid_file()
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     log_file().parent.mkdir(parents=True, exist_ok=True)
-    log_fh = log_file().open("a", encoding="utf-8")
-    proc = subprocess.Popen([frpc_bin, "-c", str(frpc_config)], stdout=log_fh, stderr=subprocess.STDOUT)
+    proc = subprocess.Popen(
+        [frpc_bin, "-c", str(frpc_config)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    threading.Thread(target=pump_frpc_output, args=(proc,), daemon=True).start()
     pid_file.write_text(str(proc.pid), encoding="utf-8")
     log(f"started independent frpc pid={proc.pid} config={frpc_config}")
 
