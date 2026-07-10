@@ -82,8 +82,10 @@ func ProvideAdminHandlers(
 
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
 func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
-	dockerUpdateService := service.NewDockerUpdateService(updateService)
-	return admin.NewSystemHandler(dockerUpdateService, lockService)
+	if service.IsRunningInContainer() {
+		return admin.NewSystemHandler(service.NewDockerUpdateService(updateService), lockService)
+	}
+	return admin.NewSystemHandler(updateService, lockService)
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo

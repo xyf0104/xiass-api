@@ -240,3 +240,23 @@ func TestMigration173AllowsCyberBlockedUsageRequestType(t *testing.T) {
 	require.Contains(t, sql, "ADD CONSTRAINT usage_logs_request_type_check")
 	require.Contains(t, sql, "CHECK (request_type IN (0, 1, 2, 3, 4)) NOT VALID")
 }
+
+func TestMigration174CorrectsOnlyUntouchedNowindGPT56SeedRows(t *testing.T) {
+	content, err := FS.ReadFile("174_correct_nowind_gpt56_seed_pricing.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "'gpt-5.6-sol'")
+	require.Contains(t, sql, "'gpt-5.6-terra'")
+	require.Contains(t, sql, "'gpt-5.6-luna'")
+	require.Contains(t, sql, "0.000006250000::numeric")
+	require.Contains(t, sql, "0.000003125000::numeric")
+	require.Contains(t, sql, "0.000001250000::numeric")
+	require.Contains(t, sql, "cmp.models = jsonb_build_array(corrected.model_name)")
+	require.Contains(t, sql, "cmp.input_price = 0.000005000000::numeric")
+	require.Contains(t, sql, "cmp.output_price = 0.000030000000::numeric")
+	require.Contains(t, sql, "cmp.cache_write_price = 0.000004000000::numeric")
+	require.Contains(t, sql, "cmp.cache_read_price = 0.000000500000::numeric")
+	require.Contains(t, sql, "c.name = 'Codex 号池'")
+	require.NotContains(t, sql, "UPDATE groups")
+}

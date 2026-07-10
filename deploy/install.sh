@@ -608,9 +608,11 @@ download_and_extract() {
     # Create install directory
     mkdir -p "$INSTALL_DIR"
 
-    # Copy binary
-    cp "$TEMP_DIR/sub2api" "$INSTALL_DIR/sub2api"
-    chmod +x "$INSTALL_DIR/sub2api"
+    # Install atomically so a running service keeps its old executable until
+    # the verified replacement is completely ready.
+    cp "$TEMP_DIR/sub2api" "$INSTALL_DIR/sub2api.new"
+    chmod +x "$INSTALL_DIR/sub2api.new"
+    mv -f "$INSTALL_DIR/sub2api.new" "$INSTALL_DIR/sub2api"
 
     # Copy deploy files if they exist in the archive
     if [ -d "$TEMP_DIR/deploy" ]; then
@@ -818,26 +820,32 @@ upgrade() {
     CURRENT_VERSION=$("$INSTALL_DIR/sub2api" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
     print_info "$(msg 'current_version'): $CURRENT_VERSION"
 
-    # Stop service
-    if systemctl is-active --quiet sub2api; then
-        print_info "$(msg 'stopping_service')"
-        systemctl stop sub2api
-    fi
-
     # Backup current binary
     cp "$INSTALL_DIR/sub2api" "$INSTALL_DIR/sub2api.backup"
     print_info "$(msg 'backup_created'): $INSTALL_DIR/sub2api.backup"
 
-    # Download and install new version
+    # Download, verify, and atomically install while the old process remains available.
     get_latest_version
     download_and_extract
+
+    if systemctl is-active --quiet sub2api; then
+        print_info "$(msg 'stopping_service')"
+        systemctl stop sub2api
+    fi
 
     # Set permissions
     chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
 
     # Start service
     print_info "$(msg 'starting_service')"
-    systemctl start sub2api
+    if ! systemctl start sub2api; then
+        print_error "$(msg 'service_start_failed')"
+        cp "$INSTALL_DIR/sub2api.backup" "$INSTALL_DIR/sub2api"
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
+        chmod +x "$INSTALL_DIR/sub2api"
+        systemctl start sub2api || true
+        exit 1
+    fi
 
     print_success "$(msg 'upgrade_complete')"
 }
@@ -870,12 +878,6 @@ install_version() {
         exit 0
     fi
 
-    # Stop service if running
-    if systemctl is-active --quiet sub2api; then
-        print_info "$(msg 'stopping_service')"
-        systemctl stop sub2api
-    fi
-
     # Backup current binary (for potential recovery)
     if [ -f "$INSTALL_DIR/sub2api" ]; then
         local backup_name
@@ -894,6 +896,11 @@ install_version() {
     # Download and install
     download_and_extract
 
+    if systemctl is-active --quiet sub2api; then
+        print_info "$(msg 'stopping_service')"
+        systemctl stop sub2api
+    fi
+
     # Set permissions
     chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
 
@@ -903,7 +910,15 @@ install_version() {
         print_success "$(msg 'service_started')"
     else
         print_error "$(msg 'service_start_failed')"
+        if [ -n "${backup_name:-}" ] && [ -f "$INSTALL_DIR/$backup_name" ]; then
+            print_warning "Restoring previous binary: $backup_name"
+            cp "$INSTALL_DIR/$backup_name" "$INSTALL_DIR/sub2api"
+            chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/sub2api"
+            chmod +x "$INSTALL_DIR/sub2api"
+            systemctl start sub2api || true
+        fi
         print_info "sudo journalctl -u sub2api -n 50"
+        exit 1
     fi
 
     # Print completion message

@@ -326,6 +326,44 @@ describe('PaymentView subscription confirmation amounts', () => {
   })
 })
 
+describe('PaymentView recharge confirmation amounts', () => {
+  it('uses the selected currency precision when rounding the recharge fee', async () => {
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          currency: 'JPY',
+        },
+      },
+      recharge_fee_rate: 2.5,
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          PaymentMethodSelector: true,
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await wrapper.find('input[type="number"]').setValue(81)
+    const checkoutButton = wrapper.findAll('button')
+      .find(button => button.text().includes('payment.topup.continueToCheckout'))
+    expect(checkoutButton).toBeDefined()
+    await checkoutButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(formatPaymentAmount(84, 'JPY'))
+    expect(wrapper.text()).not.toContain(formatPaymentAmount(83, 'JPY'))
+    wrapper.unmount()
+  })
+})
+
 describe('PaymentView payment recovery', () => {
   beforeEach(() => {
     vi.useRealTimers()

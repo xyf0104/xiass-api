@@ -4,7 +4,25 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 )
+
+const deploymentModeEnv = "SUB2API_DEPLOYMENT_MODE"
+
+// IsRunningInContainer selects the updater without changing existing Docker
+// behavior. The explicit environment override also makes nonstandard runtimes
+// deterministic (for example systemd inside a container host namespace).
+func IsRunningInContainer() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(deploymentModeEnv))) {
+	case "docker", "container":
+		return true
+	case "binary", "systemd":
+		return false
+	}
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
+}
 
 type DockerUpdateService struct {
 	updateSvc *UpdateService

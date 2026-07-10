@@ -97,6 +97,12 @@
                 <span class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
                   {{ formatDisplayDiscount(group) }}折
                 </span>
+                <span
+                  v-if="isGroupPeakActive(group)"
+                  class="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0"
+                >
+                  高峰中
+                </span>
                 <!-- 选中勾选 -->
                 <div
                   v-if="activeGroupId === group.id"
@@ -110,6 +116,12 @@
               <!-- 倍率描述 -->
               <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap truncate w-full text-left">
                 {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
+              </span>
+              <span
+                v-if="hasPeakRate(group)"
+                class="mt-1 text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap truncate w-full text-left"
+              >
+                {{ peakRateWindow(group) }}
               </span>
             </button>
           </div>
@@ -228,7 +240,7 @@
  * 模型定价页面 — 对标 apikey.fun 的分组卡片 + 定价表格布局
  * 数据来源：复用 /channels/available API（需登录），按平台聚合展示
  */
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BrandIcon from '@/components/icons/BrandIcon.vue'
@@ -240,8 +252,15 @@ import userChannelsAPI, {
   type UserPricingInterval,
   type UserSupportedModel
 } from '@/api/channels'
+import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import {
+  formatPeakRateWindow,
+  hasPeakRate,
+  isPeakRateActive,
+  serverTimezoneLabel
+} from '@/utils/peak-rate'
 import type { GroupPlatform } from '@/types'
 import {
   getDefaultImagePreviewPrice,
@@ -253,10 +272,13 @@ const appStore = useAppStore()
 // ==================== 状态 ====================
 
 const channels = ref<UserAvailableChannel[]>([])
+const userGroupRates = ref<Record<number, number>>({})
 const loading = ref(false)
 const activePlatform = ref('anthropic')
 const activeGroupId = ref<number | null>(null)
 const priceMode = ref<'group' | 'official'>('group')
+const clock = ref(Date.now())
+let clockTimer: ReturnType<typeof setInterval> | null = null
 
 type DisplayBillingMode = 'token' | 'per_request' | 'image' | 'video'
 
@@ -309,7 +331,7 @@ const activeGroups = computed((): PricingGroup[] => {
   if (!activeChannel.value) return []
   return [...activeChannel.value.section.groups]
     .map(group => group as PricingGroup)
-    .sort((a, b) => a.rate_multiplier - b.rate_multiplier)
+    .sort((a, b) => baseMultiplierForGroup(a) - baseMultiplierForGroup(b))
 })
 
 watch(activeGroups, (groups) => {
@@ -335,15 +357,43 @@ const activeModels = computed((): UserSupportedModel[] => {
  * 在纯人民币系统中，用户的 rate_multiplier 就是最终展示的倍率。
  * 不需要通过 cost_ratio 进行换算了。
  */
-function formatDisplayMultiplier(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
-  return group.rate_multiplier.toString()
+function baseMultiplierForGroup(group: PricingGroup): number {
+  const userRate = userGroupRates.value[group.id]
+  return typeof userRate === 'number' && Number.isFinite(userRate) && userRate >= 0
+    ? userRate
+    : group.rate_multiplier
 }
 
-function formatDisplayDiscount(group: { rate_multiplier: number; cost_ratio?: number | null }): string {
+function isGroupPeakActive(group: PricingGroup): boolean {
+  void clock.value
+  return group.subscription_type === 'subscription' && isPeakRateActive(
+    group,
+    appStore.cachedPublicSettings?.server_utc_offset
+  )
+}
+
+function effectiveTextMultiplier(group: PricingGroup): number {
+  const base = baseMultiplierForGroup(group)
+  if (!isGroupPeakActive(group)) return base
+  return base * (normalizedPrice(group.peak_rate_multiplier) ?? 1)
+}
+
+function formatDisplayMultiplier(group: PricingGroup): string {
+  return effectiveTextMultiplier(group).toString()
+}
+
+function formatDisplayDiscount(group: PricingGroup): string {
   // 折扣计算：(groupPrice / officialPrice) * 10
   // officialPrice 包含 *7 的换算，groupPrice 是真实的，所以折扣是 (multiplier / 7) * 10
-  const discount = (group.rate_multiplier / 7) * 10
+  const discount = (effectiveTextMultiplier(group) / 7) * 10
   return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
+}
+
+function peakRateWindow(group: PricingGroup): string {
+  return formatPeakRateWindow(
+    group,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+  )
 }
 
 function savingsPercent(multiplier?: number): number {
@@ -394,12 +444,13 @@ function multiplierFor(model: UserSupportedModel): number {
 
   const mode = billingModeFor(model)
   if (mode === 'image' && group.image_rate_independent) {
-    return normalizedPrice(group.image_rate_multiplier) ?? group.rate_multiplier
+    return normalizedPrice(group.image_rate_multiplier) ?? baseMultiplierForGroup(group)
   }
   if (mode === 'video' && group.video_rate_independent) {
-    return normalizedPrice(group.video_rate_multiplier) ?? group.rate_multiplier
+    return normalizedPrice(group.video_rate_multiplier) ?? baseMultiplierForGroup(group)
   }
-  return group.rate_multiplier
+  if (mode === 'image' || mode === 'video') return baseMultiplierForGroup(group)
+  return effectiveTextMultiplier(group)
 }
 
 function tokenItem(
@@ -585,7 +636,15 @@ async function copyModelId(modelId: string) {
 async function loadChannels() {
   loading.value = true
   try {
-    channels.value = await userChannelsAPI.getAvailable()
+    const [availableChannels, rates] = await Promise.all([
+      userChannelsAPI.getAvailable(),
+      userGroupsAPI.getUserGroupRates().catch((error: unknown) => {
+        console.error('Failed to load user group rates:', error)
+        return {} as Record<number, number>
+      })
+    ])
+    channels.value = availableChannels
+    userGroupRates.value = rates
     if (channels.value.length > 0) {
       const firstPlatform = channels.value[0]?.platforms?.[0]?.platform
       if (firstPlatform) {
@@ -599,5 +658,14 @@ async function loadChannels() {
   }
 }
 
-onMounted(loadChannels)
+onMounted(() => {
+  void loadChannels()
+  clockTimer = setInterval(() => {
+    clock.value = Date.now()
+  }, 30_000)
+})
+
+onUnmounted(() => {
+  if (clockTimer !== null) clearInterval(clockTimer)
+})
 </script>

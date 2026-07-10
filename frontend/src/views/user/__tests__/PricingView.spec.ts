@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { UserAvailableChannel, UserSupportedModelPricing } from '@/api/channels'
 import PricingView from '../PricingView.vue'
 
 const getAvailable = vi.hoisted(() => vi.fn())
+const getUserGroupRates = vi.hoisted(() => vi.fn())
 const showError = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/channels', () => ({
@@ -11,10 +12,16 @@ vi.mock('@/api/channels', () => ({
   userChannelsAPI: { getAvailable }
 }))
 
+vi.mock('@/api/groups', () => ({
+  default: { getUserGroupRates },
+  userGroupsAPI: { getUserGroupRates }
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showSuccess: vi.fn(),
-    showError
+    showError,
+    cachedPublicSettings: { server_utc_offset: '+08:00' }
   })
 }))
 
@@ -97,6 +104,11 @@ function grokChannelFixture(): UserAvailableChannel[] {
 }
 
 describe('PricingView', () => {
+  beforeEach(() => {
+    getAvailable.mockReset()
+    getUserGroupRates.mockReset().mockResolvedValue({})
+  })
+
   it('keeps existing product tabs and renders all Grok billing modes in CNY', async () => {
     getAvailable.mockResolvedValue(grokChannelFixture())
 
@@ -138,5 +150,39 @@ describe('PricingView', () => {
     await officialButton!.trigger('click')
     expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥7')
     expect(wrapper.get('[data-test="price-grok-imagine-video-1.5-video-480p"]').text()).toContain('¥0.56')
+  })
+
+  it('applies the user-specific rate and active peak factor to text prices only', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-07-10T07:00:00Z'))
+    const channels = grokChannelFixture()
+    const group = channels[0]!.platforms[0]!.groups[0]!
+    group.subscription_type = 'subscription'
+    group.peak_rate_enabled = true
+    group.peak_start = '14:00'
+    group.peak_end = '18:00'
+    group.peak_rate_multiplier = 2
+    getAvailable.mockResolvedValue(channels)
+    getUserGroupRates.mockResolvedValue({ 9: 2 })
+
+    const wrapper = mount(PricingView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: { template: '<span />' },
+          BrandIcon: { template: '<span />' },
+          PlatformIcon: { template: '<span />' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('高峰中')
+    expect(wrapper.text()).toContain('4x 倍率')
+    expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥4')
+    expect(wrapper.get('[data-test="price-grok-imagine-image-image-1k"]').text()).toContain('¥0.04')
+
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })

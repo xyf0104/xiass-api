@@ -186,8 +186,8 @@ generate_env() {
     local env_file="$INSTALL_DIR/deploy/.env"
 
     if [ -f "$env_file" ]; then
-        log ".env 已存在，备份为 .env.bak 并重新生成"
-        cp "$env_file" "${env_file}.bak"
+        log ".env 已存在，保留现有数据库、JWT、TOTP 和管理员配置"
+        return
     fi
 
     local jwt_secret pg_password totp_key

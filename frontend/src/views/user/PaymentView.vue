@@ -249,7 +249,7 @@
             <div class="bg-[#FBF9F6] dark:bg-dark-800 rounded-2xl p-6 border border-[#F0EBE1] dark:border-dark-700 mb-6">
               <div class="text-gray-500 dark:text-gray-400 text-sm mb-1">{{ t('payment.topup.paymentInfo', '支付信息') }}</div>
               <div class="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                <span class="text-2xl mr-1">{{ selectedCurrency === 'CNY' ? '¥' : '¥' }}</span>{{ formatSelectedPaymentAmount(totalAmount).replace(/[^0-9.]/g, '') }}
+                {{ formatSelectedPaymentAmount(totalAmount) }}
               </div>
               <div class="text-gray-500 dark:text-gray-400 text-sm flex justify-between items-center">
                 <span>{{ t('payment.creditedBalance', '到账余额') }} ¥{{ (selectedTier ? (selectedTier.creditUSD + selectedTier.bonusUSD) : creditedAmount).toFixed(2) }}</span>
@@ -654,13 +654,13 @@ const methodOptions = computed<PaymentMethodOption[]>(() =>
 const feeRate = computed(() => checkout.value?.recharge_fee_rate ?? 0)
 const feeAmount = computed(() =>
   feeRate.value > 0 && validAmount.value > 0
-    ? Math.ceil(((validAmount.value * feeRate.value) / 100) * 100) / 100
+    ? ceilPaymentAmount((validAmount.value * feeRate.value) / 100, selectedCurrency.value)
     : 0
 )
 const totalAmount = computed(() =>
   feeRate.value > 0 && validAmount.value > 0
-    ? Math.round((validAmount.value + feeAmount.value) * 100) / 100
-    : validAmount.value
+    ? roundPaymentAmount(validAmount.value + feeAmount.value, selectedCurrency.value)
+    : roundPaymentAmount(validAmount.value, selectedCurrency.value)
 )
 
 const amountError = computed(() => {
