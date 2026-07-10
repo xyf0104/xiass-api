@@ -12,13 +12,13 @@ DECLARE
 BEGIN
     SELECT id INTO v_codex_channel_id
     FROM channels
-    WHERE name = 'Codex 号池' AND deleted_at IS NULL
+    WHERE name = 'Codex 号池'
     ORDER BY id
     LIMIT 1;
 
     SELECT id INTO v_claude_channel_id
     FROM channels
-    WHERE name = 'jojo-max-claude' AND deleted_at IS NULL
+    WHERE name = 'jojo-max-claude'
     ORDER BY id
     LIMIT 1;
 
