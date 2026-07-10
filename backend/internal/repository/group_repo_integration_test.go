@@ -162,7 +162,8 @@ func (s *GroupRepoSuite) TestDelete() {
 // --- List / ListWithFilters ---
 
 func (s *GroupRepoSuite) TestList() {
-	baseGroups, basePage, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10})
+	params := pagination.PaginationParams{Page: 1, PageSize: 100}
+	baseGroups, basePage, err := s.repo.List(s.ctx, params)
 	s.Require().NoError(err, "List base")
 
 	s.Require().NoError(s.repo.Create(s.ctx, &service.Group{
@@ -182,7 +183,7 @@ func (s *GroupRepoSuite) TestList() {
 		SubscriptionType: service.SubscriptionTypeStandard,
 	}))
 
-	groups, page, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10})
+	groups, page, err := s.repo.List(s.ctx, params)
 	s.Require().NoError(err, "List")
 	s.Require().Len(groups, len(baseGroups)+2)
 	s.Require().Equal(basePage.Total+2, page.Total)
@@ -250,6 +251,17 @@ func (s *GroupRepoSuite) TestListWithFilters_Status() {
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
+	isExclusive := true
+	baseGroups, _, err := s.repo.ListWithFilters(
+		s.ctx,
+		pagination.PaginationParams{Page: 1, PageSize: 100},
+		"",
+		"",
+		"",
+		&isExclusive,
+	)
+	s.Require().NoError(err)
+
 	s.Require().NoError(s.repo.Create(s.ctx, &service.Group{
 		Name:             "g1",
 		Platform:         service.PlatformAnthropic,
@@ -267,11 +279,18 @@ func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
 		SubscriptionType: service.SubscriptionTypeStandard,
 	}))
 
-	isExclusive := true
-	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "", &isExclusive)
+	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 100}, "", "", "", &isExclusive)
 	s.Require().NoError(err)
-	s.Require().Len(groups, 1)
+	s.Require().Len(groups, len(baseGroups)+1)
+	found := false
 	s.Require().True(groups[0].IsExclusive)
+	for _, group := range groups {
+		s.Require().True(group.IsExclusive)
+		if group.Name == "g2" {
+			found = true
+		}
+	}
+	s.Require().True(found, "g2 group should be in results")
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_Search() {
@@ -534,6 +553,9 @@ func (s *GroupRepoSuite) TestListActive() {
 }
 
 func (s *GroupRepoSuite) TestListActiveByPlatform() {
+	baseGroups, err := s.repo.ListActiveByPlatform(s.ctx, service.PlatformAnthropic)
+	s.Require().NoError(err)
+
 	s.Require().NoError(s.repo.Create(s.ctx, &service.Group{
 		Name:             "g1",
 		Platform:         service.PlatformAnthropic,
@@ -561,8 +583,7 @@ func (s *GroupRepoSuite) TestListActiveByPlatform() {
 
 	groups, err := s.repo.ListActiveByPlatform(s.ctx, service.PlatformAnthropic)
 	s.Require().NoError(err, "ListActiveByPlatform")
-	// 1 default anthropic group + 1 test active anthropic group = 2 total
-	s.Require().Len(groups, 2)
+	s.Require().Len(groups, len(baseGroups)+1)
 	// Verify our test group is in the results
 	var found bool
 	for _, g := range groups {
