@@ -2,7 +2,7 @@
   <div v-if="basePrice != null || groupBasePrice != null">
     <!-- 分组价格模式 -->
     <template v-if="mode === 'group'">
-      <div class="font-mono">
+      <div class="whitespace-nowrap font-mono">
         <span class="text-lg font-bold text-primary-500">
           ¥{{ groupPriceFormatted }}
         </span>
@@ -14,7 +14,7 @@
     </template>
     <!-- 官方价格模式 -->
     <template v-else>
-      <div class="font-mono">
+      <div class="whitespace-nowrap font-mono">
         <span class="text-lg font-bold text-gray-700 dark:text-gray-300">
           ¥{{ officialPriceFormatted }}
         </span>

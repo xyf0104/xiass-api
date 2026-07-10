@@ -178,15 +178,16 @@
                   <td class="px-6 py-5">
                     <div
                       v-if="priceItemsFor(model).length > 0"
-                      class="grid min-w-[32rem] grid-cols-2 gap-x-6 gap-y-4 xl:grid-cols-3"
+                      :data-test="`price-items-${model.name}`"
+                      class="flex min-w-max flex-nowrap items-start gap-8"
                     >
                       <div
                         v-for="item in priceItemsFor(model)"
                         :key="item.key"
                         :data-test="`price-${model.name}-${item.key}`"
-                        class="min-w-0"
+                        class="w-[13rem] flex-none"
                       >
-                        <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                        <div class="mb-1 whitespace-nowrap text-xs font-semibold text-gray-500 dark:text-gray-400">
                           {{ item.label }}
                         </div>
                         <PriceCell
@@ -500,7 +501,7 @@ function tokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
     tokenItem('cache-write', '缓存创建', pricing.cache_write_price),
     tokenItem('cache-read', '缓存读取', pricing.cache_read_price)
   ]
-  if (normalizedPrice(pricing.image_output_price) != null) {
+  if ((normalizedPrice(pricing.image_output_price) ?? 0) > 0) {
     items.push(tokenItem('image-output', '图片输出', pricing.image_output_price))
   }
 

@@ -67,7 +67,8 @@ function grokChannelFixture(): UserAvailableChannel[] {
           platform: 'grok',
           pricing: pricing({
             input_price: 0.000001,
-            output_price: 0.000002
+            output_price: 0.000002,
+            image_output_price: 0
           })
         },
         {
@@ -135,6 +136,8 @@ describe('PricingView', () => {
     expect(wrapper.text()).toContain('深度搜索')
 
     expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥3.50')
+    expect(wrapper.find('[data-test="price-grok-4-image-output"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="price-items-grok-4"]').classes()).toContain('flex-nowrap')
     expect(wrapper.get('[data-test="price-grok-search-request"]').text()).toContain('¥1.75')
     expect(wrapper.get('[data-test="price-grok-imagine-image-image-1k"]').text()).toContain('¥0.07')
     expect(wrapper.get('[data-test="price-grok-imagine-video-1.5-video-480p"]').text()).toContain('¥0.28')

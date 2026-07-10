@@ -16,6 +16,7 @@ describe('PriceCell', () => {
     expect(wrapper.text()).toContain('官方价格 ¥14')
     expect(wrapper.text()).toContain('/ 1M tokens')
     expect(wrapper.text()).not.toContain('$')
+    expect(wrapper.get('.font-mono').classes()).toContain('whitespace-nowrap')
   })
 
   it('supports per-second media prices without the per-million scale', () => {

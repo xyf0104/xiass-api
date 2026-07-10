@@ -33,6 +33,34 @@ var DefaultModels = []Model{
 	{ID: "gpt-image-2", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2"},
 }
 
+var defaultAccountTestModelIDs = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-image-2",
+}
+
+// DefaultAccountTestModels returns the current models shown by the account test dialog.
+// Compatibility aliases and retired models remain in DefaultModels for existing API clients,
+// but they are intentionally excluded from interactive connection tests.
+func DefaultAccountTestModels() []Model {
+	modelsByID := make(map[string]Model, len(DefaultModels))
+	for _, model := range DefaultModels {
+		modelsByID[model.ID] = model
+	}
+
+	models := make([]Model, 0, len(defaultAccountTestModelIDs))
+	for _, id := range defaultAccountTestModelIDs {
+		if model, ok := modelsByID[id]; ok {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 // DefaultModelIDs returns the default model ID list
 func DefaultModelIDs() []string {
 	ids := make([]string, len(DefaultModels))

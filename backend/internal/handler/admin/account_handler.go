@@ -2257,13 +2257,13 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.IsOpenAI() {
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
-			response.Success(c, openai.DefaultModels)
+			response.Success(c, openai.DefaultAccountTestModels())
 			return
 		}
 
 		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
-			response.Success(c, openai.DefaultModels)
+			response.Success(c, openai.DefaultAccountTestModels())
 			return
 		}
 
