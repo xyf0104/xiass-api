@@ -43,10 +43,13 @@
         <label class="input-label">{{ t('admin.accounts.dataImportFile') }}</label>
         <div class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 dark:border-dark-600 dark:bg-dark-800">
           <div class="min-w-0">
-            <div class="truncate text-sm text-gray-700 dark:text-dark-200">
-              {{ fileName || t('admin.accounts.dataImportSelectFile') }}
+            <div class="truncate text-sm text-gray-700 dark:text-dark-200" :title="fileListTitle">
+              {{ selectedFilesLabel || t('admin.accounts.dataImportSelectFile') }}
             </div>
-            <div class="text-xs text-gray-500 dark:text-dark-400">JSON (.json)</div>
+            <div class="text-xs text-gray-500 dark:text-dark-400">
+              JSON (.json)
+              <span v-if="files.length > 1"> · {{ fileListTitle }}</span>
+            </div>
           </div>
           <button type="button" class="btn btn-secondary shrink-0" @click="openFilePicker">
             {{ t('common.chooseFile') }}
@@ -57,6 +60,7 @@
           type="file"
           class="hidden"
           accept="application/json,.json"
+          multiple
           @change="handleFileChange"
         />
       </div>
@@ -231,7 +235,12 @@ const errorItems = computed(() => result.value?.errors || [])
 // --- JSON Import Logic ---
 const file = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
-const fileName = computed(() => file.value?.name || '')
+const selectedFilesLabel = computed(() => {
+  if (files.value.length === 0) return ''
+  if (files.value.length === 1) return files.value[0]?.name || ''
+  return t('admin.accounts.selectedCount', { count: files.value.length })
+})
+const fileListTitle = computed(() => files.value.map((item) => item.name).join(', '))
 
 // --- Online Import Logic ---
 const onlineForm = ref({
@@ -319,12 +328,54 @@ const openFilePicker = () => {
 
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
-  file.value = target.files?.[0] || null
+  setSelectedFiles(target.files)
+  target.value = ''
 }
 
 const handleClose = () => {
   if (importing.value) return
+  if (hasCreatedData.value) {
+    hasCreatedData.value = false
+    emit('imported')
+  }
   emit('close')
+}
+
+const isJsonFile = (sourceFile: File) => {
+  const name = sourceFile.name.toLowerCase()
+  return name.endsWith('.json') || sourceFile.type === 'application/json'
+}
+
+const setSelectedFiles = (sourceFiles: FileList | File[] | null | undefined) => {
+  if (importing.value) return
+  const incoming = Array.from(sourceFiles || [])
+  const picked = incoming.filter(isJsonFile)
+  if (!picked.length) {
+    appStore.showError(t('admin.accounts.dataImportSelectFile'))
+    return
+  }
+  if (picked.length < incoming.length) {
+    appStore.showWarning(
+      t('admin.accounts.dataImportIgnoredFiles', { count: incoming.length - picked.length })
+    )
+  }
+  files.value = picked
+  result.value = null
+}
+
+const handleDragEnter = () => {
+  if (importing.value) return
+  dragDepth.value += 1
+}
+
+const handleDragLeave = () => {
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+const handleDrop = (event: DragEvent) => {
+  dragDepth.value = 0
+  if (importing.value) return
+  setSelectedFiles(event.dataTransfer?.files)
 }
 
 const readFileAsText = async (sourceFile: File): Promise<string> => {
@@ -368,8 +419,24 @@ const handleJsonImport = async () => {
 
   importing.value = true
   try {
-    const text = await readFileAsText(file.value)
-    const dataPayload = JSON.parse(text)
+    const dataPayloads: AdminDataPayload[] = []
+    for (const sourceFile of files.value) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(await readFileAsText(sourceFile))
+      } catch {
+        appStore.showError(
+          t('admin.accounts.dataImportParseFailedFile', { name: sourceFile.name })
+        )
+        return
+      }
+      if (!isValidDataPayload(parsed)) {
+        appStore.showError(t('admin.accounts.dataImportInvalidFile', { name: sourceFile.name }))
+        return
+      }
+      dataPayloads.push(parsed)
+    }
+    const dataPayload = mergeDataPayloads(dataPayloads)
 
     const res = await adminAPI.accounts.importData({
       data: dataPayload,
@@ -377,11 +444,7 @@ const handleJsonImport = async () => {
     })
     processImportResult(res)
   } catch (error: any) {
-    if (error instanceof SyntaxError) {
-      appStore.showError(t('admin.accounts.dataImportParseFailed'))
-    } else {
-      appStore.showError(error?.message || t('admin.accounts.dataImportFailed'))
-    }
+    appStore.showError(error?.message || t('admin.accounts.dataImportFailed'))
   } finally {
     importing.value = false
   }

@@ -84,13 +84,29 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AdminUsageStatsResponse } from '@/api/admin/usage'
+import type { UsageStatsResponse } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
 
-defineProps<{ stats: AdminUsageStatsResponse | null }>()
+const props = withDefaults(defineProps<{
+  stats: (AdminUsageStatsResponse | UsageStatsResponse) | null
+  showAccountCost?: boolean
+  strikeStandardCost?: boolean
+}>(), {
+  showAccountCost: true,
+  strikeStandardCost: false,
+})
 
 const { t } = useI18n()
+
+const totalAccountCost = computed(() => {
+  const stats = props.stats as (AdminUsageStatsResponse & { total_account_cost?: number }) | null
+  return stats?.total_account_cost ?? null
+})
+const showAccountCost = computed(() => props.showAccountCost)
+const strikeStandardCost = computed(() => props.strikeStandardCost)
 
 const formatDuration = (ms: number) =>
   ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(2)}s`

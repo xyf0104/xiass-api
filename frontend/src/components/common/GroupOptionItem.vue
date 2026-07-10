@@ -51,8 +51,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import type { SubscriptionType, GroupPlatform } from '@/types'
+import { useAppStore } from '@/stores/app'
+import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+
+const { t } = useI18n()
 
 interface Props {
   name: string
@@ -60,6 +65,10 @@ interface Props {
   subscriptionType?: SubscriptionType
   rateMultiplier?: number
   userRateMultiplier?: number | null
+  peakRateEnabled?: boolean
+  peakStart?: string
+  peakEnd?: string
+  peakRateMultiplier?: number
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
@@ -69,7 +78,8 @@ const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
   selected: false,
   showCheckmark: true,
-  userRateMultiplier: null
+  userRateMultiplier: null,
+  peakRateEnabled: false
 })
 
 // Whether user has a custom rate different from default
@@ -80,6 +90,28 @@ const hasCustomRate = computed(() => {
     props.rateMultiplier !== undefined &&
     props.userRateMultiplier !== props.rateMultiplier
   )
+})
+
+const appStore = useAppStore()
+
+const hasPeakRate = computed(() => {
+  return Boolean(props.peakRateEnabled && props.peakStart && props.peakEnd)
+})
+
+const peakRateText = computed(() => {
+  return formatPeakRateWindow(
+    {
+      peak_rate_enabled: props.peakRateEnabled,
+      peak_start: props.peakStart,
+      peak_end: props.peakEnd,
+      peak_rate_multiplier: props.peakRateMultiplier
+    },
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+  )
+})
+
+const peakRateTitle = computed(() => {
+  return t('common.peakRateTooltip', { window: peakRateText.value })
 })
 
 // Rate pill color matches platform badge color
