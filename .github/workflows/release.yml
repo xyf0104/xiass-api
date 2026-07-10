@@ -189,6 +189,30 @@ jobs:
           GITHUB_REPO_NAME: ${{ github.event.repository.name }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
 
+      - name: Ensure stable release is marked latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          case "$RELEASE_TAG" in
+            *-*)
+              echo "Prerelease tag $RELEASE_TAG does not replace the latest stable release"
+              exit 0
+              ;;
+          esac
+
+          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f make_latest=true \
+            --silent
+
+          LATEST_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')
+          if [ "$LATEST_TAG" != "$RELEASE_TAG" ]; then
+            echo "Expected latest release $RELEASE_TAG, got $LATEST_TAG"
+            exit 1
+          fi
+          echo "Latest release verified: $LATEST_TAG"
+
       # Update DockerHub description
       - name: Update DockerHub description
         if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}

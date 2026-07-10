@@ -72,6 +72,7 @@ release:
     name: "{{ .Env.GITHUB_REPO_NAME }}"
   draft: false
   prerelease: auto
+  make_latest: "true"
   name_template: "NoWind API {{.Version}} (Simple)"
   header: |
     > NoWind API - 将 AI 订阅配额分发和管理
