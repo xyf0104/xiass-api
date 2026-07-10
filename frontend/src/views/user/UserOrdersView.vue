@@ -85,6 +85,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { PaymentOrder } from '@/types/payment'
@@ -107,7 +108,7 @@ const currentFilter = ref('')
 const cancelTargetId = ref<number | null>(null)
 const refundTarget = ref<PaymentOrder | null>(null)
 const refundReason = ref('')
-const pagination = reactive({ page: 1, page_size: 20, total: 0 })
+const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 
 const statusFilters = computed(() => [
   { value: '', label: t('common.all') },

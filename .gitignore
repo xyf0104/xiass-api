@@ -140,3 +140,5 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+/restore-quarantine-*/
+/failed-restore-*/

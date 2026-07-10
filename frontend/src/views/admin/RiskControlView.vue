@@ -1139,6 +1139,7 @@ import type {
 } from '@/api/admin/riskControl'
 import type { AdminGroup, SelectOption } from '@/types'
 import { useAppStore } from '@/stores/app'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime as formatDateTimeValue } from '@/utils/format'
 
@@ -1256,7 +1257,7 @@ const configForm = reactive({
 
 const pagination = reactive({
   page: 1,
-  page_size: 20,
+  page_size: getPersistedPageSize(),
   total: 0,
   pages: 1,
 })

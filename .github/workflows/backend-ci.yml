@@ -8,6 +8,15 @@ permissions:
   contents: read
 
 jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify NoWind release contract
+        run: python3 tools/check_release_contract.py
+
   test:
     runs-on: ubuntu-latest
     steps:

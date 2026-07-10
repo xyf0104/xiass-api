@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { opsAPI, type OpsOpenAITokenStatsResponse, type OpsOpenAITokenStatsTimeRange } from '@/api/admin/ops'
+import { getPersistedPageSize, setPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatNumber } from '@/utils/format'
 
 interface Props {
@@ -29,7 +30,7 @@ const timeRange = ref<OpsOpenAITokenStatsTimeRange>('30d')
 const viewMode = ref<ViewMode>('topn')
 const topN = ref<number>(20)
 const page = ref<number>(1)
-const pageSize = ref<number>(20)
+const pageSize = ref<number>(getPersistedPageSize())
 
 const items = computed(() => response.value?.items ?? [])
 const total = computed(() => response.value?.total ?? 0)
@@ -123,6 +124,10 @@ watch(
     refreshToken: props.refreshToken
   }),
   (next, prev) => {
+    if (prev && next.pageSize !== prev.pageSize) {
+      setPersistedPageSize(next.pageSize)
+    }
+
     // 避免“筛选变化 -> 重置页码 -> 触发两次请求”：
     // 先只重置页码，等待下一次 watch（仅 page 变化）再发起请求。
     const filtersChanged = !prev ||

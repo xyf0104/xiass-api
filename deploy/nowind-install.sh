@@ -1,21 +1,9 @@
 #!/usr/bin/env bash
-# =============================================================================
-# NoWind API 交互式一键安装脚本
-# =============================================================================
-# 用法（在 VPS 上执行）：
-#   curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-install.sh | sudo bash
-#
-# 功能：
-#   1. 检测系统环境、安装 Docker（若缺失）
-#   2. 交互式收集：端口、管理员邮箱、管理员密码
-#   3. 自动生成安全密钥（JWT / TOTP / PostgreSQL）
-#   4. 拉取 GHCR 发布镜像，或可选从源码构建
-#   5. 启动 PostgreSQL + Redis + NoWind API
-#   6. 输出访问地址、管理员信息、Google 登录配置指引
-# =============================================================================
-set -euo pipefail
+# NoWind API Docker 一键安装脚本
+# 用法：curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh | sudo bash
 
-# ===== 颜色 =====
+set -Eeuo pipefail
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -24,354 +12,528 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# ===== 默认值 =====
 REPO_URL="https://github.com/xyf0104/nowind-api.git"
+RAW_BASE_URL="https://raw.githubusercontent.com/xyf0104/nowind-api/main"
 INSTALL_DIR="${INSTALL_DIR:-/opt/nowind-api}"
 BRANCH="${BRANCH:-main}"
-SERVER_PORT="8080"
-ADMIN_EMAIL="admin@nowind.local"
-ADMIN_PASSWORD=""
-BUILD_MODE="image"  # image = 拉取 GHCR 发布镜像; source = 从源码构建
+SERVER_PORT="${SERVER_PORT:-8080}"
+RAW_PORT_RANGE="${SOFT_ROUTER_PROXY_RAW_PORT_RANGE:-12083-12150}"
+PUBLIC_PORT_RANGE="${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1101-1120}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@nowind.local}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+BUILD_MODE="${BUILD_MODE:-image}"
+EXISTING_INSTALL=false
+ADMIN_PASSWORD_GENERATED=false
+ARCH=""
+COMPOSE=()
 
-# ===== 工具函数 =====
 log()  { echo -e "${CYAN}[NoWind]${NC} $*"; }
-ok()   { echo -e "${GREEN}[✓]${NC} $*"; }
-warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-err()  { echo -e "${RED}[✗]${NC} $*" >&2; }
-gen_secret() { openssl rand -hex 32; }
+ok()   { echo -e "${GREEN}[完成]${NC} $*"; }
+warn() { echo -e "${YELLOW}[提醒]${NC} $*"; }
+err()  { echo -e "${RED}[错误]${NC} $*" >&2; }
+die()  { err "$*"; exit 1; }
 
-# 交互式读取（兼容 curl | bash 管道模式）
+gen_secret() {
+    openssl rand -hex 32
+}
+
 ask() {
-    local prompt="$1" default="$2" var_name="$3"
-    local input
-    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-        read -p "$(echo -e "${BLUE}${prompt}${NC} [${default}]: ")" input < /dev/tty
-    else
-        input=""
+    local prompt="$1" default="$2" var_name="$3" input=""
+    if [ -r /dev/tty ]; then
+        read -r -p "$(echo -e "${BLUE}${prompt}${NC} [${default}]: ")" input < /dev/tty || true
     fi
-    eval "${var_name}='${input:-$default}'"
+    printf -v "$var_name" '%s' "${input:-$default}"
 }
 
 ask_password() {
-    local prompt="$1" var_name="$2"
-    local input
-    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-        read -sp "$(echo -e "${BLUE}${prompt}${NC}: ")" input < /dev/tty
+    local prompt="$1" var_name="$2" input=""
+    if [ -r /dev/tty ]; then
+        read -r -s -p "$(echo -e "${BLUE}${prompt}${NC}: ")" input < /dev/tty || true
         echo ""
-    else
-        input=""
     fi
-    eval "${var_name}='${input}'"
+    printf -v "$var_name" '%s' "$input"
 }
 
-# ===== 前置检查 =====
+confirm() {
+    local prompt="$1" default_yes="${2:-true}" answer=""
+    if [ ! -r /dev/tty ]; then
+        "$default_yes"
+        return
+    fi
+    if "$default_yes"; then
+        read -r -p "$(echo -e "${BLUE}${prompt}${NC} [Y/n]: ")" answer < /dev/tty || true
+        [[ ! "$answer" =~ ^[nN]$ ]]
+    else
+        read -r -p "$(echo -e "${BLUE}${prompt}${NC} [y/N]: ")" answer < /dev/tty || true
+        [[ "$answer" =~ ^[yY]$ ]]
+    fi
+}
+
+read_env_value() {
+    local key="$1" env_file="$2"
+    awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$env_file" 2>/dev/null
+}
+
 check_root() {
-    [ "$(id -u)" -eq 0 ] || { err "请使用 root 运行: curl ... | sudo bash"; exit 1; }
+    [ "$(id -u)" -eq 0 ] || die "请使用 root 权限运行，例如：curl -fsSL ${RAW_BASE_URL}/install.sh | sudo bash"
 }
 
 check_system() {
-    log "检测系统环境..."
-    local os arch mem_mb
-    os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    arch=$(uname -m)
-    [ "$os" = "linux" ] || { err "仅支持 Linux 系统，当前: $os"; exit 1; }
-    mem_mb=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
-    ok "系统: ${os}/${arch}  内存: ${mem_mb}MB"
-    if [ "$mem_mb" -gt 0 ] && [ "$mem_mb" -lt 1500 ]; then
-        warn "内存不足 1.5GB，源码构建可能失败。建议使用官方镜像模式或添加 swap。"
+    [ "$(uname -s)" = "Linux" ] || die "一键安装仅支持 Linux。"
+
+    case "$(uname -m)" in
+        x86_64|amd64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *) die "暂不支持当前 CPU 架构：$(uname -m)" ;;
+    esac
+
+    local distro="Linux" mem_mb=0 disk_mb=0
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        distro="${PRETTY_NAME:-${ID:-Linux}}"
+    fi
+    if command -v free >/dev/null 2>&1; then
+        mem_mb=$(free -m | awk '/^Mem:/{print $2}')
+    elif [ -r /proc/meminfo ]; then
+        mem_mb=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)
+    fi
+    disk_mb=$(df -Pm / | awk 'NR==2{print $4}')
+
+    log "系统：${distro}，架构：${ARCH}，内存：${mem_mb:-未知}MB，可用磁盘：${disk_mb:-未知}MB"
+    if [ "${mem_mb:-0}" -gt 0 ] && [ "$mem_mb" -lt 1500 ]; then
+        warn "内存低于 1.5GB，建议先添加 swap；源码构建至少建议 3GB 内存。"
+    fi
+    if [ "${disk_mb:-0}" -gt 0 ] && [ "$disk_mb" -lt 4096 ]; then
+        die "可用磁盘不足 4GB。请先清理磁盘或扩容。"
     fi
 }
 
-# ===== 安装 Docker =====
+install_base_dependencies() {
+    local missing=() cmd
+    for cmd in curl git openssl tar gzip awk sed ss; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    [ "${#missing[@]}" -eq 0 ] && return
+
+    log "缺少基础依赖：${missing[*]}，正在安装..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -y
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git openssl tar gzip iproute2 procps
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y ca-certificates curl git openssl tar gzip iproute procps-ng
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y ca-certificates curl git openssl tar gzip iproute procps-ng
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache ca-certificates curl git openssl tar gzip iproute2 procps bash
+    else
+        die "无法识别系统包管理器。请手动安装：curl git openssl tar gzip iproute2。"
+    fi
+
+    for cmd in curl git openssl tar gzip awk sed ss; do
+        command -v "$cmd" >/dev/null 2>&1 || die "依赖安装后仍找不到命令：$cmd"
+    done
+    ok "基础依赖已就绪"
+}
+
+install_compose_plugin() {
+    log "未检测到 Docker Compose，正在安装 Compose 插件..."
+    if command -v apt-get >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y docker-compose-plugin
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y docker-compose-plugin
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache docker-cli-compose
+    fi
+}
+
 install_docker() {
-    if command -v docker >/dev/null 2>&1; then
-        ok "Docker 已安装: $(docker --version 2>/dev/null | head -1)"
-    else
-        log "正在安装 Docker..."
+    if ! command -v docker >/dev/null 2>&1; then
+        log "未检测到 Docker，正在安装官方 Docker Engine..."
         curl -fsSL https://get.docker.com | sh
-        systemctl enable --now docker 2>/dev/null || true
-        ok "Docker 安装完成"
     fi
 
-    # 检测 docker compose
-    if docker compose version >/dev/null 2>&1; then
-        COMPOSE="docker compose"
-    elif command -v docker-compose >/dev/null 2>&1; then
-        COMPOSE="docker-compose"
-    else
-        err "未检测到 docker compose 插件，请手动安装"
-        exit 1
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl enable --now docker >/dev/null 2>&1 || die "Docker 服务启动失败，请运行 systemctl status docker 查看原因。"
+    elif command -v service >/dev/null 2>&1; then
+        service docker start >/dev/null 2>&1 || die "Docker 服务启动失败。"
     fi
-    ok "Compose: $($COMPOSE version 2>/dev/null | head -1)"
+
+    docker info >/dev/null 2>&1 || die "Docker 守护进程不可用，请先修复 Docker。"
+
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE=(docker compose)
+    else
+        install_compose_plugin
+        if docker compose version >/dev/null 2>&1; then
+            COMPOSE=(docker compose)
+        elif command -v docker-compose >/dev/null 2>&1; then
+            COMPOSE=(docker-compose)
+        else
+            die "Docker 已安装，但缺少 Compose 插件。请安装 docker-compose-plugin 后重试。"
+        fi
+    fi
+
+    ok "$(docker --version)；$("${COMPOSE[@]}" version | head -n 1)"
 }
 
-# ===== 安装 git =====
-install_git() {
-    if command -v git >/dev/null 2>&1; then
+load_existing_config() {
+    local env_file="$INSTALL_DIR/deploy/.env" value=""
+    if [ ! -f "$env_file" ]; then
         return
     fi
-    log "正在安装 git..."
-    (apt-get update -y && apt-get install -y git) 2>/dev/null || yum install -y git 2>/dev/null || true
+
+    EXISTING_INSTALL=true
+    value=$(read_env_value SERVER_PORT "$env_file")
+    [ -n "$value" ] && SERVER_PORT="$value"
+    value=$(read_env_value SOFT_ROUTER_PROXY_RAW_PORT_RANGE "$env_file")
+    [ -n "$value" ] && RAW_PORT_RANGE="$value"
+    value=$(read_env_value SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE "$env_file")
+    [ -n "$value" ] && PUBLIC_PORT_RANGE="$value"
+    value=$(read_env_value ADMIN_EMAIL "$env_file")
+    [ -n "$value" ] && ADMIN_EMAIL="$value"
+    value=$(read_env_value NOWIND_BUILD_MODE "$env_file")
+    if [ "$value" = "source" ] || [ "$value" = "image" ]; then
+        BUILD_MODE="$value"
+    elif [ "$ARCH" = "arm64" ]; then
+        BUILD_MODE="source"
+    fi
 }
 
-# ===== 交互式配置 =====
+validate_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
+}
+
+parse_range() {
+    local range="$1" start_var="$2" end_var="$3" start end
+    if [[ "$range" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        start="${BASH_REMATCH[1]}"
+        end="${BASH_REMATCH[2]}"
+    elif validate_port "$range"; then
+        start="$range"
+        end="$range"
+    else
+        return 1
+    fi
+    validate_port "$start" && validate_port "$end" && [ "$start" -le "$end" ] || return 1
+    [ $((end - start + 1)) -le 200 ] || return 1
+    printf -v "$start_var" '%s' "$start"
+    printf -v "$end_var" '%s' "$end"
+}
+
+ranges_overlap() {
+    local a_start="$1" a_end="$2" b_start="$3" b_end="$4"
+    [ "$a_start" -le "$b_end" ] && [ "$b_start" -le "$a_end" ]
+}
+
+validate_configuration() {
+    local raw_start raw_end public_start public_end
+    validate_port "$SERVER_PORT" || die "服务端口必须是 1-65535 之间的整数。"
+    parse_range "$RAW_PORT_RANGE" raw_start raw_end || die "Raw FRP 端口范围格式错误，例如 12083-12150，最多 200 个端口。"
+    parse_range "$PUBLIC_PORT_RANGE" public_start public_end || die "公网 SOCKS 端口范围格式错误，例如 1101-1120，最多 200 个端口。"
+
+    if [ "$SERVER_PORT" -ge "$raw_start" ] && [ "$SERVER_PORT" -le "$raw_end" ]; then
+        die "服务端口与 Raw FRP 端口范围冲突。"
+    fi
+    if [ "$SERVER_PORT" -ge "$public_start" ] && [ "$SERVER_PORT" -le "$public_end" ]; then
+        die "服务端口与公网 SOCKS 端口范围冲突。"
+    fi
+    ranges_overlap "$raw_start" "$raw_end" "$public_start" "$public_end" && die "Raw FRP 与公网 SOCKS 端口范围不能重叠。"
+
+    [[ "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die "管理员邮箱格式不正确。"
+    if [ -n "$ADMIN_PASSWORD" ]; then
+        [ "${#ADMIN_PASSWORD}" -ge 12 ] || die "管理员密码至少需要 12 个字符。"
+        [[ "$ADMIN_PASSWORD" =~ ^[A-Za-z0-9._~!@%+=:,/-]+$ ]] || die "管理员密码只能包含字母、数字和 ._~!@%+=:,/-。"
+    fi
+}
+
+port_in_use() {
+    local port="$1"
+    ss -H -lnt 2>/dev/null | awk -v port="$port" '$4 ~ (":" port "$" ) {found=1} END {exit !found}'
+}
+
+check_ports_available() {
+    "$EXISTING_INSTALL" && return
+
+    local raw_start raw_end public_start public_end port occupied=()
+    parse_range "$RAW_PORT_RANGE" raw_start raw_end
+    parse_range "$PUBLIC_PORT_RANGE" public_start public_end
+
+    port_in_use "$SERVER_PORT" && occupied+=("$SERVER_PORT")
+    for ((port=raw_start; port<=raw_end; port++)); do
+        port_in_use "$port" && occupied+=("$port")
+    done
+    for ((port=public_start; port<=public_end; port++)); do
+        port_in_use "$port" && occupied+=("$port")
+    done
+
+    if [ "${#occupied[@]}" -gt 0 ]; then
+        die "以下端口已被占用：${occupied[*]}。请释放端口或重新运行并选择其他范围。"
+    fi
+    if port_in_use 7010; then
+        warn "端口 7010 已被占用；以后安装软路由 FRP 时需要在后台改用其他控制端口。"
+    fi
+    ok "服务端口和代理端口范围均可用"
+}
+
 interactive_config() {
     echo ""
-    echo -e "${CYAN}══════════════════════════════════════════════${NC}"
-    echo -e "${BOLD}  NoWind API 安装配置向导${NC}"
-    echo -e "${CYAN}══════════════════════════════════════════════${NC}"
-    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${BOLD}  NoWind API 一键安装${NC}"
+    echo -e "${CYAN}============================================================${NC}"
 
-    # 部署模式
-    echo -e "${YELLOW}部署模式：${NC}"
-    echo "  1) 拉取 GHCR 发布镜像（支持后台检查更新并重建容器）${GREEN}← 推荐${NC}"
-    echo "  2) 从源码构建（开发/临时测试用，首次约 3-8 分钟）"
-    echo ""
-    local mode_choice=""
-    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-        read -p "$(echo -e "${BLUE}选择部署模式${NC} [1]: ")" mode_choice < /dev/tty
-    fi
-    case "$mode_choice" in
-        2) BUILD_MODE="source" ;;
-        *) BUILD_MODE="image" ;;
-    esac
-    echo ""
-
-    # 端口
-    ask "服务端口" "$SERVER_PORT" SERVER_PORT
-
-    # 管理员邮箱
-    ask "管理员邮箱" "$ADMIN_EMAIL" ADMIN_EMAIL
-
-    # 管理员密码
-    echo ""
-    echo -e "${YELLOW}管理员密码（留空则自动生成，首次启动后从日志中查看）${NC}"
-    ask_password "管理员密码" ADMIN_PASSWORD
-
-    echo ""
-    echo -e "${CYAN}──────────────────────────────────────────────${NC}"
-    echo -e "  部署模式:     ${BOLD}$([ "$BUILD_MODE" = "source" ] && echo "从源码构建" || echo "拉取 GHCR 发布镜像")${NC}"
-    echo -e "  服务端口:     ${BOLD}${SERVER_PORT}${NC}"
-    echo -e "  管理员邮箱:   ${BOLD}${ADMIN_EMAIL}${NC}"
-    echo -e "  管理员密码:   ${BOLD}$([ -n "$ADMIN_PASSWORD" ] && echo "***（已设置）" || echo "（自动生成）")${NC}"
-    echo -e "${CYAN}──────────────────────────────────────────────${NC}"
-    echo ""
-
-    local confirm=""
-    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-        read -p "$(echo -e "${BLUE}确认以上配置并开始安装？${NC} [Y/n]: ")" confirm < /dev/tty
-    fi
-    case "$confirm" in
-        [nN]*) echo "已取消安装。"; exit 0 ;;
-    esac
-    echo ""
-}
-
-# ===== 克隆 / 更新仓库 =====
-setup_repo() {
-    install_git
-    if [ -d "$INSTALL_DIR/.git" ]; then
-        log "更新已有仓库 $INSTALL_DIR ..."
-        git -C "$INSTALL_DIR" fetch origin "$BRANCH"
-        git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
-    else
-        log "克隆仓库到 $INSTALL_DIR ..."
-        git clone -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
-    fi
-    ok "仓库准备就绪"
-}
-
-# ===== 生成 .env =====
-generate_env() {
-    local env_file="$INSTALL_DIR/deploy/.env"
-
-    if [ -f "$env_file" ]; then
-        log ".env 已存在，保留现有数据库、JWT、TOTP 和管理员配置"
+    if "$EXISTING_INSTALL"; then
+        warn "检测到已有部署，将保留 .env、PostgreSQL、Redis 和应用数据。"
+        echo "  安装目录：$INSTALL_DIR"
+        echo "  服务端口：$SERVER_PORT"
+        echo "  Raw FRP： $RAW_PORT_RANGE"
+        echo "  公网 SOCKS：$PUBLIC_PORT_RANGE"
+        confirm "继续修复/更新部署文件并启动服务？" true || exit 0
         return
     fi
 
-    local jwt_secret pg_password totp_key
-    jwt_secret=$(gen_secret)
+    if [ "$ARCH" = "amd64" ]; then
+        echo ""
+        echo "部署方式："
+        echo "  1) 拉取 GHCR 正式镜像（推荐，速度快，支持后台在线更新）"
+        echo "  2) 本机从源码构建（开发用途，耗时更长）"
+        local mode_choice=""
+        if [ -r /dev/tty ]; then
+            read -r -p "$(echo -e "${BLUE}请选择${NC} [1]: ")" mode_choice < /dev/tty || true
+        fi
+        [ "$mode_choice" = "2" ] && BUILD_MODE="source" || BUILD_MODE="image"
+    else
+        BUILD_MODE="source"
+        warn "当前为 arm64；正式 GHCR 镜像目前只发布 amd64，将自动使用源码构建。"
+    fi
+
+    ask "Web 服务端口" "$SERVER_PORT" SERVER_PORT
+    ask "Raw FRP 端口范围" "$RAW_PORT_RANGE" RAW_PORT_RANGE
+    ask "公网 SOCKS 端口范围" "$PUBLIC_PORT_RANGE" PUBLIC_PORT_RANGE
+    ask "管理员邮箱" "$ADMIN_EMAIL" ADMIN_EMAIL
+
+    local generated_password
+    generated_password=$(openssl rand -hex 12)
+    echo ""
+    echo "管理员密码留空时会自动生成；自定义密码至少 12 位，且不能包含空格或引号。"
+    ask_password "管理员密码（留空自动生成）" ADMIN_PASSWORD
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        ADMIN_PASSWORD="$generated_password"
+        ADMIN_PASSWORD_GENERATED=true
+    fi
+
+    validate_configuration
+    echo ""
+    echo "  安装目录：      $INSTALL_DIR"
+    echo "  部署方式：      $BUILD_MODE"
+    echo "  Web 端口：      $SERVER_PORT"
+    echo "  Raw FRP：       $RAW_PORT_RANGE"
+    echo "  公网 SOCKS：    $PUBLIC_PORT_RANGE"
+    echo "  管理员邮箱：    $ADMIN_EMAIL"
+    confirm "确认安装？" true || exit 0
+}
+
+setup_repo() {
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        log "同步 NoWind 源码与部署文件..."
+        if ! git -C "$INSTALL_DIR" diff --quiet || ! git -C "$INSTALL_DIR" diff --cached --quiet; then
+            local patch_file="/root/nowind-local-changes-$(date +%Y%m%d-%H%M%S).patch"
+            git -C "$INSTALL_DIR" diff HEAD > "$patch_file"
+            chmod 600 "$patch_file"
+            warn "检测到本地源码修改，已备份为 $patch_file"
+        fi
+        git -C "$INSTALL_DIR" fetch --prune origin "$BRANCH"
+        git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+    else
+        if [ -d "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+            die "$INSTALL_DIR 已存在且不是 NoWind Git 仓库。请更换 INSTALL_DIR 或先整理该目录。"
+        fi
+        log "克隆 NoWind 到 $INSTALL_DIR ..."
+        mkdir -p "$(dirname "$INSTALL_DIR")"
+        git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    fi
+    [ -f "$INSTALL_DIR/deploy/docker-compose.local.yml" ] || die "部署文件缺失：deploy/docker-compose.local.yml"
+    ok "源码与部署文件已就绪"
+}
+
+generate_env() {
+    local env_file="$INSTALL_DIR/deploy/.env"
+    if [ -f "$env_file" ]; then
+        chmod 600 "$env_file"
+        ok "保留已有 .env 配置"
+        return
+    fi
+
+    local pg_password redis_password jwt_secret totp_key
     pg_password=$(gen_secret)
+    redis_password=$(gen_secret)
+    jwt_secret=$(gen_secret)
     totp_key=$(gen_secret)
 
+    umask 077
     cat > "$env_file" <<ENVEOF
-# ═══════════════════════════════════════════════
-# NoWind API 环境配置（由安装脚本自动生成）
-# ═══════════════════════════════════════════════
-
-# 服务器
+# NoWind API 独立实例配置
+# 此文件只保存在当前服务器，不会上传到 GitHub 或连接维护者数据库。
 SERVER_PORT=${SERVER_PORT}
+BIND_HOST=0.0.0.0
 SERVER_MODE=release
 RUN_MODE=standard
+NOWIND_BUILD_MODE=${BUILD_MODE}
 TZ=Asia/Shanghai
 
-# 软路由代理节点端口范围
-# FRP 在代理节点页面安装；安装完成后请按页面提示重建 Nowind 容器。
-SOFT_ROUTER_PROXY_RAW_PORT_RANGE=12083-12150
-SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=1101-1120
+SOFT_ROUTER_PROXY_RAW_PORT_RANGE=${RAW_PORT_RANGE}
+SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=${PUBLIC_PORT_RANGE}
 
-# PostgreSQL
 POSTGRES_USER=sub2api
 POSTGRES_PASSWORD=${pg_password}
 POSTGRES_DB=sub2api
+REDIS_PASSWORD=${redis_password}
 
-# Redis
-REDIS_PASSWORD=
-
-# 安全密钥
 JWT_SECRET=${jwt_secret}
 TOTP_ENCRYPTION_KEY=${totp_key}
 
-# 管理员
 ADMIN_EMAIL=${ADMIN_EMAIL}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-# 日志
 LOG_LEVEL=info
 LOG_FORMAT=json
 LOG_OUTPUT_TO_STDOUT=true
 LOG_OUTPUT_TO_FILE=true
-
-# 运维监控
 OPS_ENABLED=true
 
-# URL 安全（开发/内网环境可放宽）
+# 软路由与内网代理功能需要访问私有地址，因此默认保留兼容配置。
 SECURITY_URL_ALLOWLIST_ENABLED=false
 SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=true
 SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS=true
 ENVEOF
-
     chmod 600 "$env_file"
-    ok ".env 生成完成"
-
-    # 保存密钥信息用于后续输出
-    GENERATED_PG_PASSWORD="$pg_password"
-    GENERATED_JWT_SECRET="$jwt_secret"
-    GENERATED_TOTP_KEY="$totp_key"
+    ok "已生成当前服务器专属 .env 与随机安全密钥"
 }
 
-# ===== 数据目录 =====
 create_data_dirs() {
     mkdir -p "$INSTALL_DIR/deploy/data" \
              "$INSTALL_DIR/deploy/postgres_data" \
              "$INSTALL_DIR/deploy/redis_data"
-    ok "数据目录创建完成"
+    ok "持久化目录已创建"
 }
 
-# ===== 启动服务 =====
-start_services() {
-    local compose_dir="$INSTALL_DIR/deploy"
+configure_firewall() {
+    local public_start public_end
+    parse_range "$PUBLIC_PORT_RANGE" public_start public_end
 
-    if [ "$BUILD_MODE" = "source" ]; then
-        log "从源码构建并启动（首次需要较长时间，请耐心等待）..."
-        $COMPOSE -f "$compose_dir/docker-compose.local.yml" \
-                 -f "$compose_dir/docker-compose.build.yml" \
-                 --project-directory "$compose_dir" \
-                 up -d --build
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        ufw allow "${SERVER_PORT}/tcp" >/dev/null
+        ufw allow "${public_start}:${public_end}/tcp" >/dev/null
+        ok "UFW 已放行 Web 与公网 SOCKS 端口"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${SERVER_PORT}/tcp" >/dev/null
+        firewall-cmd --permanent --add-port="${public_start}-${public_end}/tcp" >/dev/null
+        firewall-cmd --reload >/dev/null
+        ok "firewalld 已放行 Web 与公网 SOCKS 端口"
     else
-        log "拉取 GHCR 发布镜像并启动..."
-        $COMPOSE -f "$compose_dir/docker-compose.local.yml" \
-                 --project-directory "$compose_dir" \
-                 up -d
+        warn "未检测到启用中的 UFW/firewalld；如使用云服务器，请在安全组放行 TCP ${SERVER_PORT} 和 ${PUBLIC_PORT_RANGE}。"
     fi
-    ok "容器启动完成"
 }
 
-# ===== 获取公网 IP =====
+compose() {
+    local compose_dir="$INSTALL_DIR/deploy"
+    "${COMPOSE[@]}" -f "$compose_dir/docker-compose.local.yml" --project-directory "$compose_dir" "$@"
+}
+
+start_services() {
+    if [ "$BUILD_MODE" = "source" ]; then
+        log "正在从源码构建并启动，首次通常需要 3-10 分钟..."
+        "${COMPOSE[@]}" \
+            -f "$INSTALL_DIR/deploy/docker-compose.local.yml" \
+            -f "$INSTALL_DIR/deploy/docker-compose.build.yml" \
+            --project-directory "$INSTALL_DIR/deploy" \
+            up -d --build
+    else
+        log "正在拉取 NoWind 正式镜像..."
+        compose pull
+        compose up -d
+    fi
+    ok "容器已启动"
+}
+
+wait_for_service() {
+    local attempt
+    log "等待数据库迁移和服务健康检查完成..."
+    for attempt in $(seq 1 120); do
+        if curl -fsS --max-time 3 "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1; then
+            ok "NoWind 健康检查通过"
+            return
+        fi
+        sleep 2
+    done
+
+    compose ps || true
+    compose logs --tail 120 sub2api || true
+    die "服务在 4 分钟内未通过健康检查。上方已输出容器状态和日志。"
+}
+
 get_public_ip() {
     curl -fsSL --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null \
-    || curl -fsSL --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null \
-    || echo "YOUR_SERVER_IP"
+        || curl -fsSL --connect-timeout 5 --max-time 10 https://ifconfig.me 2>/dev/null \
+        || echo "你的服务器IP"
 }
 
-# ===== 输出完成信息 =====
 print_completion() {
     local ip
     ip=$(get_public_ip)
-    local compose_dir="$INSTALL_DIR/deploy"
-    local compose_files="-f $compose_dir/docker-compose.local.yml"
-    if [ "$BUILD_MODE" = "source" ]; then
-        compose_files="$compose_files -f $compose_dir/docker-compose.build.yml"
-    fi
-
     echo ""
-    echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}${BOLD}  ✅ NoWind API 部署成功！${NC}"
-    echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}${BOLD}NoWind API 已完整安装并通过健康检查。${NC}"
     echo ""
-    echo -e "  ${BOLD}访问地址:${NC}       http://${ip}:${SERVER_PORT}"
-    echo -e "  ${BOLD}管理员邮箱:${NC}     ${ADMIN_EMAIL}"
-    if [ -n "$ADMIN_PASSWORD" ]; then
-        echo -e "  ${BOLD}管理员密码:${NC}     ***（你设置的密码）"
+    echo "访问地址：      http://${ip}:${SERVER_PORT}"
+    echo "管理员邮箱：    ${ADMIN_EMAIL}"
+    if ! "$EXISTING_INSTALL"; then
+        echo "管理员密码：    ${ADMIN_PASSWORD}"
+        if "$ADMIN_PASSWORD_GENERATED"; then
+            warn "这是自动生成的管理员密码，请立即保存并在登录后修改。"
+        fi
     else
-        echo -e "  ${BOLD}管理员密码:${NC}     ${YELLOW}自动生成，请从日志中查看：${NC}"
-        echo -e "                  cd $compose_dir && $COMPOSE $compose_files logs sub2api | grep -i 'admin password'"
+        echo "管理员密码：    保留原密码"
     fi
     echo ""
-    echo -e "${CYAN}──────── 生成的安全密钥（请妥善保管）────────${NC}"
-    echo -e "  POSTGRES_PASSWORD:   ${GENERATED_PG_PASSWORD}"
-    echo -e "  JWT_SECRET:          ${GENERATED_JWT_SECRET}"
-    echo -e "  TOTP_KEY:            ${GENERATED_TOTP_KEY}"
+    echo "安装目录：      $INSTALL_DIR"
+    echo "环境配置：      $INSTALL_DIR/deploy/.env（权限 600）"
+    echo "应用数据：      $INSTALL_DIR/deploy/data"
+    echo "PostgreSQL：    $INSTALL_DIR/deploy/postgres_data"
+    echo "Redis：         $INSTALL_DIR/deploy/redis_data"
     echo ""
-    echo -e "${CYAN}──────── 常用命令 ────────${NC}"
-    echo -e "  查看日志:  cd $compose_dir && $COMPOSE $compose_files logs -f sub2api"
-    echo -e "  重启服务:  cd $compose_dir && $COMPOSE $compose_files restart sub2api"
-    echo -e "  停止服务:  cd $compose_dir && $COMPOSE $compose_files down"
-    if [ "$BUILD_MODE" = "source" ]; then
-        echo -e "  更新重建:  cd $compose_dir && git -C $INSTALL_DIR pull && $COMPOSE $compose_files up -d --build"
-    else
-        echo -e "  更新重建:  cd $compose_dir && $COMPOSE $compose_files pull sub2api && $COMPOSE $compose_files up -d --force-recreate sub2api"
-    fi
+    echo "常用命令："
+    echo "  查看状态：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml ps"
+    echo "  查看日志：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml logs -f sub2api"
+    echo "  安全更新：curl -fsSL ${RAW_BASE_URL}/deploy/nowind-update.sh | sudo bash"
+    echo "  完整备份：curl -fsSL ${RAW_BASE_URL}/deploy/nowind-backup.sh | sudo bash"
     echo ""
-    echo -e "${CYAN}──────── 软路由代理节点 ────────${NC}"
-    echo -e "  后台入口:  代理管理 → 代理节点 → 安装 FRP"
-    echo -e "  默认 Raw FRP 区间:      12083-12150"
-    echo -e "  默认公网 SOCKS 区间:    1101-1120"
-    echo -e "  FRP 安装完成后:          cd $compose_dir && $COMPOSE $compose_files up -d --force-recreate sub2api"
+    warn "云厂商安全组还需放行 TCP ${SERVER_PORT}；使用代理节点时再放行 ${PUBLIC_PORT_RANGE}。"
+    warn "任何维护操作都不要使用 docker compose down -v；-v 会删除命名卷。"
     echo ""
-    echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BOLD}  📌 部署后必做：设置 Google 登录${NC}"
-    echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo -e "  NoWind API 支持通过 ${BOLD}通用 OIDC${NC} 接入 Google 登录。"
-    echo -e "  登录管理后台后，进入 ${BOLD}系统设置 → 安全与认证 → OIDC 登录${NC}，填写："
-    echo ""
-    echo -e "  ${BOLD}提供商名称:${NC}      Google"
-    echo -e "  ${BOLD}Client ID:${NC}        （从 Google Cloud Console 获取）"
-    echo -e "  ${BOLD}Client Secret:${NC}    （从 Google Cloud Console 获取）"
-    echo -e "  ${BOLD}Issuer URL:${NC}       https://accounts.google.com"
-    echo -e "  ${BOLD}Scopes:${NC}           openid email profile"
-    echo -e "  ${BOLD}Redirect URI:${NC}     http://${ip}:${SERVER_PORT}/api/v1/auth/oauth/oidc/callback"
-    echo ""
-    echo -e "  ${YELLOW}获取 Google OAuth 凭据步骤：${NC}"
-    echo -e "  1. 访问 https://console.cloud.google.com/apis/credentials"
-    echo -e "  2. 创建 OAuth 2.0 客户端 ID（应用类型选「Web 应用」）"
-    echo -e "  3. 在「已获授权的重定向 URI」中添加："
-    echo -e "     ${BOLD}http://${ip}:${SERVER_PORT}/api/v1/auth/oauth/oidc/callback${NC}"
-    echo -e "  4. 如果你配了域名和 HTTPS，把上面的地址换成 https://你的域名/api/v1/auth/oauth/oidc/callback"
-    echo -e "  5. 复制 Client ID 和 Client Secret 填入后台"
-    echo ""
-    echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-    echo ""
+    echo "每台安装均使用本机独立 PostgreSQL、Redis、数据目录和随机密钥，不会连接或读取维护者的线上实例数据。"
 }
 
-# ===== 主流程 =====
 main() {
     check_root
     check_system
+    install_base_dependencies
     install_docker
+    load_existing_config
     interactive_config
+    validate_configuration
+    check_ports_available
     setup_repo
     generate_env
     create_data_dirs
+    configure_firewall
     start_services
-
-    # 等待服务启动
-    log "等待服务启动..."
-    sleep 8
-
+    wait_for_service
     print_completion
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

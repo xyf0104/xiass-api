@@ -759,7 +759,7 @@ const switchTab = (tab: DetailTab) => {
 const errRows = ref<OpsErrorLog[]>([])
 const errLoading = ref(false)
 const errPage = ref(1)
-const errPageSize = ref(20)
+const errPageSize = ref(getPersistedPageSize())
 const errTotal = ref(0)
 const errSortBy = ref('created_at')
 const errSortOrder = ref<'asc' | 'desc'>('desc')

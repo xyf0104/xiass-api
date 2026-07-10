@@ -94,8 +94,8 @@ FROM ${POSTGRES_IMAGE} AS pg-client
 FROM ${ALPINE_IMAGE}
 
 # Labels
-LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
-LABEL description="Sub2API - AI API Gateway Platform"
+LABEL maintainer="NoWind API <github.com/xyf0104/nowind-api>"
+LABEL description="NoWind API - AI API Gateway Platform"
 LABEL org.opencontainers.image.source="https://github.com/xyf0104/nowind-api"
 
 # Install runtime dependencies

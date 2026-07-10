@@ -209,6 +209,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
 import type { GroupRPMOverrideEntry } from '@/api/admin/groups'
 import type { AdminGroup, AdminUser } from '@/types'
@@ -242,7 +243,7 @@ const showDropdown = ref(false)
 const selectedUser = ref<AdminUser | null>(null)
 const newRpm = ref<number | null>(null)
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(getPersistedPageSize())
 
 let searchTimeout: ReturnType<typeof setTimeout>
 

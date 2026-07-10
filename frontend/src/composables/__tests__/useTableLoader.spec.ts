@@ -31,6 +31,8 @@ describe('useTableLoader', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    localStorage.clear()
+    delete window.__APP_CONFIG__
   })
 
   afterEach(() => {
@@ -135,6 +137,17 @@ describe('useTableLoader', () => {
 
       expect(pagination.page).toBe(1)
       expect(pagination.page_size).toBe(50)
+    })
+
+    it('新建表格实例时恢复用户上次选择的每页数量', () => {
+      const firstFetch = createMockFetchFn([], 100, 10)
+      const first = useTableLoader({ fetchFn: firstFetch })
+
+      first.handlePageSizeChange(10)
+
+      const secondFetch = createMockFetchFn([], 100, 10)
+      const second = useTableLoader({ fetchFn: secondFetch })
+      expect(second.pagination.page_size).toBe(10)
     })
 
     it('handlePageChange 限制页码范围', async () => {

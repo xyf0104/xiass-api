@@ -5,6 +5,7 @@ import { opsAPI, type OpsRuntimeLogConfig, type OpsSystemLog, type OpsSystemLogS
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import { useAppStore } from '@/stores'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const appStore = useAppStore()
 const { t } = useI18n()
@@ -21,7 +22,7 @@ const loading = ref(false)
 const logs = ref<OpsSystemLog[]>([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(getPersistedPageSize())
 
 const health = ref<OpsSystemLogSinkHealth>({
   queue_depth: 0,

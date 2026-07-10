@@ -444,7 +444,7 @@ const usages = ref<PromoCodeUsage[]>([])
 const usagesLoading = ref(false)
 const currentViewingCode = ref<PromoCode | null>(null)
 const usagesPage = ref(1)
-const usagesPageSize = ref(20)
+const usagesPageSize = ref(getPersistedPageSize())
 const usagesTotal = ref(0)
 
 // Forms

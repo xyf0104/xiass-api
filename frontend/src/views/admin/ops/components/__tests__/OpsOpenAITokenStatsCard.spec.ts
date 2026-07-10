@@ -73,6 +73,7 @@ const sampleResponse = {
 describe('OpsOpenAITokenStatsCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
   })
 
   it('默认加载并透传 platform/group 过滤，支持时间窗口切换', async () => {
@@ -172,6 +173,45 @@ describe('OpsOpenAITokenStatsCard', () => {
       expect.objectContaining({
         top_n: 50,
       })
+    )
+  })
+
+  it('恢复并保存用户选择的每页数量', async () => {
+    localStorage.setItem('table-page-size', '50')
+    mockGetOpenAITokenStats.mockImplementation(async (params: Record<string, any>) => ({
+      ...sampleResponse,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+      top_n: params.top_n ?? null,
+      total: 100,
+    }))
+
+    const wrapper = mount(OpsOpenAITokenStatsCard, {
+      props: { refreshToken: 0 },
+      global: {
+        stubs: {
+          Select: SelectStub,
+          EmptyState: EmptyStateStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    let selects = wrapper.findAllComponents(SelectStub)
+    await selects[1].vm.$emit('update:modelValue', 'pagination')
+    await flushPromises()
+
+    expect(mockGetOpenAITokenStats).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, page_size: 50 })
+    )
+
+    selects = wrapper.findAllComponents(SelectStub)
+    await selects[2].vm.$emit('update:modelValue', 10)
+    await flushPromises()
+
+    expect(localStorage.getItem('table-page-size')).toBe('10')
+    expect(mockGetOpenAITokenStats).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, page_size: 10 })
     )
   })
 

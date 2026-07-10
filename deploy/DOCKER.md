@@ -1,76 +1,81 @@
-# NoWind API Docker Image
+# NoWind API Docker 镜像
 
-NoWind API is an AI API Gateway Platform for distributing and managing AI product subscription API quotas.
+NoWind 是 AI API 网关、账号池、用户计费和用量管理平台。
 
-## Quick Start
+## 一键完整安装
 
 ```bash
-docker run -d \
-  --name sub2api \
-  -p 8080:8080 \
-  -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
-  -e REDIS_URL="redis://host:6379" \
-  ghcr.io/xyf0104/sub2api:latest
+curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh | sudo bash
 ```
 
-## Docker Compose
+该安装方式会自动准备 Docker Compose、PostgreSQL、Redis、Watchtower、随机密钥和本地持久化目录，不需要外部数据库或 S3。
 
-```yaml
-version: '3.8'
+## 镜像
 
-services:
-  sub2api:
-    image: ghcr.io/xyf0104/sub2api:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/sub2api?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - db
-      - redis
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=sub2api
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
+```bash
+docker pull ghcr.io/xyf0104/sub2api:latest
 ```
 
-## Environment Variables
+正式镜像当前发布 `linux/amd64`。版本标签包括：
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes | - |
-| `REDIS_URL` | Redis connection string | Yes | - |
-| `PORT` | Server port | No | `8080` |
-| `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
+- `latest`：最新稳定版
+- `x.y.z`：指定稳定版本
+- `x.y.z-amd64`：指定版本和架构
 
-## Supported Architectures
+## 推荐 Compose
 
-- `linux/amd64`
-- `linux/arm64`
+```bash
+git clone https://github.com/xyf0104/nowind-api.git
+cd nowind-api/deploy
+cp .env.example .env
+mkdir -p data postgres_data redis_data
+```
 
-## Tags
+编辑 `.env`，至少设置随机值：
 
-- `latest` - Latest stable release
-- `x.y.z` - Specific version
-- `x.y` - Latest patch of minor version
-- `x` - Latest minor of major version
+```bash
+openssl rand -hex 32
+```
 
-## Links
+必须配置：
 
-- [GitHub Repository](https://github.com/xyf0104/nowind-api)
-- [Documentation](https://github.com/xyf0104/nowind-api#readme)
+```dotenv
+POSTGRES_PASSWORD=替换为随机值
+REDIS_PASSWORD=替换为随机值
+JWT_SECRET=替换为随机值
+TOTP_ENCRYPTION_KEY=替换为随机值
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=替换为强密码
+```
+
+启动：
+
+```bash
+docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yml ps
+```
+
+## 数据位置
+
+`docker-compose.local.yml` 使用：
+
+```text
+./data
+./postgres_data
+./redis_data
+./.env
+```
+
+更新应用容器不会删除这些目录。不要执行 `docker compose down -v`。
+
+## 更新与备份
+
+```bash
+# 先备份再更新
+curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-update.sh | sudo bash
+
+# 只创建完整备份
+curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-backup.sh | sudo bash
+```
+
+详细说明见项目根目录 [README](../README.md)。
