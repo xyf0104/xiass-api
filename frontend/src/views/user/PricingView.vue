@@ -10,7 +10,7 @@
       </div>
 
       <!-- 产品类别 Tab -->
-      <div class="flex items-center gap-3 rounded-xl border border-gray-200/60 bg-white/40 p-2 dark:border-dark-700/60 dark:bg-dark-800/40 shadow-sm backdrop-blur-sm">
+      <div class="custom-scrollbar flex max-w-full items-center gap-3 overflow-x-auto rounded-xl border border-gray-200/60 bg-white/40 p-2 shadow-sm backdrop-blur-sm dark:border-dark-700/60 dark:bg-dark-800/40">
         <button
           v-for="cat in productCategories"
           :key="cat.platform"
@@ -45,15 +45,15 @@
               <Icon name="chart" size="lg" class="text-primary-500" />
               <span class="text-lg font-bold text-gray-900 dark:text-white">价格列表</span>
             </div>
-            <div class="flex items-center gap-4">
+            <div class="flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center sm:gap-4">
               <span class="text-sm text-gray-500 dark:text-gray-400">
                 选择分组后，直接查看每个模型的人民币价格。
               </span>
-              <div class="flex overflow-hidden rounded-lg border border-gray-300 dark:border-dark-600">
+              <div class="flex shrink-0 overflow-hidden rounded-lg border border-gray-300 dark:border-dark-600">
                 <button
                   @click="priceMode = 'group'"
                   :class="[
-                    'px-4 py-2 text-sm font-semibold transition-colors',
+                    'whitespace-nowrap px-4 py-2 text-sm font-semibold transition-colors',
                     priceMode === 'group'
                       ? 'bg-primary-500 text-white'
                       : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700'
@@ -64,7 +64,7 @@
                 <button
                   @click="priceMode = 'official'"
                   :class="[
-                    'px-4 py-2 text-sm font-semibold transition-colors',
+                    'whitespace-nowrap px-4 py-2 text-sm font-semibold transition-colors',
                     priceMode === 'official'
                       ? 'bg-primary-500 text-white'
                       : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700'
@@ -140,84 +140,136 @@
               <thead>
                 <tr class="border-b-2 border-gray-200 text-sm font-bold text-gray-700 dark:border-dark-600 dark:text-gray-300">
                   <th class="px-6 py-4 text-left">模型 ID</th>
-                  <th class="px-6 py-4 text-left">计费方式</th>
-                  <th class="px-6 py-4 text-left">价格详情</th>
+                  <th class="px-6 py-4 text-left">输入价格</th>
+                  <th class="px-6 py-4 text-left">输出价格</th>
+                  <th class="px-6 py-4 text-left">缓存创建</th>
+                  <th class="px-6 py-4 text-left">缓存读取</th>
                   <th class="px-6 py-4 text-right">节省幅度</th>
                 </tr>
               </thead>
               <tbody>
-                <tr
-                  v-for="model in activeModels"
-                  :key="model.name"
-                  class="border-b border-gray-100 transition-colors hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/60"
-                >
-                  <!-- 模型名 -->
-                  <td class="px-6 py-5">
-                    <div class="flex items-center gap-3">
-                      <span class="text-base font-bold text-gray-900 dark:text-white">{{ model.name }}</span>
-                      <button
-                        @click="copyModelId(model.name)"
-                        class="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-dark-600 dark:hover:text-gray-300"
-                        title="复制模型 ID"
-                      >
-                        <Icon name="clipboard" size="sm" />
-                      </button>
-                    </div>
-                  </td>
+                <template v-for="model in activeModels" :key="model.name">
+                  <tr class="border-b border-gray-100 transition-colors hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/60">
+                    <!-- 模型名 -->
+                    <td class="px-6 py-5">
+                      <div class="flex items-center gap-3 whitespace-nowrap">
+                        <span class="text-base font-bold text-gray-900 dark:text-white">{{ model.name }}</span>
+                        <button
+                          @click="copyModelId(model.name)"
+                          class="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-dark-600 dark:hover:text-gray-300"
+                          title="复制模型 ID"
+                        >
+                          <Icon name="clipboard" size="sm" />
+                        </button>
+                      </div>
+                    </td>
 
-                  <!-- 计费方式 -->
-                  <td class="px-6 py-5">
-                    <span
-                      class="inline-flex whitespace-nowrap rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm font-semibold text-gray-700 dark:border-dark-600 dark:bg-dark-700/60 dark:text-gray-300"
-                    >
-                      {{ billingModeLabel(model) }}
-                    </span>
-                  </td>
-
-                  <!-- 价格详情 -->
-                  <td class="px-6 py-5">
-                    <div
-                      v-if="priceItemsFor(model).length > 0"
-                      :data-test="`price-items-${model.name}`"
-                      class="flex min-w-max flex-nowrap items-start gap-8"
-                    >
-                      <div
-                        v-for="item in priceItemsFor(model)"
-                        :key="item.key"
-                        :data-test="`price-${model.name}-${item.key}`"
-                        class="w-[13rem] flex-none"
-                      >
-                        <div class="mb-1 whitespace-nowrap text-xs font-semibold text-gray-500 dark:text-gray-400">
-                          {{ item.label }}
-                        </div>
+                    <template v-if="billingModeFor(model) === 'token'">
+                      <td :data-test="`price-${model.name}-input`" class="px-6 py-5">
                         <PriceCell
-                          :base-price="item.basePrice"
-                          :group-base-price="item.groupBasePrice"
+                          :base-price="model.pricing?.input_price"
                           :multiplier="multiplierFor(model)"
                           :mode="priceMode"
-                          :scale="item.scale"
-                          :unit="item.unit"
                         />
-                      </div>
-                    </div>
-                    <span v-else class="text-sm text-gray-400">暂无价格</span>
-                  </td>
+                      </td>
+                      <td :data-test="`price-${model.name}-output`" class="px-6 py-5">
+                        <PriceCell
+                          :base-price="model.pricing?.output_price"
+                          :multiplier="multiplierFor(model)"
+                          :mode="priceMode"
+                        />
+                      </td>
+                      <td :data-test="`price-${model.name}-cache-write`" class="px-6 py-5">
+                        <PriceCell
+                          :base-price="model.pricing?.cache_write_price"
+                          :multiplier="multiplierFor(model)"
+                          :mode="priceMode"
+                        />
+                      </td>
+                      <td :data-test="`price-${model.name}-cache-read`" class="px-6 py-5">
+                        <PriceCell
+                          :base-price="model.pricing?.cache_read_price"
+                          :multiplier="multiplierFor(model)"
+                          :mode="priceMode"
+                        />
+                      </td>
+                    </template>
 
-                  <!-- 节省幅度 -->
-                  <td class="px-6 py-5 text-right">
-                    <span
-                      v-if="savingsPercent(multiplierFor(model)) > 0"
-                      class="inline-flex items-center gap-1 text-base font-bold text-primary-500"
-                    >
-                      省 {{ savingsPercent(multiplierFor(model)) }}%
-                    </span>
-                    <span v-else class="text-sm text-gray-400">-</span>
-                  </td>
-                </tr>
+                    <template v-else>
+                      <td colspan="4" class="px-6 py-5">
+                        <div
+                          v-if="priceItemsFor(model).length > 0"
+                          :data-test="`price-items-${model.name}`"
+                          class="flex min-w-max flex-nowrap items-start gap-8"
+                        >
+                          <div
+                            v-for="item in priceItemsFor(model)"
+                            :key="item.key"
+                            :data-test="`price-${model.name}-${item.key}`"
+                            class="w-[13rem] flex-none"
+                          >
+                            <div class="mb-1 whitespace-nowrap text-xs font-semibold text-gray-500 dark:text-gray-400">
+                              {{ item.label }}
+                            </div>
+                            <PriceCell
+                              :base-price="item.basePrice"
+                              :group-base-price="item.groupBasePrice"
+                              :multiplier="multiplierFor(model)"
+                              :mode="priceMode"
+                              :scale="item.scale"
+                              :unit="item.unit"
+                            />
+                          </div>
+                        </div>
+                        <span v-else class="text-sm text-gray-400">暂无价格</span>
+                      </td>
+                    </template>
+
+                    <!-- 节省幅度 -->
+                    <td class="px-6 py-5 text-right">
+                      <span
+                        v-if="savingsPercent(multiplierFor(model)) > 0"
+                        class="inline-flex items-center gap-1 whitespace-nowrap text-base font-bold text-primary-500"
+                      >
+                        省 {{ savingsPercent(multiplierFor(model)) }}%
+                      </span>
+                      <span v-else class="text-sm text-gray-400">-</span>
+                    </td>
+                  </tr>
+
+                  <tr
+                    v-if="billingModeFor(model) === 'token' && supplementalTokenPriceItems(model).length > 0"
+                    class="border-b border-gray-100 bg-gray-50/50 dark:border-dark-700 dark:bg-dark-800/40"
+                  >
+                    <td class="px-6 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400">扩展价格</td>
+                    <td colspan="4" class="px-6 py-3">
+                      <div class="flex min-w-max flex-nowrap items-start gap-8">
+                        <div
+                          v-for="item in supplementalTokenPriceItems(model)"
+                          :key="item.key"
+                          :data-test="`price-${model.name}-${item.key}`"
+                          class="w-[13rem] flex-none"
+                        >
+                          <div class="mb-1 whitespace-nowrap text-xs font-semibold text-gray-500 dark:text-gray-400">
+                            {{ item.label }}
+                          </div>
+                          <PriceCell
+                            :base-price="item.basePrice"
+                            :multiplier="multiplierFor(model)"
+                            :mode="priceMode"
+                            :scale="item.scale"
+                            :unit="item.unit"
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td></td>
+                  </tr>
+                </template>
 
                 <!-- 空状态 -->
                 <tr v-if="activeModels.length === 0">
-                  <td colspan="4" class="py-16 text-center text-base text-gray-400">
+                  <td colspan="6" class="py-16 text-center text-base text-gray-400">
                     该分类下暂无已定价模型
                   </td>
                 </tr>
@@ -426,19 +478,6 @@ function billingModeFor(model: UserSupportedModel): DisplayBillingMode {
   return 'token'
 }
 
-function billingModeLabel(model: UserSupportedModel): string {
-  switch (billingModeFor(model)) {
-    case 'per_request':
-      return '按次计费'
-    case 'image':
-      return '按图片计费'
-    case 'video':
-      return '按视频时长计费'
-    default:
-      return '按 Token 计费'
-  }
-}
-
 function multiplierFor(model: UserSupportedModel): number {
   const group = activeGroup.value
   if (!group) return 1
@@ -516,6 +555,11 @@ function tokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
     items.push(...intervalPrices.filter(item => item.basePrice != null))
   }
   return items
+}
+
+function supplementalTokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
+  const primaryKeys = new Set(['input', 'output', 'cache-write', 'cache-read'])
+  return tokenPriceItems(model).filter(item => !primaryKeys.has(item.key))
 }
 
 function perRequestPriceItems(model: UserSupportedModel): DisplayPriceItem[] {

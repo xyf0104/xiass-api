@@ -947,6 +947,99 @@ func (s *UsageLogRepoSuite) TestGetAccountTodayStats() {
 	s.Require().InEpsilon(3.0, stats.UserCost, 0.0001)
 }
 
+func (s *UsageLogRepoSuite) TestAccountCostUsesGroupRatioWithAccountStatsBase() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "cost-ratio@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-cost-ratio", Name: "k"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-cost-ratio"})
+	group := mustCreateGroup(s.T(), s.client, &service.Group{
+		Name:           "g-cost-ratio",
+		RateMultiplier: 0.25,
+	})
+
+	const costRatio = 0.19
+	_, err := s.repo.sql.ExecContext(s.ctx, "UPDATE groups SET cost_ratio = $1 WHERE id = $2", costRatio, group.ID)
+	s.Require().NoError(err)
+
+	accountRateMultiplier := 1.0
+	accountStatsCost := 120.0
+	createdAt := time.Now().UTC().Add(-time.Minute)
+	_, err = s.repo.Create(s.ctx, &service.UsageLog{
+		UserID:                user.ID,
+		APIKeyID:              apiKey.ID,
+		AccountID:             account.ID,
+		RequestID:             uuid.NewString(),
+		Model:                 "gpt-5.5",
+		RequestedModel:        "gpt-5.5",
+		GroupID:               &group.ID,
+		InputTokens:           100,
+		OutputTokens:          20,
+		TotalCost:             100,
+		ActualCost:            25,
+		AccountRateMultiplier: &accountRateMultiplier,
+		AccountStatsCost:      &accountStatsCost,
+		CreatedAt:             createdAt,
+	})
+	s.Require().NoError(err)
+
+	start := createdAt.Add(-time.Minute)
+	end := createdAt.Add(time.Minute)
+	wantCost := accountStatsCost * costRatio
+
+	modelStats, err := s.repo.GetModelStatsWithFilters(s.ctx, start, end, user.ID, 0, 0, 0, nil, nil, nil)
+	s.Require().NoError(err)
+	s.Require().Len(modelStats, 1)
+	s.Require().InEpsilon(100, modelStats[0].Cost, 0.0001)
+	s.Require().InEpsilon(25, modelStats[0].ActualCost, 0.0001)
+	s.Require().InEpsilon(wantCost, modelStats[0].AccountCost, 0.0001)
+
+	filteredStats, err := s.repo.GetStatsWithFilters(s.ctx, UsageLogFilters{
+		UserID:    user.ID,
+		StartTime: &start,
+		EndTime:   &end,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(filteredStats.TotalAccountCost)
+	s.Require().InEpsilon(wantCost, *filteredStats.TotalAccountCost, 0.0001)
+
+	windowStats, err := s.repo.GetAccountWindowStats(s.ctx, account.ID, start)
+	s.Require().NoError(err)
+	s.Require().InEpsilon(wantCost, windowStats.Cost, 0.0001)
+
+	groupStats, err := s.repo.GetGroupStatsWithFilters(s.ctx, start, end, 0, 0, 0, group.ID, nil, nil, nil)
+	s.Require().NoError(err)
+	s.Require().Len(groupStats, 1)
+	s.Require().InEpsilon(wantCost, groupStats[0].AccountCost, 0.0001)
+
+	breakdown, err := s.repo.GetUserBreakdownStats(s.ctx, start, end, usagestats.UserBreakdownDimension{
+		GroupID: group.ID,
+	}, 10)
+	s.Require().NoError(err)
+	s.Require().Len(breakdown, 1)
+	s.Require().InEpsilon(wantCost, breakdown[0].AccountCost, 0.0001)
+
+	dashboardStats, err := s.repo.GetDashboardStatsWithRange(s.ctx, start, end)
+	s.Require().NoError(err)
+	s.Require().InEpsilon(wantCost, dashboardStats.TotalAccountCost, 0.0001)
+
+	accountUsage, err := s.repo.GetAccountUsageStats(s.ctx, account.ID, start, end)
+	s.Require().NoError(err)
+	s.Require().Len(accountUsage.History, 1)
+	s.Require().InEpsilon(wantCost, accountUsage.History[0].ActualCost, 0.0001)
+
+	aggRepo := newDashboardAggregationRepositoryWithSQL(s.tx)
+	s.Require().NoError(aggRepo.AggregateRange(s.ctx, start, end))
+	var hourlyCost float64
+	hourStart := createdAt.In(timezone.Location()).Truncate(time.Hour)
+	s.Require().NoError(scanSingleRow(
+		s.ctx,
+		s.repo.sql,
+		"SELECT account_cost FROM usage_dashboard_hourly WHERE bucket_start = $1",
+		[]any{hourStart},
+		&hourlyCost,
+	))
+	s.Require().InEpsilon(wantCost, hourlyCost, 0.0001)
+}
+
 func (s *UsageLogRepoSuite) TestDashboardAggregationConsistency() {
 	now := time.Now().UTC().Truncate(time.Second)
 	// 使用固定的时间偏移确保 hour1 和 hour2 在同一天且都在过去

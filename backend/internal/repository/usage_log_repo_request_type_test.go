@@ -16,6 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUsageLogAccountCostExpression(t *testing.T) {
+	require.Equal(t,
+		"COALESCE(account_stats_cost, total_cost) * COALESCE((SELECT cost_ratio FROM groups WHERE id = group_id), account_rate_multiplier, 1)",
+		usageLogAccountCostExpression(""),
+	)
+	require.Equal(t,
+		"COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE((SELECT cost_ratio FROM groups WHERE id = ul.group_id), ul.account_rate_multiplier, 1)",
+		usageLogAccountCostExpression("ul"),
+	)
+}
+
 func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}

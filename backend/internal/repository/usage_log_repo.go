@@ -14,6 +14,20 @@ import (
 
 const rawUsageLogModelColumn = "model"
 
+// usageLogAccountCostExpression keeps NoWind's group cost ratio as the
+// multiplier while allowing the upstream account pricing feature to override
+// the base model cost.
+func usageLogAccountCostExpression(alias string) string {
+	prefix := ""
+	if strings.TrimSpace(alias) != "" {
+		prefix = alias + "."
+	}
+	return fmt.Sprintf(
+		"COALESCE(%[1]saccount_stats_cost, %[1]stotal_cost) * COALESCE((SELECT cost_ratio FROM groups WHERE id = %[1]sgroup_id), %[1]saccount_rate_multiplier, 1)",
+		prefix,
+	)
+}
+
 // rawUsageLogModelColumn preserves the exact stored usage_logs.model semantics for direct filters.
 // Historical rows may contain upstream/billing model values, while newer rows store requested_model.
 // Requested/upstream/mapping analytics must use resolveModelDimensionExpression instead.

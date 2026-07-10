@@ -320,7 +320,7 @@ func (r *dashboardAggregationRepository) insertDailyActiveUsers(ctx context.Cont
 
 func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Context, start, end time.Time) error {
 	tzName := timezone.Name()
-	query := `
+	query := fmt.Sprintf(`
 		WITH hourly AS (
 			SELECT
 				date_trunc('hour', created_at AT TIME ZONE $3) AT TIME ZONE $3 AS bucket_start,
@@ -331,7 +331,7 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 				COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
 				COALESCE(SUM(total_cost), 0) AS total_cost,
 				COALESCE(SUM(actual_cost), 0) AS actual_cost,
-				COALESCE(SUM(total_cost * COALESCE((SELECT cost_ratio FROM groups WHERE id = usage_logs.group_id), account_rate_multiplier, 1)), 0) AS account_cost,
+				COALESCE(SUM(%s), 0) AS account_cost,
 				COALESCE(SUM(COALESCE(duration_ms, 0)), 0) AS total_duration_ms
 			FROM usage_logs
 			WHERE created_at >= $1 AND created_at < $2
@@ -385,7 +385,7 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 			total_duration_ms = EXCLUDED.total_duration_ms,
 			active_users = EXCLUDED.active_users,
 			computed_at = EXCLUDED.computed_at
-	`
+	`, usageLogAccountCostExpression(""))
 	_, err := r.sql.ExecContext(ctx, query, start, end, tzName)
 	return err
 }

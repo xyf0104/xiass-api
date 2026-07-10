@@ -110,7 +110,7 @@ describe('PricingView', () => {
     getUserGroupRates.mockReset().mockResolvedValue({})
   })
 
-  it('keeps existing product tabs and renders all Grok billing modes in CNY', async () => {
+  it('keeps the compact token columns and renders all Grok price types in CNY', async () => {
     getAvailable.mockResolvedValue(grokChannelFixture())
 
     const wrapper = mount(PricingView, {
@@ -129,15 +129,19 @@ describe('PricingView', () => {
       expect(wrapper.find(`[data-test="platform-${platform}"]`).exists()).toBe(true)
     }
 
-    expect(wrapper.text()).toContain('按 Token 计费')
-    expect(wrapper.text()).toContain('按次计费')
-    expect(wrapper.text()).toContain('按图片计费')
-    expect(wrapper.text()).toContain('按视频时长计费')
+    expect(wrapper.text()).toContain('输入价格')
+    expect(wrapper.text()).toContain('输出价格')
+    expect(wrapper.text()).toContain('缓存创建')
+    expect(wrapper.text()).toContain('缓存读取')
+    expect(wrapper.text()).not.toContain('计费方式')
+    expect(wrapper.text()).not.toContain('按 Token 计费')
+    expect(wrapper.text()).not.toContain('按次计费')
+    expect(wrapper.text()).not.toContain('按图片计费')
+    expect(wrapper.text()).not.toContain('按视频时长计费')
     expect(wrapper.text()).toContain('深度搜索')
 
     expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥3.50')
     expect(wrapper.find('[data-test="price-grok-4-image-output"]').exists()).toBe(false)
-    expect(wrapper.get('[data-test="price-items-grok-4"]').classes()).toContain('flex-nowrap')
     expect(wrapper.get('[data-test="price-grok-search-request"]').text()).toContain('¥1.75')
     expect(wrapper.get('[data-test="price-grok-imagine-image-image-1k"]').text()).toContain('¥0.07')
     expect(wrapper.get('[data-test="price-grok-imagine-video-1.5-video-480p"]').text()).toContain('¥0.28')

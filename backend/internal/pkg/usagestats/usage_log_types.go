@@ -331,7 +331,7 @@ type AccountUsageHistory struct {
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
 	Cost       float64 `json:"cost"`        // 标准计费（total_cost）
-	ActualCost float64 `json:"actual_cost"` // 账号口径费用（total_cost * account_rate_multiplier）
+	ActualCost float64 `json:"actual_cost"` // 账号成本（基础价 × 分组成本倍率，未配置时回退账号倍率）
 	UserCost   float64 `json:"user_cost"`   // 用户口径费用（actual_cost，受分组倍率影响）
 }
 
