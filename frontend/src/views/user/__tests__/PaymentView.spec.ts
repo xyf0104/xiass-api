@@ -403,6 +403,12 @@ describe('PaymentView payment recovery', () => {
     await flushPromises()
     await wrapper.find('[data-test="payment-done"]').trigger('click')
     await flushPromises()
+    await wrapper.find('input[type="number"]').setValue(66)
+    const checkoutButton = wrapper.findAll('button')
+      .find(button => button.text().includes('payment.topup.continueToCheckout'))
+    expect(checkoutButton).toBeDefined()
+    await checkoutButton?.trigger('click')
+    await flushPromises()
 
     expect(wrapper.find('[data-test="method-selector"]').text()).toBe('ldc')
   })
