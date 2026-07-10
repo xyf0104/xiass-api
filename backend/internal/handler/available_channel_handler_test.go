@@ -29,8 +29,14 @@ func TestUserAvailableChannel_Unauthenticated401(t *testing.T) {
 
 func TestFilterUserVisibleGroups_IntersectionOnly(t *testing.T) {
 	// 渠道挂在 {g1, g2, g3}，用户只允许 {g1, g3} —— 响应必须仅含 g1/g3。
+	imagePrice := 0.05
+	videoPrice := 0.14
 	groups := []service.AvailableGroupRef{
-		{ID: 1, Name: "g1", Platform: "anthropic"},
+		{
+			ID: 1, Name: "g1", Platform: "anthropic",
+			ImageRateIndependent: true, ImageRateMultiplier: 0.5, ImagePrice1K: &imagePrice,
+			VideoRateIndependent: true, VideoRateMultiplier: 0.25, VideoPrice720P: &videoPrice,
+		},
 		{ID: 2, Name: "g2", Platform: "anthropic"},
 		{ID: 3, Name: "g3", Platform: "openai"},
 	}
@@ -40,6 +46,10 @@ func TestFilterUserVisibleGroups_IntersectionOnly(t *testing.T) {
 	require.Len(t, visible, 2)
 	ids := []int64{visible[0].ID, visible[1].ID}
 	require.ElementsMatch(t, []int64{1, 3}, ids)
+	require.True(t, visible[0].ImageRateIndependent)
+	require.Equal(t, &imagePrice, visible[0].ImagePrice1K)
+	require.True(t, visible[0].VideoRateIndependent)
+	require.Equal(t, &videoPrice, visible[0].VideoPrice720P)
 }
 
 func TestToUserSupportedModels_FiltersByAllowedPlatforms(t *testing.T) {
@@ -107,7 +117,12 @@ func TestUserAvailableChannel_FieldWhitelist(t *testing.T) {
 	require.NoError(t, err)
 	var groupDecoded map[string]any
 	require.NoError(t, json.Unmarshal(rawGroup, &groupDecoded))
-	for _, key := range []string{"id", "name", "platform", "subscription_type", "rate_multiplier", "peak_rate_enabled", "peak_start", "peak_end", "peak_rate_multiplier", "is_exclusive"} {
+	for _, key := range []string{
+		"id", "name", "platform", "subscription_type", "rate_multiplier", "peak_rate_enabled",
+		"peak_start", "peak_end", "peak_rate_multiplier", "is_exclusive", "cost_ratio",
+		"image_rate_independent", "image_rate_multiplier", "image_price_1k", "image_price_2k", "image_price_4k",
+		"video_rate_independent", "video_rate_multiplier", "video_price_480p", "video_price_720p", "video_price_1080p",
+	} {
 		_, exists := groupDecoded[key]
 		require.Truef(t, exists, "group DTO must expose %q", key)
 	}

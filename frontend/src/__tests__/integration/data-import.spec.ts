@@ -28,9 +28,9 @@ vi.mock('vue-i18n', () => ({
   })
 }))
 
-const mountModal = () =>
+const mountModal = (groups: Array<{ id: number; name: string }> = []) =>
   mount(ImportDataModal, {
-    props: { show: true },
+    props: { show: true, groups: groups as any },
     global: {
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }
@@ -173,6 +173,72 @@ describe('ImportDataModal', () => {
       skip_default_group_bind: true
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.dataImportSuccess')
+  })
+
+  it('在线批量导入使用后端接受的 apikey 账号类型', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
+      proxy_created: 0,
+      proxy_reused: 0,
+      proxy_failed: 0,
+      account_created: 2,
+      account_failed: 0
+    })
+
+    const wrapper = mountModal([{ id: 7, name: '住宅代理' }])
+    const onlineTab = wrapper
+      .findAll('button')
+      .find((button) => button.text() === '在线批量导入')
+    expect(onlineTab).toBeDefined()
+    await onlineTab!.trigger('click')
+
+    const form = wrapper.find('#import-online-form')
+    const selects = form.findAll('select')
+    await selects[0]!.setValue('openai')
+    await selects[1]!.setValue('7')
+    await form.find('input[list="base-url-history"]').setValue('https://example.com/v1')
+    await form
+      .find('textarea')
+      .setValue('Tokyo sk-first-account-key-123456\nOsaka sk-second-account-key-654321')
+    await form.find('button.btn-secondary').trigger('click')
+    await form.trigger('submit')
+    await flushPromises()
+
+    expect(adminAPI.accounts.importData).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.importData).toHaveBeenCalledWith({
+      data: {
+        type: 'sub2api-data',
+        version: 1,
+        exported_at: expect.any(String),
+        proxies: [],
+        accounts: [
+          {
+            name: 'Tokyo',
+            platform: 'openai',
+            type: 'apikey',
+            concurrency: 1,
+            priority: 1,
+            credentials: {
+              api_key: 'sk-first-account-key-123456',
+              base_url: 'https://example.com/v1'
+            }
+          },
+          {
+            name: 'Osaka',
+            platform: 'openai',
+            type: 'apikey',
+            concurrency: 1,
+            priority: 1,
+            credentials: {
+              api_key: 'sk-second-account-key-654321',
+              base_url: 'https://example.com/v1'
+            }
+          }
+        ]
+      },
+      skip_default_group_bind: true,
+      group_ids: [7]
+    })
   })
 
   it('部分成功时关闭弹窗仍通知父组件刷新', async () => {

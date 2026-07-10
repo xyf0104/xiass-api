@@ -457,6 +457,7 @@ export default {
       leaveEmptyToKeep: 'Leave empty to keep current password',
       generatePassword: 'Generate random password',
       copyPassword: 'Copy password',
+      passwordCopied: 'Password copied',
       creating: 'Creating...',
       updating: 'Updating...',
       form: {
@@ -931,7 +932,7 @@ export default {
       videoPricing: {
         title: 'Video Generation Pricing',
         description:
-          'Configure Grok video generation prices in USD per second of output video. Leave empty to use the default per-second rates (grok-imagine-video: $0.05/s 480p, $0.07/s 720p; video-1.5: $0.08/s 480p, $0.14/s 720p, $0.25/s 1080p).',
+          'Configure Grok video generation prices per second of output video. Leave empty to use the default rates (grok-imagine-video: ¥0.05/s 480p, ¥0.07/s 720p; video-1.5: ¥0.08/s 480p, ¥0.14/s 720p, ¥0.25/s 1080p).',
         independentMultiplier: 'Use independent video multiplier',
         videoMultiplier: 'Video multiplier',
         modeHint:

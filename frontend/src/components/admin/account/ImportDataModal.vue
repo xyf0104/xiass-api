@@ -255,9 +255,16 @@ const selectedFilesLabel = computed(() => {
 const fileListTitle = computed(() => files.value.map((item) => item.name).join(', '))
 
 // --- Online Import Logic ---
-const onlineForm = ref({
+interface OnlineImportForm {
+  platform: AdminDataPayload['accounts'][number]['platform']
+  groupId: number | null
+  baseUrl: string
+  rawText: string
+}
+
+const onlineForm = ref<OnlineImportForm>({
   platform: 'antigravity',
-  groupId: null as number | null,
+  groupId: null,
   baseUrl: '',
   rawText: ''
 })
@@ -518,30 +525,27 @@ const handleOnlineImport = async () => {
 
   importing.value = true
   try {
-    const accounts = verifiedItems.value.map(item => {
-      const typeStr = 'api_key'
-      return {
-        name: item.name,
-        platform: onlineForm.value.platform,
-        type: typeStr,
-        concurrency: 1,
-        priority: 1,
-        credentials: {
-          api_key: item.key,
-          base_url: onlineForm.value.baseUrl.trim() || undefined
-        }
+    const accounts: AdminDataPayload['accounts'] = verifiedItems.value.map(item => ({
+      name: item.name,
+      platform: onlineForm.value.platform,
+      type: 'apikey',
+      concurrency: 1,
+      priority: 1,
+      credentials: {
+        api_key: item.key,
+        base_url: onlineForm.value.baseUrl.trim() || undefined
       }
-    })
+    }))
 
-    const payload = {
+    const payload: AdminDataPayload = {
       type: 'sub2api-data',
       version: 1,
       exported_at: new Date().toISOString(),
       proxies: [],
-      accounts: accounts
+      accounts
     }
 
-    const reqData: any = {
+    const reqData: Parameters<typeof adminAPI.accounts.importData>[0] = {
       data: payload,
       skip_default_group_bind: true
     }

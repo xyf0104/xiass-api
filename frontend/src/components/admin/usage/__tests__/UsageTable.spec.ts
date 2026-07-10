@@ -48,9 +48,17 @@ const messages: Record<string, string> = {
   'usage.imageSizeUnknown': 'unknown',
   'usage.imageUnitPrice': 'Per-image price',
   'usage.imageTotalPrice': 'Image total price',
+  'usage.videoCount': 'Video count',
+  'usage.videoUnit': ' video',
+  'usage.videoResolution': 'Video resolution',
+  'usage.videoDuration': 'Video duration',
+  'usage.videoUnitPrice': 'Price per second',
+  'usage.videoTotalPrice': 'Video total price',
+  'usage.unknown': 'Unknown',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
+  'admin.usage.billingModeVideo': 'Video',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -164,10 +172,46 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('Account rate')
     expect(text).toContain('User billed')
     expect(text).toContain('Account billed')
-    expect(text).toContain('$0.092883')
-    expect(text).toContain('$5.0000 / 1M tokens')
-    expect(text).toContain('$30.0000 / 1M tokens')
-    expect(text).toContain('$0.069568')
+    expect(text).toContain('¥0.092883')
+    expect(text).toContain('¥5.0000 / 1M tokens')
+    expect(text).toContain('¥30.0000 / 1M tokens')
+    expect(text).toContain('¥0.069568')
+  })
+
+  it('shows Grok video metadata without misclassifying the legacy image counter', async () => {
+    const row = {
+      ...baseImageRow,
+      request_id: 'req-admin-video',
+      model: 'grok-imagine-video-1.5',
+      billing_mode: 'video',
+      image_count: 1,
+      video_count: 1,
+      video_resolution: '720p',
+      video_duration_seconds: 8,
+      actual_cost: 1.12,
+      total_cost: 1.12,
+    }
+
+    const wrapper = mount(UsageTable, {
+      props: { data: [row], loading: false, columns: [] },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    expect(wrapper.text()).toContain('Video')
+    expect(wrapper.text()).toContain('1 video')
+    expect(wrapper.text()).toContain('720p · 8s')
+
+    const tooltipTriggers = wrapper.findAll('.group.relative')
+    await tooltipTriggers[tooltipTriggers.length - 1].trigger('mouseenter')
+    await nextTick()
+
+    const text = wrapper.text()
+    expect(text).toContain('Video resolution')
+    expect(text).toContain('Video duration')
+    expect(text).toContain('Price per second')
+    expect(text).toContain('¥0.140000')
   })
 
   it('shows requested and upstream models separately for admin rows', () => {

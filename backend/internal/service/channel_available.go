@@ -13,18 +13,28 @@ import (
 // 订阅 vs 标准（SubscriptionType）、默认倍率（RateMultiplier）与高峰倍率规则。
 // 用户专属倍率不在这里暴露，前端自己通过 /groups/rates 拉取，和 API 密钥页面保持一致。
 type AvailableGroupRef struct {
-	ID                 int64
-	Name               string
-	Description        string
-	Platform           string
-	SubscriptionType   string
-	RateMultiplier     float64
-	PeakRateEnabled    bool
-	PeakStart          string
-	PeakEnd            string
-	PeakRateMultiplier float64
-	IsExclusive        bool
-	CostRatio          *float64
+	ID                   int64
+	Name                 string
+	Description          string
+	Platform             string
+	SubscriptionType     string
+	RateMultiplier       float64
+	PeakRateEnabled      bool
+	PeakStart            string
+	PeakEnd              string
+	PeakRateMultiplier   float64
+	IsExclusive          bool
+	CostRatio            *float64
+	ImageRateIndependent bool
+	ImageRateMultiplier  float64
+	ImagePrice1K         *float64
+	ImagePrice2K         *float64
+	ImagePrice4K         *float64
+	VideoRateIndependent bool
+	VideoRateMultiplier  float64
+	VideoPrice480P       *float64
+	VideoPrice720P       *float64
+	VideoPrice1080P      *float64
 }
 
 // AvailableChannel 可用渠道视图：用于「可用渠道」页面展示渠道基础信息 +
@@ -65,18 +75,28 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 	for i := range groups {
 		g := groups[i]
 		groupByID[g.ID] = AvailableGroupRef{
-			ID:                 g.ID,
-			Name:               g.Name,
-			Description:        g.Description,
-			Platform:           g.Platform,
-			SubscriptionType:   g.SubscriptionType,
-			RateMultiplier:     g.RateMultiplier,
-			PeakRateEnabled:    g.PeakRateEnabled,
-			PeakStart:          g.PeakStart,
-			PeakEnd:            g.PeakEnd,
-			PeakRateMultiplier: g.PeakRateMultiplier,
-			IsExclusive:        g.IsExclusive,
-			CostRatio:          g.CostRatio,
+			ID:                   g.ID,
+			Name:                 g.Name,
+			Description:          g.Description,
+			Platform:             g.Platform,
+			SubscriptionType:     g.SubscriptionType,
+			RateMultiplier:       g.RateMultiplier,
+			PeakRateEnabled:      g.PeakRateEnabled,
+			PeakStart:            g.PeakStart,
+			PeakEnd:              g.PeakEnd,
+			PeakRateMultiplier:   g.PeakRateMultiplier,
+			IsExclusive:          g.IsExclusive,
+			CostRatio:            g.CostRatio,
+			ImageRateIndependent: g.ImageRateIndependent,
+			ImageRateMultiplier:  g.ImageRateMultiplier,
+			ImagePrice1K:         g.ImagePrice1K,
+			ImagePrice2K:         g.ImagePrice2K,
+			ImagePrice4K:         g.ImagePrice4K,
+			VideoRateIndependent: g.VideoRateIndependent,
+			VideoRateMultiplier:  g.VideoRateMultiplier,
+			VideoPrice480P:       g.VideoPrice480P,
+			VideoPrice720P:       g.VideoPrice720P,
+			VideoPrice1080P:      g.VideoPrice1080P,
 		}
 	}
 

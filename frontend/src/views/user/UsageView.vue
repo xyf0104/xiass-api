@@ -231,7 +231,7 @@ import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
-import { BILLING_MODE_IMAGE, getBillingModeLabel } from '@/utils/billingMode'
+import { getBillingModeLabel, getDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
   ApiKey,
@@ -599,13 +599,6 @@ const getRequestTypeExportText = (log: UsageLog): string => {
   if (requestType === 'stream') return 'Stream'
   if (requestType === 'sync') return 'Sync'
   return 'Unknown'
-}
-
-const getDisplayBillingMode = (
-  row: Pick<UsageLog, 'billing_mode' | 'image_count'> | null | undefined
-): string | null | undefined => {
-  if ((row?.image_count ?? 0) > 0) return BILLING_MODE_IMAGE
-  return row?.billing_mode
 }
 
 const escapeCSVValue = (value: unknown): string => {

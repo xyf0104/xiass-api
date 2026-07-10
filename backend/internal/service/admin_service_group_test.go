@@ -174,6 +174,26 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.30, *repo.created.ImagePrice4K, 0.0001)
 }
 
+func TestAdminService_CreateGroup_PreservesNoWindPricingAndRouting(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	costRatio := 0.07
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:                "nowind-group",
+		Platform:            PlatformAnthropic,
+		RateMultiplier:      0.5,
+		ModelRoutingEnabled: true,
+		CostRatio:           &costRatio,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.created)
+	require.True(t, repo.created.ModelRoutingEnabled)
+	require.NotNil(t, repo.created.CostRatio)
+	require.InDelta(t, costRatio, *repo.created.CostRatio, 1e-12)
+}
+
 func TestAdminService_CreateGroup_WithVideoPricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}
@@ -341,6 +361,29 @@ func TestAdminService_UpdateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.12, *repo.updated.ImagePrice1K, 0.0001)
 	require.InDelta(t, 0.18, *repo.updated.ImagePrice2K, 0.0001)
 	require.InDelta(t, 0.36, *repo.updated.ImagePrice4K, 0.0001)
+}
+
+func TestAdminService_UpdateGroup_WithCostRatio(t *testing.T) {
+	existingCostRatio := 0.28
+	existingGroup := &Group{
+		ID:        1,
+		Name:      "existing-group",
+		Platform:  PlatformAnthropic,
+		Status:    StatusActive,
+		CostRatio: &existingCostRatio,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	updatedCostRatio := 0.07
+	group, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
+		CostRatio: &updatedCostRatio,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.NotNil(t, repo.updated.CostRatio)
+	require.InDelta(t, updatedCostRatio, *repo.updated.CostRatio, 1e-12)
 }
 
 func TestAdminService_UpdateGroup_WithVideoPricing(t *testing.T) {

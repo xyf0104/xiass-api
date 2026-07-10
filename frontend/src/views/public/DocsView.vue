@@ -68,7 +68,7 @@ marked.setOptions({
   gfm: true,
 })
 
-const siteName = computed(() => settings.value?.site_name || 'No Wind API')
+const siteName = computed(() => settings.value?.site_name || 'NoWind API')
 const siteLogo = computed(() => sanitizeUrl(settings.value?.site_logo || '', {
   allowRelative: true,
   allowDataUrl: true,

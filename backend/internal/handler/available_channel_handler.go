@@ -53,18 +53,28 @@ func (h *AvailableChannelHandler) featureEnabled(c *gin.Context) bool {
 // 订阅视觉加深），并展示默认倍率与高峰倍率规则；用户专属倍率前端走
 // /groups/rates，和 API 密钥页面保持一致。
 type userAvailableGroup struct {
-	ID                 int64    `json:"id"`
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Platform           string   `json:"platform"`
-	SubscriptionType   string   `json:"subscription_type"`
-	RateMultiplier     float64  `json:"rate_multiplier"`
-	PeakRateEnabled    bool     `json:"peak_rate_enabled"`
-	PeakStart          string   `json:"peak_start"`
-	PeakEnd            string   `json:"peak_end"`
-	PeakRateMultiplier float64  `json:"peak_rate_multiplier"`
-	IsExclusive        bool     `json:"is_exclusive"`
-	CostRatio          *float64 `json:"cost_ratio"`
+	ID                   int64    `json:"id"`
+	Name                 string   `json:"name"`
+	Description          string   `json:"description"`
+	Platform             string   `json:"platform"`
+	SubscriptionType     string   `json:"subscription_type"`
+	RateMultiplier       float64  `json:"rate_multiplier"`
+	PeakRateEnabled      bool     `json:"peak_rate_enabled"`
+	PeakStart            string   `json:"peak_start"`
+	PeakEnd              string   `json:"peak_end"`
+	PeakRateMultiplier   float64  `json:"peak_rate_multiplier"`
+	IsExclusive          bool     `json:"is_exclusive"`
+	CostRatio            *float64 `json:"cost_ratio"`
+	ImageRateIndependent bool     `json:"image_rate_independent"`
+	ImageRateMultiplier  float64  `json:"image_rate_multiplier"`
+	ImagePrice1K         *float64 `json:"image_price_1k"`
+	ImagePrice2K         *float64 `json:"image_price_2k"`
+	ImagePrice4K         *float64 `json:"image_price_4k"`
+	VideoRateIndependent bool     `json:"video_rate_independent"`
+	VideoRateMultiplier  float64  `json:"video_rate_multiplier"`
+	VideoPrice480P       *float64 `json:"video_price_480p"`
+	VideoPrice720P       *float64 `json:"video_price_720p"`
+	VideoPrice1080P      *float64 `json:"video_price_1080p"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
@@ -219,18 +229,28 @@ func filterUserVisibleGroups(
 			continue
 		}
 		visible = append(visible, userAvailableGroup{
-			ID:                 g.ID,
-			Name:               g.Name,
-			Description:        g.Description,
-			Platform:           g.Platform,
-			SubscriptionType:   g.SubscriptionType,
-			RateMultiplier:     g.RateMultiplier,
-			PeakRateEnabled:    g.PeakRateEnabled,
-			PeakStart:          g.PeakStart,
-			PeakEnd:            g.PeakEnd,
-			PeakRateMultiplier: g.PeakRateMultiplier,
-			IsExclusive:        g.IsExclusive,
-			CostRatio:          g.CostRatio,
+			ID:                   g.ID,
+			Name:                 g.Name,
+			Description:          g.Description,
+			Platform:             g.Platform,
+			SubscriptionType:     g.SubscriptionType,
+			RateMultiplier:       g.RateMultiplier,
+			PeakRateEnabled:      g.PeakRateEnabled,
+			PeakStart:            g.PeakStart,
+			PeakEnd:              g.PeakEnd,
+			PeakRateMultiplier:   g.PeakRateMultiplier,
+			IsExclusive:          g.IsExclusive,
+			CostRatio:            g.CostRatio,
+			ImageRateIndependent: g.ImageRateIndependent,
+			ImageRateMultiplier:  g.ImageRateMultiplier,
+			ImagePrice1K:         g.ImagePrice1K,
+			ImagePrice2K:         g.ImagePrice2K,
+			ImagePrice4K:         g.ImagePrice4K,
+			VideoRateIndependent: g.VideoRateIndependent,
+			VideoRateMultiplier:  g.VideoRateMultiplier,
+			VideoPrice480P:       g.VideoPrice480P,
+			VideoPrice720P:       g.VideoPrice720P,
+			VideoPrice1080P:      g.VideoPrice1080P,
 		})
 	}
 	return visible

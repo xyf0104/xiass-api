@@ -248,6 +248,7 @@ describe('admin GroupsView column settings', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     localStorage.clear()
   })
 
@@ -327,5 +328,20 @@ describe('admin GroupsView column settings', () => {
     await clickColumnToggle(wrapper, 'Capacity')
     expect(getUsageSummary).toHaveBeenCalledTimes(1)
     expect(getCapacitySummary).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes visible capacity while the page remains open', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountView()
+
+    expect(getCapacitySummary).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flushPromises()
+    expect(getCapacitySummary).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(getCapacitySummary).toHaveBeenCalledTimes(2)
   })
 })

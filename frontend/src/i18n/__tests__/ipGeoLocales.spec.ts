@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import en from '../locales/en'
-import zh from '../locales/zh'
+import en from '../locales/en/index'
+import zh from '../locales/zh/index'
 
 describe('usage ipGeo locale keys', () => {
   it('contains zh labels for IP geolocation UI', () => {

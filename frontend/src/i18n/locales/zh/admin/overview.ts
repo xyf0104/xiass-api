@@ -451,6 +451,7 @@ export default {
       leaveEmptyToKeep: '留空则保持原密码不变',
       generatePassword: '生成随机密码',
       copyPassword: '复制密码',
+      passwordCopied: '密码已复制',
       creating: '创建中...',
       updating: '更新中...',
       columns: {
@@ -922,7 +923,7 @@ export default {
       videoPricing: {
         title: '视频生成计费',
         description:
-          '配置 Grok 视频生成的每秒单价（USD/秒），留空则使用默认每秒价（grok-imagine-video：480p $0.05/s、720p $0.07/s；video-1.5：480p $0.08/s、720p $0.14/s、1080p $0.25/s）',
+          '配置 Grok 视频生成的每秒单价，留空则使用默认每秒价（grok-imagine-video：480p ¥0.05/s、720p ¥0.07/s；video-1.5：480p ¥0.08/s、720p ¥0.14/s、1080p ¥0.25/s）',
         independentMultiplier: '视频倍率独立',
         videoMultiplier: '视频独立倍率',
         modeHint:

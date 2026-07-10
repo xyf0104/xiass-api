@@ -53,3 +53,12 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar NoWind update flow', () => {
+  it('keeps the established single update entry instead of the unsupported rollback badge', () => {
+    expect(componentSource).toContain("apiClient.get('/admin/system/check-updates')")
+    expect(componentSource).toContain('triggerUpdateConfirm')
+    expect(componentSource).not.toContain('<VersionBadge')
+    expect(componentSource).not.toContain("import VersionBadge")
+  })
+})

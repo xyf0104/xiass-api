@@ -41,6 +41,8 @@ export const claudeModels = [
 const geminiModels = [
   // Keep in sync with backend curated Gemini lists.
   // This list is intentionally conservative (models commonly available across OAuth/API key).
+  'gemini-3.1-flash-image',
+  'gemini-2.5-flash-image',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
   'gemini-1.5-flash-8b',
@@ -51,8 +53,6 @@ const geminiModels = [
   'gemini-2.0-pro-exp-0205',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
-  'gemini-2.5-flash-image',
-  'gemini-3.1-flash-image',
   'gemini-3.5-flash',
   'gemini-3-flash-preview',
   'gemini-3-pro-preview',

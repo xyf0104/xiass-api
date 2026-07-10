@@ -508,6 +508,8 @@ export default {
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',
       modelMapping: 'Model Mapping',
+      fromModel: 'Requested model',
+      toModel: 'Actual model',
       selectAllowedModels: 'Select allowed models. Leave empty to support all models.',
       mapRequestModels:
         'Map request models to actual models. Left is the requested model, right is the actual model sent to API.',
@@ -788,6 +790,8 @@ export default {
         // OpenAI specific
         openai: {
           title: 'OpenAI Account Authorization',
+          mobileRefreshTokenAuth: 'Refresh Token authorization',
+          accessTokenAuth: 'Access Token authorization',
           followSteps: 'Follow these steps to complete OpenAI account authorization:',
           step1GenerateUrl: 'Click the button below to generate the authorization URL',
           generateAuthUrl: 'Generate Auth URL',

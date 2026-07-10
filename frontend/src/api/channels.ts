@@ -23,6 +23,16 @@ export interface UserAvailableGroup {
   is_exclusive: boolean
   /** 成本比例（成本价/官方价），用于前端展示成本价倍数；null/0 表示不启用。 */
   cost_ratio?: number | null
+  image_rate_independent?: boolean
+  image_rate_multiplier?: number
+  image_price_1k?: number | null
+  image_price_2k?: number | null
+  image_price_4k?: number | null
+  video_rate_independent?: boolean
+  video_rate_multiplier?: number
+  video_price_480p?: number | null
+  video_price_720p?: number | null
+  video_price_1080p?: number | null
 }
 
 export interface UserPricingInterval {

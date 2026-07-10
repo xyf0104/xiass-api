@@ -3567,6 +3567,7 @@ const onboardingStore = useOnboardingStore();
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
 const HIDDEN_COLUMNS_KEY = "group-hidden-columns";
+const CAPACITY_REFRESH_INTERVAL_MS = 5_000;
 
 const allColumns = computed<Column[]>(() => [
   { key: "name", label: t("admin.groups.columns.name"), sortable: true },
@@ -4582,6 +4583,26 @@ const loadCapacitySummary = async () => {
   }
 };
 
+let capacityRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+const startCapacityRefresh = () => {
+  if (capacityRefreshTimer !== null) return;
+  capacityRefreshTimer = setInterval(() => {
+    if (
+      document.visibilityState === "visible" &&
+      hasVisibleCapacityColumn.value
+    ) {
+      void loadCapacitySummary();
+    }
+  }, CAPACITY_REFRESH_INTERVAL_MS);
+};
+
+const stopCapacityRefresh = () => {
+  if (capacityRefreshTimer === null) return;
+  clearInterval(capacityRefreshTimer);
+  capacityRefreshTimer = null;
+};
+
 let searchTimeout: ReturnType<typeof setTimeout>;
 const handleSearch = () => {
   clearTimeout(searchTimeout);
@@ -5191,10 +5212,12 @@ const saveSortOrder = async () => {
 onMounted(() => {
   loadGroups();
   loadModelsListCandidates("create", 0, createForm.platform);
+  startCapacityRefresh();
   document.addEventListener("click", handleClickOutside);
 });
 
 onUnmounted(() => {
+  stopCapacityRefresh();
   document.removeEventListener("click", handleClickOutside);
   accountSearchRunner.clearAll();
   clearAllAccountSearchState();
