@@ -59,3 +59,13 @@ func (s *DockerUpdateService) Rollback() error {
 func (s *DockerUpdateService) GetCurrentVersion() string {
 	return s.updateSvc.currentVersion
 }
+
+// ListRollbackVersions 代理到 UpdateService，返回可回滚的历史版本列表
+func (s *DockerUpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
+	return s.updateSvc.ListRollbackVersions(ctx)
+}
+
+// RollbackToVersion 代理到 UpdateService，回滚到指定版本
+func (s *DockerUpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	return s.updateSvc.RollbackToVersion(ctx, version)
+}
