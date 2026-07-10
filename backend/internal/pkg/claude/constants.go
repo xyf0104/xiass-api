@@ -147,10 +147,22 @@ var DefaultModels = []Model{
 		CreatedAt:   "2026-07-01T00:00:00Z",
 	},
 	{
+		ID:          "claude-fable-5",
+		Type:        "model",
+		DisplayName: "Claude Fable 5",
+		CreatedAt:   "2026-06-09T00:00:00Z",
+	},
+	{
 		ID:          "claude-sonnet-4-6",
 		Type:        "model",
 		DisplayName: "Claude Sonnet 4.6",
 		CreatedAt:   "2026-02-18T00:00:00Z",
+	},
+	{
+		ID:          "claude-sonnet-4-5",
+		Type:        "model",
+		DisplayName: "Claude Sonnet 4.5",
+		CreatedAt:   "2025-09-29T00:00:00Z",
 	},
 	{
 		ID:          "claude-sonnet-4-5-20250929",
@@ -176,7 +188,7 @@ func DefaultModelIDs() []string {
 }
 
 // DefaultTestModel 测试时使用的默认模型
-const DefaultTestModel = "claude-sonnet-4-5-20250929"
+const DefaultTestModel = "claude-sonnet-4-5"
 
 // ModelIDOverrides Claude OAuth 请求需要的模型 ID 映射
 var ModelIDOverrides = map[string]string{

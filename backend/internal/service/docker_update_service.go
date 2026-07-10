@@ -65,7 +65,6 @@ func (s *DockerUpdateService) ListRollbackVersions(ctx context.Context) ([]Rollb
 	return s.updateSvc.ListRollbackVersions(ctx)
 }
 
-// RollbackToVersion 代理到 UpdateService，回滚到指定版本
 func (s *DockerUpdateService) RollbackToVersion(ctx context.Context, version string) error {
-	return s.updateSvc.RollbackToVersion(ctx, version)
+	return fmt.Errorf("rollback to version %q is not supported in docker mode", version)
 }

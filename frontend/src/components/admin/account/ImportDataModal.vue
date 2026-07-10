@@ -41,7 +41,16 @@
 
       <div>
         <label class="input-label">{{ t('admin.accounts.dataImportFile') }}</label>
-        <div class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 dark:border-dark-600 dark:bg-dark-800">
+        <div
+          class="flex items-center justify-between gap-3 rounded-lg border border-dashed px-4 py-3 transition-colors"
+          :class="dragActive
+            ? 'border-primary-400 bg-primary-50/70 dark:border-primary-500 dark:bg-primary-900/20'
+            : 'border-gray-300 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'"
+          @dragenter.prevent="handleDragEnter"
+          @dragover.prevent
+          @dragleave.prevent="handleDragLeave"
+          @drop.prevent="handleDrop"
+        >
           <div class="min-w-0">
             <div class="truncate text-sm text-gray-700 dark:text-dark-200" :title="fileListTitle">
               {{ selectedFilesLabel || t('admin.accounts.dataImportSelectFile') }}
@@ -185,7 +194,7 @@
           class="btn btn-primary"
           type="submit"
           form="import-data-form"
-          :disabled="importing || !file"
+          :disabled="importing || files.length === 0"
         >
           {{ importing ? t('admin.accounts.dataImporting') : t('admin.accounts.dataImportButton') }}
         </button>
@@ -209,7 +218,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AdminDataImportResult, AdminGroup } from '@/types'
+import type { AdminDataImportResult, AdminDataPayload, AdminGroup } from '@/types'
 
 interface Props {
   show: boolean
@@ -229,11 +238,14 @@ const appStore = useAppStore()
 
 const activeTab = ref<'json' | 'online'>('json')
 const importing = ref(false)
+const files = ref<File[]>([])
+const dragDepth = ref(0)
+const dragActive = computed(() => dragDepth.value > 0)
+const hasCreatedData = ref(false)
 const result = ref<AdminDataImportResult | null>(null)
 const errorItems = computed(() => result.value?.errors || [])
 
 // --- JSON Import Logic ---
-const file = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFilesLabel = computed(() => {
   if (files.value.length === 0) return ''
@@ -311,7 +323,9 @@ watch(
   (open) => {
     if (open) {
       activeTab.value = 'json'
-      file.value = null
+      files.value = []
+      dragDepth.value = 0
+      hasCreatedData.value = false
       result.value = null
       if (fileInput.value) {
         fileInput.value.value = ''
@@ -404,6 +418,9 @@ const processImportResult = (res: AdminDataImportResult) => {
     proxy_failed: res.proxy_failed,
   }
   if (res.account_failed > 0 || res.proxy_failed > 0) {
+    if (res.account_created > 0 || res.proxy_created > 0) {
+      hasCreatedData.value = true
+    }
     appStore.showError(t('admin.accounts.dataImportCompletedWithErrors', msgParams))
   } else {
     appStore.showSuccess(t('admin.accounts.dataImportSuccess', msgParams))
@@ -411,8 +428,50 @@ const processImportResult = (res: AdminDataImportResult) => {
   }
 }
 
+const SUPPORTED_DATA_TYPES = ['sub2api-data', 'sub2api-bundle']
+const SUPPORTED_DATA_VERSION = 1
+
+// 与后端 validateDataHeader 对齐:合并前逐文件校验,避免坏文件混入合并 payload 后
+// 报错无法定位来源,或绕过后端本会对单文件做的 type/version 检查。
+const isValidDataPayload = (payload: unknown): payload is AdminDataPayload => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false
+  const candidate = payload as Record<string, unknown>
+  if (
+    candidate.type !== undefined &&
+    candidate.type !== '' &&
+    !SUPPORTED_DATA_TYPES.includes(candidate.type as string)
+  ) {
+    return false
+  }
+  if (
+    candidate.version !== undefined &&
+    candidate.version !== 0 &&
+    candidate.version !== SUPPORTED_DATA_VERSION
+  ) {
+    return false
+  }
+  return Array.isArray(candidate.proxies) && Array.isArray(candidate.accounts)
+}
+
+const mergeDataPayloads = (payloads: AdminDataPayload[]): AdminDataPayload => {
+  const [firstPayload] = payloads
+  if (payloads.length === 1 && firstPayload) return firstPayload
+
+  return {
+    type: payloads.find((item) => typeof item.type === 'string')?.type,
+    version: payloads.find((item) => typeof item.version === 'number')?.version,
+    exported_at: new Date().toISOString(),
+    proxies: payloads.flatMap((item) => item.proxies),
+    accounts: payloads.flatMap((item) => item.accounts),
+    skipped_shadows: payloads.reduce((sum, item) => {
+      const count = Number(item.skipped_shadows || 0)
+      return Number.isFinite(count) ? sum + count : sum
+    }, 0)
+  }
+}
+
 const handleJsonImport = async () => {
-  if (!file.value) {
+  if (files.value.length === 0) {
     appStore.showError(t('admin.accounts.dataImportSelectFile'))
     return
   }

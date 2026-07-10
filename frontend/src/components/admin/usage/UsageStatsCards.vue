@@ -68,9 +68,14 @@
           ¥{{ (stats?.total_actual_cost || 0).toFixed(4) }}
         </p>
         <p class="text-xs text-gray-400">
-          <span class="text-orange-500">{{ t('usage.accountCost') }} ¥{{ (stats?.total_account_cost || 0).toFixed(4) }}</span>
-          <span> · </span>
-          <span>{{ t('usage.standardCost') }} ¥{{ (stats?.total_cost || 0).toFixed(4) }}</span>
+          <template v-if="showAccountCost && totalAccountCost != null">
+            <span class="text-orange-500">{{ t('usage.accountCost') }} ¥{{ totalAccountCost.toFixed(4) }}</span>
+            <span> · </span>
+          </template>
+          <span>
+            {{ t('usage.standardCost') }}
+            <span :class="{ 'line-through': strikeStandardCost }">¥{{ (stats?.total_cost || 0).toFixed(4) }}</span>
+          </span>
         </p>
       </div>
     </div>

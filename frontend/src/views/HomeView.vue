@@ -556,7 +556,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
-import BrandIcon from '@/components/icons/BrandIcon.vue'
+import { sanitizeUrl } from '@/utils/url'
 
 const { t } = useI18n()
 
@@ -564,8 +564,8 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 
 // Site settings - directly from appStore (already initialized from injected config)
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'No Wind API')
-const docUrl = computed(() => appStore.cachedPublicSettings?.doc_url || appStore.docUrl || '')
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'NoWind API')
+const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 
 // Check if homeContent is a URL (for iframe display)
@@ -609,3 +609,272 @@ function initTheme() {
   }
 }
 
+// ==================== Canvas 粒子动画 ====================
+
+const homeCanvasRef = ref<HTMLCanvasElement | null>(null)
+let homeAnimationId = 0
+
+interface HomeParticle {
+  x: number; y: number; vx: number; vy: number; radius: number; opacity: number
+}
+
+function initHomeParticles() {
+  const canvas = homeCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const resize = () => {
+    canvas.width = window.innerWidth * dpr
+    canvas.height = window.innerHeight * dpr
+    canvas.style.width = window.innerWidth + 'px'
+    canvas.style.height = window.innerHeight + 'px'
+    ctx.scale(dpr, dpr)
+  }
+  resize()
+  window.addEventListener('resize', resize)
+
+  const count = Math.min(100, Math.floor(window.innerWidth / 12))
+  const particles: HomeParticle[] = []
+  const maxDist = 160
+
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: (Math.random() - 0.5) * 0.4,
+      radius: Math.random() * 1.8 + 0.3,
+      opacity: Math.random() * 0.5 + 0.15,
+    })
+  }
+
+  function draw() {
+    if (!ctx) return
+    const w = window.innerWidth, h = window.innerHeight
+    ctx.clearRect(0, 0, w, h)
+
+    // 动态检测深色模式并适配粒子与连线
+    const isDark = document.documentElement.classList.contains('dark')
+    const color = isDark ? { r: 14, g: 165, b: 233 } : { r: 37, g: 99, b: 235 }
+    const lineOpacity = isDark ? 0.12 : 0.18
+    const pOpacityMult = isDark ? 1.0 : 1.4
+
+    for (const p of particles) {
+      p.x += p.vx; p.y += p.vy
+      if (p.x < 0 || p.x > w) p.vx *= -1
+      if (p.y < 0 || p.y > h) p.vy *= -1
+    }
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x, dy = particles[i].y - particles[j].y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < maxDist) {
+          ctx.beginPath()
+          ctx.strokeStyle = `rgba(${color.r},${color.g},${color.b},${(1 - dist / maxDist) * lineOpacity})`
+          ctx.lineWidth = 0.5
+          ctx.moveTo(particles[i].x, particles[i].y)
+          ctx.lineTo(particles[j].x, particles[j].y)
+          ctx.stroke()
+        }
+      }
+    }
+    for (const p of particles) {
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(${color.r},${color.g},${color.b},${p.opacity * pOpacityMult})`
+      ctx.fill()
+    }
+    homeAnimationId = requestAnimationFrame(draw)
+  }
+  draw()
+}
+
+onMounted(() => {
+  initTheme()
+  authStore.checkAuth()
+  if (!appStore.publicSettingsLoaded) {
+    appStore.fetchPublicSettings()
+  }
+  // 启动粒子动画
+  initHomeParticles()
+})
+
+onUnmounted(() => {
+  cancelAnimationFrame(homeAnimationId)
+})
+</script>
+
+<style scoped>
+/* Terminal Container */
+.terminal-container {
+  position: relative;
+  display: inline-block;
+}
+
+/* Terminal Window */
+.terminal-window {
+  width: 420px;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+  border-radius: 14px;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  transform: perspective(1000px) rotateX(2deg) rotateY(-2deg);
+  transition: transform 0.3s ease;
+}
+
+.terminal-window:hover {
+  transform: perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(-4px);
+}
+
+/* Terminal Header */
+.terminal-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.terminal-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-buttons span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.btn-close {
+  background: #ef4444;
+}
+.btn-minimize {
+  background: #eab308;
+}
+.btn-maximize {
+  background: #22c55e;
+}
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: #64748b;
+  margin-right: 52px;
+}
+
+/* Terminal Body */
+.terminal-body {
+  padding: 20px 24px;
+  font-family: ui-monospace, 'Fira Code', monospace;
+  font-size: 14px;
+  line-height: 2;
+}
+
+.code-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  opacity: 0;
+  animation: line-appear 0.5s ease forwards;
+}
+
+.line-1 {
+  animation-delay: 0.3s;
+}
+.line-2 {
+  animation-delay: 1s;
+}
+.line-3 {
+  animation-delay: 1.8s;
+}
+.line-4 {
+  animation-delay: 2.5s;
+}
+
+@keyframes line-appear {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.code-prompt {
+  color: #22c55e;
+  font-weight: bold;
+}
+.code-cmd {
+  color: #38bdf8;
+}
+.code-flag {
+  color: #a78bfa;
+}
+.code-url {
+  color: #38bdf8;
+}
+.code-comment {
+  color: #64748b;
+  font-style: italic;
+}
+.code-success {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.code-response {
+  color: #fbbf24;
+}
+
+/* Blinking Cursor */
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: #22c55e;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Dark mode adjustments */
+:deep(.dark) .terminal-window {
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(14, 165, 233, 0.30),
+    0 0 40px rgba(14, 165, 233, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* 慢脉冲动画 */
+.animate-pulse-slow {
+  animation: pulse-slow 6s ease-in-out infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+</style>
