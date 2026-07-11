@@ -8,5 +8,5 @@
 #   docker compose -f docker-compose.local.yml -f docker-compose.nowind.yml pull
 # =============================================================================
 services:
-  sub2api:
-    image: ghcr.io/xyf0104/sub2api:latest
+  nowind-api:
+    image: ghcr.io/xyf0104/nowind-api:latest

@@ -87,7 +87,7 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "Sub2API-Updater")
+	req.Header.Set("User-Agent", "NoWind-API-Updater")
 
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -125,7 +125,7 @@ func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo stri
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "Sub2API-Updater")
+	req.Header.Set("User-Agent", "NoWind-API-Updater")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

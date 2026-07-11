@@ -11,9 +11,9 @@
 # =============================================================================
 
 services:
-  sub2api:
-    image: ghcr.io/xyf0104/sub2api:latest
-    container_name: sub2api
+  nowind-api:
+    image: ghcr.io/xyf0104/nowind-api:latest
+    container_name: nowind-api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -40,6 +40,7 @@ services:
       # System Update Configuration
       # =======================================================================
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
 
       # =======================================================================
       # Server Configuration

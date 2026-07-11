@@ -8,6 +8,10 @@ import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
+import { sanitizeUrl } from '@/utils/url'
+
+const DEFAULT_FAVICON_URL = '/favicon.png?v=1.0.66'
+const DEFAULT_APPLE_TOUCH_ICON_URL = '/apple-touch-icon.png?v=1.0.66'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,29 +30,57 @@ function updateDocumentTitle() {
   document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
 }
 
-/**
- * Update favicon dynamically
- * @param logoUrl - URL of the logo to use as favicon
- */
-function updateFavicon(logoUrl: string) {
-  // Find existing favicon link or create new one
-  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+function imageMimeType(imageUrl: string): string | null {
+  const dataMimeType = imageUrl.match(/^data:(image\/[a-z0-9.+-]+)[;,]/i)?.[1]
+  if (dataMimeType) {
+    return dataMimeType.toLowerCase()
+  }
+
+  let pathname = ''
+  try {
+    pathname = new URL(imageUrl, window.location.href).pathname.toLowerCase()
+  } catch {
+    return null
+  }
+
+  if (pathname.endsWith('.svg')) return 'image/svg+xml'
+  if (pathname.endsWith('.png')) return 'image/png'
+  if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg'
+  if (pathname.endsWith('.gif')) return 'image/gif'
+  if (pathname.endsWith('.webp')) return 'image/webp'
+  if (pathname.endsWith('.avif')) return 'image/avif'
+  if (pathname.endsWith('.ico')) return 'image/x-icon'
+  return null
+}
+
+function updateIconLink(rel: 'icon' | 'apple-touch-icon', imageUrl: string) {
+  let link = document.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
   if (!link) {
     link = document.createElement('link')
-    link.rel = 'icon'
+    link.rel = rel
     document.head.appendChild(link)
   }
-  link.type = logoUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/x-icon'
-  link.href = logoUrl
+
+  const mimeType = imageMimeType(imageUrl)
+  if (mimeType) {
+    link.type = mimeType
+  } else {
+    link.removeAttribute('type')
+  }
+  link.href = imageUrl
+}
+
+function updateSiteIcons(logoUrl: string) {
+  const customLogo = sanitizeUrl(logoUrl, { allowRelative: true, allowDataUrl: true })
+  updateIconLink('icon', customLogo || DEFAULT_FAVICON_URL)
+  updateIconLink('apple-touch-icon', customLogo || DEFAULT_APPLE_TOUCH_ICON_URL)
 }
 
 // Watch for site settings changes and update favicon/title
 watch(
   () => appStore.siteLogo,
   (newLogo) => {
-    if (newLogo) {
-      updateFavicon(newLogo)
-    }
+    updateSiteIcons(newLogo)
   },
   { immediate: true }
 )

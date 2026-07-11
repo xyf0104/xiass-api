@@ -225,7 +225,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/sub2api
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/nowind-api
           short-description: "NoWind API - customized AI API gateway"
           readme-filepath: ./deploy/DOCKER.md
 
@@ -251,7 +251,7 @@ jobs:
           fi
           VERSION=${TAG_NAME#v}
           REPO="${{ github.repository }}"
-          GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/sub2api"
+          GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/nowind-api"
 
           # 获取 tag message 内容并转义 Markdown 特殊字符
           TAG_MESSAGE='${{ steps.tag_message.outputs.message }}'
@@ -275,7 +275,7 @@ jobs:
           MESSAGE+="\`\`\`bash"$'\n'
           # 根据是否配置 DockerHub 动态生成
           if [ -n "$DOCKERHUB_USERNAME" ]; then
-            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/sub2api"
+            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/nowind-api"
             MESSAGE+="# Docker Hub"$'\n'
             MESSAGE+="docker pull ${DOCKER_IMAGE}:${VERSION}"$'\n'
             MESSAGE+="# GitHub Container Registry"$'\n'
@@ -287,7 +287,7 @@ jobs:
           if [ -n "$DOCKERHUB_USERNAME" ]; then
             MESSAGE+="• [Docker Hub](https://hub.docker.com/r/${DOCKER_IMAGE})"$'\n'
           fi
-          MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/sub2api)"$'\n'$'\n'
+          MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/nowind-api)"$'\n'$'\n'
           MESSAGE+="#NoWindAPI #Release #${TAG_NAME//./_}"
 
           # 发送消息

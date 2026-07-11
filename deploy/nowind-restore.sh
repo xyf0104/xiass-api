@@ -40,6 +40,14 @@ compose() {
     "${COMPOSE[@]}" "${COMPOSE_ARGS[@]}" "$@"
 }
 
+application_service() {
+    if compose config --services 2>/dev/null | grep -qx 'nowind-api'; then
+        printf 'nowind-api\n'
+    else
+        printf 'sub2api\n'
+    fi
+}
+
 validate_archive() {
     local archive="$1" entry
     if [ -f "$archive.sha256" ] && command -v sha256sum >/dev/null 2>&1; then
@@ -148,7 +156,7 @@ main() {
     fi
 
     compose ps || true
-    compose logs --tail 160 sub2api || true
+    compose logs --tail 160 "$(application_service)" || true
     die "恢复后的服务未通过健康检查。"
 }
 

@@ -4,7 +4,7 @@
 # Quick Start:
 #   1. Copy .env.example to .env and configure
 #   2. docker-compose up -d
-#   3. Check logs: docker-compose logs -f sub2api
+#   3. Check logs: docker-compose logs -f nowind-api
 #   4. Access: http://localhost:8080
 #
 # All configuration is done via environment variables.
@@ -17,22 +17,24 @@ services:
   # ===========================================================================
   watchtower:
     image: containrrr/watchtower:latest
-    container_name: sub2api-watchtower
+    container_name: nowind-api-watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --http-api-update --http-api-token sub2api-update-token sub2api
+    command: --http-api-update nowind-api
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
+      - WATCHTOWER_HTTP_API_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
     networks:
-      - sub2api-network
+      - nowind-api-network
 
   # ===========================================================================
   # NoWind API Application
   # ===========================================================================
-  sub2api:
-    image: ghcr.io/xyf0104/sub2api:latest
-    container_name: sub2api
+  nowind-api:
+    image: ghcr.io/xyf0104/nowind-api:latest
+    container_name: nowind-api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -69,6 +71,7 @@ services:
       # System Update Configuration
       # =======================================================================
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
 
       # =======================================================================
       # Server Configuration
@@ -203,7 +206,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - sub2api-network
+      - nowind-api-network
     healthcheck:
       test:
         [
@@ -226,7 +229,7 @@ services:
   # ===========================================================================
   postgres:
     image: postgres:18-alpine
-    container_name: sub2api-postgres
+    container_name: nowind-api-postgres
     restart: unless-stopped
     ulimits:
       nofile:
@@ -244,7 +247,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
       - TZ=${TZ:-Asia/Shanghai}
     networks:
-      - sub2api-network
+      - nowind-api-network
     healthcheck:
       test:
         [
@@ -263,7 +266,7 @@ services:
   # ===========================================================================
   redis:
     image: redis:8-alpine
-    container_name: sub2api-redis
+    container_name: nowind-api-redis
     restart: unless-stopped
     ulimits:
       nofile:
@@ -283,7 +286,7 @@ services:
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:
-      - sub2api-network
+      - nowind-api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -307,5 +310,5 @@ volumes:
 # Networks
 # =============================================================================
 networks:
-  sub2api-network:
+  nowind-api-network:
     driver: bridge

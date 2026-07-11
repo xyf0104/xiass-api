@@ -7,9 +7,9 @@
 # 确保在 deploy 目录执行
 cd "$(dirname "$0")"
 
-DB_CONTAINER="sub2api-db"
-DB_USER="sub2api"
-DB_NAME="sub2api"
+DB_CONTAINER="${DB_CONTAINER:-nowind-api-postgres}"
+DB_USER="${DB_USER:-sub2api}"
+DB_NAME="${DB_NAME:-sub2api}"
 
 echo "正在向数据库注入功能配置..."
 

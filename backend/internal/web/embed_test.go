@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,6 +110,84 @@ func TestInjectSiteTitle(t *testing.T) {
 		assert.Contains(t, string(result), `<div id="app"></div>`)
 		assert.Contains(t, string(result), "<title>TestSite - AI API Gateway</title>")
 	})
+}
+
+func TestInjectSiteBranding(t *testing.T) {
+	baseHTML := []byte(`<html><head><link rel="icon" type="image/png" href="/favicon.png?v=1.0.66"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.66"><title>NoWind API</title></head><body></body></html>`)
+
+	t.Run("injects_title_and_escaped_logo_into_both_icon_links", func(t *testing.T) {
+		settingsJSON, err := json.Marshal(siteBrandingConfig{
+			SiteName: `A&B <Gateway>`,
+			SiteLogo: `https://cdn.example.com/logo.png?theme=light&label="brand"`,
+		})
+		require.NoError(t, err)
+
+		result := string(injectSiteBranding(baseHTML, settingsJSON))
+
+		assert.Contains(t, result, `<title>A&amp;B &lt;Gateway&gt; - AI API Gateway</title>`)
+		assert.Equal(t, 2, strings.Count(result, `href="https://cdn.example.com/logo.png?theme=light&amp;label=&#34;brand&#34;"`))
+		assert.NotContains(t, result, defaultSiteFaviconURL)
+		assert.NotContains(t, result, defaultAppleIconURL)
+	})
+
+	t.Run("keeps_versioned_defaults_when_logo_is_empty", func(t *testing.T) {
+		result := injectSiteBranding(baseHTML, []byte(`{"site_name":"Custom","site_logo":""}`))
+
+		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.66"`)
+		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.66"`)
+	})
+
+	t.Run("keeps_versioned_defaults_when_logo_is_unsafe", func(t *testing.T) {
+		result := injectSiteBranding(baseHTML, []byte(`{"site_logo":"javascript:alert(1)"}`))
+
+		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.66"`)
+		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.66"`)
+		assert.NotContains(t, string(result), "javascript:")
+	})
+
+	t.Run("injects_logo_when_site_name_is_empty", func(t *testing.T) {
+		result := injectSiteBranding(baseHTML, []byte(`{"site_name":"","site_logo":"/branding/logo.png"}`))
+
+		assert.Contains(t, string(result), `<title>NoWind API</title>`)
+		assert.Equal(t, 2, strings.Count(string(result), `href="/branding/logo.png"`))
+	})
+
+	t.Run("returns_unchanged_html_for_invalid_json", func(t *testing.T) {
+		result := injectSiteBranding(baseHTML, []byte(`{invalid`))
+
+		assert.Equal(t, string(baseHTML), string(result))
+	})
+}
+
+func TestSanitizeSiteLogoURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "site_absolute_path", input: "/branding/logo.png?v=2", want: "/branding/logo.png?v=2"},
+		{name: "https_url", input: "https://cdn.example.com/logo.png", want: "https://cdn.example.com/logo.png"},
+		{name: "http_url", input: "http://cdn.example.com/logo.png", want: "http://cdn.example.com/logo.png"},
+		{name: "data_image", input: "data:image/png;base64,iVBORw0KGgo=", want: "data:image/png;base64,iVBORw0KGgo="},
+		{name: "case_insensitive_data_image", input: "DATA:image/svg+xml,%3Csvg%3E", want: "DATA:image/svg+xml,%3Csvg%3E"},
+		{name: "trims_outer_space", input: "  /branding/logo.png  ", want: "/branding/logo.png"},
+		{name: "empty", input: "", want: ""},
+		{name: "relative_path", input: "branding/logo.png", want: ""},
+		{name: "protocol_relative", input: "//evil.example/logo.png", want: ""},
+		{name: "backslash_site_path", input: `/\evil.example/logo.png`, want: ""},
+		{name: "javascript_scheme", input: "javascript:alert(1)", want: ""},
+		{name: "ftp_scheme", input: "ftp://cdn.example.com/logo.png", want: ""},
+		{name: "non_image_data", input: "data:text/html,<script>alert(1)</script>", want: ""},
+		{name: "malformed_image_data", input: "data:image/png;base64", want: ""},
+		{name: "missing_http_host", input: "https:///logo.png", want: ""},
+		{name: "control_character", input: "https://cdn.example.com/logo\n.png", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sanitizeSiteLogoURL(tt.input))
+		})
+	}
 }
 
 func TestReplaceNoncePlaceholder(t *testing.T) {
@@ -230,6 +309,24 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 		result := server.injectSettings(settingsJSON)
 
 		assert.Contains(t, string(result), `window.__APP_CONFIG__={"nested":{"array":[1,2,3]},"special":"<>&"};`)
+	})
+
+	t.Run("injects_branding_before_vue_bootstrap", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: map[string]string{"key": "value"}}
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+		server.baseHTML = []byte(`<html><head><link rel="icon" href="/favicon.png?v=1.0.66"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.66"><title>NoWind API</title></head><body><div id="app"></div></body></html>`)
+
+		settingsJSON := []byte(`{"site_name":"Custom Site","site_logo":"/branding/custom.png"}`)
+		result := server.injectSettings(settingsJSON)
+
+		brandingIndex := bytes.Index(result, []byte(`<title>Custom Site - AI API Gateway</title>`))
+		configIndex := bytes.Index(result, []byte(`window.__APP_CONFIG__=`))
+		headCloseIndex := bytes.Index(result, []byte(`</head>`))
+		assert.GreaterOrEqual(t, brandingIndex, 0)
+		assert.Greater(t, configIndex, brandingIndex)
+		assert.Greater(t, headCloseIndex, configIndex)
+		assert.Equal(t, 2, strings.Count(string(result), `href="/branding/custom.png"`))
 	})
 }
 

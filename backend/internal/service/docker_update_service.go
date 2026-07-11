@@ -8,13 +8,23 @@ import (
 	"strings"
 )
 
-const deploymentModeEnv = "SUB2API_DEPLOYMENT_MODE"
+const (
+	deploymentModeEnv       = "NOWIND_DEPLOYMENT_MODE"
+	legacyDeploymentModeEnv = "SUB2API_DEPLOYMENT_MODE"
+	watchtowerUpdateURL     = "http://watchtower:8080/v1/update"
+	watchtowerTokenEnv      = "NOWIND_WATCHTOWER_TOKEN"
+	legacyWatchtowerToken   = "sub2api-update-token"
+)
 
 // IsRunningInContainer selects the updater without changing existing Docker
 // behavior. The explicit environment override also makes nonstandard runtimes
 // deterministic (for example systemd inside a container host namespace).
 func IsRunningInContainer() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(deploymentModeEnv))) {
+	mode := strings.TrimSpace(os.Getenv(deploymentModeEnv))
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv(legacyDeploymentModeEnv))
+	}
+	switch strings.ToLower(mode) {
 	case "docker", "container":
 		return true
 	case "binary", "systemd":
@@ -48,13 +58,11 @@ func (s *DockerUpdateService) PerformUpdate(ctx context.Context) error {
 		return ErrNoUpdateAvailable
 	}
 
-	// Call Watchtower HTTP API
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://sub2api-watchtower:8080/v1/update", nil)
+	// Call Watchtower HTTP API through its stable Compose service DNS.
+	req, err := newWatchtowerUpdateRequest(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create watchtower request: %w", err)
 	}
-
-	req.Header.Set("Authorization", "Bearer sub2api-update-token")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -68,6 +76,20 @@ func (s *DockerUpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func newWatchtowerUpdateRequest(ctx context.Context) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, watchtowerUpdateURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	token := strings.TrimSpace(os.Getenv(watchtowerTokenEnv))
+	if token == "" {
+		token = legacyWatchtowerToken
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req, nil
 }
 
 func (s *DockerUpdateService) Rollback() error {

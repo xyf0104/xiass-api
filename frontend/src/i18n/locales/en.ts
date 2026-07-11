@@ -1571,7 +1571,7 @@ export default {
         step1: {
           title: 'Create an R2 Bucket',
           line1: 'Log in to the Cloudflare Dashboard (dash.cloudflare.com), select "R2 Object Storage" from the sidebar',
-          line2: 'Click "Create bucket", enter a name (e.g. sub2api-backups), choose a region',
+          line2: 'Click "Create bucket", enter a name (e.g. nowind-api-backups), choose a region',
           line3: 'Click create to finish'
         },
         step2: {
@@ -3182,7 +3182,7 @@ export default {
         expiresAt: 'Expires At',
         actions: 'Actions'
       },
-      usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
+      usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by NoWind API, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within NoWind API.',
       allPrivacyModes: 'All Privacy States',
       privacyUnset: 'Unset',
       privacyTrainingOff: 'Training data sharing disabled',
@@ -3533,7 +3533,7 @@ export default {
       poolMode: 'Pool Mode',
       poolModeHint: 'Enable when upstream is an account pool; errors won\'t mark local account status',
       poolModeInfo:
-        'When enabled, upstream 429/403/401 errors will auto-retry without marking the account as rate-limited or errored. Suitable for upstream pointing to another sub2api instance.',
+        'When enabled, upstream 429/403/401 errors will auto-retry without marking the account as rate-limited or errored. Suitable for upstream pointing to another NoWind API instance.',
       poolModeRetryCount: 'Same-Account Retries',
       poolModeRetryCountHint:
         'Only applies in pool mode. Use 0 to disable in-place retry. Default {default}, maximum {max}.',

@@ -3,8 +3,11 @@
 package service
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -184,4 +187,35 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
 	require.Contains(t, err.Error(), "no compatible release found")
+}
+
+func TestUpdateServiceExtractBinaryAcceptsCanonicalAndLegacyNames(t *testing.T) {
+	for _, binaryName := range []string{canonicalBinaryName, legacyBinaryName} {
+		t.Run(binaryName, func(t *testing.T) {
+			tempDir := t.TempDir()
+			archivePath := filepath.Join(tempDir, "release.tar")
+			archiveFile, err := os.Create(archivePath)
+			require.NoError(t, err)
+
+			writer := tar.NewWriter(archiveFile)
+			payload := []byte("nowind-binary")
+			require.NoError(t, writer.WriteHeader(&tar.Header{
+				Name: binaryName,
+				Mode: 0o755,
+				Size: int64(len(payload)),
+			}))
+			_, err = writer.Write(payload)
+			require.NoError(t, err)
+			require.NoError(t, writer.Close())
+			require.NoError(t, archiveFile.Close())
+
+			destination := filepath.Join(tempDir, canonicalBinaryName)
+			svc := &UpdateService{}
+			require.NoError(t, svc.extractBinary(archivePath, destination))
+
+			extracted, err := os.ReadFile(destination)
+			require.NoError(t, err)
+			require.Equal(t, payload, extracted)
+		})
+	}
 }

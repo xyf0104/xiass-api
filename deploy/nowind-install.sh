@@ -367,11 +367,12 @@ generate_env() {
         return
     fi
 
-    local pg_password redis_password jwt_secret totp_key
+    local pg_password redis_password jwt_secret totp_key watchtower_token
     pg_password=$(gen_secret)
     redis_password=$(gen_secret)
     jwt_secret=$(gen_secret)
     totp_key=$(gen_secret)
+    watchtower_token=$(gen_secret)
 
     umask 077
     cat > "$env_file" <<ENVEOF
@@ -382,6 +383,7 @@ BIND_HOST=0.0.0.0
 SERVER_MODE=release
 RUN_MODE=standard
 NOWIND_BUILD_MODE=${BUILD_MODE}
+NOWIND_WATCHTOWER_TOKEN=${watchtower_token}
 TZ=Asia/Shanghai
 
 SOFT_ROUTER_PROXY_RAW_PORT_RANGE=${RAW_PORT_RANGE}
@@ -443,6 +445,17 @@ compose() {
     "${COMPOSE[@]}" -f "$compose_dir/docker-compose.local.yml" --project-directory "$compose_dir" "$@"
 }
 
+remove_legacy_runtime_containers() {
+    local container_name
+    for container_name in sub2api sub2api-watchtower sub2api-postgres sub2api-redis; do
+        if docker container inspect "$container_name" >/dev/null 2>&1; then
+            log "优雅停止并移除旧版运行容器 $container_name（不会删除卷或数据）..."
+            docker stop -t 60 "$container_name" >/dev/null 2>&1 || true
+            docker rm "$container_name" >/dev/null
+        fi
+    done
+}
+
 start_services() {
     if [ "$BUILD_MODE" = "source" ]; then
         log "正在从源码构建并启动，首次通常需要 3-10 分钟..."
@@ -450,10 +463,17 @@ start_services() {
             -f "$INSTALL_DIR/deploy/docker-compose.local.yml" \
             -f "$INSTALL_DIR/deploy/docker-compose.build.yml" \
             --project-directory "$INSTALL_DIR/deploy" \
-            up -d --build
+            build nowind-api
+        remove_legacy_runtime_containers
+        "${COMPOSE[@]}" \
+            -f "$INSTALL_DIR/deploy/docker-compose.local.yml" \
+            -f "$INSTALL_DIR/deploy/docker-compose.build.yml" \
+            --project-directory "$INSTALL_DIR/deploy" \
+            up -d
     else
         log "正在拉取 NoWind 正式镜像..."
         compose pull
+        remove_legacy_runtime_containers
         compose up -d
     fi
     ok "容器已启动"
@@ -471,7 +491,7 @@ wait_for_service() {
     done
 
     compose ps || true
-    compose logs --tail 120 sub2api || true
+    compose logs --tail 120 nowind-api || true
     die "服务在 4 分钟内未通过健康检查。上方已输出容器状态和日志。"
 }
 
@@ -506,7 +526,7 @@ print_completion() {
     echo ""
     echo "常用命令："
     echo "  查看状态：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml ps"
-    echo "  查看日志：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml logs -f sub2api"
+    echo "  查看日志：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml logs -f nowind-api"
     echo "  安全更新：curl -fsSL ${RAW_BASE_URL}/deploy/nowind-update.sh | sudo bash"
     echo "  完整备份：curl -fsSL ${RAW_BASE_URL}/deploy/nowind-backup.sh | sudo bash"
     echo ""

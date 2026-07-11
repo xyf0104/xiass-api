@@ -1,17 +1,20 @@
 # 修改为你的域名
 nowind.example.com {
         # =========================================================================
-	# 静态资源长期缓存（高优先级，放在最前面）
-	# 带 hash 的文件可以永久缓存，浏览器和 CDN 都会缓存
+	# 带 hash 的构建产物可以永久缓存，浏览器和 CDN 都会缓存
 	# =========================================================================
-	@static {
-		path /assets/*
-		path /logo.png
-		path /favicon.ico
-	}
-	header @static {
+	@hashedAssets path_regexp hashed_assets ^/assets/(.+/)?[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9.]+$
+	header @hashedAssets {
 		Cache-Control "public, max-age=31536000, immutable"
 		# 移除可能干扰缓存的头
+		-Pragma
+		-Expires
+	}
+
+	# 品牌资源文件名稳定，必须每次重验证，避免旧 Logo 被永久缓存
+	@brandAssets path /logo.png /favicon.png /favicon.ico /apple-touch-icon.png /site.webmanifest
+	header @brandAssets {
+		Cache-Control "no-cache"
 		-Pragma
 		-Expires
 	}

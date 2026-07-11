@@ -9,9 +9,20 @@ type SanitizeOptions = {
   allowDataUrl?: boolean
 }
 
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+  })
+}
+
 export function sanitizeUrl(value: string, options: SanitizeOptions = {}): string {
   const trimmed = value.trim()
   if (!trimmed) {
+    return ''
+  }
+
+  if (hasControlCharacters(trimmed) || trimmed.includes('\\')) {
     return ''
   }
 
@@ -20,8 +31,8 @@ export function sanitizeUrl(value: string, options: SanitizeOptions = {}): strin
   }
 
   // 允许 data:image/ 开头的 data URL（仅限图片类型）
-  if (options.allowDataUrl && trimmed.startsWith('data:image/')) {
-    return trimmed
+  if (options.allowDataUrl && /^data:image\//i.test(trimmed)) {
+    return trimmed.includes(',') ? trimmed : ''
   }
 
   // 只接受绝对 URL，不使用 base URL 来避免相对路径被解析为当前域名

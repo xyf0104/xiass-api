@@ -10,10 +10,10 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh 
 
 该命令会安装 Docker/Compose 和基础依赖，检查端口，克隆仓库，生成独立密钥，并启动：
 
-- `sub2api`：NoWind 应用
-- `sub2api-postgres`：PostgreSQL
-- `sub2api-redis`：Redis
-- `sub2api-watchtower`：后台在线更新
+- `nowind-api`：NoWind 应用
+- PostgreSQL
+- Redis
+- `nowind-api-watchtower`：后台在线更新
 
 默认安装目录为 `/opt/nowind-api`，默认使用 `docker-compose.local.yml`，所有运行数据都保存在 `deploy` 下的本地目录，方便备份和迁移。
 
@@ -45,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh 
 /opt/nowind-api/deploy/redis_data
 ```
 
-重新拉取代码、拉取镜像或重建 `sub2api` 容器不会删除这些目录。禁止使用：
+重新拉取代码、拉取镜像或重建 `nowind-api` 容器不会删除这些目录。禁止使用：
 
 ```bash
 docker compose down -v
@@ -95,8 +95,8 @@ sudo bash /tmp/nowind-restore.sh /root/nowind-backups/nowind-runtime-YYYYmmdd-HH
 cd /opt/nowind-api/deploy
 
 docker compose -f docker-compose.local.yml ps
-docker compose -f docker-compose.local.yml logs -f --tail 200 sub2api
-docker compose -f docker-compose.local.yml restart sub2api
+docker compose -f docker-compose.local.yml logs -f --tail 200 nowind-api
+docker compose -f docker-compose.local.yml restart nowind-api
 docker compose -f docker-compose.local.yml down
 docker compose -f docker-compose.local.yml up -d
 ```

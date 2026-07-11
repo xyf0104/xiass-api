@@ -1054,7 +1054,7 @@ function referenceImageLimitForModel(model: string) {
 }
 
 const agentInstruction = computed(() => `---
-name: sub2api-batch-image
+name: nowind-api-batch-image
 description: 当用户希望用 Gemini/Vertex 批量生成图片、批量跑提示词、下载批量生图结果、重试失败图片时使用。
 ---
 
@@ -1629,7 +1629,7 @@ async function submitJob() {
         response_mime_type: form.responseMimeType,
         items: parsedItems.value,
 	      },
-	      `sub2api-ui-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+	      `nowind-api-ui-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
 	    )
 	    currentJob.value = job
 	    selectedBatchId.value = job.id
@@ -1810,7 +1810,7 @@ async function retryFailedJob(job: BatchImageJobRow | BatchImageJob) {
         response_mime_type: form.responseMimeType,
         items: failedItems,
       },
-      `sub2api-ui-retry-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      `nowind-api-ui-retry-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     )
     currentJob.value = retryJob
     selectedBatchId.value = retryJob.id

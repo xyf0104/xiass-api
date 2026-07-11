@@ -11,10 +11,12 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -22,7 +24,9 @@ import (
 
 const (
 	// NonceHTMLPlaceholder is the placeholder for nonce in HTML script tags
-	NonceHTMLPlaceholder = "__CSP_NONCE_VALUE__"
+	NonceHTMLPlaceholder  = "__CSP_NONCE_VALUE__"
+	defaultSiteFaviconURL = "/favicon.png?v=1.0.66"
+	defaultAppleIconURL   = "/apple-touch-icon.png?v=1.0.66"
 )
 
 //go:embed all:dist
@@ -171,6 +175,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	settings, err := s.settings.GetPublicSettingsForInjection(ctx)
 	if err != nil {
 		// Fallback: serve without injection
+		c.Header("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
 		c.Abort()
 		return
@@ -179,6 +184,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
 		// Fallback: serve without injection
+		c.Header("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
 		c.Abort()
 		return
@@ -200,43 +206,111 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 }
 
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
+	result := injectSiteBranding(s.baseHTML, settingsJSON)
+
 	// Create the script tag to inject with nonce placeholder
 	// The placeholder will be replaced with actual nonce at request time
 	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__APP_CONFIG__=` + string(settingsJSON) + `;</script>`)
 
 	// Inject before </head>
 	headClose := []byte("</head>")
-	result := bytes.Replace(s.baseHTML, headClose, append(script, headClose...), 1)
+	result = bytes.Replace(result, headClose, append(script, headClose...), 1)
 
-	// Replace <title> with custom site name so the browser tab shows it immediately
-	result = injectSiteTitle(result, settingsJSON)
+	return result
+}
 
+type siteBrandingConfig struct {
+	SiteName string `json:"site_name"`
+	SiteLogo string `json:"site_logo"`
+}
+
+// injectSiteBranding applies the configured title and safe icon URL before Vue runs.
+func injectSiteBranding(document, settingsJSON []byte) []byte {
+	var cfg siteBrandingConfig
+	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
+		return document
+	}
+
+	result := injectSiteTitleValue(document, cfg.SiteName)
+	if logoURL := sanitizeSiteLogoURL(cfg.SiteLogo); logoURL != "" {
+		result = injectSiteLogo(result, logoURL)
+	}
 	return result
 }
 
 // injectSiteTitle replaces the static <title> in HTML with the configured site name.
 // This ensures the browser tab shows the correct title before JS executes.
-func injectSiteTitle(html, settingsJSON []byte) []byte {
-	var cfg struct {
-		SiteName string `json:"site_name"`
+func injectSiteTitle(document, settingsJSON []byte) []byte {
+	var cfg siteBrandingConfig
+	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
+		return document
 	}
-	if err := json.Unmarshal(settingsJSON, &cfg); err != nil || cfg.SiteName == "" {
-		return html
+	return injectSiteTitleValue(document, cfg.SiteName)
+}
+
+func injectSiteTitleValue(document []byte, siteName string) []byte {
+	siteName = strings.TrimSpace(siteName)
+	if siteName == "" {
+		return document
 	}
 
 	// Find and replace the existing <title>...</title>
-	titleStart := bytes.Index(html, []byte("<title>"))
-	titleEnd := bytes.Index(html, []byte("</title>"))
+	titleStart := bytes.Index(document, []byte("<title>"))
+	titleEnd := bytes.Index(document, []byte("</title>"))
 	if titleStart == -1 || titleEnd == -1 || titleEnd <= titleStart {
-		return html
+		return document
 	}
 
-	newTitle := []byte("<title>" + htmlpkg.EscapeString(cfg.SiteName) + " - AI API Gateway</title>")
+	newTitle := []byte("<title>" + htmlpkg.EscapeString(siteName) + " - AI API Gateway</title>")
 	var buf bytes.Buffer
-	buf.Write(html[:titleStart])
+	buf.Write(document[:titleStart])
 	buf.Write(newTitle)
-	buf.Write(html[titleEnd+len("</title>"):])
+	buf.Write(document[titleEnd+len("</title>"):])
 	return buf.Bytes()
+}
+
+func injectSiteLogo(document []byte, logoURL string) []byte {
+	escapedLogoURL := htmlpkg.EscapeString(logoURL)
+	result := document
+	for _, defaultURL := range []string{defaultSiteFaviconURL, defaultAppleIconURL} {
+		oldHref := []byte(`href="` + defaultURL + `"`)
+		newHref := []byte(`href="` + escapedLogoURL + `"`)
+		result = bytes.Replace(result, oldHref, newHref, 1)
+	}
+	return result
+}
+
+func sanitizeSiteLogoURL(rawURL string) string {
+	logoURL := strings.TrimSpace(rawURL)
+	if logoURL == "" || strings.IndexFunc(logoURL, unicode.IsControl) >= 0 {
+		return ""
+	}
+
+	if strings.HasPrefix(logoURL, "/") {
+		if strings.HasPrefix(logoURL, "//") || strings.Contains(logoURL, `\`) {
+			return ""
+		}
+		return logoURL
+	}
+
+	if strings.HasPrefix(strings.ToLower(logoURL), "data:image/") {
+		if strings.IndexByte(logoURL, ',') == -1 {
+			return ""
+		}
+		return logoURL
+	}
+
+	if strings.Contains(logoURL, `\`) {
+		return ""
+	}
+	parsed, err := url.Parse(logoURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return ""
+	}
+	return logoURL
 }
 
 // replaceNoncePlaceholder replaces the nonce placeholder with actual nonce value

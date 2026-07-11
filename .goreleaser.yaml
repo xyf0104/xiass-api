@@ -1,15 +1,17 @@
 version: 2
 
-project_name: sub2api
+project_name: nowind-api
 
 before:
   hooks:
     - go mod tidy -C backend
 
 builds:
-  - id: sub2api
+  - id: nowind-api
     dir: backend
     main: ./cmd/server
+    # v1.0.65's binary updater only extracts an entry named sub2api. Keep the
+    # archive payload compatible while the public asset name uses nowind-api.
     binary: sub2api
     flags:
       - -tags=embed
@@ -62,7 +64,7 @@ dockers:
     goarch: amd64
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-amd64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     extra_files:
@@ -77,7 +79,7 @@ dockers:
     goarch: arm64
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-arm64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     extra_files:
@@ -92,6 +94,8 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
+      # Unadvertised v1.0.65 Watchtower compatibility alias.
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
@@ -107,6 +111,8 @@ dockers:
     goos: linux
     goarch: arm64
     image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
+      # Unadvertised v1.0.65 Watchtower compatibility alias.
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
@@ -121,47 +127,59 @@ dockers:
 # Docker manifests for multi-arch support
 docker_manifests:
   # DockerHub manifests (skipped if DOCKERHUB_USERNAME is 'skip')
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}"
+  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}"
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-arm64"
 
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:latest"
+  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:latest"
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-arm64"
 
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Major }}.{{ .Minor }}"
+  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Major }}.{{ .Minor }}"
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-arm64"
 
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Major }}"
+  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Major }}"
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
     image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}-arm64"
 
   # GHCR manifests (owner must be lowercase)
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Major }}.{{ .Minor }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Major }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
+
+  # Keep only version and latest on the legacy GHCR repository. These aliases
+  # exist solely so v1.0.65 Watchtower deployments can cross the rename.
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Major }}.{{ .Minor }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Major }}"
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
@@ -190,11 +208,11 @@ release:
     ```bash
     {{ if ne .Env.DOCKERHUB_USERNAME "skip" -}}
     # Docker Hub
-    docker pull {{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}
+    docker pull {{ .Env.DOCKERHUB_USERNAME }}/nowind-api:{{ .Version }}
 
     {{ end -}}
     # GitHub Container Registry
-    docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}
+    docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}
     ```
 
     **One-line complete install (Linux):**

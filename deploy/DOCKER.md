@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh 
 ## 镜像
 
 ```bash
-docker pull ghcr.io/xyf0104/sub2api:latest
+docker pull ghcr.io/xyf0104/nowind-api:latest
 ```
 
 正式镜像当前发布 `linux/amd64`。版本标签包括：
@@ -44,6 +44,7 @@ POSTGRES_PASSWORD=替换为随机值
 REDIS_PASSWORD=替换为随机值
 JWT_SECRET=替换为随机值
 TOTP_ENCRYPTION_KEY=替换为随机值
+NOWIND_WATCHTOWER_TOKEN=替换为随机值
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=替换为强密码
 ```

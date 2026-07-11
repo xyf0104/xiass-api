@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_DOCS = ("README.md", "deploy/README.md", "deploy/DOCKER.md")
 
 
 def read(path: str) -> str:
@@ -21,6 +22,14 @@ def git_output(*args: str) -> str:
     return subprocess.check_output(
         ["git", *args], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
     ).strip()
+
+
+def require_all(
+    relative: str, content: str, required: list[str], errors: list[str]
+) -> None:
+    for needle in required:
+        if needle not in content:
+            errors.append(f"{relative} 缺少发布契约内容: {needle}")
 
 
 def check_version(errors: list[str]) -> None:
@@ -64,7 +73,6 @@ def check_public_branding_and_privacy(errors: list[str]) -> None:
         if (ROOT / relative).exists():
             errors.append(f"公开仓库仍包含旧宣传或临时导出: {relative}")
 
-    docs = ["README.md", "deploy/README.md", "deploy/DOCKER.md"]
     forbidden_text = {
         "Wei-Shaw": "旧仓库宣传",
         "trendshift": "Trending 宣传",
@@ -72,7 +80,7 @@ def check_public_branding_and_privacy(errors: list[str]) -> None:
         "赞助商": "赞助商内容",
         "sub2api.org": "旧项目外链",
     }
-    for relative in docs:
+    for relative in PUBLIC_DOCS:
         content = read(relative)
         for needle, label in forbidden_text.items():
             if needle.lower() in content.lower():
@@ -91,6 +99,173 @@ def check_public_branding_and_privacy(errors: list[str]) -> None:
             errors.append(f"检测到维护者线上域名硬编码: {relative}")
         if re.search(r"admin-[0-9a-f]{48,}", content):
             errors.append(f"检测到疑似管理员密钥: {relative}")
+
+
+def check_release_branding_and_compatibility(errors: list[str]) -> None:
+    full = read(".goreleaser.yaml")
+    simple = read(".goreleaser.simple.yaml")
+    workflow = read(".github/workflows/release.yml")
+
+    require_all(
+        ".goreleaser.yaml",
+        full,
+        [
+            "project_name: nowind-api",
+            "binary: sub2api",
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"',
+        ],
+        errors,
+    )
+    require_all(
+        ".goreleaser.simple.yaml",
+        simple,
+        [
+            "project_name: nowind-api",
+            "binary: sub2api",
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest',
+            'name_template: "NoWind API {{.Version}}"',
+            "> 支持 linux/amd64 GHCR 镜像和安装包",
+        ],
+        errors,
+    )
+    if "(Simple)" in simple or "Simple Release" in simple:
+        errors.append("简化发布配置向用户暴露了内部构建模式名")
+
+    for relative, content in [
+        (".goreleaser.yaml", full),
+        (".goreleaser.simple.yaml", simple),
+    ]:
+        footer = content.partition("footer: |")[2]
+        if "/sub2api:" in footer:
+            errors.append(f"{relative} 的公开 Release 文案宣传了旧镜像别名")
+
+    require_all(
+        ".github/workflows/release.yml",
+        workflow,
+        [
+            "${{ secrets.DOCKERHUB_USERNAME }}/nowind-api",
+            'GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/nowind-api"',
+            "/pkgs/container/nowind-api",
+        ],
+        errors,
+    )
+    if "sub2api" in workflow:
+        errors.append("release workflow 仍在公开流程中使用旧品牌名")
+
+    for relative in PUBLIC_DOCS:
+        content = read(relative)
+        if "ghcr.io/xyf0104/sub2api" in content:
+            errors.append(f"{relative} 宣传了旧 GHCR 镜像")
+        if re.search(
+            r"(?m)^\s*(?:docker(?:-compose)?|docker\s+compose)\b[^\n]*\bsub2api\b",
+            content,
+        ):
+            errors.append(f"{relative} 的命令仍使用旧应用名")
+
+    require_all(
+        "Dockerfile",
+        read("Dockerfile"),
+        [
+            "# NoWind API Multi-Stage Dockerfile",
+            "NoWind API - AI API Gateway Platform",
+            "addgroup -g 1000 nowind",
+            "adduser -u 1000 -G nowind",
+            "/app/nowind-api",
+            'CMD ["/app/nowind-api"]',
+        ],
+        errors,
+    )
+    require_all(
+        "Dockerfile.goreleaser",
+        read("Dockerfile.goreleaser"),
+        [
+            "# NoWind API Dockerfile for GoReleaser",
+            "NoWind API - customized AI API gateway",
+            "addgroup -g 1000 nowind",
+            "adduser -u 1000 -G nowind",
+            "sub2api /app/nowind-api",
+            'CMD ["/app/nowind-api"]',
+        ],
+        errors,
+    )
+    for relative in ["Dockerfile", "Dockerfile.goreleaser"]:
+        content = read(relative)
+        if "/app/sub2api" in content or "sub2api:sub2api" in content:
+            errors.append(f"{relative} 仍暴露旧镜像内部运行路径或用户")
+
+    require_all(
+        "deploy/docker-entrypoint.sh",
+        read("deploy/docker-entrypoint.sh"),
+        ["chown -R 1000:1000 /app/data", "su-exec 1000:1000", "/app/nowind-api"],
+        errors,
+    )
+
+
+def check_compose_branding(errors: list[str]) -> None:
+    compose_paths = [
+        "deploy/docker-compose.local.yml",
+        "deploy/docker-compose.yml",
+        "deploy/docker-compose.nowind.yml",
+        "deploy/docker-compose.standalone.yml",
+        "deploy/docker-compose.build.yml",
+        "deploy/docker-compose.dev.yml",
+    ]
+    for relative in compose_paths:
+        content = read(relative)
+        if re.search(r"(?m)^  sub2api:\s*$", content):
+            errors.append(f"{relative} 仍使用旧应用 service 名")
+        if "ghcr.io/xyf0104/sub2api" in content:
+            errors.append(f"{relative} 仍使用旧 GHCR 镜像")
+        if not re.search(r"(?m)^  nowind-api:\s*$", content):
+            errors.append(f"{relative} 缺少 nowind-api service")
+
+    token_default = "${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}"
+    for relative in ["deploy/docker-compose.local.yml", "deploy/docker-compose.yml"]:
+        content = read(relative)
+        require_all(
+            relative,
+            content,
+            [
+                "image: ghcr.io/xyf0104/nowind-api:latest",
+                "container_name: nowind-api",
+                "container_name: nowind-api-watchtower",
+                "container_name: nowind-api-postgres",
+                "container_name: nowind-api-redis",
+                "nowind-api-network",
+                "command: --http-api-update nowind-api",
+                f"NOWIND_WATCHTOWER_TOKEN={token_default}",
+                f"WATCHTOWER_HTTP_API_TOKEN={token_default}",
+            ],
+            errors,
+        )
+        if content.count(f"NOWIND_WATCHTOWER_TOKEN={token_default}") < 2:
+            errors.append(f"{relative} 未同时向应用与 Watchtower 传入更新令牌")
+
+    require_all(
+        "deploy/docker-compose.standalone.yml",
+        read("deploy/docker-compose.standalone.yml"),
+        ["image: ghcr.io/xyf0104/nowind-api:latest", "container_name: nowind-api"],
+        errors,
+    )
+    require_all(
+        "deploy/docker-compose.dev.yml",
+        read("deploy/docker-compose.dev.yml"),
+        [
+            "container_name: nowind-api-dev",
+            "container_name: nowind-api-postgres-dev",
+            "container_name: nowind-api-redis-dev",
+            "nowind-api-network",
+        ],
+        errors,
+    )
 
 
 def check_persistence(errors: list[str]) -> None:
@@ -113,9 +288,7 @@ def check_persistence(errors: list[str]) -> None:
         if mount not in named_compose:
             errors.append(f"命名卷持久化挂载缺失: {mount}")
 
-    watchtower_target = (
-        "command: --http-api-update --http-api-token sub2api-update-token sub2api"
-    )
+    watchtower_target = "command: --http-api-update nowind-api"
     for relative, content in [
         ("deploy/docker-compose.local.yml", local_compose),
         ("deploy/docker-compose.yml", named_compose),
@@ -123,9 +296,36 @@ def check_persistence(errors: list[str]) -> None:
         if watchtower_target not in content:
             errors.append(f"{relative} 的在线更新目标不再限定为应用容器")
 
+    historical_identifiers = [
+        "DATABASE_USER=${POSTGRES_USER:-sub2api}",
+        "DATABASE_DBNAME=${POSTGRES_DB:-sub2api}",
+        "POSTGRES_USER=${POSTGRES_USER:-sub2api}",
+        "POSTGRES_DB=${POSTGRES_DB:-sub2api}",
+    ]
+    for relative, content in [
+        ("deploy/docker-compose.local.yml", local_compose),
+        ("deploy/docker-compose.yml", named_compose),
+    ]:
+        require_all(relative, content, historical_identifiers, errors)
+
+    config = read("backend/internal/config/config.go")
+    if 'viper.SetDefault("dashboard_cache.key_prefix", "sub2api:")' not in config:
+        errors.append("Redis dashboard_cache 历史前缀 sub2api: 被修改")
+
     install_script = read("deploy/nowind-install.sh")
     if 'if [ -f "$env_file" ]' not in install_script or "保留已有 .env" not in install_script:
         errors.append("一键安装脚本不再明确保留已有 .env")
+    require_all(
+        "deploy/nowind-install.sh",
+        install_script,
+        [
+            "NOWIND_WATCHTOWER_TOKEN=${watchtower_token}",
+            'for container_name in sub2api sub2api-watchtower sub2api-postgres sub2api-redis; do',
+            'docker stop -t 60 "$container_name"',
+            'docker rm "$container_name"',
+        ],
+        errors,
+    )
 
     for relative in [
         "install.sh",
@@ -147,6 +347,62 @@ def check_persistence(errors: list[str]) -> None:
                 r"\bdown\s+(?:-[A-Za-z]*v[A-Za-z]*|--volumes)\b", stripped
             ):
                 errors.append(f"{relative}:{line_number} 禁止在维护脚本中删除卷")
+
+
+def check_update_bridge(errors: list[str]) -> None:
+    service = read("backend/internal/service/docker_update_service.go")
+    service_test = read("backend/internal/service/docker_update_service_test.go")
+    require_all(
+        "backend/internal/service/docker_update_service.go",
+        service,
+        [
+            'watchtowerUpdateURL',
+            '"http://watchtower:8080/v1/update"',
+            'watchtowerTokenEnv',
+            '"NOWIND_WATCHTOWER_TOKEN"',
+            'legacyWatchtowerToken',
+            '"sub2api-update-token"',
+            "strings.TrimSpace(os.Getenv(watchtowerTokenEnv))",
+        ],
+        errors,
+    )
+    require_all(
+        "backend/internal/service/docker_update_service_test.go",
+        service_test,
+        ["uses service DNS and configured token", "falls back to v1.0.65 token"],
+        errors,
+    )
+
+    update_script = read("deploy/nowind-update.sh")
+    main_body = update_script.partition("main() {")[2]
+    ordered_markers = [
+        'nowind-backup.sh',
+        'git -C "$INSTALL_DIR" fetch --prune origin main',
+        "compose down",
+        'git -C "$INSTALL_DIR" reset --hard origin/main',
+    ]
+    positions = [main_body.find(marker) for marker in ordered_markers]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        errors.append("nowind-update.sh 必须先备份，再拉取、停止旧栈并切换 Git 状态")
+    require_all(
+        "deploy/nowind-update.sh",
+        update_script,
+        [
+            'PREVIOUS_REF=$(git -C "$INSTALL_DIR" rev-parse HEAD)',
+            "rollback_update()",
+            'git -C "$INSTALL_DIR" reset --hard "$PREVIOUS_REF"',
+            "UPDATE_STARTED=true",
+            "compose pull nowind-api watchtower",
+        ],
+        errors,
+    )
+    if "git clean" in update_script:
+        errors.append("nowind-update.sh 禁止清理未跟踪的 .env 或数据目录")
+    if re.search(
+        r"(?m)^\s*(?:rm|cp|mv)\b[^\n]*(?:\.env|postgres_data|redis_data|/data\b)",
+        update_script,
+    ):
+        errors.append("nowind-update.sh 禁止覆盖或移动持久化数据")
 
 
 def check_migration_immutability(errors: list[str]) -> None:
@@ -178,7 +434,10 @@ def main() -> int:
     errors: list[str] = []
     check_version(errors)
     check_public_branding_and_privacy(errors)
+    check_release_branding_and_compatibility(errors)
+    check_compose_branding(errors)
     check_persistence(errors)
+    check_update_bridge(errors)
     if not args.skip_migrations:
         check_migration_immutability(errors)
 

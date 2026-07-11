@@ -652,8 +652,8 @@ import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 
 const GITHUB_REPO = 'xyf0104/nowind-api'
-// GHCR image published by CI (tags carry no "v" prefix, e.g. ghcr.io/xyf0104/sub2api:1.0.61)
-const DOCKER_IMAGE = 'ghcr.io/xyf0104/sub2api'
+// GHCR image published by CI (tags carry no "v" prefix, e.g. ghcr.io/xyf0104/nowind-api:1.0.66)
+const DOCKER_IMAGE = 'ghcr.io/xyf0104/nowind-api'
 
 const { t } = useI18n()
 

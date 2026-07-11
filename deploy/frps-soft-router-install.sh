@@ -102,7 +102,10 @@ download_file() {
 
 detect_proxy_bind_addr() {
     if command -v docker >/dev/null 2>&1; then
-        container_id="$(docker ps -q --filter 'name=^/sub2api$' | head -n 1 || true)"
+        container_id="$(docker ps -q --filter 'name=^/nowind-api$' | head -n 1 || true)"
+        if [ -z "$container_id" ]; then
+            container_id="$(docker ps -q --filter 'name=^/sub2api$' | head -n 1 || true)"
+        fi
         if [ -n "$container_id" ]; then
             gateway="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{"\n"}}{{end}}' "$container_id" 2>/dev/null | sed '/^$/d' | head -n 1 || true)"
             if [ -n "$gateway" ]; then
