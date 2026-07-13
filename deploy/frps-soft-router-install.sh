@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Install an independent frps service for Nowind soft-router proxy nodes.
+# Install an independent frps service for XIASS API soft-router proxy nodes.
 #
 # Examples:
 #   FRP_TOKEN="$(openssl rand -hex 24)" sh frps-soft-router-install.sh
@@ -189,7 +189,7 @@ write_service() {
     unit="/etc/systemd/system/$SERVICE_NAME.service"
     cat > "$unit" <<EOF
 [Unit]
-Description=FRP server for Nowind soft-router proxy nodes
+Description=FRP server for XIASS API soft-router proxy nodes
 After=network-online.target
 Wants=network-online.target
 
@@ -234,8 +234,8 @@ main() {
     info "proxy bind address: $PROXY_BIND_ADDR"
     info "FRP token: $FRP_TOKEN"
     info ""
-    info "In Nowind admin -> proxies -> proxy nodes, use the same FRP host, bind port, token and raw range."
-    info "If Nowind runs in Docker, set the panel upstream host to host.docker.internal."
+    info "In XIASS API admin -> proxies -> proxy nodes, use the same FRP host, bind port, token and raw range."
+    info "If XIASS API runs in Docker, set the panel upstream host to host.docker.internal."
 }
 
 main "$@"

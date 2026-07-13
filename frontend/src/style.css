@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning .app-layout,
+html.theme-transitioning .auth-layout,
+html.theme-transitioning .sidebar,
+html.theme-transitioning .app-header,
+html.theme-transitioning .card,
+html.theme-transitioning .auth-card,
+html.theme-transitioning .modal-content,
+html.theme-transitioning .dialog-container,
+html.theme-transitioning .dropdown {
+  transition:
+    background-color 520ms ease,
+    border-color 520ms ease,
+    color 420ms ease,
+    box-shadow 520ms ease,
+    opacity 520ms ease !important;
+}
+
 @layer base {
   * {
     @apply border-gray-200 dark:border-dark-700;
@@ -764,12 +783,135 @@
   }
 }
 
-/* ============ NoWind 控制台深色透明层 ============ */
+/* ============ XIASS 控制台浅色透明层 ============ */
+html:not(.dark) body:has(.app-layout) {
+  --xiass-console-light-surface: rgb(255 255 255 / 0.46);
+  --xiass-console-light-surface-soft: rgb(245 249 252 / 0.38);
+  --xiass-console-light-surface-raised: rgb(255 255 255 / 0.78);
+  --xiass-console-light-border: rgb(255 255 255 / 0.74);
+}
+
+/* 覆盖控制台子页面直接使用的浅色背景工具类。 */
+html:not(.dark) body:has(.app-layout) :is(
+    [class~='bg-white'],
+    [class~='bg-white/40'],
+    [class~='bg-white/50'],
+    [class~='bg-white/60'],
+    [class~='bg-white/70'],
+    [class~='bg-white/75'],
+    [class~='bg-white/80'],
+    [class~='bg-white/85'],
+    [class~='bg-white/90'],
+    [class~='bg-white/95']
+  ) {
+  background-color: var(--xiass-console-light-surface) !important;
+}
+
+html:not(.dark) body:has(.app-layout) :is(
+    [class~='bg-gray-50'],
+    [class~='bg-gray-50/30'],
+    [class~='bg-gray-50/40'],
+    [class~='bg-gray-50/50'],
+    [class~='bg-gray-50/60'],
+    [class~='bg-gray-50/70'],
+    [class~='bg-gray-50/80'],
+    [class~='bg-gray-100']
+  ) {
+  background-color: var(--xiass-console-light-surface-soft) !important;
+}
+
+html:not(.dark) .app-header {
+  border-color: rgb(255 255 255 / 0.72) !important;
+  background-color: rgb(255 255 255 / 0.38) !important;
+  box-shadow: 0 8px 28px rgb(71 85 105 / 0.1);
+  backdrop-filter: blur(28px) saturate(125%) brightness(1.04) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(125%) brightness(1.04) !important;
+}
+
+html:not(.dark) .sidebar {
+  border-color: rgb(255 255 255 / 0.76);
+  background-color: rgb(255 255 255 / 0.36);
+  box-shadow:
+    10px 0 32px rgb(71 85 105 / 0.1),
+    inset -1px 0 rgb(255 255 255 / 0.62);
+  backdrop-filter: blur(32px) saturate(125%) brightness(1.04);
+  -webkit-backdrop-filter: blur(32px) saturate(125%) brightness(1.04);
+}
+
+html:not(.dark) body:has(.app-layout) :is(
+    .card,
+    .glass-card,
+    .card-glass,
+    .table-container,
+    .table-scroll-container
+  ) {
+  border-color: var(--xiass-console-light-border) !important;
+  background-color: var(--xiass-console-light-surface) !important;
+  box-shadow: 0 14px 34px rgb(71 85 105 / 0.1);
+  backdrop-filter: blur(22px) saturate(125%) brightness(1.04);
+  -webkit-backdrop-filter: blur(22px) saturate(125%) brightness(1.04);
+}
+
+html:not(.dark) body:has(.app-layout) :is(.input, .select-trigger, .btn-secondary, .tabs) {
+  border-color: rgb(148 163 184 / 0.48) !important;
+  background-color: rgb(255 255 255 / 0.54) !important;
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+}
+
+html:not(.dark) body:has(.app-layout) :is(.table th, .table-scroll-container thead) {
+  background-color: rgb(255 255 255 / 0.42) !important;
+  backdrop-filter: blur(18px) saturate(115%);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+}
+
+html:not(.dark) body:has(.app-layout) :is(.modal-overlay, .dialog-overlay) {
+  background-color: rgb(71 85 105 / 0.16) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+html:not(.dark) body:has(.app-layout) :is(.modal-content, .dialog-container) {
+  border-color: rgb(255 255 255 / 0.82) !important;
+  background-color: var(--xiass-console-light-surface-raised) !important;
+  box-shadow: 0 24px 70px rgb(71 85 105 / 0.22);
+  backdrop-filter: blur(30px) saturate(120%) brightness(1.03);
+  -webkit-backdrop-filter: blur(30px) saturate(120%) brightness(1.03);
+}
+
+html:not(.dark) body:has(.app-layout) :is(
+    .dropdown,
+    .select-dropdown-portal,
+    .action-menu-content,
+    .toast
+  ) {
+  border-color: rgb(255 255 255 / 0.82) !important;
+  background-color: rgb(255 255 255 / 0.82) !important;
+  box-shadow: 0 18px 48px rgb(71 85 105 / 0.2);
+  backdrop-filter: blur(24px) saturate(120%) brightness(1.03);
+  -webkit-backdrop-filter: blur(24px) saturate(120%) brightness(1.03);
+}
+
+html:not(.dark) body:has(.app-layout) .user-menu-dropdown {
+  background-color: rgb(255 255 255 / 0.92) !important;
+  backdrop-filter: blur(28px) saturate(115%) brightness(1.03);
+  -webkit-backdrop-filter: blur(28px) saturate(115%) brightness(1.03);
+}
+
+html:not(.dark) body:has(.app-layout) .console-settings-popover {
+  border-color: rgb(203 213 225 / 0.94) !important;
+  background-color: rgb(255 255 255 / 0.97) !important;
+  box-shadow: 0 18px 48px rgb(71 85 105 / 0.24) !important;
+  backdrop-filter: blur(28px) saturate(112%);
+  -webkit-backdrop-filter: blur(28px) saturate(112%);
+}
+
+/* ============ XIASS 控制台深色透明层 ============ */
 .dark body:has(.app-layout) {
-  --nowind-console-surface: rgb(6 18 32 / 0.28);
-  --nowind-console-surface-deep: rgb(3 14 25 / 0.22);
-  --nowind-console-surface-raised: rgb(8 21 38 / 0.48);
-  --nowind-console-border: rgb(255 255 255 / 0.13);
+  --xiass-console-surface: rgb(6 18 32 / 0.28);
+  --xiass-console-surface-deep: rgb(3 14 25 / 0.22);
+  --xiass-console-surface-raised: rgb(8 21 38 / 0.48);
+  --xiass-console-border: rgb(255 255 255 / 0.13);
 }
 
 /* 覆盖各页面直接使用的深色背景工具类，仅在控制台存在时生效。 */
@@ -778,12 +920,12 @@
 }
 
 .dark body:has(.app-layout) [class*='dark:bg-dark-800'] {
-  background-color: var(--nowind-console-surface) !important;
+  background-color: var(--xiass-console-surface) !important;
 }
 
 .dark body:has(.app-layout) [class*='dark:bg-dark-900'],
 .dark body:has(.app-layout) [class*='dark:bg-dark-950'] {
-  background-color: var(--nowind-console-surface-deep) !important;
+  background-color: var(--xiass-console-surface-deep) !important;
 }
 
 .dark .app-header {
@@ -811,15 +953,15 @@
     .table-container,
     .table-scroll-container
   ) {
-  border-color: var(--nowind-console-border) !important;
-  background-color: var(--nowind-console-surface) !important;
+  border-color: var(--xiass-console-border) !important;
+  background-color: var(--xiass-console-surface) !important;
   box-shadow: 0 14px 34px rgb(0 0 0 / 0.12);
   backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
   -webkit-backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
 }
 
 .dark body:has(.app-layout) :is(.input, .select-trigger, .btn-secondary, .tabs) {
-  border-color: var(--nowind-console-border) !important;
+  border-color: var(--xiass-console-border) !important;
   background-color: rgb(12 27 45 / 0.34) !important;
   backdrop-filter: blur(16px) saturate(125%);
   -webkit-backdrop-filter: blur(16px) saturate(125%);
@@ -839,7 +981,7 @@
 
 .dark body:has(.app-layout) :is(.modal-content, .dialog-container) {
   border-color: rgb(255 255 255 / 0.16) !important;
-  background-color: var(--nowind-console-surface-raised) !important;
+  background-color: var(--xiass-console-surface-raised) !important;
   box-shadow: 0 24px 70px rgb(0 0 0 / 0.38);
   backdrop-filter: blur(30px) saturate(135%) brightness(1.08);
   -webkit-backdrop-filter: blur(30px) saturate(135%) brightness(1.08);
@@ -856,4 +998,81 @@
   box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
   backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
   -webkit-backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
+}
+
+.dark body:has(.app-layout) .user-menu-dropdown {
+  background-color: rgb(8 21 38 / 0.88) !important;
+  backdrop-filter: blur(28px) saturate(130%) brightness(1.06);
+  -webkit-backdrop-filter: blur(28px) saturate(130%) brightness(1.06);
+}
+
+.dark body:has(.app-layout) .console-settings-popover {
+  border-color: rgb(148 163 184 / 0.36) !important;
+  background-color: rgb(8 21 38 / 0.96) !important;
+  box-shadow: 0 20px 52px rgb(0 0 0 / 0.52) !important;
+  backdrop-filter: blur(28px) saturate(118%);
+  -webkit-backdrop-filter: blur(28px) saturate(118%);
+}
+
+/* ============ XIASS 认证页面浅色主题 ============ */
+html:not(.dark) .auth-layout .auth-card {
+  border-color: rgb(255 255 255 / 0.82) !important;
+  background-color: rgb(255 255 255 / 0.58) !important;
+  box-shadow: 0 24px 70px rgb(71 85 105 / 0.2);
+  backdrop-filter: blur(30px) saturate(120%) brightness(1.04);
+  -webkit-backdrop-filter: blur(30px) saturate(120%) brightness(1.04);
+}
+
+html:not(.dark) .auth-layout :is(
+    [class~='text-white'],
+    [class~='text-gray-100'],
+    [class~='text-gray-200'],
+    [class~='text-gray-300']
+  ) {
+  color: rgb(15 23 42) !important;
+}
+
+html:not(.dark) .auth-layout :is([class~='text-gray-400'], [class~='text-gray-500']) {
+  color: rgb(71 85 105) !important;
+}
+
+html:not(.dark) .auth-layout :is(
+    [class~='bg-black/40'],
+    [class~='bg-black/30'],
+    [class~='bg-black/20']
+  ) {
+  border-color: rgb(148 163 184 / 0.52) !important;
+  background-color: rgb(255 255 255 / 0.62) !important;
+  color: rgb(15 23 42) !important;
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+}
+
+html:not(.dark) .auth-layout :is(
+    [class~='border-white/10'],
+    [class~='border-white/20']
+  ) {
+  border-color: rgb(148 163 184 / 0.48) !important;
+}
+
+html:not(.dark) .auth-layout input::placeholder {
+  color: rgb(100 116 139) !important;
+}
+
+html:not(.dark) .auth-layout button[type='submit'][class~='bg-white'] {
+  background-color: rgb(15 23 42) !important;
+  color: white !important;
+}
+
+html:not(.dark) .auth-layout button[type='submit'][class~='bg-white'] [class~='text-black'] {
+  color: white !important;
+}
+
+html:not(.dark) .auth-layout button[type='submit'][class~='bg-white']:hover {
+  background-color: rgb(30 41 59) !important;
+}
+
+html:not(.dark) .auth-layout .auth-theme-toggle {
+  border-color: rgb(255 255 255 / 0.82) !important;
+  background-color: rgb(255 255 255 / 0.58) !important;
 }

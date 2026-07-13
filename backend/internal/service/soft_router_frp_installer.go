@@ -97,7 +97,7 @@ func (i *DockerSoftRouterFRPInstaller) Install(ctx context.Context, cfg SoftRout
 	if _, err := os.Stat(i.socketPath); err != nil {
 		return nil, infraerrors.ServiceUnavailable(
 			"SOFT_ROUTER_DOCKER_SOCKET_MISSING",
-			"当前 Nowind 容器没有挂载 /var/run/docker.sock，无法从面板安装 FRP。请使用新版一键安装脚本或更新 compose 后重建容器。",
+			"当前 XIASS API 容器没有挂载 /var/run/docker.sock，无法从面板安装 FRP。请使用新版一键安装脚本或更新 compose 后重建容器。",
 		).WithCause(err)
 	}
 	if err := i.pingDocker(ctx); err != nil {
@@ -153,7 +153,7 @@ func (i *DockerSoftRouterFRPInstaller) Install(ctx context.Context, cfg SoftRout
 	return &SoftRouterFRPInstallResult{
 		Status:          status,
 		RestartRequired: true,
-		Message:         "FRP 已安装，宿主机 .env 已写入端口范围。请重启或重建当前 Nowind 容器让公网 SOCKS 端口映射生效。",
+		Message:         "FRP 已安装，宿主机 .env 已写入端口范围。请重启或重建当前 XIASS API 容器让公网 SOCKS 端口映射生效。",
 		Log:             trimInstallLog(logText),
 		Metadata: map[string]string{
 			"deploy_dir":       deployDir,
@@ -639,7 +639,7 @@ write_service() {
     unit="/etc/systemd/system/$SERVICE_NAME.service"
     cat > "$unit" <<EOF
 [Unit]
-Description=FRP server for Nowind soft-router proxy nodes
+Description=FRP server for XIASS API soft-router proxy nodes
 After=network-online.target
 Wants=network-online.target
 
@@ -677,13 +677,13 @@ update_nowind_env() {
         env_file="/opt/nowind-api/deploy/.env"
     fi
     if [ ! -f "$env_file" ]; then
-        info "Nowind .env not found, skip env update"
+        info "XIASS API .env not found, skip env update"
         return
     fi
     cp "$env_file" "${env_file}.bak.$(date +%Y%m%d%H%M%S)"
     upsert_env_value "$env_file" "SOFT_ROUTER_PROXY_RAW_PORT_RANGE" "$RAW_PORT_START-$RAW_PORT_END"
     upsert_env_value "$env_file" "SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE" "$PUBLIC_PORT_START-$PUBLIC_PORT_END"
-    info "Updated Nowind env: $env_file"
+    info "Updated XIASS API env: $env_file"
 }
 
 open_firewall_ports() {
@@ -724,5 +724,5 @@ info "frps bind port: $BIND_PORT"
 info "raw FRP range: $RAW_PORT_START-$RAW_PORT_END"
 info "public SOCKS range: $PUBLIC_PORT_START-$PUBLIC_PORT_END"
 info "proxy bind address: $PROXY_BIND_ADDR"
-info "Restart or recreate the Nowind container for updated public port publishing."
+info "Restart or recreate the XIASS API container for updated public port publishing."
 `

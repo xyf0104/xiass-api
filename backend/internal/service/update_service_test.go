@@ -190,7 +190,7 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 }
 
 func TestUpdateServiceExtractBinaryAcceptsCanonicalAndLegacyNames(t *testing.T) {
-	for _, binaryName := range []string{canonicalBinaryName, legacyBinaryName} {
+	for _, binaryName := range []string{canonicalBinaryName, previousBinaryName, legacyBinaryName} {
 		t.Run(binaryName, func(t *testing.T) {
 			tempDir := t.TempDir()
 			archivePath := filepath.Join(tempDir, "release.tar")

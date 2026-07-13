@@ -1019,7 +1019,7 @@ const endpointBase = computed(() => {
   const configured = appStore.apiBaseUrl?.trim()
   if (configured) return configured.replace(/\/+$/, '')
   if (typeof window !== 'undefined') return window.location.origin.replace(/\/+$/, '')
-  return '<你的 NoWind API 端点>'
+  return '<你的 XIASS API 端点>'
 })
 
 const selectedModelReferenceLimit = computed(() => referenceImageLimitForModel(form.model))
@@ -1054,7 +1054,7 @@ function referenceImageLimitForModel(model: string) {
 }
 
 const agentInstruction = computed(() => `---
-name: nowind-api-batch-image
+name: xiass-api-batch-image
 description: 当用户希望用 Gemini/Vertex 批量生成图片、批量跑提示词、下载批量生图结果、重试失败图片时使用。
 ---
 
@@ -1629,7 +1629,7 @@ async function submitJob() {
         response_mime_type: form.responseMimeType,
         items: parsedItems.value,
 	      },
-	      `nowind-api-ui-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+	      `xiass-api-ui-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
 	    )
 	    currentJob.value = job
 	    selectedBatchId.value = job.id
@@ -1810,7 +1810,7 @@ async function retryFailedJob(job: BatchImageJobRow | BatchImageJob) {
         response_mime_type: form.responseMimeType,
         items: failedItems,
       },
-      `nowind-api-ui-retry-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      `xiass-api-ui-retry-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     )
     currentJob.value = retryJob
     selectedBatchId.value = retryJob.id

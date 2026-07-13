@@ -14,7 +14,7 @@ import (
 
 const rawUsageLogModelColumn = "model"
 
-// usageLogAccountCostExpression keeps NoWind's group cost ratio as the
+// usageLogAccountCostExpression keeps XIASS's group cost ratio as the
 // multiplier while allowing the upstream account pricing feature to override
 // the base model cost.
 func usageLogAccountCostExpression(alias string) string {

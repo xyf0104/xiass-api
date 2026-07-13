@@ -1,10 +1,10 @@
-# NoWind API Configuration File
-# NoWind API 配置文件
+# XIASS API Configuration File
+# XIASS API 配置文件
 #
 # Copy this file to /etc/nowind-api/config.yaml and modify as needed
 # 复制此文件到 /etc/nowind-api/config.yaml 并根据需要修改
 #
-# Documentation / 文档: https://github.com/xyf0104/nowind-api
+# Documentation / 文档: https://github.com/xyf0104/xiass-api
 
 # =============================================================================
 # Server Configuration
@@ -891,7 +891,7 @@ totp:
 
 # =============================================================================
 # LinuxDo Connect OAuth Login (SSO)
-# LinuxDo Connect OAuth 登录（用于 NoWind API 用户登录）
+# LinuxDo Connect OAuth 登录（用于 XIASS API 用户登录）
 # =============================================================================
 linuxdo_connect:
   enabled: false
@@ -916,7 +916,7 @@ linuxdo_connect:
 
 # =============================================================================
 # Generic OIDC OAuth Login (SSO)
-# 通用 OIDC OAuth 登录（用于 NoWind API 用户登录）
+# 通用 OIDC OAuth 登录（用于 XIASS API 用户登录）
 # =============================================================================
 oidc_connect:
   enabled: false
@@ -1055,8 +1055,8 @@ turnstile:
 # Gemini OAuth (Required for Gemini accounts)
 # Gemini OAuth 配置（Gemini 账户必需）
 # =============================================================================
-# NoWind API supports TWO Gemini OAuth modes:
-# NoWind API 支持两种 Gemini OAuth 模式：
+# XIASS API supports TWO Gemini OAuth modes:
+# XIASS API 支持两种 Gemini OAuth 模式：
 #
 # 1. Code Assist OAuth (requires GCP project_id)
 # 1. Code Assist OAuth（需要 GCP project_id）

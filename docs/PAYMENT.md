@@ -1,6 +1,6 @@
 # Payment System Configuration Guide
 
-NoWind API has a built-in payment system that enables user self-service top-up without deploying a separate payment service.
+XIASS API has a built-in payment system that enables user self-service top-up without deploying a separate payment service.
 
 ---
 
@@ -28,7 +28,7 @@ NoWind API has a built-in payment system that enables user self-service top-up w
 
 > Alipay/WeChat Pay direct and EasyPay can both exist as backend provider instances, but the frontend always exposes only two visible buttons: `Alipay` and `WeChat Pay`. Admins choose exactly one source for each visible method: direct or EasyPay. Direct channels connect to payment APIs directly with lower fees; EasyPay aggregates through third-party platforms with easier setup.
 
-> Evaluate the security, reliability, fees, settlement rules, and compliance of any third-party payment provider independently. NoWind does not recommend, endorse, or guarantee a specific provider.
+> Evaluate the security, reliability, fees, settlement rules, and compliance of any third-party payment provider independently. XIASS does not recommend, endorse, or guarantee a specific provider.
 
 ---
 
@@ -265,17 +265,17 @@ If you previously used [Sub2ApiPay](https://github.com/touwaeriol/sub2apipay) as
 
 | Aspect | Sub2ApiPay | Built-in Payment |
 |--------|-----------|-----------------|
-| Deployment | Separate service (Next.js + PostgreSQL) | Built into NoWind API, no extra deployment |
+| Deployment | Separate service (Next.js + PostgreSQL) | Built into XIASS API, no extra deployment |
 | Payment Methods | EasyPay, Alipay, WeChat, Stripe | Same |
-| Configuration | Environment variables + separate admin UI | Unified in NoWind API admin dashboard |
+| Configuration | Environment variables + separate admin UI | Unified in XIASS API admin dashboard |
 | Top-up Integration | Via Admin API callback | Internal processing, more reliable |
 | Subscription Plans | Supported | Not yet (planned) |
-| Order Management | Separate admin interface | Integrated in NoWind API admin dashboard |
+| Order Management | Separate admin interface | Integrated in XIASS API admin dashboard |
 
 ### Migration Steps
 
-1. Enable payment in NoWind API admin dashboard and configure providers (use the same payment credentials)
-2. Update webhook callback URLs to NoWind API's callback endpoints
+1. Enable payment in XIASS API admin dashboard and configure providers (use the same payment credentials)
+2. Update webhook callback URLs to XIASS API's callback endpoints
 3. Verify that new orders are processed correctly via built-in payment
 4. Decommission the Sub2ApiPay service
 

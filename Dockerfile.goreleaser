@@ -1,5 +1,5 @@
 # =============================================================================
-# NoWind API Dockerfile for GoReleaser
+# XIASS API Dockerfile for GoReleaser
 # =============================================================================
 # This Dockerfile is used by GoReleaser to build Docker images.
 # It only packages the pre-built binary, no compilation needed.
@@ -12,9 +12,9 @@ FROM ${POSTGRES_IMAGE} AS pg-client
 
 FROM ${ALPINE_IMAGE}
 
-LABEL maintainer="NoWind API <github.com/xyf0104>"
-LABEL description="NoWind API - customized AI API gateway"
-LABEL org.opencontainers.image.source="https://github.com/xyf0104/nowind-api"
+LABEL maintainer="XIASS API <github.com/xyf0104>"
+LABEL description="XIASS API - customized AI API gateway"
+LABEL org.opencontainers.image.source="https://github.com/xyf0104/xiass-api"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

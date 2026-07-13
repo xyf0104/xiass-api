@@ -4,13 +4,11 @@ import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
+import { applyTheme, getInitialTheme } from '@/utils/theme'
 import './style.css'
 
 function initThemeClass() {
-  // 默认浅色主题（贴合参考站点的明亮风格）；仅当用户手动切到 dark 才用暗色。
-  const savedTheme = localStorage.getItem('theme')
-  const shouldUseDark = savedTheme === 'dark' || !savedTheme
-  document.documentElement.classList.toggle('dark', shouldUseDark)
+  applyTheme(getInitialTheme(), { persist: false, animate: false })
 }
 
 async function bootstrap() {
@@ -27,7 +25,7 @@ async function bootstrap() {
   appStore.initFromInjectedConfig()
 
   // Set document title immediately after config is loaded
-  if (appStore.siteName && appStore.siteName !== 'NoWind API') {
+  if (appStore.siteName && appStore.siteName !== 'XIASS API') {
     document.title = `${appStore.siteName} - AI API Gateway`
   }
 

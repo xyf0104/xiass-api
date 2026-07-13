@@ -120,7 +120,7 @@
 
           <!-- Dropdown Menu -->
           <transition name="dropdown">
-            <div v-if="dropdownOpen" class="dropdown right-0 mt-2 w-56">
+            <div v-if="dropdownOpen" class="user-menu-dropdown dropdown right-0 mt-2 w-56">
               <!-- User Info -->
               <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700">
                 <div class="text-sm font-medium text-gray-900 dark:text-white">
@@ -155,7 +155,7 @@
 
                 <a
                   v-if="authStore.isAdmin"
-                  href="https://github.com/xyf0104/nowind-api"
+                  href="https://github.com/xyf0104/xiass-api"
                   target="_blank"
                   rel="noopener noreferrer"
                   @click="closeDropdown"

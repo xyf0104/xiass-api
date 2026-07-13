@@ -6,7 +6,7 @@
           <div>
             <h2 class="text-base font-semibold text-gray-900 dark:text-white">软路由代理配置</h2>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              OpenWrt 通过 FRP 主动反连，公网 SOCKS 端口由 Nowind 提供用户名密码认证。
+              OpenWrt 通过 FRP 主动反连，公网 SOCKS 端口由 XIASS 提供用户名密码认证。
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -57,7 +57,7 @@
             <input v-model="configForm.public_host" class="input" placeholder="api.example.com" />
           </div>
           <div>
-            <label class="input-label">Nowind 内部访问地址</label>
+            <label class="input-label">XIASS 内部访问地址</label>
             <input v-model="configForm.upstream_host" class="input" placeholder="127.0.0.1" />
           </div>
           <div>
@@ -118,7 +118,7 @@
         </div>
 
         <div v-if="!softRouterReady" class="rounded-lg border border-dashed border-amber-300 p-6 text-center text-sm text-amber-700 dark:border-amber-800 dark:text-amber-300">
-          请先安装 FRP 并重启 Nowind 容器
+          请先安装 FRP 并重启 XIASS 容器
         </div>
         <div v-else-if="overview.agents.length === 0" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
           暂无 Agent
@@ -447,7 +447,7 @@ const frpStatusLabel = computed(() => {
 })
 const frpStatusHint = computed(() => {
   if (frpStatus.value.installed && !frpStatus.value.needs_restart) return ''
-  if (frpStatus.value.needs_restart) return '宿主机 FRP 或 .env 已更新，请重启或重建当前 Nowind 容器，让新的公网 SOCKS 端口映射生效。'
+  if (frpStatus.value.needs_restart) return '宿主机 FRP 或 .env 已更新，请重启或重建当前 XIASS 容器，让新的公网 SOCKS 端口映射生效。'
   if (!frpStatus.value.docker_socket_available) return '当前容器没有挂载 Docker Socket。新服务器请使用最新版一键安装脚本，或更新 compose 后重建容器。'
   return frpStatus.value.reason || '填写上方端口范围和 FRP Token 后，可以从这里安装宿主机 FRP。'
 })
@@ -530,7 +530,7 @@ async function installFRP() {
   installingFRP.value = true
   try {
     const result = await adminAPI.proxies.installSoftRouterFRP(configForm)
-    appStore.showWarning(result.message || 'FRP 已安装，请重启或重建当前 Nowind 容器')
+    appStore.showWarning(result.message || 'FRP 已安装，请重启或重建当前 XIASS 容器')
     if (result.config) assignConfig(result.config)
     overview.frp_status = result.status
     await loadOverview()

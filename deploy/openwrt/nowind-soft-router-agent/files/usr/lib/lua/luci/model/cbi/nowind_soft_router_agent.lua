@@ -1,7 +1,7 @@
 local m, s, o
 
-m = Map("nowind_soft_router_agent", translate("NoWind 代理节点"),
-	translate("将本机 PassWall SOCKS 监听上报到 NoWind，并按面板配置生成独立 FRP 映射。"))
+m = Map("nowind_soft_router_agent", translate("XIASS 代理节点"),
+	translate("将本机 PassWall SOCKS 监听上报到 XIASS，并按面板配置生成独立 FRP 映射。"))
 
 s = m:section(NamedSection, "main", "agent", translate("Agent 设置"))
 s.addremove = false
@@ -10,7 +10,7 @@ s.anonymous = false
 o = s:option(Flag, "enabled", translate("启用"))
 o.rmempty = false
 
-o = s:option(Value, "panel_url", translate("NoWind 面板地址"))
+o = s:option(Value, "panel_url", translate("XIASS 面板地址"))
 o.placeholder = "https://api.example.com"
 o.rmempty = false
 

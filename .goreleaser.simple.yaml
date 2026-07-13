@@ -1,18 +1,18 @@
 # 简化版 GoReleaser 配置 - 发布 x86_64 GHCR 镜像及 Linux 安装包
 version: 2
 
-project_name: nowind-api
+project_name: xiass-api
 
 before:
   hooks:
     - go mod tidy -C backend
 
 builds:
-  - id: nowind-api
+  - id: xiass-api
     dir: backend
     main: ./cmd/server
-    # v1.0.65's binary updater only extracts an entry named sub2api. Keep the
-    # archive payload compatible while the public asset name uses nowind-api.
+    # Older updaters extract an entry named sub2api. Keep the archive payload
+    # compatible while the public asset name uses xiass-api.
     binary: sub2api
     flags:
       - -tags=embed
@@ -52,10 +52,13 @@ dockers:
     goos: linux
     goarch: amd64
     image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest"
+      # Unadvertised v1.0.67 and older Watchtower compatibility aliases.
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"
-      # Unadvertised v1.0.65 Watchtower compatibility aliases.
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"
@@ -79,9 +82,9 @@ release:
   draft: false
   prerelease: auto
   make_latest: "true"
-  name_template: "NoWind API {{.Version}}"
+  name_template: "XIASS API {{.Version}}"
   header: |
-    > NoWind API - 将 AI 订阅配额分发和管理
+    > XIASS API - 将 AI 订阅配额分发和管理
     > 支持 linux/amd64 GHCR 镜像和安装包
 
     {{ .Env.TAG_MESSAGE }}
@@ -93,7 +96,7 @@ release:
 
     **Docker (x86_64 only):**
     ```bash
-    docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}
+    docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}
     ```
 
     **One-line complete install (Linux x86_64):**

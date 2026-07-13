@@ -1,5 +1,5 @@
 <template>
-  <div class="app-layout min-h-screen bg-slate-50 text-gray-800 dark:bg-[#0c1021] dark:text-gray-200 transition-colors duration-300">
+  <div class="app-layout min-h-screen bg-[#cdd8df] text-gray-800 dark:bg-[#061720] dark:text-gray-200 transition-colors duration-300">
     <DarkVideoBackground blurred />
 
     <!-- 科技感粒子动画背景 -->

@@ -1,7 +1,7 @@
-# Nowind Soft Router Agent for OpenWrt
+# XIASS API Soft Router Agent for OpenWrt
 
 This package lets an OpenWrt router report PassWall SOCKS listeners to the
-Nowind admin panel and pull desired FRP mappings from it.
+XIASS API admin panel and pull desired FRP mappings from it.
 
 It uses the same Python-agent approach as the previously validated prototype:
 OpenWrt discovers PassWall SOCKS listeners locally, writes an independent frpc
@@ -18,10 +18,10 @@ these paths by default:
 
 ## Server-Side Flow
 
-1. Deploy or update Nowind to v1.0.56 or newer.
-2. In Nowind admin, open `代理管理 -> 代理节点`:
+1. Deploy or update XIASS API to v1.0.56 or newer.
+2. In XIASS API admin, open `代理管理 -> 代理节点`:
    - `公网域名/IP`: public host such as `api.example.com`.
-   - `Nowind 内部访问地址`: `host.docker.internal` for Docker, or `127.0.0.1`
+   - `XIASS API 内部访问地址`: `host.docker.internal` for Docker, or `127.0.0.1`
      for binary/systemd deployment.
    - `FRP 服务地址`: the US frps host, such as `api.example.com`.
    - `FRP 控制端口`: frps bind port, such as `7010`.
@@ -32,12 +32,12 @@ these paths by default:
 3. Click `安装 FRP`. The panel installs an independent server-side frps service,
    opens the relevant firewall ports when ufw/firewalld is active, and updates
    the deployment `.env` ranges.
-4. Recreate the Nowind container when prompted so Docker publishes the selected
+4. Recreate the XIASS API container when prompted so Docker publishes the selected
    public SOCKS range.
 5. Create an OpenWrt Agent in the panel and copy its token.
 
 The raw FRP ports should not be opened to the public Internet. Public users
-should use only Nowind's authenticated SOCKS ports, for example:
+should use only XIASS API's authenticated SOCKS ports, for example:
 
 ```txt
 socks5://username:password@api.example.com:1101
@@ -67,14 +67,14 @@ binary path. This agent starts its own frpc process with its own config file.
 Open:
 
 ```txt
-Services -> NoWind 代理节点
+Services -> XIASS 代理节点
 ```
 
 Set:
 
 - Enabled: on
 - Panel URL: `https://api.example.com`
-- Agent Token: token copied from Nowind admin
+- Agent Token: token copied from XIASS API admin
 - frpc binary: usually `/usr/bin/frpc`
 - frpc config: keep `/etc/frp/nowind-soft-router-frpc.ini`
 - Extra SOCKS ports: optional. Leave empty when PassWall/PassWall2 scanning
@@ -102,6 +102,6 @@ ps | grep frpc
 /usr/bin/nowind-soft-router-agent --once
 ```
 
-After the agent reports, the Nowind panel will show discovered PassWall SOCKS
+After the agent reports, the XIASS API panel will show discovered PassWall SOCKS
 listeners. Configure a mapping in the panel, then the agent will rewrite and
 restart its independent frpc process automatically.

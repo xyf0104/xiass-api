@@ -1,4 +1,4 @@
-# Example frps config for Nowind soft-router proxy nodes.
+# Example frps config for XIASS API soft-router proxy nodes.
 #
 # Use this as a separate US frps service, or merge the relevant fields into an
 # existing US frps service. Do not reuse or modify an unrelated HK/OpenWrt frp
@@ -7,9 +7,9 @@
 bindPort = 7010
 
 # Recommended:
-# - Binary/systemd Nowind on the same host: use "127.0.0.1" and set panel
+# - Binary/systemd XIASS API on the same host: use "127.0.0.1" and set panel
 #   upstream_host to 127.0.0.1.
-# - Docker Nowind: use the Docker bridge gateway address that the container can
+# - Docker XIASS API: use the Docker bridge gateway address that the container can
 #   reach, for example "172.18.0.1", and set panel upstream_host to
 #   host.docker.internal.
 # If you bind this to 0.0.0.0, block 12083-12150 from the public Internet with
@@ -19,7 +19,7 @@ proxyBindAddr = "172.18.0.1"
 auth.method = "token"
 auth.token = "change_this_frp_token"
 
-# Only allow the raw upstream ports managed by the Nowind panel.
+# Only allow the raw upstream ports managed by the XIASS API panel.
 allowPorts = [
   { start = 12083, end = 12150 }
 ]

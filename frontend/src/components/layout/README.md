@@ -1,6 +1,6 @@
 # Layout Components
 
-Vue 3 layout components for the NoWind API frontend, built with Composition API, TypeScript, and TailwindCSS.
+Vue 3 layout components for the XIASS API frontend, built with Composition API, TypeScript, and TailwindCSS.
 
 ## Components
 

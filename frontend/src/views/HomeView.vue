@@ -15,7 +15,7 @@
   <!-- Default Home Page -->
   <div
     v-else
-    class="relative flex min-h-screen flex-col overflow-hidden bg-slate-50 text-gray-800 dark:bg-[#0a0e1a] dark:text-gray-200 transition-colors duration-300"
+    class="relative flex min-h-screen flex-col overflow-hidden bg-[#cdd8df] text-gray-800 dark:bg-[#061720] dark:text-gray-200 transition-colors duration-300"
   >
     <DarkVideoBackground />
 
@@ -31,8 +31,12 @@
     <!-- Header -->
     <header class="relative z-20 px-6 py-4">
       <nav class="mx-auto flex max-w-[1480px] items-center justify-between">
-        <!-- Brand: 纯文字标识（不使用 logo 图片） -->
-        <div class="flex items-center">
+        <div class="flex items-center gap-3">
+          <img
+            :src="isDark ? '/brand/xiass-mark-dark.png' : '/brand/xiass-mark-light.png'"
+            :alt="siteName"
+            class="h-10 w-10 object-contain"
+          />
           <span class="text-lg font-bold tracking-tight text-gray-900 dark:text-white">
             {{ siteName }}
           </span>
@@ -503,6 +507,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
+import { getCurrentTheme, toggleTheme as toggleAppTheme } from '@/utils/theme'
 
 const { t } = useI18n()
 
@@ -510,7 +515,7 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 
 // Site settings - directly from appStore (already initialized from injected config)
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'NoWind API')
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'XIASS API')
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 
@@ -521,7 +526,7 @@ const isHomeContentUrl = computed(() => {
 })
 
 // Theme
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const isDark = ref(getCurrentTheme() === 'dark')
 
 // GitHub URL（已去除原版链接，留空则页脚不显示）
 const githubUrl = ''
@@ -541,18 +546,12 @@ const currentYear = computed(() => new Date().getFullYear())
 
 // Toggle theme
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  isDark.value = toggleAppTheme() === 'dark'
 }
 
 // Initialize theme（默认浅色，贴合参考站点；仅手动选过 dark 才用暗色）
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme')
-  if (savedTheme === 'dark' || !savedTheme) {
-    isDark.value = true
-    document.documentElement.classList.add('dark')
-  }
+  isDark.value = getCurrentTheme() === 'dark'
 }
 
 // ==================== Canvas 粒子动画 ====================

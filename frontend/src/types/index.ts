@@ -1,5 +1,5 @@
 /**
- * Core Type Definitions for NoWind API Frontend
+ * Core Type Definitions for XIASS API Frontend
  */
 
 // ==================== Common Types ====================

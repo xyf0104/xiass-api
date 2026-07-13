@@ -15,9 +15,11 @@ describe('site_logo sanitization', () => {
     expect(sidebarSource).toContain('sanitizeUrl(appStore.siteLogo')
   })
 
-  it('HomeView keeps the NoWind text-only brand and does not render a siteLogo URL', () => {
+  it('HomeView uses the bundled theme logos and does not render an unsanitized siteLogo URL', () => {
     expect(homeViewSource).not.toContain('cachedPublicSettings?.site_logo')
     expect(homeViewSource).not.toContain(':src="siteLogo')
+    expect(homeViewSource).toContain('/brand/xiass-mark-light.png')
+    expect(homeViewSource).toContain('/brand/xiass-mark-dark.png')
   })
 
   it('KeyUsageView applies sanitizeUrl to siteLogo', () => {

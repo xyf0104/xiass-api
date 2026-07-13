@@ -1,16 +1,21 @@
 <template>
-  <div class="min-h-screen grid lg:grid-cols-2 bg-[#050B14] text-white relative overflow-hidden">
-    <DarkVideoBackground always />
+  <div class="auth-layout relative grid min-h-screen overflow-hidden bg-[#cdd8df] text-gray-900 transition-colors duration-500 dark:bg-[#061720] dark:text-white lg:grid-cols-2">
+    <DarkVideoBackground blurred />
 
     <!-- Canvas for particle background -->
     <canvas ref="canvasRef" class="absolute inset-0 w-full h-full pointer-events-none z-0"></canvas>
 
     <!-- Left side: Branding and Interactive Characters -->
-    <div class="relative hidden lg:flex flex-col justify-between p-12 text-white z-10 bg-transparent">
+    <div class="relative z-10 hidden flex-col justify-between bg-transparent p-12 text-gray-900 dark:text-white lg:flex">
       <!-- Logo/Brand (Top Left) -->
       <div class="relative z-20">
-        <div class="flex items-center gap-2 text-lg font-semibold cursor-pointer" @click="$router.push('/')">
-          <span>NoWind API</span>
+        <div class="flex cursor-pointer items-center gap-3 text-lg font-semibold" @click="$router.push('/')">
+          <img
+            :src="isDark ? '/brand/xiass-mark-dark.png' : '/brand/xiass-mark-light.png'"
+            alt="XIASS API"
+            class="h-10 w-10 object-contain"
+          />
+          <span>{{ siteName }}</span>
         </div>
       </div>
 
@@ -20,8 +25,16 @@
     </div>
 
     <!-- Right side: Content Area (Login/Register Form) -->
-    <div class="flex items-center justify-center p-8 bg-transparent z-10 w-full">
-      <div class="w-full max-w-[420px] bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl">
+    <div class="relative z-10 flex w-full items-center justify-center bg-transparent p-8">
+      <button
+        type="button"
+        class="auth-theme-toggle absolute right-6 top-6 flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-white/20 text-gray-800 shadow-lg backdrop-blur-xl transition-colors hover:bg-white/35 dark:text-white"
+        :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
+        @click="handleThemeToggle"
+      >
+        <Icon :name="isDark ? 'sun' : 'moon'" size="md" />
+      </button>
+      <div class="auth-card w-full max-w-[420px] rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-xl">
         <slot />
         
         <!-- 底部链接 -->
@@ -42,8 +55,16 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import AuthCharacters from '@/components/auth/AuthCharacters.vue'
+import Icon from '@/components/icons/Icon.vue'
+import { getCurrentTheme, toggleTheme } from '@/utils/theme'
 
 const appStore = useAppStore()
+const siteName = ref(appStore.siteName || 'XIASS API')
+const isDark = ref(getCurrentTheme() === 'dark')
+
+function handleThemeToggle() {
+  isDark.value = toggleTheme() === 'dark'
+}
 
 // ==================== Canvas 粒子动画 ====================
 
@@ -82,8 +103,6 @@ function initParticleAnimation() {
   const particleCount = Math.min(80, Math.floor(window.innerWidth / 15))
   const particles: Particle[] = []
   const connectionDist = 150
-  const primaryColor = { r: 255, g: 255, b: 255 } // white color to match original
-
   for (let i = 0; i < particleCount; i++) {
     particles.push({
       x: Math.random() * window.innerWidth,
@@ -100,6 +119,12 @@ function initParticleAnimation() {
     const w = window.innerWidth
     const h = window.innerHeight
     ctx.clearRect(0, 0, w, h)
+    const darkTheme = document.documentElement.classList.contains('dark')
+    const primaryColor = darkTheme
+      ? { r: 255, g: 255, b: 255 }
+      : { r: 37, g: 99, b: 235 }
+    const lineStrength = darkTheme ? 0.15 : 0.2
+    const particleStrength = darkTheme ? 1 : 1.25
 
     // 更新粒子位置
     for (const p of particles) {
@@ -119,7 +144,7 @@ function initParticleAnimation() {
         const dist = Math.sqrt(dx * dx + dy * dy)
 
         if (dist < connectionDist) {
-          const alpha = (1 - dist / connectionDist) * 0.15
+          const alpha = (1 - dist / connectionDist) * lineStrength
           ctx.beginPath()
           ctx.strokeStyle = `rgba(${primaryColor.r}, ${primaryColor.g}, ${primaryColor.b}, ${alpha})`
           ctx.lineWidth = 0.5
@@ -134,7 +159,7 @@ function initParticleAnimation() {
     for (const p of particles) {
       ctx.beginPath()
       ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2)
-      ctx.fillStyle = `rgba(${primaryColor.r}, ${primaryColor.g}, ${primaryColor.b}, ${p.opacity})`
+      ctx.fillStyle = `rgba(${primaryColor.r}, ${primaryColor.g}, ${primaryColor.b}, ${Math.min(1, p.opacity * particleStrength)})`
       ctx.fill()
     }
 
@@ -145,7 +170,9 @@ function initParticleAnimation() {
 }
 
 onMounted(() => {
-  appStore.fetchPublicSettings()
+  void appStore.fetchPublicSettings().then(() => {
+    siteName.value = appStore.siteName || 'XIASS API'
+  })
   initParticleAnimation()
 })
 

@@ -1,5 +1,5 @@
 /**
- * Vue Router configuration for NoWind API frontend
+ * Vue Router configuration for XIASS API frontend
  * Defines all application routes with lazy loading and navigation guards
  */
 

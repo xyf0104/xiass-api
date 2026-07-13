@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # =============================================================================
-# NoWind API Multi-Stage Dockerfile
+# XIASS API Multi-Stage Dockerfile
 # =============================================================================
 # Stage 1: Build frontend
 # Stage 2: Build Go backend with embedded frontend
@@ -94,9 +94,9 @@ FROM ${POSTGRES_IMAGE} AS pg-client
 FROM ${ALPINE_IMAGE}
 
 # Labels
-LABEL maintainer="NoWind API <github.com/xyf0104/nowind-api>"
-LABEL description="NoWind API - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/xyf0104/nowind-api"
+LABEL maintainer="XIASS API <github.com/xyf0104/xiass-api>"
+LABEL description="XIASS API - AI API Gateway Platform"
+LABEL org.opencontainers.image.source="https://github.com/xyf0104/xiass-api"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

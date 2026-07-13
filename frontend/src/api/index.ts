@@ -1,5 +1,5 @@
 /**
- * API Client for NoWind API Backend
+ * API Client for XIASS API Backend
  * Central export point for all API modules
  */
 

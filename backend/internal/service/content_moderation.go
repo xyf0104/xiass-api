@@ -1812,11 +1812,11 @@ func contentModerationEmailVariables(log *ContentModerationLog, cfg *ContentMode
 
 func (s *ContentModerationService) siteName(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
-		return "NoWind API"
+		return "XIASS API"
 	}
 	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || strings.TrimSpace(name) == "" {
-		return "NoWind API"
+		return "XIASS API"
 	}
 	return strings.TrimSpace(name)
 }

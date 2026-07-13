@@ -243,7 +243,7 @@ describe('ProfileIdentityBindingsSection', () => {
       invitation_code_enabled: false,
       turnstile_enabled: false,
       turnstile_site_key: '',
-      site_name: 'NoWind API',
+      site_name: 'XIASS API',
       site_logo: '',
       site_subtitle: '',
       api_base_url: '',

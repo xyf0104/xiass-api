@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate NoWind release branding, privacy, migrations, and data persistence."""
+"""Validate XIASS release branding, privacy, migrations, and data persistence."""
 
 from __future__ import annotations
 
@@ -110,10 +110,14 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         ".goreleaser.yaml",
         full,
         [
-            "project_name: nowind-api",
+            "project_name: xiass-api",
             "binary: sub2api",
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-arm64',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}"',
+            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest"',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"',
@@ -125,13 +129,15 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         ".goreleaser.simple.yaml",
         simple,
         [
-            "project_name: nowind-api",
+            "project_name: xiass-api",
             "binary: sub2api",
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}',
+            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest',
-            'name_template: "NoWind API {{.Version}}"',
+            'name_template: "XIASS API {{.Version}}"',
             "> 支持 linux/amd64 GHCR 镜像和安装包",
         ],
         errors,
@@ -151,9 +157,9 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         ".github/workflows/release.yml",
         workflow,
         [
-            "${{ secrets.DOCKERHUB_USERNAME }}/nowind-api",
-            'GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/nowind-api"',
-            "/pkgs/container/nowind-api",
+            "${{ secrets.DOCKERHUB_USERNAME }}/xiass-api",
+            'GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/xiass-api"',
+            "/pkgs/container/xiass-api",
         ],
         errors,
     )
@@ -174,8 +180,8 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         "Dockerfile",
         read("Dockerfile"),
         [
-            "# NoWind API Multi-Stage Dockerfile",
-            "NoWind API - AI API Gateway Platform",
+            "# XIASS API Multi-Stage Dockerfile",
+            "XIASS API - AI API Gateway Platform",
             "addgroup -g 1000 nowind",
             "adduser -u 1000 -G nowind",
             "/app/nowind-api",
@@ -187,8 +193,8 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         "Dockerfile.goreleaser",
         read("Dockerfile.goreleaser"),
         [
-            "# NoWind API Dockerfile for GoReleaser",
-            "NoWind API - customized AI API gateway",
+            "# XIASS API Dockerfile for GoReleaser",
+            "XIASS API - customized AI API gateway",
             "addgroup -g 1000 nowind",
             "adduser -u 1000 -G nowind",
             "sub2api /app/nowind-api",
@@ -234,7 +240,7 @@ def check_compose_branding(errors: list[str]) -> None:
             relative,
             content,
             [
-                "image: ghcr.io/xyf0104/nowind-api:latest",
+                "image: ghcr.io/xyf0104/xiass-api:latest",
                 "container_name: nowind-api",
                 "container_name: nowind-api-watchtower",
                 "container_name: nowind-api-postgres",
@@ -252,7 +258,7 @@ def check_compose_branding(errors: list[str]) -> None:
     require_all(
         "deploy/docker-compose.standalone.yml",
         read("deploy/docker-compose.standalone.yml"),
-        ["image: ghcr.io/xyf0104/nowind-api:latest", "container_name: nowind-api"],
+        ["image: ghcr.io/xyf0104/xiass-api:latest", "container_name: nowind-api"],
         errors,
     )
     require_all(
@@ -312,11 +318,11 @@ def check_persistence(errors: list[str]) -> None:
     if 'viper.SetDefault("dashboard_cache.key_prefix", "sub2api:")' not in config:
         errors.append("Redis dashboard_cache 历史前缀 sub2api: 被修改")
 
-    install_script = read("deploy/nowind-install.sh")
+    install_script = read("deploy/xiass-install.sh")
     if 'if [ -f "$env_file" ]' not in install_script or "保留已有 .env" not in install_script:
         errors.append("一键安装脚本不再明确保留已有 .env")
     require_all(
-        "deploy/nowind-install.sh",
+        "deploy/xiass-install.sh",
         install_script,
         [
             "NOWIND_WATCHTOWER_TOKEN=${watchtower_token}",
@@ -329,10 +335,10 @@ def check_persistence(errors: list[str]) -> None:
 
     for relative in [
         "install.sh",
-        "deploy/nowind-install.sh",
-        "deploy/nowind-update.sh",
-        "deploy/nowind-backup.sh",
-        "deploy/nowind-restore.sh",
+        "deploy/xiass-install.sh",
+        "deploy/xiass-update.sh",
+        "deploy/xiass-backup.sh",
+        "deploy/xiass-restore.sh",
     ]:
         content = read(relative)
         for line_number, line in enumerate(content.splitlines(), start=1):
@@ -373,19 +379,19 @@ def check_update_bridge(errors: list[str]) -> None:
         errors,
     )
 
-    update_script = read("deploy/nowind-update.sh")
+    update_script = read("deploy/xiass-update.sh")
     main_body = update_script.partition("main() {")[2]
     ordered_markers = [
-        'nowind-backup.sh',
+        'xiass-backup.sh',
         'git -C "$INSTALL_DIR" fetch --prune origin main',
         "compose down",
         'git -C "$INSTALL_DIR" reset --hard origin/main',
     ]
     positions = [main_body.find(marker) for marker in ordered_markers]
     if any(position < 0 for position in positions) or positions != sorted(positions):
-        errors.append("nowind-update.sh 必须先备份，再拉取、停止旧栈并切换 Git 状态")
+        errors.append("xiass-update.sh 必须先备份，再拉取、停止旧栈并切换 Git 状态")
     require_all(
-        "deploy/nowind-update.sh",
+        "deploy/xiass-update.sh",
         update_script,
         [
             'PREVIOUS_REF=$(git -C "$INSTALL_DIR" rev-parse HEAD)',
@@ -397,12 +403,12 @@ def check_update_bridge(errors: list[str]) -> None:
         errors,
     )
     if "git clean" in update_script:
-        errors.append("nowind-update.sh 禁止清理未跟踪的 .env 或数据目录")
+        errors.append("xiass-update.sh 禁止清理未跟踪的 .env 或数据目录")
     if re.search(
         r"(?m)^\s*(?:rm|cp|mv)\b[^\n]*(?:\.env|postgres_data|redis_data|/data\b)",
         update_script,
     ):
-        errors.append("nowind-update.sh 禁止覆盖或移动持久化数据")
+        errors.append("xiass-update.sh 禁止覆盖或移动持久化数据")
 
 
 def check_migration_immutability(errors: list[str]) -> None:
@@ -442,12 +448,12 @@ def main() -> int:
         check_migration_immutability(errors)
 
     if errors:
-        print("NoWind 发布契约检查失败：", file=sys.stderr)
+        print("XIASS 发布契约检查失败：", file=sys.stderr)
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
 
-    print("NoWind 发布契约检查通过。")
+    print("XIASS 发布契约检查通过。")
     return 0
 
 

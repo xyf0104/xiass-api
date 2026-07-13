@@ -9,9 +9,11 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { sanitizeUrl } from '@/utils/url'
+import { getCurrentTheme } from '@/utils/theme'
 
-const DEFAULT_FAVICON_URL = '/favicon.png?v=1.0.67'
-const DEFAULT_APPLE_TOUCH_ICON_URL = '/apple-touch-icon.png?v=1.0.67'
+const DEFAULT_LIGHT_FAVICON_URL = '/favicon-light.png?v=1.0.68'
+const DEFAULT_DARK_FAVICON_URL = '/favicon-dark.png?v=1.0.68'
+const DEFAULT_APPLE_TOUCH_ICON_URL = '/apple-touch-icon.png?v=1.0.68'
 
 const router = useRouter()
 const route = useRoute()
@@ -21,6 +23,7 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+let themeObserver: MutationObserver | null = null
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -72,7 +75,10 @@ function updateIconLink(rel: 'icon' | 'apple-touch-icon', imageUrl: string) {
 
 function updateSiteIcons(logoUrl: string) {
   const customLogo = sanitizeUrl(logoUrl, { allowRelative: true, allowDataUrl: true })
-  updateIconLink('icon', customLogo || DEFAULT_FAVICON_URL)
+  const defaultFavicon = getCurrentTheme() === 'dark'
+    ? DEFAULT_DARK_FAVICON_URL
+    : DEFAULT_LIGHT_FAVICON_URL
+  updateIconLink('icon', customLogo || defaultFavicon)
   updateIconLink('apple-touch-icon', customLogo || DEFAULT_APPLE_TOUCH_ICON_URL)
 }
 
@@ -157,12 +163,18 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
+  themeObserver?.disconnect()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })
 
 onMounted(async () => {
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
+  themeObserver = new MutationObserver(() => updateSiteIcons(appStore.siteLogo))
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class']
+  })
 
   // Check if setup is needed
   try {

@@ -51,7 +51,7 @@ func RunCLI() error {
 
 	fmt.Println()
 	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║      NoWind API Installation Wizard       ║")
+	fmt.Println("║      XIASS API Installation Wizard       ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 

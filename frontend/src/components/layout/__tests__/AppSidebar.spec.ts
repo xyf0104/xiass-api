@@ -54,7 +54,7 @@ describe('AppSidebar header styles', () => {
   })
 })
 
-describe('AppSidebar NoWind update flow', () => {
+describe('AppSidebar XIASS update flow', () => {
   it('keeps the established single update entry instead of the unsupported rollback badge', () => {
     expect(componentSource).toContain("apiClient.get('/admin/system/check-updates')")
     expect(componentSource).toContain('triggerUpdateConfirm')

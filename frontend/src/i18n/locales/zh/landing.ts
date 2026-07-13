@@ -191,8 +191,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'NoWind API 安装向导',
-    description: '配置您的 NoWind API 实例',
+    title: 'XIASS API 安装向导',
+    description: '配置您的 XIASS API 实例',
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',

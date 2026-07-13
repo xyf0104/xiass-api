@@ -22,7 +22,7 @@ const (
 	quotaDimWeekly = "weekly"
 	quotaDimTotal  = "total"
 
-	defaultSiteName = "NoWind API"
+	defaultSiteName = "XIASS API"
 )
 
 // quotaDimLabels maps dimension names to display labels.

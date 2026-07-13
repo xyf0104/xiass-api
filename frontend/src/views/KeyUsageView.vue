@@ -4,8 +4,8 @@
     <header class="relative z-20 px-6 py-4">
       <nav class="mx-auto flex max-w-6xl items-center justify-between">
         <router-link to="/home" class="flex items-center gap-3">
-          <div class="h-10 w-10 overflow-hidden rounded-xl shadow-md">
-            <img :src="siteLogo || '/logo.png?v=1.0.67'" alt="Logo" class="h-full w-full object-contain" />
+          <div class="flex h-10 w-10 items-center justify-center">
+            <img :src="siteLogo || (isDark ? '/brand/xiass-mark-dark.png' : '/brand/xiass-mark-light.png')" :alt="siteName" class="h-full w-full object-contain" />
           </div>
           <span class="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">{{ siteName }}</span>
         </router-link>
@@ -425,25 +425,24 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { buildGatewayUrl } from '@/api/client'
 import { sanitizeUrl } from '@/utils/url'
+import { getCurrentTheme, toggleTheme as toggleAppTheme } from '@/utils/theme'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
 
 // ==================== Site Settings (same as HomeView) ====================
 
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'NoWind API')
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'XIASS API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const githubUrl = ''
 
 // ==================== Theme (same as HomeView) ====================
 
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const isDark = ref(getCurrentTheme() === 'dark')
 
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  isDark.value = toggleAppTheme() === 'dark'
 }
 
 const currentYear = computed(() => new Date().getFullYear())
@@ -908,14 +907,7 @@ async function queryKey() {
 // ==================== Lifecycle ====================
 
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme')
-  if (
-    savedTheme === 'dark' ||
-    !savedTheme
-  ) {
-    isDark.value = true
-    document.documentElement.classList.add('dark')
-  }
+  isDark.value = getCurrentTheme() === 'dark'
 }
 
 function formatResetTime(resetAt: string | null | undefined): string {

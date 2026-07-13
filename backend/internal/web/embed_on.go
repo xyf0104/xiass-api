@@ -25,8 +25,8 @@ import (
 const (
 	// NonceHTMLPlaceholder is the placeholder for nonce in HTML script tags
 	NonceHTMLPlaceholder  = "__CSP_NONCE_VALUE__"
-	defaultSiteFaviconURL = "/favicon.png?v=1.0.67"
-	defaultAppleIconURL   = "/apple-touch-icon.png?v=1.0.67"
+	defaultSiteFaviconURL = "/favicon-dark.png?v=1.0.68"
+	defaultAppleIconURL   = "/apple-touch-icon.png?v=1.0.68"
 )
 
 //go:embed all:dist

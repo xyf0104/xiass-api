@@ -17,7 +17,7 @@ describe('ccswitchImport utils', () => {
 
   const baseInput = {
     baseUrl: 'https://api.example.com',
-    providerName: 'NoWind API',
+    providerName: 'XIASS API',
     apiKey: 'sk-test',
     usageScript: 'return true'
   }

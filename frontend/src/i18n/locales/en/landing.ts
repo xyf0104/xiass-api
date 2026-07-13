@@ -191,8 +191,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'NoWind API Setup',
-    description: 'Configure your NoWind API instance',
+    title: 'XIASS API Setup',
+    description: 'Configure your XIASS API instance',
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',

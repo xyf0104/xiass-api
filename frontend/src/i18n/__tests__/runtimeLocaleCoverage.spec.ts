@@ -59,12 +59,12 @@ describe('runtime locale contract', () => {
     expect(missing).toEqual([])
   })
 
-  it('preserves NoWind navigation, pricing, and newly added page titles', () => {
+  it('preserves XIASS navigation, pricing, and newly added page titles', () => {
     expect(zh.nav.availableChannels).toBe('模型价格')
     expect(zh.nav.buySubscription).toBe('充值')
     expect(zh.admin.dashboard.groupPricing).toBe('分组定价')
     expect(zh.usage.tabs.ranking).toBe('用户排行')
-    expect(zh.setup.title).toBe('NoWind API 安装向导')
-    expect(en.setup.title).toBe('NoWind API Setup')
+    expect(zh.setup.title).toBe('XIASS API 安装向导')
+    expect(en.setup.title).toBe('XIASS API Setup')
   })
 })

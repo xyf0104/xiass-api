@@ -53,19 +53,19 @@ func (s *siteNameSettingRepoStub) Delete(context.Context, string) error {
 	panic("unexpected Delete call")
 }
 
-func TestSettingService_DefaultSiteNameIsNoWindAPI(t *testing.T) {
+func TestSettingService_DefaultSiteNameIsXIASSAPI(t *testing.T) {
 	t.Run("initialization", func(t *testing.T) {
 		repo := &siteNameSettingRepoStub{values: map[string]string{}}
 		svc := NewSettingService(repo, &config.Config{})
 
 		require.NoError(t, svc.InitializeDefaultSettings(context.Background()))
-		require.Equal(t, "NoWind API", repo.initialized[SettingKeySiteName])
+		require.Equal(t, "XIASS API", repo.initialized[SettingKeySiteName])
 	})
 
 	t.Run("system_settings_parse", func(t *testing.T) {
 		svc := NewSettingService(&siteNameSettingRepoStub{}, &config.Config{})
 
-		require.Equal(t, "NoWind API", svc.parseSettings(map[string]string{}).SiteName)
+		require.Equal(t, "XIASS API", svc.parseSettings(map[string]string{}).SiteName)
 	})
 
 	t.Run("public_settings", func(t *testing.T) {
@@ -73,13 +73,13 @@ func TestSettingService_DefaultSiteNameIsNoWindAPI(t *testing.T) {
 
 		settings, err := svc.GetPublicSettings(context.Background())
 		require.NoError(t, err)
-		require.Equal(t, "NoWind API", settings.SiteName)
+		require.Equal(t, "XIASS API", settings.SiteName)
 	})
 
 	t.Run("site_name_accessor", func(t *testing.T) {
 		svc := NewSettingService(&siteNameSettingRepoStub{values: map[string]string{}}, &config.Config{})
 
-		require.Equal(t, "NoWind API", svc.GetSiteName(context.Background()))
+		require.Equal(t, "XIASS API", svc.GetSiteName(context.Background()))
 	})
 
 	t.Run("custom_name_is_preserved", func(t *testing.T) {

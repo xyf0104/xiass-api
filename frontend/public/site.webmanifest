@@ -1,19 +1,19 @@
 {
-  "name": "NoWind API",
-  "short_name": "NoWind API",
+  "name": "XIASS API",
+  "short_name": "XIASS API",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "icons": [
     {
-      "src": "/favicon.png?v=1.0.67",
+      "src": "/brand/xiass-mark-light.png?v=1.0.68",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/apple-touch-icon.png?v=1.0.67",
+      "src": "/apple-touch-icon.png?v=1.0.68",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"

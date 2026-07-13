@@ -1,6 +1,6 @@
 # Authentication Views
 
-This directory contains Vue 3 authentication views for the NoWind API frontend application.
+This directory contains Vue 3 authentication views for the XIASS API frontend application.
 
 ## Components
 

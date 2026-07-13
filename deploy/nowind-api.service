@@ -1,6 +1,6 @@
 [Unit]
-Description=NoWind API - AI API Gateway Platform
-Documentation=https://github.com/xyf0104/nowind-api
+Description=XIASS API - AI API Gateway Platform
+Documentation=https://github.com/xyf0104/xiass-api
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 

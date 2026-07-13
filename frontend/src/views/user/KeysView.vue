@@ -1894,7 +1894,7 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
       };
     }
   })`
-  const providerName = (publicSettings.value?.site_name || 'NoWind API').trim() || 'NoWind API'
+  const providerName = (publicSettings.value?.site_name || 'XIASS API').trim() || 'XIASS API'
   const deeplink = buildCcSwitchImportDeeplink({
     baseUrl,
     platform,

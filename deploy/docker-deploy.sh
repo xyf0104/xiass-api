@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# NoWind API Docker Deployment Preparation Script
+# XIASS API Docker Deployment Preparation Script
 # =============================================================================
-# This script prepares deployment files for NoWind API:
+# This script prepares deployment files for XIASS API:
 #   - Downloads docker-compose.local.yml and .env.example
 #   - Generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 #   - Creates necessary data directories
@@ -21,7 +21,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # GitHub raw content base URL
-GITHUB_RAW_URL="https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy"
 
 # Print colored message
 print_info() {
@@ -54,7 +54,7 @@ command_exists() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  NoWind API Deployment Preparation"
+    echo "  XIASS API Deployment Preparation"
     echo "=========================================="
     echo ""
 

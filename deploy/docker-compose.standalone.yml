@@ -1,7 +1,7 @@
 # =============================================================================
-# NoWind API Docker Compose - Standalone Configuration
+# XIASS API Docker Compose - Standalone Configuration
 # =============================================================================
-# This configuration runs only the NoWind API application.
+# This configuration runs only the XIASS API application.
 # PostgreSQL and Redis must be provided externally.
 #
 # Usage:
@@ -12,7 +12,7 @@
 
 services:
   nowind-api:
-    image: ghcr.io/xyf0104/nowind-api:latest
+    image: ghcr.io/xyf0104/xiass-api:latest
     container_name: nowind-api
     restart: unless-stopped
     ulimits:

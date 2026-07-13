@@ -46,7 +46,7 @@ jobs:
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
-      - name: Verify NoWind release contract
+      - name: Verify XIASS release contract
         run: python3 tools/check_release_contract.py --skip-migrations
 
       - name: Upload VERSION artifact
@@ -225,8 +225,8 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/nowind-api
-          short-description: "NoWind API - customized AI API gateway"
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/xiass-api
+          short-description: "XIASS API - customized AI API gateway"
           readme-filepath: ./deploy/DOCKER.md
 
       # Send Telegram notification
@@ -251,7 +251,7 @@ jobs:
           fi
           VERSION=${TAG_NAME#v}
           REPO="${{ github.repository }}"
-          GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/nowind-api"
+          GHCR_IMAGE="ghcr.io/${{ steps.lowercase.outputs.owner }}/xiass-api"
 
           # 获取 tag message 内容并转义 Markdown 特殊字符
           TAG_MESSAGE='${{ steps.tag_message.outputs.message }}'
@@ -263,7 +263,7 @@ jobs:
           fi
 
           # 构建消息内容
-          MESSAGE="🚀 *NoWind API 新版本发布！*"$'\n'$'\n'
+          MESSAGE="🚀 *XIASS API 新版本发布！*"$'\n'$'\n'
           MESSAGE+="📦 版本号: \`${VERSION}\`"$'\n'$'\n'
 
           # 添加更新内容
@@ -275,7 +275,7 @@ jobs:
           MESSAGE+="\`\`\`bash"$'\n'
           # 根据是否配置 DockerHub 动态生成
           if [ -n "$DOCKERHUB_USERNAME" ]; then
-            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/nowind-api"
+            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/xiass-api"
             MESSAGE+="# Docker Hub"$'\n'
             MESSAGE+="docker pull ${DOCKER_IMAGE}:${VERSION}"$'\n'
             MESSAGE+="# GitHub Container Registry"$'\n'
@@ -287,8 +287,8 @@ jobs:
           if [ -n "$DOCKERHUB_USERNAME" ]; then
             MESSAGE+="• [Docker Hub](https://hub.docker.com/r/${DOCKER_IMAGE})"$'\n'
           fi
-          MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/nowind-api)"$'\n'$'\n'
-          MESSAGE+="#NoWindAPI #Release #${TAG_NAME//./_}"
+          MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/xiass-api)"$'\n'$'\n'
+          MESSAGE+="#XIASSAPI #Release #${TAG_NAME//./_}"
 
           # 发送消息
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \

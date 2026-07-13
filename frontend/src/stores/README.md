@@ -1,6 +1,6 @@
 # Pinia Stores Documentation
 
-This directory contains all Pinia stores for the NoWind API frontend application.
+This directory contains all Pinia stores for the XIASS API frontend application.
 
 ## Stores Overview
 

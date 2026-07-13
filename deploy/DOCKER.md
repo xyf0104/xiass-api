@@ -1,11 +1,11 @@
-# NoWind API Docker 镜像
+# XIASS API Docker 镜像
 
-NoWind 是 AI API 网关、账号池、用户计费和用量管理平台。
+XIASS 是 AI API 网关、账号池、用户计费和用量管理平台。
 
 ## 一键完整安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh | sudo bash
 ```
 
 该安装方式会自动准备 Docker Compose、PostgreSQL、Redis、Watchtower、随机密钥和本地持久化目录，不需要外部数据库或 S3。
@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/install.sh 
 ## 镜像
 
 ```bash
-docker pull ghcr.io/xyf0104/nowind-api:latest
+docker pull ghcr.io/xyf0104/xiass-api:latest
 ```
 
 正式镜像当前发布 `linux/amd64`。版本标签包括：
@@ -25,8 +25,8 @@ docker pull ghcr.io/xyf0104/nowind-api:latest
 ## 推荐 Compose
 
 ```bash
-git clone https://github.com/xyf0104/nowind-api.git
-cd nowind-api/deploy
+git clone https://github.com/xyf0104/xiass-api.git
+cd xiass-api/deploy
 cp .env.example .env
 mkdir -p data postgres_data redis_data
 ```
@@ -73,10 +73,10 @@ docker compose -f docker-compose.local.yml ps
 
 ```bash
 # 先备份再更新
-curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass-update.sh | sudo bash
 
 # 只创建完整备份
-curl -fsSL https://raw.githubusercontent.com/xyf0104/nowind-api/main/deploy/nowind-backup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass-backup.sh | sudo bash
 ```
 
 详细说明见项目根目录 [README](../README.md)。
