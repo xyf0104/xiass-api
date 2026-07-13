@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.68-0ea5e9" alt="当前版本 v1.0.68" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.69-0ea5e9" alt="当前版本 v1.0.69" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,7 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.68
+> 当前版本：v1.0.69
+
+v1.0.69 修复 Codex HTTP/SSE 首 token 统计偏差，并避免客户端已携带 `image_gen` 时重复注入 hosted 图片工具。升级不修改数据库结构和持久化目录。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

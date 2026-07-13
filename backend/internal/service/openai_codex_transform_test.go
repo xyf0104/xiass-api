@@ -617,6 +617,46 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesExistingImageTool(t *
 	require.Equal(t, "webp", tool["output_format"])
 }
 
+func TestEnsureOpenAIResponsesImageGenerationTool_PreservesImageGenNamespace(t *testing.T) {
+	tests := []struct {
+		name    string
+		reqBody map[string]any
+	}{
+		{
+			name: "top-level tools",
+			reqBody: map[string]any{
+				"model": "gpt-5.6-sol",
+				"tools": []any{map[string]any{
+					"type":  "namespace",
+					"name":  "image_gen",
+					"tools": []any{map[string]any{"type": "function", "name": "imagegen"}},
+				}},
+			},
+		},
+		{
+			name: "responses lite additional_tools",
+			reqBody: map[string]any{
+				"model": "gpt-5.6-sol",
+				"input": []any{map[string]any{
+					"type": "additional_tools",
+					"tools": []any{map[string]any{
+						"type":  "namespace",
+						"name":  "image_gen",
+						"tools": []any{map[string]any{"type": "function", "name": "imagegen"}},
+					}},
+				}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.True(t, hasOpenAIImageGenerationTool(tt.reqBody))
+			require.False(t, ensureOpenAIResponsesImageGenerationTool(tt.reqBody))
+		})
+	}
+}
+
 func TestApplyCodexImageGenerationBridgeInstructions_AppendsBridgeOnce(t *testing.T) {
 	reqBody := map[string]any{
 		"model":        "gpt-5.4",
