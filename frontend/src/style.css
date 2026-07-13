@@ -787,7 +787,9 @@ html.theme-transitioning .dropdown {
 html:not(.dark) body:has(.app-layout) {
   --xiass-console-light-surface: rgb(255 255 255 / 0.46);
   --xiass-console-light-surface-soft: rgb(245 249 252 / 0.38);
-  --xiass-console-light-surface-raised: rgb(255 255 255 / 0.78);
+  --xiass-console-light-surface-raised: rgb(255 255 255 / 0.92);
+  --xiass-console-light-floating-surface: rgb(255 255 255 / 0.92);
+  --xiass-console-light-floating-border: rgb(255 255 255 / 0.86);
   --xiass-console-light-border: rgb(255 255 255 / 0.74);
 }
 
@@ -871,7 +873,13 @@ html:not(.dark) body:has(.app-layout) :is(.modal-overlay, .dialog-overlay) {
   -webkit-backdrop-filter: blur(8px);
 }
 
-html:not(.dark) body:has(.app-layout) :is(.modal-content, .dialog-container) {
+html:not(.dark) body:has(.app-layout) :is(
+    .modal-content,
+    .dialog-container,
+    .console-modal-surface,
+    [class*='fixed'][class*='inset-0'][class*='z-'] > div[class*='rounded'][class*='shadow'],
+    [class*='fixed'][class*='inset-0'][class*='z-'] > div[class*='flex'] > div[class*='relative'][class*='rounded'][class*='shadow']
+  ) {
   border-color: rgb(255 255 255 / 0.82) !important;
   background-color: var(--xiass-console-light-surface-raised) !important;
   box-shadow: 0 24px 70px rgb(71 85 105 / 0.22);
@@ -881,36 +889,39 @@ html:not(.dark) body:has(.app-layout) :is(.modal-content, .dialog-container) {
 
 html:not(.dark) body:has(.app-layout) :is(
     .dropdown,
+    .select-dropdown,
     .select-dropdown-portal,
+    .date-picker-dropdown,
     .action-menu-content,
+    .console-settings-popover,
+    .console-floating-surface,
+    .batch-prompt-popover,
+    [role='listbox'],
+    [role='menu'],
+    [class*='absolute'][class*='z-'][class*='rounded'][class*='shadow'],
+    [class*='absolute'][class*='top-full'][class*='z-'][class*='rounded'],
+    [class*='fixed'][class*='z-'][class*='rounded'][class*='shadow'],
     .toast
   ) {
-  border-color: rgb(255 255 255 / 0.82) !important;
-  background-color: rgb(255 255 255 / 0.82) !important;
-  box-shadow: 0 18px 48px rgb(71 85 105 / 0.2);
-  backdrop-filter: blur(24px) saturate(120%) brightness(1.03);
-  -webkit-backdrop-filter: blur(24px) saturate(120%) brightness(1.03);
+  isolation: isolate;
+  border-color: var(--xiass-console-light-floating-border) !important;
+  background-color: var(--xiass-console-light-floating-surface) !important;
+  box-shadow: 0 18px 48px rgb(71 85 105 / 0.22) !important;
+  backdrop-filter: blur(28px) saturate(115%) brightness(1.03) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(115%) brightness(1.03) !important;
 }
 
 html:not(.dark) body:has(.app-layout) .user-menu-dropdown {
-  background-color: rgb(255 255 255 / 0.92) !important;
-  backdrop-filter: blur(28px) saturate(115%) brightness(1.03);
-  -webkit-backdrop-filter: blur(28px) saturate(115%) brightness(1.03);
-}
-
-html:not(.dark) body:has(.app-layout) .console-settings-popover {
-  border-color: rgb(203 213 225 / 0.94) !important;
-  background-color: rgb(255 255 255 / 0.97) !important;
-  box-shadow: 0 18px 48px rgb(71 85 105 / 0.24) !important;
-  backdrop-filter: blur(28px) saturate(112%);
-  -webkit-backdrop-filter: blur(28px) saturate(112%);
+  background-color: var(--xiass-console-light-floating-surface) !important;
 }
 
 /* ============ XIASS 控制台深色透明层 ============ */
 .dark body:has(.app-layout) {
   --xiass-console-surface: rgb(6 18 32 / 0.28);
   --xiass-console-surface-deep: rgb(3 14 25 / 0.22);
-  --xiass-console-surface-raised: rgb(8 21 38 / 0.48);
+  --xiass-console-surface-raised: rgb(8 21 38 / 0.88);
+  --xiass-console-floating-surface: rgb(8 21 38 / 0.88);
+  --xiass-console-floating-border: rgb(255 255 255 / 0.18);
   --xiass-console-border: rgb(255 255 255 / 0.13);
 }
 
@@ -979,7 +990,13 @@ html:not(.dark) body:has(.app-layout) .console-settings-popover {
   -webkit-backdrop-filter: blur(8px);
 }
 
-.dark body:has(.app-layout) :is(.modal-content, .dialog-container) {
+.dark body:has(.app-layout) :is(
+    .modal-content,
+    .dialog-container,
+    .console-modal-surface,
+    [class*='fixed'][class*='inset-0'][class*='z-'] > div[class*='rounded'][class*='shadow'],
+    [class*='fixed'][class*='inset-0'][class*='z-'] > div[class*='flex'] > div[class*='relative'][class*='rounded'][class*='shadow']
+  ) {
   border-color: rgb(255 255 255 / 0.16) !important;
   background-color: var(--xiass-console-surface-raised) !important;
   box-shadow: 0 24px 70px rgb(0 0 0 / 0.38);
@@ -989,29 +1006,30 @@ html:not(.dark) body:has(.app-layout) .console-settings-popover {
 
 .dark body:has(.app-layout) :is(
     .dropdown,
+    .select-dropdown,
     .select-dropdown-portal,
+    .date-picker-dropdown,
     .action-menu-content,
+    .console-settings-popover,
+    .console-floating-surface,
+    .batch-prompt-popover,
+    [role='listbox'],
+    [role='menu'],
+    [class*='absolute'][class*='z-'][class*='rounded'][class*='shadow'],
+    [class*='absolute'][class*='top-full'][class*='z-'][class*='rounded'],
+    [class*='fixed'][class*='z-'][class*='rounded'][class*='shadow'],
     .toast
   ) {
-  border-color: rgb(255 255 255 / 0.16) !important;
-  background-color: rgb(8 21 38 / 0.56) !important;
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
-  backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
-  -webkit-backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
+  isolation: isolate;
+  border-color: var(--xiass-console-floating-border) !important;
+  background-color: var(--xiass-console-floating-surface) !important;
+  box-shadow: 0 20px 52px rgb(0 0 0 / 0.46) !important;
+  backdrop-filter: blur(28px) saturate(130%) brightness(1.06) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(130%) brightness(1.06) !important;
 }
 
 .dark body:has(.app-layout) .user-menu-dropdown {
-  background-color: rgb(8 21 38 / 0.88) !important;
-  backdrop-filter: blur(28px) saturate(130%) brightness(1.06);
-  -webkit-backdrop-filter: blur(28px) saturate(130%) brightness(1.06);
-}
-
-.dark body:has(.app-layout) .console-settings-popover {
-  border-color: rgb(148 163 184 / 0.36) !important;
-  background-color: rgb(8 21 38 / 0.96) !important;
-  box-shadow: 0 20px 52px rgb(0 0 0 / 0.52) !important;
-  backdrop-filter: blur(28px) saturate(118%);
-  -webkit-backdrop-filter: blur(28px) saturate(118%);
+  background-color: var(--xiass-console-floating-surface) !important;
 }
 
 /* ============ XIASS 认证页面浅色主题 ============ */
