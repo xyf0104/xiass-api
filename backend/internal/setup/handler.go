@@ -331,7 +331,7 @@ func install(c *gin.Context) {
 		Admin:    req.Admin,
 		Server:   req.Server,
 		JWT: JWTConfig{
-			ExpireHour: 24,
+			ExpireHour: 168,
 		},
 	}
 

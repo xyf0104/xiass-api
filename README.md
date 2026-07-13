@@ -267,7 +267,7 @@ sudo bash /tmp/xiass-restore.sh /root/xiass-backups/xiass-runtime-YYYYmmdd-HHMMS
 
 1. 设置 FRP 控制端口、Raw FRP 端口范围和公网 SOCKS 端口范围。
 2. 点击安装 FRP，按页面输出完成服务器端配置。
-3. 在 OpenWrt 安装 XIASS Proxy Agent，并填写服务器地址、Agent ID 与密钥。
+3. 在 OpenWrt 安装 `NoWind 代理节点` 插件（为兼容现有软路由保留历史名称），并填写服务器地址、Agent ID 与密钥。
 4. Agent 上报 PassWall/本地 SOCKS 节点后，在后台为每个节点分配独立 Raw 端口和公网端口。
 5. 为公网 SOCKS 设置用户名与密码后再对外提供服务。
 

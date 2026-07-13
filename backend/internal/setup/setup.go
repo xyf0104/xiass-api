@@ -585,7 +585,7 @@ func AutoSetupFromEnv() error {
 		},
 		JWT: JWTConfig{
 			Secret:     getEnvOrDefault("JWT_SECRET", ""),
-			ExpireHour: getEnvIntOrDefault("JWT_EXPIRE_HOUR", 24),
+			ExpireHour: getEnvIntOrDefault("JWT_EXPIRE_HOUR", 168),
 		},
 		Timezone:                tz,
 		MigrationTimeoutSeconds: getEnvIntOrDefault("SETUP_MIGRATION_TIMEOUT_SECONDS", 0),

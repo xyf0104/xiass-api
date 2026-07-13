@@ -62,7 +62,7 @@ func RunCLI() error {
 			Mode: "release",
 		},
 		JWT: JWTConfig{
-			ExpireHour: 24,
+			ExpireHour: 168,
 		},
 	}
 

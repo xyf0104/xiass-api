@@ -49,6 +49,6 @@ if [ -d "$BACKUP_DIR" ]; then
   echo "Backup saved to: $BACKUP_DIR"
 fi
 echo "Requires python3 and frpc. Install with: opkg update && opkg install python3 frpc luci-compat"
-echo "Configure it in LuCI: Services -> XIASS 代理节点"
+echo "Configure it in LuCI: Services -> NoWind 代理节点"
 echo "Or edit /etc/config/nowind_soft_router_agent, then run:"
 echo "  /etc/init.d/nowind-soft-router-agent restart"

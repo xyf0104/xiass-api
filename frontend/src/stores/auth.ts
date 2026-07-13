@@ -79,6 +79,7 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let persistedSessionRestorePromise: Promise<void> | null = null
 
   // ==================== Computed ====================
 
@@ -100,36 +101,63 @@ export const useAuthStore = defineStore('auth', () => {
    * Call this on app startup to restore session
    * Also starts auto-refresh and immediately fetches latest user data
    */
-  function checkAuth(): void {
+  function checkAuth(): Promise<void> {
+    pendingAuthSession.value = getPersistedPendingAuthSession()
+
+    if (persistedSessionRestorePromise) {
+      return persistedSessionRestorePromise
+    }
+
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
     const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
-    pendingAuthSession.value = getPersistedPendingAuthSession()
 
     if (savedToken && savedUser) {
       try {
+        const parsedExpiresAt = savedExpiresAt ? Number(savedExpiresAt) : null
+
         token.value = savedToken
         user.value = JSON.parse(savedUser)
         refreshTokenValue.value = savedRefreshToken
-        tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
+        tokenExpiresAt.value = parsedExpiresAt !== null && Number.isFinite(parsedExpiresAt)
+          ? parsedExpiresAt
+          : null
 
-        // Immediately refresh user data from backend (async, don't block)
-        refreshUser().catch((error) => {
-          console.error('Failed to refresh user on init:', error)
+        persistedSessionRestorePromise = restorePersistedSession().finally(() => {
+          persistedSessionRestorePromise = null
         })
-
-        // Start auto-refresh interval for user data
-        startAutoRefresh()
-
-        // Start proactive token refresh if we have refresh token and expiry info
-        // Note: use !== null to handle case when tokenExpiresAt.value is 0 (expired)
-        if (savedRefreshToken && tokenExpiresAt.value !== null) {
-          scheduleTokenRefreshAt(tokenExpiresAt.value)
-        }
+        return persistedSessionRestorePromise
       } catch (error) {
         console.error('Failed to parse saved user data:', error)
         clearAuth({ preservePendingAuthSession: true })
+      }
+    }
+
+    return Promise.resolve()
+  }
+
+  async function restorePersistedSession(): Promise<void> {
+    const expiresAt = tokenExpiresAt.value
+    const hasRefreshToken = Boolean(refreshTokenValue.value)
+    const shouldRefreshFirst = hasRefreshToken && (
+      expiresAt === null || expiresAt <= Date.now() + TOKEN_REFRESH_BUFFER
+    )
+
+    try {
+      if (shouldRefreshFirst) {
+        const refreshed = await performTokenRefresh()
+        if (!refreshed) return
+      } else if (hasRefreshToken && expiresAt !== null) {
+        scheduleTokenRefreshAt(expiresAt)
+      }
+
+      await refreshUser()
+    } catch (error) {
+      console.error('Failed to refresh user on init:', error)
+    } finally {
+      if (token.value && localStorage.getItem(AUTH_TOKEN_KEY)) {
+        startAutoRefresh()
       }
     }
   }
@@ -201,9 +229,9 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Perform the actual token refresh
    */
-  async function performTokenRefresh(): Promise<void> {
+  async function performTokenRefresh(): Promise<boolean> {
     if (!refreshTokenValue.value) {
-      return
+      return false
     }
 
     try {
@@ -212,12 +240,16 @@ export const useAuthStore = defineStore('auth', () => {
       // Update state
       token.value = response.access_token
       refreshTokenValue.value = response.refresh_token
+      localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
+      localStorage.setItem(REFRESH_TOKEN_KEY, response.refresh_token)
 
       // Schedule next refresh (this also updates tokenExpiresAt and localStorage)
       scheduleTokenRefresh(response.expires_in)
+      return true
     } catch (error) {
       console.error('Token refresh failed:', error)
       // Don't clear auth here - the interceptor will handle 401 errors
+      return false
     }
   }
 
