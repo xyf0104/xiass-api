@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -99,6 +100,80 @@ def check_public_branding_and_privacy(errors: list[str]) -> None:
             errors.append(f"检测到维护者线上域名硬编码: {relative}")
         if re.search(r"admin-[0-9a-f]{48,}", content):
             errors.append(f"检测到疑似管理员密钥: {relative}")
+
+
+def check_frontend_visible_branding(errors: list[str]) -> None:
+    index_path = "frontend/index.html"
+    manifest_path = "frontend/public/site.webmanifest"
+    store_path = "frontend/src/stores/app.ts"
+    title_path = "frontend/src/router/title.ts"
+    contents = {
+        relative: read(relative)
+        for relative in (index_path, manifest_path, store_path, title_path)
+    }
+
+    require_all(
+        index_path,
+        contents[index_path],
+        ["<title>XIASS API</title>", 'href="/favicon-dark.png'],
+        errors,
+    )
+    require_all(
+        store_path,
+        contents[store_path],
+        [
+            "const siteName = ref<string>('XIASS API')",
+            "siteName.value = config.site_name || 'XIASS API'",
+        ],
+        errors,
+    )
+    require_all(
+        title_path,
+        contents[title_path],
+        [": 'XIASS API'"],
+        errors,
+    )
+
+    try:
+        manifest = json.loads(contents[manifest_path])
+    except json.JSONDecodeError as exc:
+        errors.append(f"{manifest_path} 不是有效 JSON: {exc}")
+    else:
+        if not isinstance(manifest, dict):
+            errors.append(f"{manifest_path} 顶层必须是 JSON 对象")
+        else:
+            for key in ("name", "short_name"):
+                if manifest.get(key) != "XIASS API":
+                    errors.append(f"{manifest_path} 的 {key} 默认品牌必须为 XIASS API")
+            icons = manifest.get("icons", [])
+            icon_sources = (
+                {
+                    icon.get("src", "").partition("?")[0]
+                    for icon in icons
+                    if isinstance(icon, dict) and isinstance(icon.get("src"), str)
+                }
+                if isinstance(icons, list)
+                else set()
+            )
+            if "/brand/xiass-mark-light.png" not in icon_sources:
+                errors.append(f"{manifest_path} 缺少 XIASS 品牌图标引用")
+
+    visible_sub2api = re.compile(
+        r"(?:[\"'][^\"'\n]*\bSub2API\b[^\"'\n]*[\"']|"
+        r"<title>[^<]*\bSub2API\b[^<]*</title>)"
+    )
+    for relative, content in contents.items():
+        if visible_sub2api.search(content):
+            errors.append(f"{relative} 仍包含可见 Sub2API 标题")
+
+    legacy_favicon = re.compile(
+        r"/(?:favicon\.png|logo\.png|vite\.svg)(?:\?[^\"'\s<>]*)?",
+        re.IGNORECASE,
+    )
+    for relative in (index_path, manifest_path):
+        match = legacy_favicon.search(contents[relative])
+        if match:
+            errors.append(f"{relative} 仍引用旧 favicon: {match.group(0)}")
 
 
 def check_release_branding_and_compatibility(errors: list[str]) -> None:
@@ -384,24 +459,59 @@ def check_update_bridge(errors: list[str]) -> None:
     ordered_markers = [
         'xiass-backup.sh',
         'git -C "$INSTALL_DIR" fetch --prune origin main',
+        "capture_previous_image",
+        "UPDATE_STARTED=true",
         "compose down",
         'git -C "$INSTALL_DIR" reset --hard origin/main',
     ]
     positions = [main_body.find(marker) for marker in ordered_markers]
     if any(position < 0 for position in positions) or positions != sorted(positions):
-        errors.append("xiass-update.sh 必须先备份，再拉取、停止旧栈并切换 Git 状态")
+        errors.append(
+            "xiass-update.sh 必须先备份、拉取并记录旧镜像，再停止旧栈并切换 Git 状态"
+        )
     require_all(
         "deploy/xiass-update.sh",
         update_script,
         [
             'PREVIOUS_REF=$(git -C "$INSTALL_DIR" rev-parse HEAD)',
+            'PREVIOUS_IMAGE_ID=""',
+            'PREVIOUS_IMAGE_REF=""',
+            "capture_previous_image()",
+            "{{.Image}} {{.Config.Image}}",
             "rollback_update()",
             'git -C "$INSTALL_DIR" reset --hard "$PREVIOUS_REF"',
+            'docker image tag "$PREVIOUS_IMAGE_ID" "$PREVIOUS_IMAGE_REF"',
+            "compose up -d --no-build",
             "UPDATE_STARTED=true",
             "compose pull nowind-api watchtower",
         ],
         errors,
     )
+    capture_body = update_script.partition("capture_previous_image() {")[2].partition(
+        "\n}\n\nwait_for_health()"
+    )[0]
+    if (
+        "if ! image_snapshot=$(docker inspect" not in capture_body
+        or capture_body.count("return 0") < 2
+    ):
+        errors.append("xiass-update.sh 记录旧镜像失败时必须非致命降级")
+    rollback_body = update_script.partition("rollback_update() {")[2].partition(
+        "\n}\n\ncleanup()"
+    )[0]
+    rollback_markers = [
+        'git -C "$INSTALL_DIR" reset --hard "$PREVIOUS_REF"',
+        'docker image tag "$PREVIOUS_IMAGE_ID" "$PREVIOUS_IMAGE_REF"',
+        "compose up -d --no-build",
+        "compose up -d >/dev/null",
+    ]
+    rollback_positions = [rollback_body.find(marker) for marker in rollback_markers]
+    if any(position < 0 for position in rollback_positions) or rollback_positions != sorted(
+        rollback_positions
+    ):
+        errors.append(
+            "xiass-update.sh 回滚必须恢复 Git 和旧镜像 tag，以 --no-build 启动，"
+            "并保留普通 compose 启动降级"
+        )
     if "git clean" in update_script:
         errors.append("xiass-update.sh 禁止清理未跟踪的 .env 或数据目录")
     if re.search(
@@ -440,6 +550,7 @@ def main() -> int:
     errors: list[str] = []
     check_version(errors)
     check_public_branding_and_privacy(errors)
+    check_frontend_visible_branding(errors)
     check_release_branding_and_compatibility(errors)
     check_compose_branding(errors)
     check_persistence(errors)

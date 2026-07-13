@@ -82,6 +82,7 @@ func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*Gr
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	applyGrokCLIHeaders(req.Header)
 	req.Header.Set("User-Agent", "nowind-api-grok-quota-probe/1.0")
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, maxInt(account.Concurrency, 1))
@@ -91,9 +92,16 @@ func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*Gr
 	defer func() { _ = resp.Body.Close() }()
 
 	snapshot := xai.ObserveQuotaHeaders(resp.Header, resp.StatusCode, "active_probe")
+	resetAt, limited := grokRateLimitResetAt(snapshot, time.Now())
+	if limited {
+		normalizeGrokExhaustedWindowResets(snapshot, resetAt, time.Now())
+	}
 	_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
 		grokQuotaSnapshotExtraKey: snapshot,
 	})
+	if limited {
+		persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
+	}
 
 	result := &GrokQuotaProbeResult{
 		Source:          "active_probe",

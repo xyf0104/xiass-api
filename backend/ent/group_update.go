@@ -640,6 +640,33 @@ func (_u *GroupUpdate) ClearVideoPrice1080p() *GroupUpdate {
 	return _u
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (_u *GroupUpdate) SetWebSearchPricePerCall(v float64) *GroupUpdate {
+	_u.mutation.ResetWebSearchPricePerCall()
+	_u.mutation.SetWebSearchPricePerCall(v)
+	return _u
+}
+
+// SetNillableWebSearchPricePerCall sets the "web_search_price_per_call" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableWebSearchPricePerCall(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetWebSearchPricePerCall(*v)
+	}
+	return _u
+}
+
+// AddWebSearchPricePerCall adds value to the "web_search_price_per_call" field.
+func (_u *GroupUpdate) AddWebSearchPricePerCall(v float64) *GroupUpdate {
+	_u.mutation.AddWebSearchPricePerCall(v)
+	return _u
+}
+
+// ClearWebSearchPricePerCall clears the value of the "web_search_price_per_call" field.
+func (_u *GroupUpdate) ClearWebSearchPricePerCall() *GroupUpdate {
+	_u.mutation.ClearWebSearchPricePerCall()
+	return _u
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdate) SetClaudeCodeOnly(v bool) *GroupUpdate {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -883,6 +910,33 @@ func (_u *GroupUpdate) SetNillableRpmLimit(v *int) *GroupUpdate {
 // AddRpmLimit adds value to the "rpm_limit" field.
 func (_u *GroupUpdate) AddRpmLimit(v int) *GroupUpdate {
 	_u.mutation.AddRpmLimit(v)
+	return _u
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (_u *GroupUpdate) SetCostRatio(v float64) *GroupUpdate {
+	_u.mutation.ResetCostRatio()
+	_u.mutation.SetCostRatio(v)
+	return _u
+}
+
+// SetNillableCostRatio sets the "cost_ratio" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableCostRatio(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetCostRatio(*v)
+	}
+	return _u
+}
+
+// AddCostRatio adds value to the "cost_ratio" field.
+func (_u *GroupUpdate) AddCostRatio(v float64) *GroupUpdate {
+	_u.mutation.AddCostRatio(v)
+	return _u
+}
+
+// ClearCostRatio clears the value of the "cost_ratio" field.
+func (_u *GroupUpdate) ClearCostRatio() *GroupUpdate {
+	_u.mutation.ClearCostRatio()
 	return _u
 }
 
@@ -1375,6 +1429,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.VideoPrice1080pCleared() {
 		_spec.ClearField(group.FieldVideoPrice1080p, field.TypeFloat64)
 	}
+	if value, ok := _u.mutation.WebSearchPricePerCall(); ok {
+		_spec.SetField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedWebSearchPricePerCall(); ok {
+		_spec.AddField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
+	}
+	if _u.mutation.WebSearchPricePerCallCleared() {
+		_spec.ClearField(group.FieldWebSearchPricePerCall, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 	}
@@ -1445,6 +1508,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CostRatio(); ok {
+		_spec.SetField(group.FieldCostRatio, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedCostRatio(); ok {
+		_spec.AddField(group.FieldCostRatio, field.TypeFloat64, value)
+	}
+	if _u.mutation.CostRatioCleared() {
+		_spec.ClearField(group.FieldCostRatio, field.TypeFloat64)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2364,6 +2436,33 @@ func (_u *GroupUpdateOne) ClearVideoPrice1080p() *GroupUpdateOne {
 	return _u
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (_u *GroupUpdateOne) SetWebSearchPricePerCall(v float64) *GroupUpdateOne {
+	_u.mutation.ResetWebSearchPricePerCall()
+	_u.mutation.SetWebSearchPricePerCall(v)
+	return _u
+}
+
+// SetNillableWebSearchPricePerCall sets the "web_search_price_per_call" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableWebSearchPricePerCall(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetWebSearchPricePerCall(*v)
+	}
+	return _u
+}
+
+// AddWebSearchPricePerCall adds value to the "web_search_price_per_call" field.
+func (_u *GroupUpdateOne) AddWebSearchPricePerCall(v float64) *GroupUpdateOne {
+	_u.mutation.AddWebSearchPricePerCall(v)
+	return _u
+}
+
+// ClearWebSearchPricePerCall clears the value of the "web_search_price_per_call" field.
+func (_u *GroupUpdateOne) ClearWebSearchPricePerCall() *GroupUpdateOne {
+	_u.mutation.ClearWebSearchPricePerCall()
+	return _u
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdateOne) SetClaudeCodeOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -2607,6 +2706,33 @@ func (_u *GroupUpdateOne) SetNillableRpmLimit(v *int) *GroupUpdateOne {
 // AddRpmLimit adds value to the "rpm_limit" field.
 func (_u *GroupUpdateOne) AddRpmLimit(v int) *GroupUpdateOne {
 	_u.mutation.AddRpmLimit(v)
+	return _u
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (_u *GroupUpdateOne) SetCostRatio(v float64) *GroupUpdateOne {
+	_u.mutation.ResetCostRatio()
+	_u.mutation.SetCostRatio(v)
+	return _u
+}
+
+// SetNillableCostRatio sets the "cost_ratio" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableCostRatio(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetCostRatio(*v)
+	}
+	return _u
+}
+
+// AddCostRatio adds value to the "cost_ratio" field.
+func (_u *GroupUpdateOne) AddCostRatio(v float64) *GroupUpdateOne {
+	_u.mutation.AddCostRatio(v)
+	return _u
+}
+
+// ClearCostRatio clears the value of the "cost_ratio" field.
+func (_u *GroupUpdateOne) ClearCostRatio() *GroupUpdateOne {
+	_u.mutation.ClearCostRatio()
 	return _u
 }
 
@@ -3129,6 +3255,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if _u.mutation.VideoPrice1080pCleared() {
 		_spec.ClearField(group.FieldVideoPrice1080p, field.TypeFloat64)
 	}
+	if value, ok := _u.mutation.WebSearchPricePerCall(); ok {
+		_spec.SetField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedWebSearchPricePerCall(); ok {
+		_spec.AddField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
+	}
+	if _u.mutation.WebSearchPricePerCallCleared() {
+		_spec.ClearField(group.FieldWebSearchPricePerCall, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 	}
@@ -3199,6 +3334,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CostRatio(); ok {
+		_spec.SetField(group.FieldCostRatio, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedCostRatio(); ok {
+		_spec.AddField(group.FieldCostRatio, field.TypeFloat64, value)
+	}
+	if _u.mutation.CostRatioCleared() {
+		_spec.ClearField(group.FieldCostRatio, field.TypeFloat64)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

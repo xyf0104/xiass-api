@@ -469,6 +469,20 @@ func (_c *GroupCreate) SetNillableVideoPrice1080p(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (_c *GroupCreate) SetWebSearchPricePerCall(v float64) *GroupCreate {
+	_c.mutation.SetWebSearchPricePerCall(v)
+	return _c
+}
+
+// SetNillableWebSearchPricePerCall sets the "web_search_price_per_call" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableWebSearchPricePerCall(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetWebSearchPricePerCall(*v)
+	}
+	return _c
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_c *GroupCreate) SetClaudeCodeOnly(v bool) *GroupCreate {
 	_c.mutation.SetClaudeCodeOnly(v)
@@ -659,6 +673,20 @@ func (_c *GroupCreate) SetRpmLimit(v int) *GroupCreate {
 func (_c *GroupCreate) SetNillableRpmLimit(v *int) *GroupCreate {
 	if v != nil {
 		_c.SetRpmLimit(*v)
+	}
+	return _c
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (_c *GroupCreate) SetCostRatio(v float64) *GroupCreate {
+	_c.mutation.SetCostRatio(v)
+	return _c
+}
+
+// SetNillableCostRatio sets the "cost_ratio" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCostRatio(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetCostRatio(*v)
 	}
 	return _c
 }
@@ -1218,6 +1246,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldVideoPrice1080p, field.TypeFloat64, value)
 		_node.VideoPrice1080p = &value
 	}
+	if value, ok := _c.mutation.WebSearchPricePerCall(); ok {
+		_spec.SetField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
+		_node.WebSearchPricePerCall = &value
+	}
 	if value, ok := _c.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 		_node.ClaudeCodeOnly = value
@@ -1277,6 +1309,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.CostRatio(); ok {
+		_spec.SetField(group.FieldCostRatio, field.TypeFloat64, value)
+		_node.CostRatio = &value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1968,6 +2004,30 @@ func (u *GroupUpsert) ClearVideoPrice1080p() *GroupUpsert {
 	return u
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (u *GroupUpsert) SetWebSearchPricePerCall(v float64) *GroupUpsert {
+	u.Set(group.FieldWebSearchPricePerCall, v)
+	return u
+}
+
+// UpdateWebSearchPricePerCall sets the "web_search_price_per_call" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateWebSearchPricePerCall() *GroupUpsert {
+	u.SetExcluded(group.FieldWebSearchPricePerCall)
+	return u
+}
+
+// AddWebSearchPricePerCall adds v to the "web_search_price_per_call" field.
+func (u *GroupUpsert) AddWebSearchPricePerCall(v float64) *GroupUpsert {
+	u.Add(group.FieldWebSearchPricePerCall, v)
+	return u
+}
+
+// ClearWebSearchPricePerCall clears the value of the "web_search_price_per_call" field.
+func (u *GroupUpsert) ClearWebSearchPricePerCall() *GroupUpsert {
+	u.SetNull(group.FieldWebSearchPricePerCall)
+	return u
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (u *GroupUpsert) SetClaudeCodeOnly(v bool) *GroupUpsert {
 	u.Set(group.FieldClaudeCodeOnly, v)
@@ -2187,6 +2247,30 @@ func (u *GroupUpsert) UpdateRpmLimit() *GroupUpsert {
 // AddRpmLimit adds v to the "rpm_limit" field.
 func (u *GroupUpsert) AddRpmLimit(v int) *GroupUpsert {
 	u.Add(group.FieldRpmLimit, v)
+	return u
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (u *GroupUpsert) SetCostRatio(v float64) *GroupUpsert {
+	u.Set(group.FieldCostRatio, v)
+	return u
+}
+
+// UpdateCostRatio sets the "cost_ratio" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCostRatio() *GroupUpsert {
+	u.SetExcluded(group.FieldCostRatio)
+	return u
+}
+
+// AddCostRatio adds v to the "cost_ratio" field.
+func (u *GroupUpsert) AddCostRatio(v float64) *GroupUpsert {
+	u.Add(group.FieldCostRatio, v)
+	return u
+}
+
+// ClearCostRatio clears the value of the "cost_ratio" field.
+func (u *GroupUpsert) ClearCostRatio() *GroupUpsert {
+	u.SetNull(group.FieldCostRatio)
 	return u
 }
 
@@ -2858,6 +2942,34 @@ func (u *GroupUpsertOne) ClearVideoPrice1080p() *GroupUpsertOne {
 	})
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (u *GroupUpsertOne) SetWebSearchPricePerCall(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetWebSearchPricePerCall(v)
+	})
+}
+
+// AddWebSearchPricePerCall adds v to the "web_search_price_per_call" field.
+func (u *GroupUpsertOne) AddWebSearchPricePerCall(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddWebSearchPricePerCall(v)
+	})
+}
+
+// UpdateWebSearchPricePerCall sets the "web_search_price_per_call" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateWebSearchPricePerCall() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateWebSearchPricePerCall()
+	})
+}
+
+// ClearWebSearchPricePerCall clears the value of the "web_search_price_per_call" field.
+func (u *GroupUpsertOne) ClearWebSearchPricePerCall() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearWebSearchPricePerCall()
+	})
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (u *GroupUpsertOne) SetClaudeCodeOnly(v bool) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3114,6 +3226,34 @@ func (u *GroupUpsertOne) AddRpmLimit(v int) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRpmLimit() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (u *GroupUpsertOne) SetCostRatio(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCostRatio(v)
+	})
+}
+
+// AddCostRatio adds v to the "cost_ratio" field.
+func (u *GroupUpsertOne) AddCostRatio(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddCostRatio(v)
+	})
+}
+
+// UpdateCostRatio sets the "cost_ratio" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCostRatio() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCostRatio()
+	})
+}
+
+// ClearCostRatio clears the value of the "cost_ratio" field.
+func (u *GroupUpsertOne) ClearCostRatio() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCostRatio()
 	})
 }
 
@@ -3951,6 +4091,34 @@ func (u *GroupUpsertBulk) ClearVideoPrice1080p() *GroupUpsertBulk {
 	})
 }
 
+// SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
+func (u *GroupUpsertBulk) SetWebSearchPricePerCall(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetWebSearchPricePerCall(v)
+	})
+}
+
+// AddWebSearchPricePerCall adds v to the "web_search_price_per_call" field.
+func (u *GroupUpsertBulk) AddWebSearchPricePerCall(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddWebSearchPricePerCall(v)
+	})
+}
+
+// UpdateWebSearchPricePerCall sets the "web_search_price_per_call" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateWebSearchPricePerCall() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateWebSearchPricePerCall()
+	})
+}
+
+// ClearWebSearchPricePerCall clears the value of the "web_search_price_per_call" field.
+func (u *GroupUpsertBulk) ClearWebSearchPricePerCall() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearWebSearchPricePerCall()
+	})
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (u *GroupUpsertBulk) SetClaudeCodeOnly(v bool) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -4207,6 +4375,34 @@ func (u *GroupUpsertBulk) AddRpmLimit(v int) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRpmLimit() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetCostRatio sets the "cost_ratio" field.
+func (u *GroupUpsertBulk) SetCostRatio(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCostRatio(v)
+	})
+}
+
+// AddCostRatio adds v to the "cost_ratio" field.
+func (u *GroupUpsertBulk) AddCostRatio(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddCostRatio(v)
+	})
+}
+
+// UpdateCostRatio sets the "cost_ratio" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCostRatio() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCostRatio()
+	})
+}
+
+// ClearCostRatio clears the value of the "cost_ratio" field.
+func (u *GroupUpsertBulk) ClearCostRatio() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCostRatio()
 	})
 }
 

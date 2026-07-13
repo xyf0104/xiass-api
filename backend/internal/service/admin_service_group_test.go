@@ -386,6 +386,71 @@ func TestAdminService_UpdateGroup_WithCostRatio(t *testing.T) {
 	require.InDelta(t, updatedCostRatio, *repo.updated.CostRatio, 1e-12)
 }
 
+func TestAdminService_UpdateGroup_ClearsCostRatioWithNegativeSentinel(t *testing.T) {
+	existingCostRatio := 0.28
+	existingGroup := &Group{
+		ID:        1,
+		Name:      "existing-group",
+		Platform:  PlatformAnthropic,
+		Status:    StatusActive,
+		CostRatio: &existingCostRatio,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	clearSentinel := -1.0
+	group, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
+		CostRatio: &clearSentinel,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.Nil(t, repo.updated.CostRatio)
+}
+
+func TestAdminService_UpdateGroup_PreservesCostRatioWhenOmitted(t *testing.T) {
+	existingCostRatio := 0.28
+	existingGroup := &Group{
+		ID:        1,
+		Name:      "existing-group",
+		Platform:  PlatformAnthropic,
+		Status:    StatusActive,
+		CostRatio: &existingCostRatio,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.NotNil(t, repo.updated.CostRatio)
+	require.InDelta(t, existingCostRatio, *repo.updated.CostRatio, 1e-12)
+}
+
+func TestAdminService_UpdateGroup_AcceptsZeroCostRatio(t *testing.T) {
+	existingCostRatio := 0.28
+	existingGroup := &Group{
+		ID:        1,
+		Name:      "existing-group",
+		Platform:  PlatformAnthropic,
+		Status:    StatusActive,
+		CostRatio: &existingCostRatio,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	zero := 0.0
+	group, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
+		CostRatio: &zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.NotNil(t, repo.updated.CostRatio)
+	require.Zero(t, *repo.updated.CostRatio)
+}
+
 func TestAdminService_UpdateGroup_WithVideoPricing(t *testing.T) {
 	existingGroup := &Group{
 		ID:       1,

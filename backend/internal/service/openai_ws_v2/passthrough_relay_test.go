@@ -183,7 +183,7 @@ func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	require.Equal(t, 7, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.FirstTokenMs)
 	require.Equal(t, int64(1), result.ClientToUpstreamFrames)
 	require.Equal(t, int64(1), result.UpstreamToClientFrames)
 	require.Equal(t, int64(0), result.DroppedDownstreamFrames)
@@ -197,6 +197,46 @@ func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	require.Len(t, clientWrites, 1)
 	require.Equal(t, coderws.MessageText, clientWrites[0].msgType)
 	require.JSONEq(t, `{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":7,"output_tokens":3,"input_tokens_details":{"cached_tokens":2}}}}`, string(clientWrites[0].payload))
+}
+
+func TestRelay_TerminalOnlyDoesNotSetFirstToken(t *testing.T) {
+	t.Parallel()
+
+	for _, eventType := range []string{
+		"response.completed",
+		"response.done",
+		"response.failed",
+		"response.incomplete",
+		"response.cancelled",
+		"response.canceled",
+	} {
+		eventType := eventType
+		t.Run(eventType, func(t *testing.T) {
+			clientConn := newPassthroughTestFrameConn(nil, false)
+			upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+				{
+					msgType: coderws.MessageText,
+					payload: []byte(`{"type":"` + eventType + `","response":{"id":"resp_terminal_only","usage":{"input_tokens":2,"output_tokens":0}}}`),
+				},
+			}, true)
+
+			firstPayload := []byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			var turn RelayTurnResult
+			result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{
+				OnTurnComplete: func(current RelayTurnResult) {
+					turn = current
+				},
+			})
+			require.Nil(t, relayExit)
+			require.Equal(t, eventType, result.TerminalEventType)
+			require.Nil(t, result.FirstTokenMs)
+			require.Equal(t, eventType, turn.TerminalEventType)
+			require.Nil(t, turn.FirstTokenMs)
+		})
+	}
 }
 
 func TestRelay_FunctionCallOutputBytesPreserved(t *testing.T) {

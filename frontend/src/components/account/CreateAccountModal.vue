@@ -353,7 +353,7 @@
         </div>
       </div>
 
-      <!-- Account Type Selection (Grok - OAuth only) -->
+      <!-- Account Type Selection (Grok) -->
       <div v-if="form.platform === 'grok'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
@@ -382,10 +382,34 @@
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.grokOauth') }}</span>
             </div>
           </button>
+
+          <button
+            type="button"
+            data-testid="grok-account-type-api-key"
+            @click="accountCategory = 'apikey'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey'
+                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'apikey'
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
+            </div>
+          </button>
         </div>
-        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('admin.accounts.oauth.grok.oauthOnlyHint') }}
-        </p>
       </div>
 
       <!-- Account Type Selection (Gemini) -->
@@ -1088,10 +1112,12 @@
                 ? 'https://api.openai.com'
                 : form.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
-                  : 'https://api.anthropic.com'
+                  : form.platform === 'grok'
+                    ? 'https://api.x.ai/v1'
+                    : 'https://api.anthropic.com'
             "
           />
-          <p class="input-hint">{{ baseUrlHint }}</p>
+          <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
         </div>
         <div>
           <!-- Batch Mode Toggle -->
@@ -1101,6 +1127,7 @@
               <span class="text-xs text-gray-500 dark:text-gray-400">批量添加</span>
               <button
                 type="button"
+                data-testid="api-key-batch-mode-toggle"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
                 :class="[isBatchMode ? 'bg-primary-500' : 'bg-gray-200 dark:bg-dark-600']"
                 @click="isBatchMode = !isBatchMode"
@@ -1125,14 +1152,16 @@
                 ? 'sk-proj-...'
                 : form.platform === 'gemini'
                   ? 'AIza...'
-                  : 'sk-ant-...'
+                  : form.platform === 'grok'
+                    ? 'xai-...'
+                    : 'sk-ant-...'
             "
           />
-
           <!-- Batch Key Input -->
           <div v-if="isBatchMode">
             <textarea
               v-model="batchText"
+              data-testid="api-key-batch-input"
               rows="6"
               required
               class="input font-mono text-sm"
@@ -1167,7 +1196,9 @@
             </div>
           </div>
 
-          <p class="input-hint">{{ isBatchMode ? '批量粘贴名称与 Key，较长的字符串自动识别为 Key' : apiKeyHint }}</p>
+          <p v-if="isBatchMode || apiKeyHint" class="input-hint">
+            {{ isBatchMode ? '批量粘贴名称与 Key，较长的字符串自动识别为 Key' : apiKeyHint }}
+          </p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -1542,6 +1573,7 @@
             </div>
             <button
               type="button"
+              data-testid="header-override-toggle"
               @click="headerOverrideEnabled = !headerOverrideEnabled"
               :class="[
                 'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -1573,12 +1605,14 @@
               >
                 <input
                   v-model="row.name"
+                  :data-testid="`header-override-name-${index}`"
                   type="text"
                   class="input flex-1"
                   :placeholder="t('admin.accounts.headerOverride.namePlaceholder')"
                 />
                 <input
                   v-model="row.value"
+                  :data-testid="`header-override-value-${index}`"
                   type="text"
                   class="input flex-1"
                   :placeholder="t('admin.accounts.headerOverride.valuePlaceholder')"
@@ -1602,6 +1636,7 @@
 
             <button
               type="button"
+              data-testid="header-override-add-row"
               @click="addHeaderOverrideRow"
               class="w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
             >
@@ -2143,6 +2178,7 @@
           </div>
           <button
             type="button"
+            data-testid="temp-unsched-toggle"
             @click="tempUnschedEnabled = !tempUnschedEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -3599,14 +3635,14 @@ const oauthStepTitle = computed(() => {
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
-  if (form.platform === 'grok') return t('admin.accounts.grok.baseUrlHint')
+  if (form.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
-  if (form.platform === 'grok') return t('admin.accounts.grok.apiKeyHint')
+  if (form.platform === 'grok') return ''
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -3802,6 +3838,21 @@ const fillHeaderOverrideTemplate = () => {
     }
   }
   headerOverrideRows.value = rows
+}
+
+const applyHeaderOverrideConfig = (credentials: Record<string, unknown>) => {
+  if (!isHeaderOverridePlatform(form.platform)) {
+    return true
+  }
+  if (headerOverrideEnabled.value) {
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    if (headerError) {
+      appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
+      return false
+    }
+  }
+  applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
+  return true
 }
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
@@ -5133,7 +5184,9 @@ const handleSubmit = async () => {
         ? 'https://api.openai.com'
         : form.platform === 'gemini'
           ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
+          : form.platform === 'grok'
+            ? 'https://api.x.ai/v1'
+            : 'https://api.anthropic.com'
 
     const baseCredentials: Record<string, unknown> = {
       base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
@@ -5166,8 +5219,13 @@ const handleSubmit = async () => {
       baseCredentials.custom_error_codes_enabled = true
       baseCredentials.custom_error_codes = [...selectedErrorCodes.value]
     }
+    if (!applyHeaderOverrideConfig(baseCredentials)) {
+      return
+    }
     applyInterceptWarmup(baseCredentials, interceptWarmupRequests.value, 'create')
-    applyTempUnschedConfig(baseCredentials)
+    if (!applyTempUnschedConfig(baseCredentials)) {
+      return
+    }
 
     const extra = buildAnthropicExtra(buildOpenAIExtra())
 
@@ -5222,7 +5280,9 @@ const handleSubmit = async () => {
       ? 'https://api.openai.com'
       : form.platform === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+        : form.platform === 'grok'
+          ? 'https://api.x.ai/v1'
+          : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -5265,15 +5325,8 @@ const handleSubmit = async () => {
   }
 
   // Add header override if enabled (anthropic/openai apikey only)
-  if (isHeaderOverridePlatform(form.platform)) {
-    if (headerOverrideEnabled.value) {
-      const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
-      if (headerError) {
-        appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
-        return
-      }
-    }
-    applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
+  if (!applyHeaderOverrideConfig(credentials)) {
+    return
   }
 
   applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')

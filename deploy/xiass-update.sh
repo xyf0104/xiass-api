@@ -11,6 +11,8 @@ LOCK_DIR="/tmp/nowind-maintenance.lock"
 COMPOSE=()
 COMPOSE_ARGS=()
 PREVIOUS_REF=""
+PREVIOUS_IMAGE_ID=""
+PREVIOUS_IMAGE_REF=""
 UPDATE_STARTED=false
 UPDATE_SUCCEEDED=false
 LOCK_HELD=false
@@ -42,6 +44,28 @@ compose() {
     "${COMPOSE[@]}" "${COMPOSE_ARGS[@]}" "$@"
 }
 
+capture_previous_image() {
+    local image_snapshot
+    PREVIOUS_IMAGE_ID=""
+    PREVIOUS_IMAGE_REF=""
+
+    if ! image_snapshot=$(docker inspect --type container \
+        --format '{{.Image}} {{.Config.Image}}' nowind-api 2>/dev/null); then
+        log "未能记录当前应用镜像；更新失败时将使用原有 Git/Compose 恢复流程。"
+        return 0
+    fi
+
+    read -r PREVIOUS_IMAGE_ID PREVIOUS_IMAGE_REF <<< "$image_snapshot"
+    if [ -z "$PREVIOUS_IMAGE_ID" ] || [ -z "$PREVIOUS_IMAGE_REF" ]; then
+        PREVIOUS_IMAGE_ID=""
+        PREVIOUS_IMAGE_REF=""
+        log "当前应用镜像信息不完整；更新失败时将使用原有 Git/Compose 恢复流程。"
+        return 0
+    fi
+
+    log "已记录当前应用镜像用于失败回滚：$PREVIOUS_IMAGE_REF"
+}
+
 wait_for_health() {
     local port attempt
     port=$(read_env_value SERVER_PORT)
@@ -56,6 +80,8 @@ wait_for_health() {
 }
 
 rollback_update() {
+    local image_tag_restored=false
+    local rollback_started=false
     set +e
     log "更新失败，正在恢复原 Git 状态和旧容器栈..."
 
@@ -65,12 +91,32 @@ rollback_update() {
     fi
 
     if ! git -C "$INSTALL_DIR" reset --hard "$PREVIOUS_REF" >/dev/null 2>&1; then
-        log "无法自动恢复 Git 到 $PREVIOUS_REF；更新前完整备份仍位于 $BACKUP_DIR。"
+        log "无法自动恢复 Git 到 ${PREVIOUS_REF}；更新前完整备份仍位于 ${BACKUP_DIR}。"
         return
     fi
 
     init_compose
-    if compose up -d >/dev/null 2>&1; then
+    if [ -z "$PREVIOUS_IMAGE_ID" ] || [ -z "$PREVIOUS_IMAGE_REF" ]; then
+        log "更新前镜像快照不可用，将按原 compose 配置尝试恢复。"
+    elif docker image tag "$PREVIOUS_IMAGE_ID" "$PREVIOUS_IMAGE_REF" >/dev/null 2>&1; then
+        image_tag_restored=true
+        log "旧应用镜像已重新标记为 ${PREVIOUS_IMAGE_REF}。"
+    else
+        log "无法重新标记旧应用镜像，将按原 compose 配置尝试恢复。"
+    fi
+
+    if "$image_tag_restored"; then
+        if compose up -d --no-build >/dev/null 2>&1; then
+            rollback_started=true
+        else
+            log "使用旧应用镜像启动失败，将按原 compose 配置再次尝试恢复。"
+        fi
+    fi
+    if ! "$rollback_started" && compose up -d >/dev/null 2>&1; then
+        rollback_started=true
+    fi
+
+    if "$rollback_started"; then
         if wait_for_health; then
             log "旧版本容器栈已恢复。"
         else
@@ -123,6 +169,7 @@ main() {
     log "同步最新部署文件..."
     git -C "$INSTALL_DIR" fetch --prune origin main
     init_compose
+    capture_previous_image
 
     log "停止当前容器栈以迁移运行时名称（不会删除卷或数据）..."
     UPDATE_STARTED=true
@@ -143,7 +190,7 @@ main() {
     if ! wait_for_health; then
         compose ps || true
         compose logs --tail 160 nowind-api || true
-        die "更新后健康检查失败。数据没有删除，更新前备份位于 $BACKUP_DIR，可使用 xiass-restore.sh 恢复。"
+        die "更新后健康检查失败。数据没有删除，更新前备份位于 ${BACKUP_DIR}，可使用 xiass-restore.sh 恢复。"
     fi
 
     UPDATE_SUCCEEDED=true

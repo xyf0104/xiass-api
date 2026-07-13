@@ -80,6 +80,8 @@ const (
 	FieldVideoPrice720p = "video_price_720p"
 	// FieldVideoPrice1080p holds the string denoting the video_price_1080p field in the database.
 	FieldVideoPrice1080p = "video_price_1080p"
+	// FieldWebSearchPricePerCall holds the string denoting the web_search_price_per_call field in the database.
+	FieldWebSearchPricePerCall = "web_search_price_per_call"
 	// FieldClaudeCodeOnly holds the string denoting the claude_code_only field in the database.
 	FieldClaudeCodeOnly = "claude_code_only"
 	// FieldFallbackGroupID holds the string denoting the fallback_group_id field in the database.
@@ -219,6 +221,7 @@ var Columns = []string{
 	FieldVideoPrice480p,
 	FieldVideoPrice720p,
 	FieldVideoPrice1080p,
+	FieldWebSearchPricePerCall,
 	FieldClaudeCodeOnly,
 	FieldFallbackGroupID,
 	FieldFallbackGroupIDOnInvalidRequest,
@@ -514,6 +517,11 @@ func ByVideoPrice1080p(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldVideoPrice1080p, opts...).ToFunc()
 }
 
+// ByWebSearchPricePerCall orders the results by the web_search_price_per_call field.
+func ByWebSearchPricePerCall(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWebSearchPricePerCall, opts...).ToFunc()
+}
+
 // ByClaudeCodeOnly orders the results by the claude_code_only field.
 func ByClaudeCodeOnly(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldClaudeCodeOnly, opts...).ToFunc()
@@ -567,6 +575,11 @@ func ByDefaultMappedModel(opts ...sql.OrderTermOption) OrderOption {
 // ByRpmLimit orders the results by the rpm_limit field.
 func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
+}
+
+// ByCostRatio orders the results by the cost_ratio field.
+func ByCostRatio(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCostRatio, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

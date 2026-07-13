@@ -241,6 +241,55 @@ describe('ImportDataModal', () => {
     })
   })
 
+  it('在线批量导入可选择 Grok / xAI 并提交 grok 平台', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
+      proxy_created: 0,
+      proxy_reused: 0,
+      proxy_failed: 0,
+      account_created: 1,
+      account_failed: 0
+    })
+
+    const wrapper = mountModal()
+    const onlineTab = wrapper
+      .findAll('button')
+      .find((button) => button.text() === '在线批量导入')
+    expect(onlineTab).toBeDefined()
+    await onlineTab!.trigger('click')
+
+    const form = wrapper.find('#import-online-form')
+    const platformSelect = form.findAll('select')[0]!
+    const grokOption = platformSelect.find('option[value="grok"]')
+    expect(grokOption.exists()).toBe(true)
+    expect(grokOption.text()).toBe('Grok / xAI')
+
+    await platformSelect.setValue('grok')
+    await form.find('input[list="base-url-history"]').setValue('https://api.x.ai/v1')
+    await form.find('textarea').setValue('Grok Batch xai-batch-account-key-123456')
+    await form.find('button.btn-secondary').trigger('click')
+    await form.trigger('submit')
+    await flushPromises()
+
+    expect(adminAPI.accounts.importData).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accounts: [
+          expect.objectContaining({
+            name: 'Grok Batch',
+            platform: 'grok',
+            type: 'apikey',
+            credentials: {
+              api_key: 'xai-batch-account-key-123456',
+              base_url: 'https://api.x.ai/v1'
+            }
+          })
+        ]
+      }),
+      skip_default_group_bind: true
+    })
+    wrapper.unmount()
+  })
+
   it('部分成功时关闭弹窗仍通知父组件刷新', async () => {
     const { adminAPI } = await import('@/api/admin')
     vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
