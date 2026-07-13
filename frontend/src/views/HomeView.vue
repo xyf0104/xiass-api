@@ -17,6 +17,8 @@
     v-else
     class="relative flex min-h-screen flex-col overflow-hidden bg-slate-50 text-gray-800 dark:bg-[#0a0e1a] dark:text-gray-200 transition-colors duration-300"
   >
+    <DarkVideoBackground />
+
     <!-- 科技感自适应粒子背景：粒子 Canvas + 光球 -->
     <canvas ref="homeCanvasRef" class="pointer-events-none absolute inset-0 h-full w-full"></canvas>
     <div class="pointer-events-none absolute inset-0 overflow-hidden">
@@ -28,7 +30,7 @@
 
     <!-- Header -->
     <header class="relative z-20 px-6 py-4">
-      <nav class="mx-auto flex max-w-6xl items-center justify-between">
+      <nav class="mx-auto flex max-w-[1480px] items-center justify-between">
         <!-- Brand: 纯文字标识（不使用 logo 图片） -->
         <div class="flex items-center">
           <span class="text-lg font-bold tracking-tight text-gray-900 dark:text-white">
@@ -110,28 +112,35 @@
 
     <!-- Main Content -->
     <main class="relative z-10 flex-1 px-6 py-16">
-      <div id="top" class="mx-auto max-w-6xl">
-        <!-- Hero Section - Left/Right Layout -->
-        <div class="mb-12 flex flex-col items-center justify-between gap-12 lg:flex-row lg:gap-16">
-          <!-- Left: Text Content -->
-          <div class="flex-1 text-center lg:text-left">
+      <div id="top" class="mx-auto max-w-[1480px]">
+        <!-- Hero Section - Centered Layout -->
+        <section
+          class="mb-12 flex min-h-[calc(100svh-16rem)] flex-col items-center justify-center py-8 text-center md:py-12"
+        >
+          <div class="flex w-full max-w-[960px] flex-col items-center">
             <span
-              class="mb-6 inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-3.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-primary-700 dark:border-primary-800/60 dark:bg-primary-900/20 dark:text-primary-300"
+              class="mb-6 inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-3.5 py-1 text-xs font-semibold uppercase tracking-normal text-primary-700 dark:border-primary-800/60 dark:bg-primary-900/20 dark:text-primary-300"
             >
               The Universal AI Gateway
             </span>
             <h1
-              class="mb-7 text-5xl font-black leading-none tracking-tight text-gray-900 dark:text-white md:text-6xl lg:text-[4.25rem]"
+              class="max-w-full break-words text-5xl font-black leading-none tracking-normal text-gray-900 dark:text-white dark:[text-shadow:0_4px_28px_rgba(0,0,0,0.68)] md:text-6xl lg:text-7xl"
             >
-              <span class="block">连接全球顶级</span>
-              <span class="mt-5 block text-primary-500 dark:text-primary-400">AI 大模型</span>
+              {{ siteName }}
             </h1>
-            <p class="mb-9 max-w-xl text-base leading-[1.9] text-gray-600 dark:text-dark-300 md:text-[1.0625rem]">
+            <p
+              class="mt-5 text-xl font-semibold text-primary-600 dark:text-primary-300 dark:[text-shadow:0_3px_22px_rgba(0,0,0,0.68)] md:text-2xl"
+            >
+              连接全球顶级 AI 大模型
+            </p>
+            <p
+              class="mt-5 max-w-3xl text-base leading-[1.9] text-gray-600 dark:text-gray-200 dark:[text-shadow:0_2px_18px_rgba(0,0,0,0.72)] md:text-[1.0625rem]"
+            >
               为开发者与团队而生 —— 高速直连、稳定可靠、余额永不过期。支持支付宝 / 微信支付，低延迟调用 Claude、ChatGPT、Gemini 等主流模型。
             </p>
 
             <!-- CTA Buttons -->
-            <div class="flex flex-col items-center gap-3 sm:flex-row lg:items-start">
+            <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <router-link
                 :to="isAuthenticated ? dashboardPath : '/login'"
                 class="btn btn-primary px-8 py-3 text-base shadow-lg shadow-primary-500/30"
@@ -141,100 +150,36 @@
               </router-link>
               <a href="#pricing" class="btn btn-secondary px-8 py-3 text-base">查看价格</a>
             </div>
-          </div>
 
-          <!-- Right: Model Constellation -->
-          <div class="flex flex-1 justify-center lg:justify-end">
-            <div class="relative h-80 w-80">
-              <!-- connecting lines (center → model nodes) -->
-              <svg
-                class="pointer-events-none absolute inset-0 h-full w-full text-primary-400/40 dark:text-primary-500/35"
-                viewBox="0 0 320 320"
-                fill="none"
-              >
-                <g stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 5">
-                  <line x1="160" y1="160" x2="48" y2="48" />
-                  <line x1="160" y1="160" x2="272" y2="48" />
-                  <line x1="160" y1="160" x2="48" y2="272" />
-                  <line x1="160" y1="160" x2="272" y2="272" />
-                </g>
-              </svg>
-              <!-- orbit rings -->
-              <div class="absolute inset-0 rounded-full border border-dashed border-primary-400/30 dark:border-primary-600/30"></div>
-              <div class="absolute inset-10 rounded-full border border-dashed border-primary-400/20 dark:border-primary-600/20"></div>
-              <!-- center node (gateway) -->
+            <!-- Feature Tags -->
+            <div class="mt-9 flex flex-wrap items-center justify-center gap-4 md:gap-6">
               <div
-                class="absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 animate-glow items-center justify-center rounded-3xl bg-gradient-to-br from-primary-400 to-primary-600 shadow-xl shadow-primary-500/40"
+                class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/70"
               >
-                <Icon name="swap" size="lg" class="text-white" />
+                <Icon name="swap" size="sm" class="text-primary-500" />
+                <span class="text-sm font-medium text-gray-700 dark:text-dark-100">{{
+                  t('home.tags.subscriptionToApi')
+                }}</span>
               </div>
-              <!-- Claude (top-left) -->
-              <div class="absolute left-[15%] top-[15%] -translate-x-1/2 -translate-y-1/2">
-                <div class="flex animate-float flex-col items-center">
-                  <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-lg ring-1 ring-primary-100 dark:bg-dark-800 dark:ring-dark-700">
-                    <BrandIcon name="claude" class="h-7 w-7 text-[#D97757]" />
-                  </div>
-                  <span class="mt-1.5 text-xs font-medium text-gray-500 dark:text-dark-400">Claude</span>
-                </div>
+              <div
+                class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/70"
+              >
+                <Icon name="shield" size="sm" class="text-primary-500" />
+                <span class="text-sm font-medium text-gray-700 dark:text-dark-100">{{
+                  t('home.tags.stickySession')
+                }}</span>
               </div>
-              <!-- All Models (top-right) -->
-              <div class="absolute right-[15%] top-[15%] translate-x-1/2 -translate-y-1/2">
-                <div class="flex animate-float flex-col items-center [animation-delay:0.8s]">
-                  <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-lg ring-1 ring-primary-100 dark:bg-dark-800 dark:ring-dark-700">
-                    <Icon name="sparkles" size="md" class="text-primary-500" />
-                  </div>
-                  <span class="mt-1.5 text-xs font-medium text-gray-500 dark:text-dark-400">All Models</span>
-                </div>
-              </div>
-              <!-- ChatGPT (bottom-left) -->
-              <div class="absolute bottom-[15%] left-[15%] -translate-x-1/2 translate-y-1/2">
-                <div class="flex animate-float flex-col items-center [animation-delay:1.6s]">
-                  <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-lg ring-1 ring-primary-100 dark:bg-dark-800 dark:ring-dark-700">
-                    <BrandIcon name="openai" class="h-7 w-7 text-gray-900 dark:text-white" />
-                  </div>
-                  <span class="mt-1.5 text-xs font-medium text-gray-500 dark:text-dark-400">ChatGPT</span>
-                </div>
-              </div>
-              <!-- Gemini (bottom-right) -->
-              <div class="absolute bottom-[15%] right-[15%] translate-x-1/2 translate-y-1/2">
-                <div class="flex animate-float flex-col items-center [animation-delay:2.4s]">
-                  <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-lg ring-1 ring-primary-100 dark:bg-dark-800 dark:ring-dark-700">
-                    <BrandIcon name="gemini" class="h-7 w-7 text-[#4285F4]" />
-                  </div>
-                  <span class="mt-1.5 text-xs font-medium text-gray-500 dark:text-dark-400">Gemini</span>
-                </div>
+              <div
+                class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/70"
+              >
+                <Icon name="chart" size="sm" class="text-primary-500" />
+                <span class="text-sm font-medium text-gray-700 dark:text-dark-100">{{
+                  t('home.tags.realtimeBilling')
+                }}</span>
               </div>
             </div>
           </div>
-        </div>
-
-        <!-- Feature Tags - Centered -->
-        <div class="mb-12 flex flex-wrap items-center justify-center gap-4 md:gap-6">
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="swap" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.subscriptionToApi')
-            }}</span>
-          </div>
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="shield" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.stickySession')
-            }}</span>
-          </div>
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="chart" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.realtimeBilling')
-            }}</span>
-          </div>
-        </div>
+        </section>
 
         <!-- Features Grid -->
         <div class="mb-12 grid gap-6 md:grid-cols-3">
@@ -404,7 +349,7 @@
       </div>
 
       <!-- ===== 定价方案 ===== -->
-      <section id="pricing" class="mx-auto mt-8 max-w-6xl scroll-mt-24">
+      <section id="pricing" class="mx-auto mt-8 max-w-[1480px] scroll-mt-24">
         <div class="mb-10 text-center">
           <h2 class="mb-3 text-3xl font-bold text-gray-900 dark:text-white">按量付费，按需使用</h2>
           <p class="text-sm text-gray-600 dark:text-dark-400">
@@ -450,7 +395,7 @@
       </section>
 
       <!-- ===== 使用价值 ===== -->
-      <section class="mx-auto mt-20 max-w-6xl">
+      <section class="mx-auto mt-20 max-w-[1480px]">
         <div class="mb-10 text-center">
           <h2 class="mb-3 text-3xl font-bold text-gray-900 dark:text-white">释放你的编程潜能</h2>
           <p class="text-sm text-gray-600 dark:text-dark-400">稳定、专业的 AI API 基础设施</p>
@@ -520,7 +465,7 @@
     <!-- Footer -->
     <footer class="relative z-10 border-t border-gray-200/50 px-6 py-8 dark:border-dark-800/50">
       <div
-        class="mx-auto flex max-w-6xl flex-col items-center justify-center gap-4 text-center sm:flex-row sm:text-left"
+        class="mx-auto flex max-w-[1480px] flex-col items-center justify-center gap-4 text-center sm:flex-row sm:text-left"
       >
         <p class="text-sm text-gray-500 dark:text-dark-400">
           &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
@@ -555,6 +500,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 

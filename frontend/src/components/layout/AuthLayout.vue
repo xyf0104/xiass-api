@@ -1,5 +1,7 @@
 <template>
   <div class="min-h-screen grid lg:grid-cols-2 bg-[#050B14] text-white relative overflow-hidden">
+    <DarkVideoBackground always />
+
     <!-- Canvas for particle background -->
     <canvas ref="canvasRef" class="absolute inset-0 w-full h-full pointer-events-none z-0"></canvas>
 
@@ -38,6 +40,7 @@
  */
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
+import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import AuthCharacters from '@/components/auth/AuthCharacters.vue'
 
 const appStore = useAppStore()

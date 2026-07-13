@@ -113,7 +113,7 @@ func TestInjectSiteTitle(t *testing.T) {
 }
 
 func TestInjectSiteBranding(t *testing.T) {
-	baseHTML := []byte(`<html><head><link rel="icon" type="image/png" href="/favicon.png?v=1.0.66"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.66"><title>NoWind API</title></head><body></body></html>`)
+	baseHTML := []byte(`<html><head><link rel="icon" type="image/png" href="/favicon.png?v=1.0.67"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.67"><title>NoWind API</title></head><body></body></html>`)
 
 	t.Run("injects_title_and_escaped_logo_into_both_icon_links", func(t *testing.T) {
 		settingsJSON, err := json.Marshal(siteBrandingConfig{
@@ -133,15 +133,15 @@ func TestInjectSiteBranding(t *testing.T) {
 	t.Run("keeps_versioned_defaults_when_logo_is_empty", func(t *testing.T) {
 		result := injectSiteBranding(baseHTML, []byte(`{"site_name":"Custom","site_logo":""}`))
 
-		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.66"`)
-		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.66"`)
+		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.67"`)
+		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.67"`)
 	})
 
 	t.Run("keeps_versioned_defaults_when_logo_is_unsafe", func(t *testing.T) {
 		result := injectSiteBranding(baseHTML, []byte(`{"site_logo":"javascript:alert(1)"}`))
 
-		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.66"`)
-		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.66"`)
+		assert.Contains(t, string(result), `href="/favicon.png?v=1.0.67"`)
+		assert.Contains(t, string(result), `href="/apple-touch-icon.png?v=1.0.67"`)
 		assert.NotContains(t, string(result), "javascript:")
 	})
 
@@ -315,7 +315,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 		provider := &mockSettingsProvider{settings: map[string]string{"key": "value"}}
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
-		server.baseHTML = []byte(`<html><head><link rel="icon" href="/favicon.png?v=1.0.66"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.66"><title>NoWind API</title></head><body><div id="app"></div></body></html>`)
+		server.baseHTML = []byte(`<html><head><link rel="icon" href="/favicon.png?v=1.0.67"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.67"><title>NoWind API</title></head><body><div id="app"></div></body></html>`)
 
 		settingsJSON := []byte(`{"site_name":"Custom Site","site_logo":"/branding/custom.png"}`)
 		result := server.injectSettings(settingsJSON)

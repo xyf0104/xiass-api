@@ -10,8 +10,8 @@ import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, 
 import { getSetupStatus } from '@/api/setup'
 import { sanitizeUrl } from '@/utils/url'
 
-const DEFAULT_FAVICON_URL = '/favicon.png?v=1.0.66'
-const DEFAULT_APPLE_TOUCH_ICON_URL = '/apple-touch-icon.png?v=1.0.66'
+const DEFAULT_FAVICON_URL = '/favicon.png?v=1.0.67'
+const DEFAULT_APPLE_TOUCH_ICON_URL = '/apple-touch-icon.png?v=1.0.67'
 
 const router = useRouter()
 const route = useRoute()

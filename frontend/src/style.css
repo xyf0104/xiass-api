@@ -763,3 +763,97 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ============ NoWind 控制台深色透明层 ============ */
+.dark body:has(.app-layout) {
+  --nowind-console-surface: rgb(6 18 32 / 0.28);
+  --nowind-console-surface-deep: rgb(3 14 25 / 0.22);
+  --nowind-console-surface-raised: rgb(8 21 38 / 0.48);
+  --nowind-console-border: rgb(255 255 255 / 0.13);
+}
+
+/* 覆盖各页面直接使用的深色背景工具类，仅在控制台存在时生效。 */
+.dark body:has(.app-layout) [class*='dark:bg-dark-700'] {
+  background-color: rgb(61 76 98 / 0.34) !important;
+}
+
+.dark body:has(.app-layout) [class*='dark:bg-dark-800'] {
+  background-color: var(--nowind-console-surface) !important;
+}
+
+.dark body:has(.app-layout) [class*='dark:bg-dark-900'],
+.dark body:has(.app-layout) [class*='dark:bg-dark-950'] {
+  background-color: var(--nowind-console-surface-deep) !important;
+}
+
+.dark .app-header {
+  border-color: rgb(255 255 255 / 0.12) !important;
+  background-color: rgb(3 11 20 / 0.12) !important;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.12);
+  backdrop-filter: blur(28px) saturate(140%) brightness(1.18) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(140%) brightness(1.18) !important;
+}
+
+.dark .sidebar {
+  border-color: rgb(255 255 255 / 0.14);
+  background-color: rgb(3 11 20 / 0.12);
+  box-shadow:
+    10px 0 32px rgb(0 0 0 / 0.18),
+    inset -1px 0 rgb(255 255 255 / 0.05);
+  backdrop-filter: blur(32px) saturate(140%) brightness(1.18);
+  -webkit-backdrop-filter: blur(32px) saturate(140%) brightness(1.18);
+}
+
+.dark body:has(.app-layout) :is(
+    .card,
+    .glass-card,
+    .card-glass,
+    .table-container,
+    .table-scroll-container
+  ) {
+  border-color: var(--nowind-console-border) !important;
+  background-color: var(--nowind-console-surface) !important;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 0.12);
+  backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
+  -webkit-backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
+}
+
+.dark body:has(.app-layout) :is(.input, .select-trigger, .btn-secondary, .tabs) {
+  border-color: var(--nowind-console-border) !important;
+  background-color: rgb(12 27 45 / 0.34) !important;
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+}
+
+.dark body:has(.app-layout) :is(.table th, .table-scroll-container thead) {
+  background-color: rgb(12 27 45 / 0.2) !important;
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+}
+
+.dark body:has(.app-layout) :is(.modal-overlay, .dialog-overlay) {
+  background-color: rgb(0 4 10 / 0.3) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dark body:has(.app-layout) :is(.modal-content, .dialog-container) {
+  border-color: rgb(255 255 255 / 0.16) !important;
+  background-color: var(--nowind-console-surface-raised) !important;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.38);
+  backdrop-filter: blur(30px) saturate(135%) brightness(1.08);
+  -webkit-backdrop-filter: blur(30px) saturate(135%) brightness(1.08);
+}
+
+.dark body:has(.app-layout) :is(
+    .dropdown,
+    .select-dropdown-portal,
+    .action-menu-content,
+    .toast
+  ) {
+  border-color: rgb(255 255 255 / 0.16) !important;
+  background-color: rgb(8 21 38 / 0.56) !important;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
+  backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
+  -webkit-backdrop-filter: blur(24px) saturate(135%) brightness(1.08);
+}

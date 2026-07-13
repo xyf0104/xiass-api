@@ -1,5 +1,7 @@
 <template>
   <div class="app-layout min-h-screen bg-slate-50 text-gray-800 dark:bg-[#0c1021] dark:text-gray-200 transition-colors duration-300">
+    <DarkVideoBackground blurred />
+
     <!-- 科技感粒子动画背景 -->
     <canvas ref="appCanvasRef" class="pointer-events-none fixed inset-0 h-full w-full"></canvas>
     <div class="pointer-events-none fixed inset-0">
@@ -34,6 +36,7 @@ import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
+import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 
