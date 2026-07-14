@@ -493,12 +493,14 @@ def check_update_bridge(errors: list[str]) -> None:
     update_script = read("deploy/xiass-update.sh")
     main_body = update_script.partition("main() {")[2]
     ordered_markers = [
+        "ensure_xiass_update_remote",
+        'git -C "$INSTALL_DIR" fetch --prune "$UPDATE_REMOTE" main',
+        'UPDATE_REF=$(git -C "$INSTALL_DIR" rev-parse "$UPDATE_REMOTE/main")',
         'xiass-backup.sh',
-        'git -C "$INSTALL_DIR" fetch --prune origin main',
         "capture_previous_image",
         "UPDATE_STARTED=true",
         "compose down",
-        'git -C "$INSTALL_DIR" reset --hard origin/main',
+        'git -C "$INSTALL_DIR" reset --hard "$UPDATE_REF"',
     ]
     positions = [main_body.find(marker) for marker in ordered_markers]
     if any(position < 0 for position in positions) or positions != sorted(positions):
@@ -525,6 +527,11 @@ def check_update_bridge(errors: list[str]) -> None:
             "com.docker.compose.project.config_files",
             "docker inspect --type container",
             "PERSISTENCE_MODE",
+            'CANONICAL_UPSTREAM_REMOTE="xiass-upstream"',
+            'UPDATE_REF=""',
+            "ensure_xiass_update_remote()",
+            "remove_created_update_remote()",
+            'remote add "$CANONICAL_UPSTREAM_REMOTE" "$CANONICAL_UPSTREAM_URL"',
         ],
         errors,
     )

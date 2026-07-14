@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh |
 
 新安装默认目录为 `/opt/xiass-api`，默认使用 `docker-compose.local.yml`，所有运行数据都保存在 `deploy` 下的本地目录，方便备份和迁移。
 
-安装/更新脚本会先探测 `/opt/xiass-api`、`/opt/nowind-api`、`/opt/sub2api` 和运行中的 `xiass-api`、`nowind-api`、`sub2api` 容器。`XIASS_*` 是新配置主变量，已有 `NOWIND_*` 继续作为 fallback。升级会按 PostgreSQL 的实际 mount 选择本地目录或命名卷 Compose，且从不使用 `down -v`。
+安装/更新脚本会先探测 `/opt/xiass-api`、`/opt/nowind-api`、`/opt/sub2api` 和运行中的 `xiass-api`、`nowind-api`、`sub2api` 容器。`XIASS_*` 是新配置主变量，已有 `NOWIND_*` 继续作为 fallback。升级会按 PostgreSQL 的实际 mount 选择本地目录或命名卷 Compose，且从不使用 `down -v`。识别到官方旧 NoWind Git 来源时，更新脚本会保留 `origin`，增加 `xiass-upstream` 获取正式 XIASS 更新；未知 fork 会在任何停机前退出。
 
 不要把历史 `docker-compose.nowind.yml` 与 canonical Compose 文件手工混合。它不是跨版本迁移入口；旧 `nowind-api`/`sub2api` 栈必须通过 `xiass-update.sh` 或 `xiass-install.sh` 迁移，脚本会冻结运行中容器记录的 Compose 文件并保留原布局用于失败回滚。
 
@@ -73,6 +73,12 @@ docker compose down -v
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass-update.sh | sudo bash
+```
+
+若实例使用自定义 Git fork，脚本不会自动替换其来源。仅在确认要改用正式发布源时使用：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass-update.sh | sudo env XIASS_ALLOW_ORIGIN_MIGRATION=1 bash
 ```
 
 ## 备份

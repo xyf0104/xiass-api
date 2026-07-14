@@ -17,6 +17,15 @@ jobs:
       - name: Verify XIASS release contract
         run: python3 tools/check_release_contract.py
 
+  update-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify legacy origin migration
+        run: |
+          bash -n deploy/xiass-update.sh
+          tools/test_xiass_update_origin.sh
+
   test:
     runs-on: ubuntu-latest
     steps:
