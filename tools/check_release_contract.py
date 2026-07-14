@@ -115,7 +115,15 @@ def check_frontend_visible_branding(errors: list[str]) -> None:
     require_all(
         index_path,
         contents[index_path],
-        ["<title>XIASS API</title>", 'href="/favicon-dark.png'],
+        [
+            '<html lang="zh-CN" class="dark">',
+            '<meta name="color-scheme" content="dark light" />',
+            'nonce="__CSP_NONCE_VALUE__"',
+            "window.localStorage.getItem('theme')",
+            "root.classList.toggle('dark', theme === 'dark')",
+            "<title>XIASS API</title>",
+            'href="/favicon-dark.png',
+        ],
         errors,
     )
     require_all(

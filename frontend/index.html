@@ -1,7 +1,36 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark light" />
+    <script nonce="__CSP_NONCE_VALUE__">
+      (() => {
+        const root = document.documentElement
+        let theme = 'dark'
+
+        try {
+          if (window.localStorage.getItem('theme') === 'light') {
+            theme = 'light'
+          }
+        } catch {
+          // Storage can be unavailable in restricted browser contexts.
+        }
+
+        root.classList.toggle('dark', theme === 'dark')
+        root.style.colorScheme = theme
+      })()
+    </script>
+    <style nonce="__CSP_NONCE_VALUE__">
+      html,
+      body {
+        background-color: #020617;
+      }
+
+      html:not(.dark),
+      html:not(.dark) body {
+        background-color: #f9fafb;
+      }
+    </style>
     <link rel="icon" type="image/png" href="/favicon-dark.png?v=1.0.68" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.68" />
     <link rel="manifest" href="/site.webmanifest?v=1.0.68" />

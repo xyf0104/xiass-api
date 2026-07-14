@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.71-0ea5e9" alt="当前版本 v1.0.71" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.72-0ea5e9" alt="当前版本 v1.0.72" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,9 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.71
+> 当前版本：v1.0.72
 
-v1.0.71 在 XIASS API v1.0.70 二开基线上融合上游 v0.1.153：新增 Grok API Key/第三方地址/视频编辑与续作、OpenAI Fast/Flex 用户策略、Codex alpha/search 按次计费、Responses 工具桥和压缩链路增强，并修复远程压缩图片桥、最终 ServiceTier 计费及 WS 首字延迟。批量 API Key 创建现与单个创建一致地校验 Header Override 和临时停调规则，在线批量导入支持 Grok/xAI；成本倍率恢复同事务持久化，软路由返回正确的 `nowind-api` 重建命令，命令行更新失败时会优先用更新前镜像自动回滚。XIASS 品牌、动态双主题界面、人民币价格、模型清单、软路由 FRP、在线更新和备份恢复全部保留；升级只新增 `177`、`178` 迁移，不修改既有迁移和持久化目录。
+v1.0.72 修复深色主题页面刷新时短暂显示浅色界面的问题：在浏览器首次绘制前同步恢复已保存主题，并提供与主题匹配的初始画布颜色。首页、登录注册页、用户控制台和管理员后台共用同一首屏主题逻辑；不修改业务接口、数据库迁移、持久化目录、在线更新和软路由 FRP 功能。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

@@ -178,7 +178,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	if err != nil {
 		// Fallback: serve without injection
 		c.Header("Cache-Control", "no-cache")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", replaceNoncePlaceholder(s.baseHTML, nonce))
 		c.Abort()
 		return
 	}
@@ -187,7 +187,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	if err != nil {
 		// Fallback: serve without injection
 		c.Header("Cache-Control", "no-cache")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", replaceNoncePlaceholder(s.baseHTML, nonce))
 		c.Abort()
 		return
 	}

@@ -357,6 +357,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		// Nonce placeholder should be replaced
 		assert.NotContains(t, body, NonceHTMLPlaceholder)
 		assert.Contains(t, body, `nonce="`+testNonce+`"`)
+		assert.Contains(t, body, "window.localStorage.getItem('theme')")
 	})
 
 	t.Run("caches_html_content", func(t *testing.T) {
@@ -483,6 +484,9 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		// Should still return 200 with base HTML
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+		assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
+		assert.Contains(t, w.Body.String(), `nonce="nonce123"`)
+		assert.Contains(t, w.Body.String(), "window.localStorage.getItem('theme')")
 	})
 }
 
