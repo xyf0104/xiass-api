@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN" class="dark" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="color-scheme" content="dark light" />
@@ -17,18 +17,34 @@
         }
 
         root.classList.toggle('dark', theme === 'dark')
+        root.dataset.theme = theme
+        root.dataset.themeBooting = 'true'
         root.style.colorScheme = theme
       })()
     </script>
     <style nonce="__CSP_NONCE_VALUE__">
       html,
       body {
-        background-color: #020617;
+        background-color: #061720;
       }
 
-      html:not(.dark),
-      html:not(.dark) body {
-        background-color: #f9fafb;
+      html[data-theme='light'],
+      html[data-theme='light'] body {
+        background-color: #cdd8df;
+      }
+
+      /*
+       * Do not let the application paint between the synchronous HTML theme
+       * bootstrap and Vue mounting. This prevents a cached stylesheet or a
+       * late module from briefly rendering the opposite console theme.
+       */
+      html[data-theme-booting] #app {
+        visibility: hidden;
+      }
+
+      html[data-theme-booting],
+      html[data-theme-booting] * {
+        transition: none !important;
       }
     </style>
     <link rel="icon" type="image/png" href="/favicon-dark.png?v=1.0.68" />

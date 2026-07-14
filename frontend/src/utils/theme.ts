@@ -6,12 +6,29 @@ const TRANSITION_DURATION_MS = 520
 
 let transitionTimer: number | undefined
 
+function readBootstrapTheme(): AppTheme | null {
+  if (!document.documentElement.hasAttribute('data-theme-booting')) {
+    return null
+  }
+
+  const theme = document.documentElement.dataset.theme
+  return theme === 'light' || theme === 'dark' ? theme : null
+}
+
+function readPersistedTheme(): AppTheme | null {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return null
+  }
+}
+
 export function getCurrentTheme(): AppTheme {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
 export function getInitialTheme(): AppTheme {
-  return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'
+  return readBootstrapTheme() ?? readPersistedTheme() ?? 'dark'
 }
 
 export function applyTheme(
@@ -30,11 +47,28 @@ export function applyTheme(
   }
 
   root.classList.toggle('dark', theme === 'dark')
+  root.dataset.theme = theme
   root.style.colorScheme = theme
 
   if (persist) {
     localStorage.setItem(THEME_STORAGE_KEY, theme)
   }
+}
+
+export function releaseThemeBootstrapGuard(): void {
+  const root = document.documentElement
+  const reveal = () => {
+    delete root.dataset.themeBooting
+  }
+
+  // Wait until the mounted application has had two chances to paint using
+  // the same theme selected by the inline HTML bootstrap.
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(reveal))
+    return
+  }
+
+  window.setTimeout(reveal, 0)
 }
 
 export function toggleTheme(): AppTheme {

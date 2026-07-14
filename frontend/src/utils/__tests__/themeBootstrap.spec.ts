@@ -9,16 +9,20 @@ describe('pre-paint theme bootstrap', () => {
     const themeBootstrap = indexHTML.indexOf("window.localStorage.getItem('theme')")
     const applicationModule = indexHTML.indexOf('src="/src/main.ts"')
 
-    expect(indexHTML).toContain('<html lang="zh-CN" class="dark">')
+    expect(indexHTML).toContain('<html lang="zh-CN" class="dark" data-theme="dark">')
     expect(indexHTML).toContain('nonce="__CSP_NONCE_VALUE__"')
     expect(indexHTML).toContain("root.classList.toggle('dark', theme === 'dark')")
+    expect(indexHTML).toContain('root.dataset.theme = theme')
+    expect(indexHTML).toContain("root.dataset.themeBooting = 'true'")
     expect(themeBootstrap).toBeGreaterThan(-1)
     expect(applicationModule).toBeGreaterThan(themeBootstrap)
   })
 
-  it('provides matching dark and light canvas colors before CSS loads', () => {
-    expect(indexHTML).toContain('background-color: #020617')
-    expect(indexHTML).toContain('html:not(.dark)')
-    expect(indexHTML).toContain('background-color: #f9fafb')
+  it('keeps the application hidden until the bootstrapped theme has painted', () => {
+    expect(indexHTML).toContain('background-color: #061720')
+    expect(indexHTML).toContain("html[data-theme='light']")
+    expect(indexHTML).toContain('background-color: #cdd8df')
+    expect(indexHTML).toContain('html[data-theme-booting] #app')
+    expect(indexHTML).toContain('transition: none !important')
   })
 })
