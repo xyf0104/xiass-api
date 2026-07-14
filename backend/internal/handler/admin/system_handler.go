@@ -97,9 +97,10 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 		succeeded = true
 
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
-			"operation_id": lock.OperationID(),
+			"message":            "Update accepted. Waiting for container restart.",
+			"need_restart":       true,
+			"update_in_progress": true,
+			"operation_id":       lock.OperationID(),
 		}, nil
 	})
 }

@@ -247,6 +247,12 @@ import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { getCurrentTheme, toggleTheme as toggleAppTheme } from '@/utils/theme'
+import {
+  SERVICE_RECOVERY_RETRY_INTERVAL_MS,
+  SERVICE_RECOVERY_TIMEOUT_MS,
+  isExpectedServiceRestartError,
+  waitForServiceVersion
+} from '@/utils/serviceRecovery'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
@@ -1002,14 +1008,35 @@ function triggerUpdateConfirm() {
   showUpdateConfirm.value = true
 }
 
+async function waitForUpdatedContainer(targetVersion: string): Promise<boolean> {
+  return waitForServiceVersion({
+    targetVersion,
+    timeoutMs: SERVICE_RECOVERY_TIMEOUT_MS,
+    retryIntervalMs: SERVICE_RECOVERY_RETRY_INTERVAL_MS,
+    getVersion: async () => {
+      const { data } = await apiClient.get<{ version?: string }>('/admin/system/version', {
+        params: { update_probe: Date.now() },
+        timeout: 3000
+      })
+      return data?.version
+    }
+  })
+}
+
 async function performUpdate() {
+  if (isUpdating.value) return
+
   showUpdateConfirm.value = false
   isUpdating.value = true
+  const targetVersion = latestVersion.value
+
   try {
     await apiClient.post('/admin/system/update')
   } catch (err: any) {
-    // Watchtower restarts the container, causing network drops
-    if (err.code === 'ECONNABORTED' || err.message === 'Network Error' || !err.response) {
+    // Watchtower may stop this container before its HTTP response reaches the
+    // browser. A transient gateway response is not a failed update; readiness
+    // polling below confirms the target version before we refresh.
+    if (isExpectedServiceRestartError(err)) {
       console.log('Expected network drop during update')
     } else {
       appStore.showError(err?.response?.data?.message || '更新失败')
@@ -1017,11 +1044,22 @@ async function performUpdate() {
       return
     }
   }
-  
-  appStore.showSuccess('更新成功，正在刷新页面...')
-  setTimeout(() => {
-    window.location.reload()
-  }, 3000)
+
+  const progressToast = appStore.showInfo(
+    '更新任务已提交，正在等待新版本容器就绪，请勿刷新或关闭页面...',
+    SERVICE_RECOVERY_TIMEOUT_MS
+  )
+  const recovered = await waitForUpdatedContainer(targetVersion)
+  appStore.hideToast(progressToast)
+
+  if (!recovered) {
+    isUpdating.value = false
+    appStore.showWarning('新版服务尚未恢复，请稍后手动刷新页面；请勿重复点击更新。', 8000)
+    return
+  }
+
+  appStore.showSuccess('新版本已就绪，正在刷新页面...')
+  window.location.reload()
 }
 
 watch(isAdmin, (v) => {

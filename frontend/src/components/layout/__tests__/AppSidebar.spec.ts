@@ -61,4 +61,10 @@ describe('AppSidebar XIASS update flow', () => {
     expect(componentSource).not.toContain('<VersionBadge')
     expect(componentSource).not.toContain("import VersionBadge")
   })
+
+  it('waits for the target container version instead of reloading on a fixed timer', () => {
+    expect(componentSource).toContain('waitForServiceVersion')
+    expect(componentSource).toContain('waitForUpdatedContainer(targetVersion)')
+    expect(componentSource).not.toContain("setTimeout(() => {\n    window.location.reload()")
+  })
 })

@@ -62,11 +62,12 @@ type systemUpdateResponseEnvelope struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		Message         string `json:"message"`
-		AlreadyUpToDate bool   `json:"already_up_to_date"`
-		CurrentVersion  string `json:"current_version"`
-		LatestVersion   string `json:"latest_version"`
-		OperationID     string `json:"operation_id"`
+		Message          string `json:"message"`
+		AlreadyUpToDate  bool   `json:"already_up_to_date"`
+		CurrentVersion   string `json:"current_version"`
+		LatestVersion    string `json:"latest_version"`
+		UpdateInProgress bool   `json:"update_in_progress"`
+		OperationID      string `json:"operation_id"`
 	} `json:"data"`
 }
 
@@ -163,6 +164,33 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, http.StatusInternalServerError, body.Code)
 	require.Equal(t, "internal error", body.Message)
+}
+
+func TestSystemHandlerPerformUpdateReportsContainerRestartInProgress(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		updateInfo: &service.UpdateInfo{
+			CurrentVersion: "1.0.76",
+			LatestVersion:  "1.0.77",
+			HasUpdate:      true,
+		},
+	}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	req.Header.Set("Idempotency-Key", "update-in-progress")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, updateSvc.performCall)
+	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
+
+	var body systemUpdateResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "Update accepted. Waiting for container restart.", body.Data.Message)
+	require.True(t, body.Data.UpdateInProgress)
+	require.NotEmpty(t, body.Data.OperationID)
 }
 
 func TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup(t *testing.T) {
