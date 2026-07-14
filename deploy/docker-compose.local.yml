@@ -32,6 +32,8 @@ services:
     command: --http-api-update xiass-api
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      # Docker 29 rejects Watchtower's legacy default API v1.25.
+      - DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.40}
       - XIASS_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
       - NOWIND_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
       - WATCHTOWER_HTTP_API_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}

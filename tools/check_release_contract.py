@@ -328,6 +328,7 @@ def check_compose_branding(errors: list[str]) -> None:
                 f"XIASS_WATCHTOWER_TOKEN={token_default}",
                 f"NOWIND_WATCHTOWER_TOKEN={token_default}",
                 f"WATCHTOWER_HTTP_API_TOKEN={token_default}",
+                "DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.40}",
             ],
             errors,
         )

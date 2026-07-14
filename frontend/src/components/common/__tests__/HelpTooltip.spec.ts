@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -74,6 +74,41 @@ describe('HelpTooltip', () => {
     document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
     expect(tooltip.style.display).toBe('none')
+
+    wrapper.unmount()
+  })
+
+  it('uses viewport coordinates and opens below when there is no space above', async () => {
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      props: {
+        content: 'viewport details',
+      },
+    })
+    const trigger = wrapper.get('.group')
+    vi.spyOn(trigger.element, 'getBoundingClientRect').mockReturnValue({
+      x: 40,
+      y: 4,
+      top: 4,
+      right: 56,
+      bottom: 20,
+      left: 40,
+      width: 16,
+      height: 16,
+      toJSON: () => ({}),
+    })
+
+    const tooltip = getTooltipElement()
+    Object.defineProperty(tooltip, 'offsetWidth', { configurable: true, value: 256 })
+    Object.defineProperty(tooltip, 'offsetHeight', { configurable: true, value: 80 })
+
+    await trigger.trigger('mouseenter')
+    await nextTick()
+    await nextTick()
+
+    expect(tooltip.style.top).toBe('28px')
+    expect(tooltip.className).not.toContain('-translate-y-full')
+    expect(tooltip.className).toContain('z-[100000100]')
 
     wrapper.unmount()
   })

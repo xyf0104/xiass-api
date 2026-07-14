@@ -75,10 +75,16 @@
         <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
           <Icon name="cube" size="md" class="text-amber-600 dark:text-amber-400" :stroke-width="2" />
         </div>
-        <div>
+        <div class="min-w-0">
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('dashboard.todayTokens') }}</p>
           <p class="text-xl font-bold text-gray-900 dark:text-white">{{ formatTokens(stats?.today_tokens || 0) }}</p>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('dashboard.input') }}: {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }}: {{ formatTokens(stats?.today_output_tokens || 0) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('dashboard.cacheHitRate') }}:
+            <span class="font-medium text-sky-600 dark:text-sky-400">
+              {{ formatCacheHitRate(stats?.today_input_tokens, stats?.today_cache_creation_tokens, stats?.today_cache_read_tokens) }}
+            </span>
+          </p>
         </div>
       </div>
     </div>
@@ -89,10 +95,16 @@
         <div class="rounded-lg bg-indigo-100 p-2 dark:bg-indigo-900/30">
           <Icon name="database" size="md" class="text-indigo-600 dark:text-indigo-400" :stroke-width="2" />
         </div>
-        <div>
+        <div class="min-w-0">
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('dashboard.totalTokens') }}</p>
           <p class="text-xl font-bold text-gray-900 dark:text-white">{{ formatTokens(stats?.total_tokens || 0) }}</p>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('dashboard.input') }}: {{ formatTokens(stats?.total_input_tokens || 0) }} / {{ t('dashboard.output') }}: {{ formatTokens(stats?.total_output_tokens || 0) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('dashboard.cacheHitRate') }}:
+            <span class="font-medium text-sky-600 dark:text-sky-400">
+              {{ formatCacheHitRate(stats?.total_input_tokens, stats?.total_cache_creation_tokens, stats?.total_cache_read_tokens) }}
+            </span>
+          </p>
         </div>
       </div>
     </div>
@@ -386,6 +398,12 @@ const formatTokens = (t: number) => {
   if (t >= 1_000_000) return `${(t / 1_000_000).toFixed(1)}M`
   if (t >= 1000) return `${(t / 1000).toFixed(1)}K`
   return t.toString()
+}
+
+function formatCacheHitRate(inputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0): string {
+  const totalPromptTokens = inputTokens + cacheCreationTokens + cacheReadTokens
+  if (totalPromptTokens <= 0) return '-'
+  return `${((cacheReadTokens / totalPromptTokens) * 100).toFixed(1)}%`
 }
 const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`
 </script>

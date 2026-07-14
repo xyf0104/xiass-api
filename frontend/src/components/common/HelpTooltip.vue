@@ -14,6 +14,7 @@ const show = ref(false)
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
 const tooltipStyle = ref({ top: '0px', left: '0px' })
+const tooltipPlacement = ref<'top' | 'bottom'>('top')
 
 function openTooltip() {
   show.value = true
@@ -67,10 +68,23 @@ function onViewportChange() {
 function updatePosition() {
   const el = triggerRef.value
   if (!el) return
+
   const rect = el.getBoundingClientRect()
+  const tooltip = tooltipRef.value
+  const tooltipWidth = tooltip?.offsetWidth || 256
+  const tooltipHeight = tooltip?.offsetHeight || 0
+  const viewportMargin = 8
+  const centeredLeft = rect.left + rect.width / 2
+  const left = Math.min(
+    Math.max(centeredLeft, tooltipWidth / 2 + viewportMargin),
+    window.innerWidth - tooltipWidth / 2 - viewportMargin,
+  )
+  const hasRoomAbove = rect.top >= tooltipHeight + viewportMargin
+
+  tooltipPlacement.value = hasRoomAbove ? 'top' : 'bottom'
   tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
+    top: hasRoomAbove ? `${rect.top - viewportMargin}px` : `${rect.bottom + viewportMargin}px`,
+    left: `${left}px`,
   }
 }
 
@@ -121,10 +135,11 @@ onBeforeUnmount(() => {
         v-show="show"
         role="tooltip"
         :class="[
-          'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800',
+          'fixed z-[100000100] -translate-x-1/2 rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800',
+          tooltipPlacement === 'top' ? '-translate-y-full' : '',
           props.widthClass,
         ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        :style="tooltipStyle"
       >
         <button
           v-if="props.trigger === 'click'"
@@ -138,7 +153,12 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div
+          :class="[
+            'absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800',
+            tooltipPlacement === 'top' ? '-bottom-1' : '-top-1',
+          ]"
+        ></div>
       </div>
     </Teleport>
   </div>

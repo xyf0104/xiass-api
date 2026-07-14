@@ -9,6 +9,7 @@ export default {
     todayTokens: '今日 Token',
     totalTokens: '累计 Token',
     cacheToday: '今日缓存',
+    cacheHitRate: '缓存命中率',
     performance: '性能指标',
     avgResponse: '平均响应',
     averageTime: '平均时间',

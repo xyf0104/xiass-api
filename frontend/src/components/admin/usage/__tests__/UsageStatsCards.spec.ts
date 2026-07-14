@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
 import UsageStatsCards from '../UsageStatsCards.vue'
 
@@ -13,6 +14,7 @@ const messages: Record<string, string> = {
   'usage.cacheBreakdown': 'Cache Token Breakdown',
   'usage.cacheCreationTokensLabel': 'Cache Creation',
   'usage.cacheReadTokensLabel': 'Cache Read',
+  'usage.cacheHitRate': 'Cache hit rate',
   'usage.totalCost': 'Total Cost',
   'usage.accountCost': 'Cost',
   'usage.standardCost': 'Standard',
@@ -44,7 +46,11 @@ const stats = {
 }
 
 describe('UsageStatsCards', () => {
-  it('shows cache token breakdown values', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('shows cache token breakdown values and the prompt-token hit rate', async () => {
     const wrapper = mount(UsageStatsCards, {
       props: {
         stats,
@@ -58,10 +64,21 @@ describe('UsageStatsCards', () => {
 
     const text = wrapper.text()
     expect(text).toContain('Cache: 34')
-    expect(text).toContain('Cache Token Breakdown')
-    expect(text).toContain('Cache Creation')
-    expect(text).toContain('12')
-    expect(text).toContain('Cache Read')
+    expect(text).toContain('Cache hit rate:')
     expect(text).toContain('22')
+    expect(text).toContain('134')
+    expect(text).toContain('16.4%')
+
+    const helpTrigger = wrapper.get('.group')
+    await helpTrigger.trigger('mouseenter')
+    await nextTick()
+
+    const tooltip = document.body.querySelector('[role="tooltip"]')
+    expect(tooltip?.textContent).toContain('Cache Token Breakdown')
+    expect(tooltip?.textContent).toContain('Cache Creation')
+    expect(tooltip?.textContent).toContain('Cache Read')
+    expect(tooltip?.className).toContain('z-[100000100]')
+
+    wrapper.unmount()
   })
 })

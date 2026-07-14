@@ -9,6 +9,7 @@ export default {
     todayTokens: 'Today Tokens',
     totalTokens: 'Total Tokens',
     cacheToday: 'Cache (Today)',
+    cacheHitRate: 'Cache hit rate',
     performance: 'Performance',
     avgResponse: 'Avg Response',
     averageTime: 'Average time',
