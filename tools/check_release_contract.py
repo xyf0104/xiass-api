@@ -265,10 +265,10 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         [
             "# XIASS API Multi-Stage Dockerfile",
             "XIASS API - AI API Gateway Platform",
-            "addgroup -g 1000 nowind",
-            "adduser -u 1000 -G nowind",
-            "/app/nowind-api",
-            'CMD ["/app/nowind-api"]',
+            "addgroup -g 1000 xiass",
+            "adduser -u 1000 -G xiass",
+            "/app/xiass-api",
+            'CMD ["/app/xiass-api"]',
         ],
         errors,
     )
@@ -278,22 +278,17 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         [
             "# XIASS API Dockerfile for GoReleaser",
             "XIASS API - customized AI API gateway",
-            "addgroup -g 1000 nowind",
-            "adduser -u 1000 -G nowind",
-            "sub2api /app/nowind-api",
-            'CMD ["/app/nowind-api"]',
+            "addgroup -g 1000 xiass",
+            "adduser -u 1000 -G xiass",
+            "sub2api /app/xiass-api",
+            'CMD ["/app/xiass-api"]',
         ],
         errors,
     )
-    for relative in ["Dockerfile", "Dockerfile.goreleaser"]:
-        content = read(relative)
-        if "/app/sub2api" in content or "sub2api:sub2api" in content:
-            errors.append(f"{relative} 仍暴露旧镜像内部运行路径或用户")
-
     require_all(
         "deploy/docker-entrypoint.sh",
         read("deploy/docker-entrypoint.sh"),
-        ["chown -R 1000:1000 /app/data", "su-exec 1000:1000", "/app/nowind-api"],
+        ["chown -R 1000:1000 /app/data", "su-exec 1000:1000", "/app/xiass-api"],
         errors,
     )
 
@@ -313,10 +308,10 @@ def check_compose_branding(errors: list[str]) -> None:
             errors.append(f"{relative} 仍使用旧应用 service 名")
         if "ghcr.io/xyf0104/sub2api" in content:
             errors.append(f"{relative} 仍使用旧 GHCR 镜像")
-        if not re.search(r"(?m)^  nowind-api:\s*$", content):
-            errors.append(f"{relative} 缺少 nowind-api service")
+        if not re.search(r"(?m)^  xiass-api:\s*$", content):
+            errors.append(f"{relative} 缺少 xiass-api service")
 
-    token_default = "${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}"
+    token_default = "${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}"
     for relative in ["deploy/docker-compose.local.yml", "deploy/docker-compose.yml"]:
         content = read(relative)
         require_all(
@@ -324,34 +319,35 @@ def check_compose_branding(errors: list[str]) -> None:
             content,
             [
                 "image: ghcr.io/xyf0104/xiass-api:latest",
-                "container_name: nowind-api",
-                "container_name: nowind-api-watchtower",
-                "container_name: nowind-api-postgres",
-                "container_name: nowind-api-redis",
-                "nowind-api-network",
-                "command: --http-api-update nowind-api",
+                "container_name: xiass-api",
+                "container_name: xiass-api-watchtower",
+                "container_name: xiass-api-postgres",
+                "container_name: xiass-api-redis",
+                "xiass-api-network",
+                "command: --http-api-update xiass-api",
+                f"XIASS_WATCHTOWER_TOKEN={token_default}",
                 f"NOWIND_WATCHTOWER_TOKEN={token_default}",
                 f"WATCHTOWER_HTTP_API_TOKEN={token_default}",
             ],
             errors,
         )
-        if content.count(f"NOWIND_WATCHTOWER_TOKEN={token_default}") < 2:
-            errors.append(f"{relative} 未同时向应用与 Watchtower 传入更新令牌")
+        if content.count(f"XIASS_WATCHTOWER_TOKEN={token_default}") < 2:
+            errors.append(f"{relative} 未同时向应用与 Watchtower 传入 XIASS 更新令牌")
 
     require_all(
         "deploy/docker-compose.standalone.yml",
         read("deploy/docker-compose.standalone.yml"),
-        ["image: ghcr.io/xyf0104/xiass-api:latest", "container_name: nowind-api"],
+        ["image: ghcr.io/xyf0104/xiass-api:latest", "container_name: xiass-api"],
         errors,
     )
     require_all(
         "deploy/docker-compose.dev.yml",
         read("deploy/docker-compose.dev.yml"),
         [
-            "container_name: nowind-api-dev",
-            "container_name: nowind-api-postgres-dev",
-            "container_name: nowind-api-redis-dev",
-            "nowind-api-network",
+            "container_name: xiass-api-dev",
+            "container_name: xiass-api-postgres-dev",
+            "container_name: xiass-api-redis-dev",
+            "xiass-api-network",
         ],
         errors,
     )
@@ -377,7 +373,7 @@ def check_persistence(errors: list[str]) -> None:
         if mount not in named_compose:
             errors.append(f"命名卷持久化挂载缺失: {mount}")
 
-    watchtower_target = "command: --http-api-update nowind-api"
+    watchtower_target = "command: --http-api-update xiass-api"
     for relative, content in [
         ("deploy/docker-compose.local.yml", local_compose),
         ("deploy/docker-compose.yml", named_compose),
@@ -408,13 +404,44 @@ def check_persistence(errors: list[str]) -> None:
         "deploy/xiass-install.sh",
         install_script,
         [
+            "XIASS_WATCHTOWER_TOKEN=${watchtower_token}",
             "NOWIND_WATCHTOWER_TOKEN=${watchtower_token}",
-            'for container_name in sub2api sub2api-watchtower sub2api-postgres sub2api-redis; do',
+            "backup_existing_runtime()",
+            "com.docker.compose.project.working_dir",
+            "PERSISTENCE_MODE",
+            "docker-compose.yml",
+            "xiass-api nowind-api sub2api",
+            '"/var/lib/postgresql/data"',
             'docker stop -t 60 "$container_name"',
             'docker rm "$container_name"',
         ],
         errors,
     )
+
+    for relative, required in [
+        (
+            "deploy/xiass-backup.sh",
+            [
+                "com.docker.compose.project.config_files",
+                "archive_named_volume()",
+                "layout=named",
+                "docker-compose.yml",
+                "docker-compose.local.yml",
+            ],
+        ),
+        (
+            "deploy/xiass-restore.sh",
+            [
+                "com.docker.compose.project.config_files",
+                "snapshot_named_volume()",
+                "restore_named_volume()",
+                "拒绝跨布局恢复",
+                "docker-compose.yml",
+                "docker-compose.local.yml",
+            ],
+        ),
+    ]:
+        require_all(relative, read(relative), required, errors)
 
     for relative in [
         "install.sh",
@@ -448,6 +475,7 @@ def check_update_bridge(errors: list[str]) -> None:
             'watchtowerUpdateURL',
             '"http://watchtower:8080/v1/update"',
             'watchtowerTokenEnv',
+            '"XIASS_WATCHTOWER_TOKEN"',
             '"NOWIND_WATCHTOWER_TOKEN"',
             'legacyWatchtowerToken',
             '"sub2api-update-token"',
@@ -458,7 +486,7 @@ def check_update_bridge(errors: list[str]) -> None:
     require_all(
         "backend/internal/service/docker_update_service_test.go",
         service_test,
-        ["uses service DNS and configured token", "falls back to v1.0.65 token"],
+        ["uses service DNS and configured token", "previous token variable as a compatibility fallback", "falls back to v1.0.65 token"],
         errors,
     )
 
@@ -491,7 +519,12 @@ def check_update_bridge(errors: list[str]) -> None:
             'docker image tag "$PREVIOUS_IMAGE_ID" "$PREVIOUS_IMAGE_REF"',
             "compose up -d --no-build",
             "UPDATE_STARTED=true",
-            "compose pull nowind-api watchtower",
+            "compose pull xiass-api watchtower",
+            "snapshot_previous_compose()",
+            "PREVIOUS_COMPOSE_FILES",
+            "com.docker.compose.project.config_files",
+            "docker inspect --type container",
+            "PERSISTENCE_MODE",
         ],
         errors,
     )
@@ -499,7 +532,7 @@ def check_update_bridge(errors: list[str]) -> None:
         "\n}\n\nwait_for_health()"
     )[0]
     if (
-        "if ! image_snapshot=$(docker inspect" not in capture_body
+        "for container_name in xiass-api nowind-api sub2api" not in capture_body
         or capture_body.count("return 0") < 2
     ):
         errors.append("xiass-update.sh 记录旧镜像失败时必须非致命降级")
@@ -533,7 +566,7 @@ def check_soft_router_compatibility(errors: list[str]) -> None:
     service = read("backend/internal/service/soft_router_proxy.go")
     service_test = read("backend/internal/service/soft_router_proxy_test.go")
     installer = read("deploy/frps-soft-router-install.sh")
-    restart_hint = "docker compose up -d --force-recreate sub2api"
+    restart_hint = "docker compose up -d --force-recreate xiass-api"
 
     require_all(
         "backend/internal/service/soft_router_proxy.go",
@@ -550,7 +583,7 @@ def check_soft_router_compatibility(errors: list[str]) -> None:
     require_all(
         "deploy/frps-soft-router-install.sh",
         installer,
-        ["name=^/nowind-api$", "name=^/sub2api$"],
+        ["name=^/xiass-api$", "name=^/nowind-api$", "name=^/sub2api$"],
         errors,
     )
 

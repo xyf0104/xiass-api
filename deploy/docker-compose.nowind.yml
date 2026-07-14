@@ -1,5 +1,5 @@
 # =============================================================================
-# XIASS API - GHCR 镜像覆盖文件（配合 docker-compose.local.yml 使用）
+# XIASS API - 历史文件名兼容入口（新部署请使用 docker-compose.xiass.yml）
 # =============================================================================
 # 作用：明确使用 XIASS 的 GHCR 正式镜像。
 #
@@ -8,5 +8,5 @@
 #   docker compose -f docker-compose.local.yml -f docker-compose.nowind.yml pull
 # =============================================================================
 services:
-  nowind-api:
+  xiass-api:
     image: ghcr.io/xyf0104/xiass-api:latest

@@ -1,15 +1,15 @@
 # =============================================================================
 # XIASS API - 从源码构建覆盖文件（配合 docker-compose.local.yml 使用）
 # =============================================================================
-# 作用：把 nowind-api 服务从“拉取正式预编译镜像”改为“用本仓库 Dockerfile 本地构建”，
+# 作用：把 xiass-api 服务从“拉取正式预编译镜像”改为“用本仓库 Dockerfile 本地构建”，
 # 这样部署的就是本 fork 修改后的前端界面，而不是上游官方镜像。
 #
 # 用法：
 #   docker compose -f docker-compose.local.yml -f docker-compose.build.yml up -d --build
 # =============================================================================
 services:
-  nowind-api:
+  xiass-api:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: nowind-api:latest
+    image: xiass-api:latest

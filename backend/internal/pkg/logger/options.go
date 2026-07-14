@@ -9,8 +9,8 @@ import (
 
 const (
 	// DefaultContainerLogPath 为容器内默认日志文件路径。
-	DefaultContainerLogPath = "/app/data/logs/nowind-api.log"
-	defaultLogFilename      = "nowind-api.log"
+	DefaultContainerLogPath = "/app/data/logs/xiass-api.log"
+	defaultLogFilename      = "xiass-api.log"
 )
 
 type InitOptions struct {
@@ -57,7 +57,7 @@ func (o InitOptions) normalized() InitOptions {
 	}
 	out.ServiceName = strings.TrimSpace(out.ServiceName)
 	if out.ServiceName == "" {
-		out.ServiceName = "nowind-api"
+		out.ServiceName = "xiass-api"
 	}
 	out.Environment = strings.TrimSpace(out.Environment)
 	if out.Environment == "" {
@@ -107,7 +107,7 @@ func bootstrapOptions() InitOptions {
 	return InitOptions{
 		Level:       "info",
 		Format:      "console",
-		ServiceName: "nowind-api",
+		ServiceName: "xiass-api",
 		Environment: "bootstrap",
 		Output: OutputOptions{
 			ToStdout: true,

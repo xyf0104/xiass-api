@@ -18,9 +18,9 @@ func TestResolveLogFilePath_Default(t *testing.T) {
 }
 
 func TestResolveLogFilePath_WithDataDir(t *testing.T) {
-	t.Setenv("DATA_DIR", "/tmp/nowind-api-data")
+	t.Setenv("DATA_DIR", "/tmp/xiass-api-data")
 	got := resolveLogFilePath("")
-	want := filepath.Join("/tmp/nowind-api-data", "logs", "nowind-api.log")
+	want := filepath.Join("/tmp/xiass-api-data", "logs", "xiass-api.log")
 	if got != want {
 		t.Fatalf("resolveLogFilePath() = %q, want %q", got, want)
 	}
@@ -86,7 +86,7 @@ func TestBuildFileCore_InvalidPathFallback(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	opts := bootstrapOptions()
 	opts.Output.ToFile = true
-	opts.Output.FilePath = filepath.Join(os.DevNull, "logs", "nowind-api.log")
+	opts.Output.FilePath = filepath.Join(os.DevNull, "logs", "xiass-api.log")
 	encoderCfg := zapcore.EncoderConfig{
 		TimeKey:     "time",
 		LevelKey:    "level",

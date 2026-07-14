@@ -75,7 +75,7 @@ RUN VERSION_VALUE="${VERSION}" && \
     CGO_ENABLED=0 GOOS=linux go build \
     -tags embed \
     -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
-    -o /app/nowind-api \
+    -o /app/xiass-api \
     ./cmd/server
 
 # -----------------------------------------------------------------------------
@@ -97,19 +97,20 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 # Create non-root user
-RUN addgroup -g 1000 nowind && \
-    adduser -u 1000 -G nowind -s /bin/sh -D nowind
+RUN addgroup -g 1000 xiass && \
+    adduser -u 1000 -G xiass -s /bin/sh -D xiass
 
 # Set working directory
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=backend-builder --chown=nowind:nowind /app/nowind-api /app/nowind-api
+COPY --from=backend-builder --chown=xiass:xiass /app/xiass-api /app/xiass-api
+RUN ln -s /app/xiass-api /app/nowind-api && ln -s /app/xiass-api /app/sub2api
 
 # Create data directory
-RUN mkdir -p /app/data && chown -R nowind:nowind /app
+RUN mkdir -p /app/data && chown -R xiass:xiass /app
 
-# Copy entrypoint script (fixes volume permissions then drops to nowind)
+# Copy entrypoint script (fixes volume permissions then drops to UID/GID 1000)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
@@ -120,6 +121,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget -q -T 5 -O /dev/null http://localhost:${SERVER_PORT:-8080}/health || exit 1
 
-# Run the application (entrypoint fixes /app/data ownership then execs as nowind)
+# Run the canonical XIASS API executable.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["/app/nowind-api"]
+CMD ["/app/xiass-api"]

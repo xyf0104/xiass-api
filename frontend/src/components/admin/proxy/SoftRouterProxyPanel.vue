@@ -201,7 +201,7 @@
                 <div v-if="row.mapping" class="space-y-1">
                   <div class="flex items-center gap-1.5">
                     <code class="code text-xs">{{ configForm.public_host || '-' }}:{{ row.mapping.public_port }}</code>
-                    <button class="rounded p-0.5 text-gray-400 hover:text-primary-600" @click="copy(row.mapping.public_url || '')">
+                    <button class="rounded p-0.5 text-gray-400 hover:text-primary-600" @click="copy(row.mapping.public_url || row.mapping.xiass_url || row.mapping.nowind_url || '')">
                       <Icon name="copy" size="sm" />
                     </button>
                   </div>

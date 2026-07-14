@@ -28,7 +28,7 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN --mount=type=cache,id=nowind-api-pnpm-store,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,id=xiass-api-pnpm-store,target=/root/.local/share/pnpm/store \
     if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
     pnpm install --frozen-lockfile --prefer-offline
 
@@ -80,7 +80,7 @@ RUN VERSION_VALUE="${VERSION}" && \
     -tags embed \
     -ldflags="-s -w -X main.Version=${VERSION_VALUE} -X main.Commit=${COMMIT} -X main.Date=${DATE_VALUE} -X main.BuildType=release" \
     -trimpath \
-    -o /app/nowind-api \
+    -o /app/xiass-api \
     ./cmd/server
 
 # -----------------------------------------------------------------------------
@@ -118,20 +118,23 @@ COPY --from=pg-client /usr/local/bin/psql /usr/local/bin/psql
 COPY --from=pg-client /usr/local/lib/libpq.so.5* /usr/local/lib/
 
 # Create non-root user
-RUN addgroup -g 1000 nowind && \
-    adduser -u 1000 -G nowind -s /bin/sh -D nowind
+RUN addgroup -g 1000 xiass && \
+    adduser -u 1000 -G xiass -s /bin/sh -D xiass
 
 # Set working directory
 WORKDIR /app
 
 # Copy binary/resources with ownership to avoid extra full-layer chown copy
-COPY --from=backend-builder --chown=nowind:nowind /app/nowind-api /app/nowind-api
-COPY --from=backend-builder --chown=nowind:nowind /app/backend/resources /app/resources
+COPY --from=backend-builder --chown=xiass:xiass /app/xiass-api /app/xiass-api
+COPY --from=backend-builder --chown=xiass:xiass /app/backend/resources /app/resources
+
+# Historical executable aliases keep custom commands from older deployments working.
+RUN ln -s /app/xiass-api /app/nowind-api && ln -s /app/xiass-api /app/sub2api
 
 # Create data directory
-RUN mkdir -p /app/data && chown nowind:nowind /app/data
+RUN mkdir -p /app/data && chown xiass:xiass /app/data
 
-# Copy entrypoint script (fixes volume permissions then drops to nowind)
+# Copy entrypoint script (fixes volume permissions then drops to UID/GID 1000)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
@@ -142,6 +145,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget -q -T 5 -O /dev/null http://localhost:${SERVER_PORT:-8080}/health || exit 1
 
-# Run the application (entrypoint fixes /app/data ownership then execs as nowind)
+# Run the canonical XIASS API executable.
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["/app/nowind-api"]
+CMD ["/app/xiass-api"]

@@ -1,0 +1,4 @@
+#!/bin/sh
+# XIASS_COMPAT_WRAPPER=1
+# 旧命令兼容入口。参数和退出码原样转交给新命令。
+exec /usr/bin/xiass-soft-router-agent "$@"

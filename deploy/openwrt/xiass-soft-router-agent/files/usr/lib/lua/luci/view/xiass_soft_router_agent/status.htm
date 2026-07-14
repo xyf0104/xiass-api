@@ -1,0 +1,98 @@
+<style type="text/css">
+	.xiass-status-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; margin:0 0 16px; }
+	.xiass-status-item { border:1px solid #d9d9d9; border-radius:6px; padding:12px; background:#fff; min-height:82px; box-sizing:border-box; }
+	.xiass-status-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-weight:600; }
+	.xiass-status-dot { width:11px; height:11px; border-radius:50%; background:#d93025; box-shadow:0 0 0 3px rgba(217,48,37,.12); flex:0 0 auto; }
+	.xiass-status-item.ok .xiass-status-dot { background:#188038; box-shadow:0 0 0 3px rgba(24,128,56,.12); }
+	.xiass-status-log .xiass-status-dot { background:#6b7280; box-shadow:0 0 0 3px rgba(107,114,128,.12); }
+	.xiass-status-message { color:#5f6368; line-height:1.45; overflow-wrap:anywhere; }
+	.xiass-status-time { color:#80868b; font-size:12px; margin-top:5px; }
+	@media (prefers-color-scheme: dark) {
+		.xiass-status-item { background:#202124; border-color:#4a4d51; }
+		.xiass-status-message, .xiass-status-time { color:#bdc1c6; }
+	}
+</style>
+
+<div class="cbi-section">
+	<h3><%:实时连通状态%></h3>
+	<div class="xiass-status-grid">
+		<div class="xiass-status-item" id="xiass-api-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:XIASS API 面板%></span></div>
+			<div class="xiass-status-message"><%:正在检测%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item" id="xiass-report-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:节点上报%></span></div>
+			<div class="xiass-status-message"><%:正在读取%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item" id="xiass-pull-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:配置拉取%></span></div>
+			<div class="xiass-status-message"><%:正在读取%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item" id="xiass-frpc-process-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:frpc 进程%></span></div>
+			<div class="xiass-status-message"><%:正在读取%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item" id="xiass-frpc-control-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:FRP 隧道%></span></div>
+			<div class="xiass-status-message"><%:正在检测%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item" id="xiass-exit-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:PassWall 出口%></span></div>
+			<div class="xiass-status-message"><%:正在检测%></div><div class="xiass-status-time"></div>
+		</div>
+		<div class="xiass-status-item xiass-status-log" id="xiass-frpc-log-status">
+			<div class="xiass-status-head"><span class="xiass-status-dot"></span><span><%:frpc 最新日志%></span></div>
+			<div class="xiass-status-message"><%:暂无日志%></div><div class="xiass-status-time"></div>
+		</div>
+	</div>
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+(function() {
+	function setStatus(id, ok, message, checkedAt, timeLabel) {
+		var box = document.getElementById(id);
+		if (!box) return;
+		box.className = 'xiass-status-item' + (ok ? ' ok' : '');
+		var messageNode = box.querySelector('.xiass-status-message');
+		var timeNode = box.querySelector('.xiass-status-time');
+		messageNode.textContent = message || '暂无状态';
+		timeNode.textContent = checkedAt ? ((timeLabel || '更新时间') + '：' + checkedAt) : '';
+	}
+
+	function setLog(id, message, checkedAt) {
+		var box = document.getElementById(id);
+		if (!box) return;
+		box.className = 'xiass-status-item xiass-status-log';
+		box.querySelector('.xiass-status-message').textContent = message || '暂无 frpc 日志';
+		box.querySelector('.xiass-status-time').textContent = checkedAt ? ('日志时间：' + checkedAt) : '';
+	}
+
+	XHR.poll(5, '<%=url("admin/services/xiass-soft-router-agent/status")%>', null, function(xhr, data) {
+		if (!data) {
+			setStatus('xiass-api-status', false, '状态接口无响应', '');
+			setStatus('xiass-report-status', false, '无法读取最近上报结果', '');
+			setStatus('xiass-pull-status', false, '无法读取最近拉取结果', '');
+			setStatus('xiass-frpc-process-status', false, '无法读取 frpc 进程状态', '');
+			setStatus('xiass-frpc-control-status', false, '无法读取 FRP 隧道状态', '');
+			setStatus('xiass-exit-status', false, '无法读取 PassWall 出口状态', '');
+			setLog('xiass-frpc-log-status', '无法读取 frpc 最新日志', '');
+			return;
+		}
+
+		var api = data.xiass_api || {};
+		var report = data.report || {};
+		var pull = data.pull || {};
+		var exitStatus = data.exit || {};
+		var frpc = data.frpc || {};
+		setStatus('xiass-api-status', api.ok === true, api.message, api.checked_at);
+		setStatus('xiass-report-status', report.ok === true, report.message, report.last_success_at, '上次成功');
+		setStatus('xiass-pull-status', pull.ok === true, pull.message, pull.last_success_at, '上次成功');
+		setStatus('xiass-frpc-process-status', frpc.process_ok === true, frpc.process_message, frpc.checked_at);
+		setStatus('xiass-frpc-control-status', frpc.control_ok === true, frpc.control_message, frpc.checked_at);
+		setStatus('xiass-exit-status', exitStatus.ok === true, exitStatus.message, exitStatus.checked_at);
+		setLog('xiass-frpc-log-status', frpc.latest_log || '暂无 frpc 日志', frpc.latest_log_at);
+	});
+})();
+//]]>
+</script>

@@ -15,9 +15,9 @@ fi
 
 # Compatibility: if the first arg looks like a flag (e.g. --help),
 # prepend the default binary so it behaves the same as the old
-# ENTRYPOINT ["/app/nowind-api"] style.
+# ENTRYPOINT ["/app/xiass-api"] style.
 if [ "${1#-}" != "$1" ]; then
-    set -- /app/nowind-api "$@"
+    set -- /app/xiass-api "$@"
 fi
 
 exec "$@"

@@ -10,14 +10,16 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh |
 
 该命令会安装 Docker/Compose 和基础依赖，检查端口，克隆仓库，生成独立密钥，并启动：
 
-- `nowind-api`：XIASS 应用
+- `xiass-api`：XIASS 应用
 - PostgreSQL
 - Redis
-- `nowind-api-watchtower`：后台在线更新
+- `xiass-api-watchtower`：后台在线更新
 
-默认安装目录为 `/opt/nowind-api`，默认使用 `docker-compose.local.yml`，所有运行数据都保存在 `deploy` 下的本地目录，方便备份和迁移。
+新安装默认目录为 `/opt/xiass-api`，默认使用 `docker-compose.local.yml`，所有运行数据都保存在 `deploy` 下的本地目录，方便备份和迁移。
 
-`/opt/nowind-api`、`nowind-api` service/container 和 `NOWIND_*` 环境变量是旧版本原地升级所需的内部兼容标识；公开产品名、仓库、镜像和安装入口均为 XIASS API。
+安装/更新脚本会先探测 `/opt/xiass-api`、`/opt/nowind-api`、`/opt/sub2api` 和运行中的 `xiass-api`、`nowind-api`、`sub2api` 容器。`XIASS_*` 是新配置主变量，已有 `NOWIND_*` 继续作为 fallback。升级会按 PostgreSQL 的实际 mount 选择本地目录或命名卷 Compose，且从不使用 `down -v`。
+
+不要把历史 `docker-compose.nowind.yml` 与 canonical Compose 文件手工混合。它不是跨版本迁移入口；旧 `nowind-api`/`sub2api` 栈必须通过 `xiass-update.sh` 或 `xiass-install.sh` 迁移，脚本会冻结运行中容器记录的 Compose 文件并保留原布局用于失败回滚。
 
 ## 文件说明
 
@@ -42,13 +44,13 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh |
 推荐部署的四项核心数据：
 
 ```text
-/opt/nowind-api/deploy/.env
-/opt/nowind-api/deploy/data
-/opt/nowind-api/deploy/postgres_data
-/opt/nowind-api/deploy/redis_data
+/opt/xiass-api/deploy/.env
+/opt/xiass-api/deploy/data
+/opt/xiass-api/deploy/postgres_data
+/opt/xiass-api/deploy/redis_data
 ```
 
-重新拉取代码、拉取镜像或重建 `nowind-api` 容器不会删除这些目录。禁止使用：
+重新拉取代码、拉取镜像或重建 `xiass-api` 容器不会删除这些目录。旧 `/opt/nowind-api`、`/opt/sub2api` 安装会原地沿用其目录。禁止使用：
 
 ```bash
 docker compose down -v
@@ -79,7 +81,7 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass
 curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass-backup.sh | sudo bash
 ```
 
-默认输出到 `/root/xiass-backups`，包含 `.env`、应用数据、PostgreSQL 和 Redis，并生成 SHA-256 校验文件。
+默认输出到 `/root/xiass-backups`，包含 `.env`、应用数据、PostgreSQL 和 Redis，并生成 SHA-256 校验文件。本地目录备份保留目录结构；命名卷备份把三个卷安全归档为独立 tar 文件。
 
 ## 恢复
 
@@ -90,16 +92,16 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/deploy/xiass
 sudo bash /tmp/xiass-restore.sh /root/xiass-backups/xiass-runtime-YYYYmmdd-HHMMSS.tar.gz
 ```
 
-恢复前的目标实例数据会移动到带时间戳的隔离目录，不会直接删除。
+恢复前的目标实例数据会移动到带时间戳的隔离目录；命名卷会先完整快照到该目录。为避免误写，恢复拒绝在本地目录与命名卷布局之间交叉执行。
 
 ## 常用命令
 
 ```bash
-cd /opt/nowind-api/deploy
+cd /opt/xiass-api/deploy
 
 docker compose -f docker-compose.local.yml ps
-docker compose -f docker-compose.local.yml logs -f --tail 200 nowind-api
-docker compose -f docker-compose.local.yml restart nowind-api
+docker compose -f docker-compose.local.yml logs -f --tail 200 xiass-api
+docker compose -f docker-compose.local.yml restart xiass-api
 docker compose -f docker-compose.local.yml down
 docker compose -f docker-compose.local.yml up -d
 ```

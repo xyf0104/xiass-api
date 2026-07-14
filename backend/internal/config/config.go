@@ -1453,7 +1453,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.AddConfigPath(".")
 	// 4. Config subdirectory
 	viper.AddConfigPath("./config")
-	// 5. Canonical system config directory, then legacy fallback
+	// 5. Canonical system config directory, then historical fallbacks.
+	viper.AddConfigPath("/etc/xiass-api")
 	viper.AddConfigPath("/etc/nowind-api")
 	viper.AddConfigPath("/etc/sub2api")
 
@@ -1631,7 +1632,7 @@ func setDefaults() {
 	// Log
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "console")
-	viper.SetDefault("log.service_name", "nowind-api")
+	viper.SetDefault("log.service_name", "xiass-api")
 	viper.SetDefault("log.env", "production")
 	viper.SetDefault("log.caller", true)
 	viper.SetDefault("log.stacktrace_level", "error")
@@ -3069,6 +3070,7 @@ func GetServerAddress() string {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
 	v.AddConfigPath("./config")
+	v.AddConfigPath("/etc/xiass-api")
 	v.AddConfigPath("/etc/nowind-api")
 	v.AddConfigPath("/etc/sub2api")
 

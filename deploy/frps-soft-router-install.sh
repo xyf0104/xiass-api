@@ -1,6 +1,8 @@
 #!/bin/sh
 #
-# Install an independent frps service for Nowind soft-router proxy nodes.
+# Install a fresh independent frps service for XIASS API soft-router proxy nodes.
+# Existing frps-us/frps-nowind-soft-router services must use
+# xiass-frps-migrate.sh so their token and configuration are preserved.
 #
 # Examples:
 #   FRP_TOKEN="$(openssl rand -hex 24)" sh frps-soft-router-install.sh
@@ -8,11 +10,11 @@
 
 set -eu
 
-SERVICE_NAME="${SERVICE_NAME:-frps-nowind-soft-router}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/frp-nowind-soft-router}"
+SERVICE_NAME="${SERVICE_NAME:-xiass-frps-soft-router}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/xiass-frps-soft-router}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/frps.toml}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-FRPS_BIN="${FRPS_BIN:-$INSTALL_DIR/frps-nowind-soft-router}"
+FRPS_BIN="${FRPS_BIN:-$INSTALL_DIR/xiass-frps-soft-router}"
 FRP_VERSION="${FRP_VERSION:-}"
 FRP_TOKEN="${FRP_TOKEN:-}"
 BIND_PORT="${BIND_PORT:-7010}"
@@ -20,6 +22,7 @@ RAW_PORT_START="${RAW_PORT_START:-12083}"
 RAW_PORT_END="${RAW_PORT_END:-12150}"
 PROXY_BIND_ADDR="${PROXY_BIND_ADDR:-}"
 RUN_USER="${RUN_USER:-root}"
+STOPPED_SERVICES=""
 
 info() {
     printf '%s\n' "$*"
@@ -27,7 +30,29 @@ info() {
 
 fail() {
     printf 'Error: %s\n' "$*" >&2
+    restore_stopped_services
     exit 1
+}
+
+restore_stopped_services() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for service in $STOPPED_SERVICES; do
+        systemctl start "$service" >/dev/null 2>&1 || true
+    done
+}
+
+stop_service_for_migration() {
+    service="$1"
+    command -v systemctl >/dev/null 2>&1 || return 0
+    if systemctl is-active --quiet "$service" 2>/dev/null; then
+        info "Stopping legacy FRP service $service for XIASS API migration"
+        systemctl stop "$service" >/dev/null 2>&1 || fail "could not stop $service"
+        STOPPED_SERVICES="$STOPPED_SERVICES $service"
+    fi
+}
+
+stop_existing_frp_services() {
+    stop_service_for_migration "$SERVICE_NAME"
 }
 
 require_root() {
@@ -102,7 +127,10 @@ download_file() {
 
 detect_proxy_bind_addr() {
     if command -v docker >/dev/null 2>&1; then
-        container_id="$(docker ps -q --filter 'name=^/nowind-api$' | head -n 1 || true)"
+        container_id="$(docker ps -q --filter 'name=^/xiass-api$' | head -n 1 || true)"
+        if [ -z "$container_id" ]; then
+            container_id="$(docker ps -q --filter 'name=^/nowind-api$' | head -n 1 || true)"
+        fi
         if [ -z "$container_id" ]; then
             container_id="$(docker ps -q --filter 'name=^/sub2api$' | head -n 1 || true)"
         fi
@@ -189,7 +217,7 @@ write_service() {
     unit="/etc/systemd/system/$SERVICE_NAME.service"
     cat > "$unit" <<EOF
 [Unit]
-Description=FRP server for Nowind soft-router proxy nodes
+Description=XIASS API FRP server for soft-router proxy nodes
 After=network-online.target
 Wants=network-online.target
 
@@ -219,9 +247,11 @@ main() {
     write_service
 
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload
-        systemctl enable "$SERVICE_NAME"
-        systemctl restart "$SERVICE_NAME"
+        stop_existing_frp_services
+        systemctl daemon-reload || fail "could not reload systemd"
+        systemctl enable "$SERVICE_NAME" || fail "could not enable $SERVICE_NAME"
+        systemctl restart "$SERVICE_NAME" || fail "could not start $SERVICE_NAME"
+        systemctl is-active --quiet "$SERVICE_NAME" || fail "$SERVICE_NAME did not become active"
         systemctl --no-pager --full status "$SERVICE_NAME" || true
     fi
 
@@ -234,8 +264,8 @@ main() {
     info "proxy bind address: $PROXY_BIND_ADDR"
     info "FRP token: $FRP_TOKEN"
     info ""
-    info "In Nowind admin -> proxies -> proxy nodes, use the same FRP host, bind port, token and raw range."
-    info "If Nowind runs in Docker, set the panel upstream host to host.docker.internal."
+    info "In XIASS API admin -> proxies -> proxy nodes, use the same FRP host, bind port, token and raw range."
+    info "If XIASS API runs in Docker, set the panel upstream host to host.docker.internal."
 }
 
 main "$@"

@@ -1,0 +1,30 @@
+[Unit]
+Description=XIASS API - AI API Gateway Platform
+Documentation=https://github.com/xyf0104/xiass-api
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=xiass
+Group=xiass
+WorkingDirectory=/opt/xiass-api
+ExecStart=/opt/xiass-api/xiass-api
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xiass-api
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/xiass-api
+
+Environment=GIN_MODE=release
+Environment=SERVER_HOST=0.0.0.0
+Environment=SERVER_PORT=8080
+
+[Install]
+WantedBy=multi-user.target

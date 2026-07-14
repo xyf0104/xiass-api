@@ -870,6 +870,7 @@ export interface SoftRouterProxyMapping {
   created_at: string
   updated_at: string
   public_url?: string
+  xiass_url?: string
   nowind_url?: string
 }
 

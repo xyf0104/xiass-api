@@ -13,6 +13,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAttachSoftRouterURLsPublishesXiassAndLegacyFields(t *testing.T) {
+	mappings := []SoftRouterProxyMapping{{
+		PublicPort: 1101,
+		Username:   "user",
+		Password:   "password",
+	}}
+
+	attachSoftRouterURLs(SoftRouterProxyConfig{
+		PublicHost:   "api.example.com",
+		UpstreamHost: "host.docker.internal",
+	}, mappings)
+
+	require.Equal(t, "socks5://user:password@api.example.com:1101", mappings[0].PublicURL)
+	require.Equal(t, "socks5://user:password@host.docker.internal:1101", mappings[0].XiassURL)
+	require.Equal(t, mappings[0].XiassURL, mappings[0].NoWindURL)
+}
+
 func TestSoftRouterProxyServiceCreateMappingAssignsAvailablePorts(t *testing.T) {
 	publicPorts, publicListeners := reserveContiguousLoopbackPorts(t, 3)
 	publicBusy, publicUsed, publicFree := publicPorts[0], publicPorts[1], publicPorts[2]
@@ -211,7 +228,7 @@ func TestSoftRouterProxyServiceInstallFRPAllowsPublicPortsAlreadyPublished(t *te
 	require.Equal(t, "api.example.com", repo.config.PublicHost)
 	require.Equal(t, rawFree, installer.installedConfig.RawPortStart)
 	require.Equal(t, publicPublished, installer.installedConfig.PublicPortStart)
-	require.Equal(t, "docker compose up -d --force-recreate sub2api", result.Metadata["restart_hint"])
+	require.Equal(t, "docker compose up -d --force-recreate xiass-api", result.Metadata["restart_hint"])
 }
 
 func TestSoftRouterProxyServiceDeleteMappingRemovesGeneratedProxyWithoutAccounts(t *testing.T) {

@@ -14,11 +14,12 @@ NC='\033[0m'
 
 REPO_URL="https://github.com/xyf0104/xiass-api.git"
 RAW_BASE_URL="https://raw.githubusercontent.com/xyf0104/xiass-api/main"
-INSTALL_DIR="${INSTALL_DIR:-/opt/nowind-api}"
+INSTALL_DIR="${INSTALL_DIR:-}"
 BRANCH="${BRANCH:-main}"
 SERVER_PORT="${SERVER_PORT:-8080}"
 RAW_PORT_RANGE="${SOFT_ROUTER_PROXY_RAW_PORT_RANGE:-12083-12150}"
 PUBLIC_PORT_RANGE="${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1101-1120}"
+BACKUP_DIR="${BACKUP_DIR:-/root/xiass-backups}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@xiass.local}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 BUILD_MODE="${BUILD_MODE:-image}"
@@ -26,6 +27,56 @@ EXISTING_INSTALL=false
 ADMIN_PASSWORD_GENERATED=false
 ARCH=""
 COMPOSE=()
+PERSISTENCE_MODE="${PERSISTENCE_MODE:-}"
+COMPOSE_FILE=""
+APP_CONTAINER=""
+POSTGRES_CONTAINER=""
+
+resolve_install_dir() {
+    local candidate working_dir install_candidate
+    local -A discovered=()
+    [ -n "$INSTALL_DIR" ] && return
+
+    for candidate in xiass-api nowind-api sub2api; do
+        if container_exists "$candidate"; then
+            working_dir=$(docker inspect --type container \
+                --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' \
+                "$candidate" 2>/dev/null || true)
+            if [ -n "$working_dir" ]; then
+                if [ "$(basename "$working_dir")" = "deploy" ]; then
+                    install_candidate=$(dirname "$working_dir")
+                else
+                    install_candidate="$working_dir"
+                fi
+                discovered["$install_candidate"]=1
+            fi
+        fi
+    done
+    if [ "${#discovered[@]}" -gt 1 ]; then
+        die "检测到多个运行中的 XIASS/legacy 安装目录；请显式设置 INSTALL_DIR 后重试。"
+    fi
+    if [ "${#discovered[@]}" -eq 1 ]; then
+        for install_candidate in "${!discovered[@]}"; do
+            INSTALL_DIR="$install_candidate"
+        done
+        return
+    fi
+
+    local existing=()
+    for candidate in /opt/xiass-api /opt/nowind-api /opt/sub2api; do
+        if [ -d "$candidate/.git" ] || [ -f "$candidate/deploy/.env" ]; then
+            existing+=("$candidate")
+        fi
+    done
+    if [ "${#existing[@]}" -gt 1 ]; then
+        die "检测到多个安装目录但没有可用的运行容器标签；请显式设置 INSTALL_DIR 后重试。"
+    fi
+    if [ "${#existing[@]}" -eq 1 ]; then
+        INSTALL_DIR="${existing[0]}"
+        return
+    fi
+    INSTALL_DIR="/opt/xiass-api"
+}
 
 log()  { echo -e "${CYAN}[XIASS]${NC} $*"; }
 ok()   { echo -e "${GREEN}[完成]${NC} $*"; }
@@ -72,6 +123,73 @@ confirm() {
 read_env_value() {
     local key="$1" env_file="$2"
     awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$env_file" 2>/dev/null
+}
+
+container_exists() {
+    docker container inspect "$1" >/dev/null 2>&1
+}
+
+detect_runtime_layout() {
+    local candidate mount_type
+
+    if [ -n "$PERSISTENCE_MODE" ] && [ "$PERSISTENCE_MODE" != "local" ] && [ "$PERSISTENCE_MODE" != "named" ]; then
+        die "PERSISTENCE_MODE 只能是 local 或 named。"
+    fi
+
+    for candidate in xiass-api nowind-api sub2api; do
+        if container_exists "$candidate"; then
+            APP_CONTAINER="$candidate"
+            break
+        fi
+    done
+
+    case "$APP_CONTAINER" in
+        xiass-api) candidate="xiass-api-postgres" ;;
+        nowind-api) candidate="nowind-api-postgres" ;;
+        sub2api) candidate="sub2api-postgres" ;;
+        *) candidate="" ;;
+    esac
+    if [ -n "$candidate" ] && container_exists "$candidate"; then
+        POSTGRES_CONTAINER="$candidate"
+    else
+        for candidate in xiass-api-postgres nowind-api-postgres sub2api-postgres; do
+            if container_exists "$candidate"; then
+                POSTGRES_CONTAINER="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$PERSISTENCE_MODE" ] && [ -n "$POSTGRES_CONTAINER" ]; then
+        mount_type=$(docker inspect --type container \
+            --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}{{end}}{{end}}' \
+            "$POSTGRES_CONTAINER" 2>/dev/null || true)
+        case "$mount_type" in
+            volume) PERSISTENCE_MODE="named" ;;
+            bind) PERSISTENCE_MODE="local" ;;
+        esac
+    fi
+
+    if [ -z "$PERSISTENCE_MODE" ]; then
+        if [ -d "$INSTALL_DIR/deploy/postgres_data" ] || [ -d "$INSTALL_DIR/deploy/redis_data" ]; then
+            PERSISTENCE_MODE="local"
+        else
+            PERSISTENCE_MODE="local"
+        fi
+    fi
+
+    if [ -n "$APP_CONTAINER" ]; then
+        log "检测到当前应用容器：$APP_CONTAINER；PostgreSQL 容器：${POSTGRES_CONTAINER:-未运行}；持久化模式：$PERSISTENCE_MODE"
+    fi
+}
+
+select_compose_file() {
+    case "$PERSISTENCE_MODE" in
+        named) COMPOSE_FILE="$INSTALL_DIR/deploy/docker-compose.yml" ;;
+        local) COMPOSE_FILE="$INSTALL_DIR/deploy/docker-compose.local.yml" ;;
+        *) die "未知持久化模式：$PERSISTENCE_MODE" ;;
+    esac
+    [ -f "$COMPOSE_FILE" ] || die "部署文件缺失：$COMPOSE_FILE"
 }
 
 check_root() {
@@ -194,7 +312,8 @@ load_existing_config() {
     [ -n "$value" ] && PUBLIC_PORT_RANGE="$value"
     value=$(read_env_value ADMIN_EMAIL "$env_file")
     [ -n "$value" ] && ADMIN_EMAIL="$value"
-    value=$(read_env_value NOWIND_BUILD_MODE "$env_file")
+    value=$(read_env_value XIASS_BUILD_MODE "$env_file")
+    [ -n "$value" ] || value=$(read_env_value NOWIND_BUILD_MODE "$env_file")
     if [ "$value" = "source" ] || [ "$value" = "image" ]; then
         BUILD_MODE="$value"
     elif [ "$ARCH" = "arm64" ]; then
@@ -382,6 +501,9 @@ SERVER_PORT=${SERVER_PORT}
 BIND_HOST=0.0.0.0
 SERVER_MODE=release
 RUN_MODE=standard
+XIASS_BUILD_MODE=${BUILD_MODE}
+XIASS_WATCHTOWER_TOKEN=${watchtower_token}
+# Legacy aliases allow rollback to older images and maintenance scripts.
 NOWIND_BUILD_MODE=${BUILD_MODE}
 NOWIND_WATCHTOWER_TOKEN=${watchtower_token}
 TZ=Asia/Shanghai
@@ -417,6 +539,10 @@ ENVEOF
 }
 
 create_data_dirs() {
+    if [ "$PERSISTENCE_MODE" = "named" ]; then
+        ok "使用命名卷持久化，保留现有 Docker 卷"
+        return
+    fi
     mkdir -p "$INSTALL_DIR/deploy/data" \
              "$INSTALL_DIR/deploy/postgres_data" \
              "$INSTALL_DIR/deploy/redis_data"
@@ -442,13 +568,18 @@ configure_firewall() {
 }
 
 compose() {
-    local compose_dir="$INSTALL_DIR/deploy"
-    "${COMPOSE[@]}" -f "$compose_dir/docker-compose.local.yml" --project-directory "$compose_dir" "$@"
+    local compose_dir="$INSTALL_DIR/deploy" args=(-f "$COMPOSE_FILE")
+    if [ "$BUILD_MODE" = "source" ]; then
+        args+=(-f "$compose_dir/docker-compose.build.yml")
+    fi
+    "${COMPOSE[@]}" "${args[@]}" --project-directory "$compose_dir" "$@"
 }
 
 remove_legacy_runtime_containers() {
     local container_name
-    for container_name in sub2api sub2api-watchtower sub2api-postgres sub2api-redis; do
+    for container_name in \
+        nowind-api nowind-api-watchtower nowind-api-postgres nowind-api-redis \
+        sub2api sub2api-watchtower sub2api-postgres sub2api-redis; do
         if docker container inspect "$container_name" >/dev/null 2>&1; then
             log "优雅停止并移除旧版运行容器 $container_name（不会删除卷或数据）..."
             docker stop -t 60 "$container_name" >/dev/null 2>&1 || true
@@ -460,17 +591,9 @@ remove_legacy_runtime_containers() {
 start_services() {
     if [ "$BUILD_MODE" = "source" ]; then
         log "正在从源码构建并启动，首次通常需要 3-10 分钟..."
-        "${COMPOSE[@]}" \
-            -f "$INSTALL_DIR/deploy/docker-compose.local.yml" \
-            -f "$INSTALL_DIR/deploy/docker-compose.build.yml" \
-            --project-directory "$INSTALL_DIR/deploy" \
-            build nowind-api
+        compose build xiass-api
         remove_legacy_runtime_containers
-        "${COMPOSE[@]}" \
-            -f "$INSTALL_DIR/deploy/docker-compose.local.yml" \
-            -f "$INSTALL_DIR/deploy/docker-compose.build.yml" \
-            --project-directory "$INSTALL_DIR/deploy" \
-            up -d
+        compose up -d
     else
         log "正在拉取 XIASS 正式镜像..."
         compose pull
@@ -478,6 +601,15 @@ start_services() {
         compose up -d
     fi
     ok "容器已启动"
+}
+
+backup_existing_runtime() {
+    if ! "$EXISTING_INSTALL" && [ -z "$APP_CONTAINER" ]; then
+        return
+    fi
+    log "检测到已有安装；同步部署文件前先创建完整备份..."
+    curl -fsSL "$RAW_BASE_URL/deploy/xiass-backup.sh" \
+        | INSTALL_DIR="$INSTALL_DIR" BACKUP_DIR="$BACKUP_DIR" PERSISTENCE_MODE="$PERSISTENCE_MODE" bash
 }
 
 wait_for_service() {
@@ -492,7 +624,7 @@ wait_for_service() {
     done
 
     compose ps || true
-    compose logs --tail 120 nowind-api || true
+    compose logs --tail 120 xiass-api || true
     die "服务在 4 分钟内未通过健康检查。上方已输出容器状态和日志。"
 }
 
@@ -526,8 +658,8 @@ print_completion() {
     echo "Redis：         $INSTALL_DIR/deploy/redis_data"
     echo ""
     echo "常用命令："
-    echo "  查看状态：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml ps"
-    echo "  查看日志：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f docker-compose.local.yml logs -f nowind-api"
+    echo "  查看状态：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f $(basename "$COMPOSE_FILE") ps"
+    echo "  查看日志：cd $INSTALL_DIR/deploy && ${COMPOSE[*]} -f $(basename "$COMPOSE_FILE") logs -f xiass-api"
     echo "  安全更新：curl -fsSL ${RAW_BASE_URL}/deploy/xiass-update.sh | sudo bash"
     echo "  完整备份：curl -fsSL ${RAW_BASE_URL}/deploy/xiass-backup.sh | sudo bash"
     echo ""
@@ -542,11 +674,21 @@ main() {
     check_system
     install_base_dependencies
     install_docker
+    resolve_install_dir
+    detect_runtime_layout
     load_existing_config
+    if "$EXISTING_INSTALL"; then
+        interactive_config
+        log "已有实例将交给带完整备份和自动回滚的更新事务处理..."
+        curl -fsSL "$RAW_BASE_URL/deploy/xiass-update.sh" \
+            | INSTALL_DIR="$INSTALL_DIR" BACKUP_DIR="$BACKUP_DIR" PERSISTENCE_MODE="$PERSISTENCE_MODE" bash
+        return
+    fi
     interactive_config
     validate_configuration
     check_ports_available
     setup_repo
+    select_compose_file
     generate_env
     create_data_dirs
     configure_firewall

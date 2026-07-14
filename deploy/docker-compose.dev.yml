@@ -9,13 +9,13 @@
 # =============================================================================
 
 services:
-  nowind-api:
+  xiass-api:
     build:
       context: ..
       dockerfile: Dockerfile
       args:
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
-    container_name: nowind-api-dev
+    container_name: xiass-api-dev
     restart: unless-stopped
     ports:
       - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-8080}:8080"
@@ -37,7 +37,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@nowind.local}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xiass.local}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - JWT_SECRET=${JWT_SECRET:-}
       - SETUP_MIGRATION_TIMEOUT_SECONDS=${SETUP_MIGRATION_TIMEOUT_SECONDS:-0}
@@ -45,10 +45,11 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       # Local mainland-China development proxy. Containers cannot use
       # 127.0.0.1 for the host proxy, so default to Docker Desktop's host name.
-      - HTTP_PROXY=${SUB2API_DEV_HTTP_PROXY:-http://host.docker.internal:7897}
-      - HTTPS_PROXY=${SUB2API_DEV_HTTPS_PROXY:-http://host.docker.internal:7897}
-      - ALL_PROXY=${SUB2API_DEV_ALL_PROXY:-socks5://host.docker.internal:7897}
-      - NO_PROXY=${SUB2API_DEV_NO_PROXY:-127.0.0.1,localhost,::1,postgres,redis,nowind-api,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local}
+      - XIASS_DEPLOYMENT_MODE=container
+      - HTTP_PROXY=${XIASS_DEV_HTTP_PROXY:-${NOWIND_DEV_HTTP_PROXY:-${SUB2API_DEV_HTTP_PROXY:-http://host.docker.internal:7897}}}
+      - HTTPS_PROXY=${XIASS_DEV_HTTPS_PROXY:-${NOWIND_DEV_HTTPS_PROXY:-${SUB2API_DEV_HTTPS_PROXY:-http://host.docker.internal:7897}}}
+      - ALL_PROXY=${XIASS_DEV_ALL_PROXY:-${NOWIND_DEV_ALL_PROXY:-${SUB2API_DEV_ALL_PROXY:-socks5://host.docker.internal:7897}}}
+      - NO_PROXY=${XIASS_DEV_NO_PROXY:-${NOWIND_DEV_NO_PROXY:-${SUB2API_DEV_NO_PROXY:-127.0.0.1,localhost,::1,postgres,redis,xiass-api,nowind-api,sub2api,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local}}}
       # OpenAI HTTP upstream protocol/timeout
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_OPENAI_HTTP2_ENABLED=${GATEWAY_OPENAI_HTTP2_ENABLED:-true}
@@ -78,7 +79,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -88,7 +89,7 @@ services:
 
   postgres:
     image: postgres:18-alpine
-    container_name: nowind-api-postgres-dev
+    container_name: xiass-api-postgres-dev
     restart: unless-stopped
     volumes:
       - ./postgres_data:/var/lib/postgresql/data:Z
@@ -99,7 +100,7 @@ services:
       - PGDATA=/var/lib/postgresql/data
       - TZ=${TZ:-Asia/Shanghai}
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
       interval: 10s
@@ -109,7 +110,7 @@ services:
 
   redis:
     image: redis:8-alpine
-    container_name: nowind-api-redis-dev
+    container_name: xiass-api-redis-dev
     restart: unless-stopped
     volumes:
       - ./redis_data:/data:Z
@@ -124,7 +125,7 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -133,5 +134,5 @@ services:
       start_period: 5s
 
 networks:
-  nowind-api-network:
+  xiass-api-network:
     driver: bridge

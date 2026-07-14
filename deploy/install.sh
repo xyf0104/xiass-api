@@ -32,19 +32,42 @@ NC='\033[0m' # No Color
 
 # Configuration
 GITHUB_REPO="xyf0104/xiass-api"
-INSTALL_DIR="/opt/nowind-api"
-SERVICE_NAME="nowind-api"
-SERVICE_USER="nowind"
-CONFIG_DIR="/etc/nowind-api"
+INSTALL_DIR="${INSTALL_DIR:-/opt/xiass-api}"
+SERVICE_NAME="${SERVICE_NAME:-xiass-api}"
+SERVICE_USER="${SERVICE_USER:-xiass}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/xiass-api}"
 
 # Existing pre-v1.0.66 systemd installs keep their original paths and unit
 # name during in-place updates. Fresh installs use the canonical XIASS names.
 use_legacy_runtime_if_present() {
-    if [ ! -f "$INSTALL_DIR/$SERVICE_NAME" ] && [ -f "/opt/sub2api/sub2api" ]; then
+	local legacy_unit
+    if [ -f "$INSTALL_DIR/$SERVICE_NAME" ]; then
+        return
+    fi
+    if [ -f "/opt/nowind-api/nowind-api" ]; then
+        INSTALL_DIR="/opt/nowind-api"
+        SERVICE_NAME="nowind-api"
+        SERVICE_USER="nowind"
+        CONFIG_DIR="/etc/nowind-api"
+    elif [ -f "/opt/sub2api/sub2api" ]; then
         INSTALL_DIR="/opt/sub2api"
         SERVICE_NAME="sub2api"
         SERVICE_USER="sub2api"
         CONFIG_DIR="/etc/sub2api"
+		return
+	fi
+
+	# A nonstandard historical systemd install may not use the legacy default
+	# paths. Refuse a fresh install in that case instead of creating a second
+	# process that competes for the same HTTP port.
+	if command -v systemctl >/dev/null 2>&1; then
+		for legacy_unit in nowind-api sub2api; do
+			if systemctl is-active --quiet "$legacy_unit" 2>/dev/null; then
+				echo "Error: detected active legacy service $legacy_unit with a nonstandard binary path." >&2
+				echo "Set INSTALL_DIR/SERVICE_NAME explicitly or migrate that service before installing XIASS API." >&2
+				exit 1
+			fi
+		done
     fi
 }
 

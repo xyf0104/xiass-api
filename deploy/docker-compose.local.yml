@@ -9,12 +9,12 @@
 #   1. Copy .env.example to .env and configure
 #   2. mkdir -p data postgres_data redis_data
 #   3. docker-compose -f docker-compose.local.yml up -d
-#   4. Check logs: docker-compose -f docker-compose.local.yml logs -f nowind-api
+#   4. Check logs: docker-compose -f docker-compose.local.yml logs -f xiass-api
 #   5. Access: http://localhost:8080
 #
 # Migration to New Server:
 #   1. docker-compose -f docker-compose.local.yml down
-#   2. tar czf nowind-api-deploy.tar.gz deploy/
+#   2. tar czf xiass-api-deploy.tar.gz deploy/
 #   3. Transfer to new server and extract
 #   4. docker-compose -f docker-compose.local.yml up -d
 # =============================================================================
@@ -25,24 +25,25 @@ services:
   # ===========================================================================
   watchtower:
     image: containrrr/watchtower:latest
-    container_name: nowind-api-watchtower
+    container_name: xiass-api-watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --http-api-update nowind-api
+    command: --http-api-update xiass-api
     environment:
       - TZ=${TZ:-Asia/Shanghai}
-      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
-      - WATCHTOWER_HTTP_API_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
+      - XIASS_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
+      - NOWIND_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
+      - WATCHTOWER_HTTP_API_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
     networks:
-      - nowind-api-network
+      - xiass-api-network
 
   # ===========================================================================
   # XIASS API Application
   # ===========================================================================
-  nowind-api:
+  xiass-api:
     image: ghcr.io/xyf0104/xiass-api:latest
-    container_name: nowind-api
+    container_name: xiass-api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -75,7 +76,9 @@ services:
       # System Update Configuration
       # =======================================================================
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
+      - XIASS_DEPLOYMENT_MODE=container
+      - XIASS_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
+      - NOWIND_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
 
       # =======================================================================
       # Server Configuration
@@ -115,7 +118,7 @@ services:
       # =======================================================================
       # Admin Account (auto-created on first run)
       # =======================================================================
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@nowind.local}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xiass.local}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
       # =======================================================================
@@ -210,7 +213,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -223,7 +226,7 @@ services:
   # ===========================================================================
   postgres:
     image: postgres:18-alpine
-    container_name: nowind-api-postgres
+    container_name: xiass-api-postgres
     restart: unless-stopped
     ulimits:
       nofile:
@@ -239,7 +242,7 @@ services:
       - PGDATA=/var/lib/postgresql/data
       - TZ=${TZ:-Asia/Shanghai}
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
       interval: 10s
@@ -254,7 +257,7 @@ services:
   # ===========================================================================
   redis:
     image: redis:8-alpine
-    container_name: nowind-api-redis
+    container_name: xiass-api-redis
     restart: unless-stopped
     ulimits:
       nofile:
@@ -275,7 +278,7 @@ services:
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:
-      - nowind-api-network
+      - xiass-api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -287,5 +290,5 @@ services:
 # Networks
 # =============================================================================
 networks:
-  nowind-api-network:
+  xiass-api-network:
     driver: bridge

@@ -1,0 +1,4 @@
+#!/bin/sh
+# XIASS_COMPAT_WRAPPER=1
+# 旧服务名兼容入口。实际服务统一由 xiass-soft-router-agent 管理。
+exec /etc/init.d/xiass-soft-router-agent "$@"

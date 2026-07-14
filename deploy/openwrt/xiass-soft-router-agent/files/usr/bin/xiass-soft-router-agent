@@ -1,0 +1,1845 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import concurrent.futures
+import ipaddress
+import json
+import os
+import re
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+
+APP_NAME = "xiass-soft-router-agent"
+PRODUCT_NAME = "XIASS API"
+VERSION = "2.0.0"
+CONFIG_NAME = "xiass_soft_router_agent"
+LEGACY_CONFIG_NAME = "nowind_soft_router_agent"
+CONFIG_NAMES = (CONFIG_NAME, LEGACY_CONFIG_NAME)
+SECTION = "main"
+CONFIG_DIR = Path("/etc/config")
+RUN_DIR = Path("/var/run/xiass-soft-router-agent")
+STATUS_FILE = RUN_DIR / "status.json"
+DEFAULT_LOG = Path("/var/log/xiass-soft-router-agent.log")
+DEFAULT_FRPC_CONFIG = Path("/etc/frp/xiass-soft-router-frpc.ini")
+DEFAULT_FRPC_PID = RUN_DIR / "frpc.pid"
+LEGACY_FRPC_CONFIG = Path("/etc/frp/nowind-soft-router-frpc.ini")
+LEGACY_FRPC_PID = Path("/var/run/nowind-soft-router-agent/frpc.pid")
+MANAGED_FRPC_CONFIG_PATHS = frozenset((str(DEFAULT_FRPC_CONFIG), str(LEGACY_FRPC_CONFIG)))
+DEFAULT_LOG_MAX_SIZE = 5 * 1024 * 1024
+DEFAULT_LOG_BACKUPS = 5
+LOG_LOCK = threading.Lock()
+SECRET_LOCK = threading.Lock()
+RUNTIME_SECRETS = set()
+STATUS_STORE = None
+STOP_EVENT = threading.Event()
+
+
+OPTION_ALIASES = {
+    "enabled": ("enabled", "xiass_enabled", "nowind_enabled"),
+    "api_url": (
+        "api_url",
+        "xiass_api_url",
+        "panel_url",
+        "nowind_api_url",
+        "nowind_panel_url",
+    ),
+    "agent_token": ("agent_token", "xiass_agent_token", "nowind_agent_token"),
+    "interval": ("interval", "poll_interval", "xiass_interval", "nowind_interval"),
+    "frpc_bin": ("frpc_bin", "frpc_binary"),
+    "frpc_config": ("frpc_config", "frpc_config_file"),
+    "frpc_pid_file": ("frpc_pid_file", "frpc_pid"),
+    "local_ip": ("local_ip", "socks_listen_ip"),
+    "include_passwall": ("include_passwall",),
+    "include_passwall2": ("include_passwall2",),
+    "extra_socks": ("extra_socks", "extra_socks_ports"),
+    "exit_probe_host": ("exit_probe_host", "socks_probe_host"),
+    "exit_probe_port": ("exit_probe_port", "socks_probe_port"),
+    "exit_probe_timeout": ("exit_probe_timeout", "socks_probe_timeout"),
+    "exit_probe_protocol": ("exit_probe_protocol", "socks_probe_protocol"),
+    "log_file": ("log_file",),
+    "log_max_size": ("log_max_size",),
+    "log_backups": ("log_backups",),
+}
+
+
+def run(args, timeout=10):
+    try:
+        proc = subprocess.run(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+    except Exception as exc:
+        return False, "", str(exc)
+
+
+def config_package_order():
+    entries = []
+    for package in CONFIG_NAMES:
+        path = CONFIG_DIR / package
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = -1
+        canonical_priority = 1 if package == CONFIG_NAME else 0
+        entries.append((mtime, canonical_priority, package))
+    entries.sort(reverse=True)
+    return [entry[2] for entry in entries]
+
+
+def uci_get_exact(package, option):
+    ok, out, _ = run(["uci", "-q", "get", "%s.%s.%s" % (package, SECTION, option)])
+    return out if ok and out != "" else ""
+
+
+def package_get(package, option, default=""):
+    for alias in OPTION_ALIASES.get(option, (option,)):
+        value = uci_get_exact(package, alias)
+        if value != "":
+            return value
+    return default
+
+
+def uci_get(option, default=""):
+    for package in config_package_order():
+        value = package_get(package, option, "")
+        if value != "":
+            return value
+    return default
+
+
+def active_config_is_legacy():
+    return config_package_order()[0] == LEGACY_CONFIG_NAME
+
+
+def cfg_bool(option, default=False):
+    value = uci_get(option, "1" if default else "0").strip().lower()
+    return value in {"1", "true", "yes", "on", "enabled"}
+
+
+def cfg_int(option, default):
+    try:
+        return int(uci_get(option, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_size(value, default):
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+
+    multipliers = [
+        ("gib", 1024 * 1024 * 1024),
+        ("gb", 1024 * 1024 * 1024),
+        ("g", 1024 * 1024 * 1024),
+        ("mib", 1024 * 1024),
+        ("mb", 1024 * 1024),
+        ("m", 1024 * 1024),
+        ("kib", 1024),
+        ("kb", 1024),
+        ("k", 1024),
+        ("b", 1),
+    ]
+    multiplier = 1
+    for suffix, scale in multipliers:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+            multiplier = scale
+            break
+
+    try:
+        return int(float(text) * multiplier)
+    except ValueError:
+        return default
+
+
+def log_file():
+    return Path(uci_get("log_file", str(DEFAULT_LOG)) or str(DEFAULT_LOG))
+
+
+def log_max_size():
+    size = parse_size(uci_get("log_max_size", "5M"), DEFAULT_LOG_MAX_SIZE)
+    return max(0, size)
+
+
+def log_backup_count():
+    count = cfg_int("log_backups", DEFAULT_LOG_BACKUPS)
+    return max(0, min(count, 20))
+
+
+def rotate_log_if_needed(path):
+    max_size = log_max_size()
+    if max_size <= 0:
+        return
+    try:
+        if not path.exists() or path.stat().st_size < max_size:
+            return
+        backups = log_backup_count()
+        if backups <= 0:
+            path.unlink()
+            return
+        oldest = Path(str(path) + ".%d" % backups)
+        if oldest.exists():
+            oldest.unlink()
+        for idx in range(backups - 1, 0, -1):
+            src = Path(str(path) + ".%d" % idx)
+            if src.exists():
+                os.replace(str(src), str(path) + ".%d" % (idx + 1))
+        os.replace(str(path), str(path) + ".1")
+    except Exception:
+        pass
+
+
+def remember_secret(value):
+    value = str(value or "").strip()
+    if len(value) < 4:
+        return
+    with SECRET_LOCK:
+        RUNTIME_SECRETS.add(value)
+
+
+def configured_secrets():
+    secrets = set()
+    with SECRET_LOCK:
+        secrets.update(RUNTIME_SECRETS)
+    for package in CONFIG_NAMES:
+        for option in OPTION_ALIASES["agent_token"]:
+            value = uci_get_exact(package, option)
+            if len(value) >= 4:
+                secrets.add(value)
+    return secrets
+
+
+def sanitize_text(value, secrets=None, limit=500):
+    text = str(value or "")
+    for secret in secrets if secrets is not None else configured_secrets():
+        text = text.replace(secret, "***")
+    text = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+", r"\1***", text)
+    text = re.sub(r"(?i)((?:token|password|secret)\s*[:=]\s*)[^\s,;]+", r"\1***", text)
+    text = re.sub(r"([a-z][a-z0-9+.-]*://)[^/@\s]+@", r"\1***@", text, flags=re.I)
+    text = text.replace("\r", " ").replace("\n", " ")
+    return text[:limit]
+
+
+def log(message):
+    safe_message = sanitize_text(message)
+    line = "%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), safe_message)
+    try:
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_LOCK:
+            rotate_log_if_needed(path)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:
+        pass
+    try:
+        subprocess.run(["logger", "-t", APP_NAME, safe_message], timeout=3)
+    except Exception:
+        pass
+    print(line, flush=True)
+
+
+def utc_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def status_signal(message):
+    return {
+        "ok": False,
+        "message": message,
+        "checked_at": "",
+        "last_attempt_at": "",
+        "last_success_at": "",
+        "last_error": "",
+    }
+
+
+def default_status():
+    return {
+        "schema_version": 2,
+        "service": APP_NAME,
+        "product": PRODUCT_NAME,
+        "version": VERSION,
+        "updated_at": utc_now(),
+        "enabled": False,
+        "configuration": {"compatibility_mode": False},
+        "agent": {
+            "running": False,
+            "pid": 0,
+            "heartbeat_at": "",
+            "message": "节点程序尚未运行",
+        },
+        "xiass_api": status_signal("尚未检测 XIASS API 面板"),
+        "report": status_signal("尚未执行节点上报"),
+        "pull": status_signal("尚未拉取节点配置"),
+        "exit": status_signal("尚未检测 PassWall 出口"),
+        "config_apply": status_signal("尚未应用节点配置"),
+        "frpc": {
+            "ok": True,
+            "required": False,
+            "process_ok": True,
+            "process_running": False,
+            "process_owned": False,
+            "process_message": "面板尚未要求运行 frpc",
+            "control_ok": True,
+            "control_reachable": False,
+            "control_message": "面板尚未要求建立 FRP 控制链路",
+            "control_host": "",
+            "control_port": 0,
+            "proxy_count": 0,
+            "login_state": "unknown",
+            "tunnel_state": "unknown",
+            "latest_log": "暂无 frpc 日志",
+            "latest_log_at": "",
+            "checked_at": "",
+            "message": "当前无需运行 frpc",
+        },
+    }
+
+
+def sanitize_status_data(value, secrets=None):
+    if secrets is None:
+        secrets = configured_secrets()
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(word in lowered for word in ("token", "password", "secret", "authorization")):
+                continue
+            result[key] = sanitize_status_data(item, secrets)
+        return result
+    if isinstance(value, list):
+        return [sanitize_status_data(item, secrets) for item in value]
+    if isinstance(value, str):
+        return sanitize_text(value, secrets=secrets)
+    return value
+
+
+def load_status_file():
+    try:
+        raw = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+class StatusStore:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.data = default_status()
+        previous = load_status_file()
+        for name in ("xiass_api", "report", "pull", "exit", "config_apply", "frpc"):
+            if isinstance(previous.get(name), dict):
+                self.data[name].update(previous[name])
+        self.data["enabled"] = cfg_bool("enabled", False)
+        self.data["configuration"] = {"compatibility_mode": active_config_is_legacy()}
+        self.data["agent"] = {
+            "running": True,
+            "pid": os.getpid(),
+            "heartbeat_at": utc_now(),
+            "message": "节点程序正在运行",
+        }
+        self.write()
+
+    def _write_locked(self):
+        self.data["updated_at"] = utc_now()
+        safe = sanitize_status_data(self.data)
+        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(str(RUN_DIR), 0o700)
+        except OSError:
+            pass
+        tmp = Path(str(STATUS_FILE) + ".tmp.%d" % os.getpid())
+        tmp.write_text(json.dumps(safe, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(str(tmp), 0o644)
+        os.replace(str(tmp), str(STATUS_FILE))
+
+    def write(self):
+        with self.lock:
+            try:
+                self._write_locked()
+            except Exception:
+                pass
+
+    def update_top(self, **values):
+        with self.lock:
+            self.data.update(values)
+            self._write_locked()
+
+    def update_section(self, name, **values):
+        with self.lock:
+            section = self.data.setdefault(name, {})
+            section.update(values)
+            self._write_locked()
+
+    def signal(self, name, ok, message, attempted=False, success=False, **values):
+        now = utc_now()
+        with self.lock:
+            section = self.data.setdefault(name, status_signal(""))
+            section["ok"] = bool(ok)
+            section["message"] = sanitize_text(message)
+            section["checked_at"] = now
+            if attempted:
+                section["last_attempt_at"] = now
+            if success:
+                section["last_success_at"] = now
+            if ok:
+                section["last_error"] = ""
+            elif attempted:
+                section["last_error"] = sanitize_text(message)
+            section.update(values)
+            self._write_locked()
+
+    def heartbeat(self, message="节点程序正在运行"):
+        self.update_top(
+            enabled=cfg_bool("enabled", False),
+            configuration={"compatibility_mode": active_config_is_legacy()},
+            agent={
+                "running": True,
+                "pid": os.getpid(),
+                "heartbeat_at": utc_now(),
+                "message": message,
+            },
+        )
+
+    def snapshot(self):
+        with self.lock:
+            return json.loads(json.dumps(self.data, ensure_ascii=False))
+
+
+def valid_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return False
+    return 1 <= port <= 65535
+
+
+def to_port(value, default=0):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
+
+
+def uci_show(package):
+    ok, out, err = run(["uci", "-q", "show", package])
+    return ok, out.splitlines() if ok else [], err
+
+
+def strip_uci_value(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        value = value[1:-1].replace("'\\''", "'")
+    return value
+
+
+def parse_uci_package(package):
+    ok, lines, err = uci_show(package)
+    if not ok:
+        if not (CONFIG_DIR / package).exists():
+            return {}, True
+        log("扫描 UCI 配置 %s 失败：%s" % (package, err or "uci show 执行失败"))
+        return {}, False
+
+    sections = {}
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, raw = line.split("=", 1)
+        value = strip_uci_value(raw)
+        prefix = package + "."
+        if not key.startswith(prefix):
+            continue
+        rest = key[len(prefix) :]
+        if "." not in rest:
+            sections.setdefault(rest, {})[".type"] = value
+            continue
+        section, option = rest.split(".", 1)
+        sections.setdefault(section, {})[option] = value
+    return sections, True
+
+
+def socks_handshake_ok(port):
+    host = uci_get("local_ip", "127.0.0.1") or "127.0.0.1"
+    try:
+        with socket.create_connection((host, int(port)), timeout=2) as sock:
+            sock.settimeout(2)
+            sock.sendall(b"\x05\x01\x00")
+            resp = sock.recv(2)
+        return len(resp) == 2 and resp[0] == 5 and resp[1] != 0xFF
+    except Exception:
+        return False
+
+
+def exit_probe_target():
+    host = uci_get("exit_probe_host", "").strip()
+    port = to_port(uci_get("exit_probe_port", "0"), 0)
+    protocol = uci_get("exit_probe_protocol", "auto").strip().lower()
+    try:
+        parsed = urllib.parse.urlsplit(api_url())
+    except Exception:
+        parsed = urllib.parse.SplitResult("", "", "", "", "")
+    try:
+        panel_host = parsed.hostname or ""
+        panel_port = parsed.port
+    except ValueError:
+        panel_host = ""
+        panel_port = 0
+    if not host:
+        host = panel_host
+        if not port:
+            port = panel_port or (443 if parsed.scheme == "https" else 80)
+    if protocol not in {"auto", "http", "https", "tcp"}:
+        protocol = "auto"
+    if protocol == "auto":
+        if host == panel_host and parsed.scheme in {"http", "https"}:
+            protocol = parsed.scheme
+        elif port == 443:
+            protocol = "https"
+        elif port == 80:
+            protocol = "http"
+        else:
+            protocol = "tcp"
+    request_path = parsed.path or "/" if host == panel_host else "/"
+    timeout = max(1, min(cfg_int("exit_probe_timeout", 5), 15))
+    return host, port, timeout, protocol, request_path
+
+
+def recv_exact(sock, size):
+    chunks = []
+    remaining = size
+    while remaining > 0:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            raise RuntimeError("SOCKS5 响应提前结束")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def socks5_open_tunnel(local_host, local_port, target_host, target_port, timeout):
+    error_names = {
+        1: "通用失败",
+        2: "规则拒绝",
+        3: "网络不可达",
+        4: "目标主机不可达",
+        5: "目标端口拒绝连接",
+        6: "连接超时",
+        7: "不支持的命令",
+        8: "不支持的地址类型",
+    }
+    sock = None
+    try:
+        sock = socket.create_connection((local_host, int(local_port)), timeout=timeout)
+        sock.settimeout(timeout)
+        sock.sendall(b"\x05\x01\x00")
+        greeting = recv_exact(sock, 2)
+        if greeting[0] != 5 or greeting[1] == 0xFF:
+            raise RuntimeError("本地 SOCKS5 拒绝协商")
+        if greeting[1] != 0:
+            raise RuntimeError("本地 SOCKS5 要求认证，出口探测未配置认证信息")
+
+        try:
+            address = ipaddress.ip_address(target_host)
+            if address.version == 4:
+                encoded_host = b"\x01" + address.packed
+            else:
+                encoded_host = b"\x04" + address.packed
+        except ValueError:
+            encoded = target_host.encode("idna")
+            if not encoded or len(encoded) > 255:
+                raise RuntimeError("出口探测主机名无效")
+            encoded_host = b"\x03" + bytes([len(encoded)]) + encoded
+
+        sock.sendall(b"\x05\x01\x00" + encoded_host + int(target_port).to_bytes(2, "big"))
+        response = recv_exact(sock, 4)
+        if response[0] != 5:
+            raise RuntimeError("SOCKS5 返回了无效协议版本")
+        if response[1] != 0:
+            raise RuntimeError("外部上游不可达：%s" % error_names.get(response[1], "错误码 %d" % response[1]))
+        if response[3] == 1:
+            recv_exact(sock, 4)
+        elif response[3] == 3:
+            recv_exact(sock, recv_exact(sock, 1)[0])
+        elif response[3] == 4:
+            recv_exact(sock, 16)
+        else:
+            raise RuntimeError("SOCKS5 返回了未知地址类型")
+        recv_exact(sock, 2)
+        return sock, ""
+    except Exception as exc:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        return None, sanitize_text(exc)
+
+
+def socks5_connect_ok(local_host, local_port, target_host, target_port, timeout, protocol="tcp", request_path="/"):
+    sock, error = socks5_open_tunnel(local_host, local_port, target_host, target_port, timeout)
+    if sock is None:
+        return False, "外部上游不可达：%s" % error
+    try:
+        transport = sock
+        if protocol == "https":
+            context = ssl.create_default_context()
+            transport = context.wrap_socket(sock, server_hostname=target_host)
+        try:
+            if protocol in {"http", "https"}:
+                path = request_path if request_path.startswith("/") else "/"
+                header_host = target_host.encode("idna").decode("ascii")
+                if (protocol == "https" and int(target_port) != 443) or (protocol == "http" and int(target_port) != 80):
+                    header_host = "%s:%d" % (header_host, int(target_port))
+                request = "HEAD %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: %s\r\n\r\n" % (
+                    path,
+                    header_host,
+                    APP_NAME,
+                )
+                transport.sendall(request.encode("ascii", "strict"))
+                response = transport.recv(12)
+                if not response:
+                    return False, "外部上游未返回 HTTP 响应"
+                if not response.startswith(b"HTTP/"):
+                    return False, "外部上游返回了无效 HTTP 响应"
+                return True, "已通过 SOCKS5 完成 %s 请求并收到响应" % protocol.upper()
+            return True, "已通过 SOCKS5 建立 TCP 连接并完成协议握手"
+        finally:
+            transport.close()
+    except Exception as exc:
+        try:
+            sock.close()
+        except OSError:
+            pass
+        return False, "外部上游传输失败：%s" % sanitize_text(exc)
+
+
+def attach_exit_probes(nodes):
+    host, port, timeout, protocol, request_path = exit_probe_target()
+    active_nodes = []
+    for node in nodes:
+        if not node.get("enabled", False):
+            node["exit_status"] = "skipped"
+            node["exit_message"] = "SOCKS 未启用，已跳过出口探测"
+        else:
+            active_nodes.append(node)
+    if not host or not port:
+        for node in active_nodes:
+            node["exit_status"] = "unchecked"
+            node["exit_message"] = "未配置有效的出口探测目标"
+        return nodes
+
+    local_host = uci_get("local_ip", "127.0.0.1") or "127.0.0.1"
+    candidates = [node for node in active_nodes if node.get("listen_status") == "listening"]
+    for node in active_nodes:
+        if node.get("listen_status") != "listening":
+            node["exit_status"] = "unreachable"
+            node["exit_message"] = "本地 SOCKS 监听不可用"
+    if not candidates:
+        return nodes
+
+    workers = min(8, len(candidates))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                socks5_connect_ok,
+                local_host,
+                node.get("openwrt_port"),
+                host,
+                port,
+                timeout,
+                protocol,
+                request_path,
+            ): node
+            for node in candidates
+        }
+        for future, node in futures.items():
+            try:
+                ok, message = future.result()
+            except Exception as exc:
+                ok, message = False, "出口探测异常：%s" % sanitize_text(exc)
+            node["exit_status"] = "reachable" if ok else "unreachable"
+            node["exit_message"] = message
+    return nodes
+
+
+def node_name(sections, socks_section):
+    node_ref = socks_section.get("node", "")
+    if node_ref:
+        node = sections.get(node_ref, {})
+        for key in ("remarks", "remark", "name"):
+            if node.get(key):
+                return node[key]
+    for key in ("remarks", "remark", "name"):
+        if socks_section.get(key):
+            return socks_section[key]
+    return ""
+
+
+def collect_passwall_package(package):
+    result = []
+    sections, complete = parse_uci_package(package)
+    if not complete:
+        return result, False
+    for section_id, section in sections.items():
+        if section.get(".type") != "socks":
+            continue
+        port = to_port(section.get("port"))
+        if not port:
+            continue
+        node_ref = section.get("node", "")
+        name = node_name(sections, section) or "%s SOCKS %d" % (package, port)
+        if node_ref:
+            node_key = "%s:%s:%d" % (package, node_ref, port)
+        else:
+            node_key = "%s:%s:%d" % (package, section_id, port)
+        result.append(
+            {
+                "id": "%s.%s" % (package, section_id),
+                "node_key": node_key,
+                "name": name,
+                "openwrt_port": port,
+                "http_port": to_port(section.get("http_port")),
+                "node_ref": node_ref,
+                "listen_status": "listening" if socks_handshake_ok(port) else "closed",
+                "enabled": str(section.get("enabled", "0")).lower()
+                in {"1", "true", "yes", "on"},
+            }
+        )
+    return result, True
+
+
+def collect_extra_socks():
+    result = []
+    extra = uci_get("extra_socks", "")
+    for item in [part.strip() for part in extra.replace(";", ",").split(",") if part.strip()]:
+        if ":" in item:
+            port_text, name = item.split(":", 1)
+            name = name.strip() or "SOCKS %s" % port_text.strip()
+        else:
+            port_text = item
+            name = "SOCKS %s" % port_text.strip()
+        port = to_port(port_text.strip())
+        if not port:
+            continue
+        result.append(
+            {
+                "id": "extra.%d" % port,
+                "node_key": "extra:%d" % port,
+                "name": name,
+                "openwrt_port": port,
+                "http_port": 0,
+                "node_ref": "",
+                "listen_status": "listening" if socks_handshake_ok(port) else "closed",
+                "enabled": True,
+            }
+        )
+    return result
+
+
+def collect_socks_nodes():
+    nodes = []
+    complete = True
+    if cfg_bool("include_passwall", True):
+        found, ok = collect_passwall_package("passwall")
+        nodes.extend(found)
+        complete = complete and ok
+    if cfg_bool("include_passwall2", True):
+        found, ok = collect_passwall_package("passwall2")
+        nodes.extend(found)
+        complete = complete and ok
+    nodes.extend(collect_extra_socks())
+    return attach_exit_probes(nodes), complete
+
+
+def build_report():
+    nodes, snapshot_complete = collect_socks_nodes()
+    return {
+        "hostname": socket.gethostname(),
+        "snapshot_complete": snapshot_complete,
+        "socks": nodes,
+        "xiass_agent": {
+            "name": APP_NAME,
+            "version": VERSION,
+            "schema_version": 2,
+        },
+    }
+
+
+def exit_status_from_report(report):
+    nodes = report.get("socks") if isinstance(report, dict) else []
+    nodes = nodes if isinstance(nodes, list) else []
+    eligible = [node for node in nodes if node.get("exit_status") != "skipped"]
+    skipped = [node for node in nodes if node.get("exit_status") == "skipped"]
+    reachable = [node for node in eligible if node.get("exit_status") == "reachable"]
+    unreachable = [node for node in eligible if node.get("exit_status") == "unreachable"]
+    unchecked = [node for node in eligible if node.get("exit_status") == "unchecked"]
+    ok = bool(eligible) and len(reachable) == len(eligible)
+    if not nodes:
+        message = "未发现可检测的 PassWall SOCKS 监听"
+    elif not eligible:
+        ok = True
+        message = "没有启用的 SOCKS 出口，已跳过 %d 条" % len(skipped)
+    elif ok:
+        message = "%d 个已启用 SOCKS 出口全部可达" % len(reachable)
+    else:
+        message = "%d 个已启用 SOCKS 出口：%d 个可达，%d 个不可达，%d 个未检测，%d 个已跳过" % (
+            len(eligible),
+            len(reachable),
+            len(unreachable),
+            len(unchecked),
+            len(skipped),
+        )
+    details = []
+    for node in nodes[:20]:
+        details.append(
+            {
+                "name": str(node.get("name") or "SOCKS"),
+                "port": to_port(node.get("openwrt_port"), 0),
+                "status": str(node.get("exit_status") or "unchecked"),
+                "message": str(node.get("exit_message") or ""),
+            }
+        )
+    return ok, message, {
+        "total": len(nodes),
+        "eligible": len(eligible),
+        "skipped": len(skipped),
+        "reachable": len(reachable),
+        "unreachable": len(unreachable),
+        "unchecked": len(unchecked),
+        "nodes": details,
+    }
+
+
+def api_url():
+    return uci_get("api_url", "").strip().rstrip("/")
+
+
+def api_request(method, path, payload=None):
+    base_url = api_url()
+    token = uci_get("agent_token", "")
+    remember_secret(token)
+    if not base_url or not token:
+        raise RuntimeError("XIASS API 地址或节点令牌为空")
+
+    body = None
+    headers = {
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/json",
+        "User-Agent": "%s/%s" % (APP_NAME, VERSION),
+        "X-XIASS-Agent": APP_NAME,
+    }
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(base_url + path, data=body, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw) if raw else {}
+
+    if isinstance(data, dict) and "code" in data:
+        if data.get("code") != 0:
+            raise RuntimeError(data.get("message") or "XIASS API 返回错误码 %s" % data.get("code"))
+        return data.get("data") if data.get("data") is not None else {}
+    return data
+
+
+def safe_url_display(value):
+    try:
+        parsed = urllib.parse.urlsplit(str(value or ""))
+        host = parsed.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = "[%s]" % host
+        if parsed.port:
+            host = "%s:%d" % (host, parsed.port)
+        path = parsed.path.rstrip("/")
+        return "%s://%s%s" % (parsed.scheme, host, path)
+    except Exception:
+        return ""
+
+
+def probe_xiass_api():
+    base_url = api_url()
+    if not base_url:
+        return False, "XIASS API 地址为空", 0, 0
+    started = time.monotonic()
+    request = urllib.request.Request(
+        base_url + "/",
+        headers={"Accept": "text/html,application/json", "User-Agent": "%s/%s" % (APP_NAME, VERSION)},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            response.read(1)
+            code = int(response.getcode() or 0)
+        latency = int((time.monotonic() - started) * 1000)
+        return True, "面板可达（HTTP %d，%d 毫秒）" % (code, latency), code, latency
+    except urllib.error.HTTPError as exc:
+        latency = int((time.monotonic() - started) * 1000)
+        ok = 100 <= exc.code < 500
+        message = "面板可达（HTTP %d，%d 毫秒）" % (exc.code, latency) if ok else "面板响应异常（HTTP %d）" % exc.code
+        return ok, message, exc.code, latency
+    except Exception as exc:
+        latency = int((time.monotonic() - started) * 1000)
+        return False, "面板不可达：%s" % sanitize_text(exc), 0, latency
+
+
+def api_error_message(exc):
+    if isinstance(exc, urllib.error.HTTPError):
+        return "HTTP %d %s" % (exc.code, sanitize_text(exc.reason))
+    if isinstance(exc, urllib.error.URLError):
+        return sanitize_text(exc.reason)
+    return sanitize_text(exc)
+
+
+def update_panel_from_api_result(status, error=None):
+    if error is None:
+        status.signal("xiass_api", True, "XIASS API 节点接口响应正常", http_status=200)
+        return
+    if isinstance(error, urllib.error.HTTPError):
+        ok = 100 <= error.code < 500
+        message = "面板可达，但节点接口返回 HTTP %d" % error.code if ok else "面板节点接口异常（HTTP %d）" % error.code
+        status.signal("xiass_api", ok, message, http_status=error.code)
+    elif isinstance(error, urllib.error.URLError):
+        status.signal("xiass_api", False, "面板不可达：%s" % sanitize_text(error.reason), http_status=0)
+
+
+def process_cmdline(pid):
+    try:
+        raw = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+        return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+    except Exception:
+        return []
+
+
+def pid_running(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def agent_pid_owned(pid):
+    args = process_cmdline(pid)
+    joined = "\0".join(args)
+    return APP_NAME in joined or "nowind-soft-router-agent" in joined
+
+
+def cmdline_owns_frpc(args, config_paths):
+    if not args:
+        return False
+    executable = os.path.basename(args[0]).lower()
+    joined = "\0".join(args).lower()
+    if "frpc" not in executable and "/frpc" not in joined:
+        return False
+    for config_path in config_paths:
+        value = str(config_path or "")
+        if not value:
+            continue
+        if value in args or "-c=%s" % value in args or "--config=%s" % value in args:
+            return True
+    return False
+
+
+def read_pid(path):
+    try:
+        text = Path(path).read_text(encoding="utf-8").strip()
+        return int(text) if text else 0
+    except Exception:
+        return 0
+
+
+def frpc_config_error(config_file):
+    path = Path(config_file)
+    normalized = os.path.normpath(str(path))
+    if normalized not in MANAGED_FRPC_CONFIG_PATHS:
+        return "拒绝使用非本节点程序管理的 frpc 配置：%s" % path
+    try:
+        if path.is_symlink():
+            return "拒绝使用符号链接形式的 frpc 配置：%s" % path
+    except OSError:
+        return "无法安全检查 frpc 配置：%s" % path
+    return ""
+
+
+def require_managed_frpc_config(config_file):
+    error = frpc_config_error(config_file)
+    if error:
+        raise RuntimeError(error)
+
+
+def effective_frpc_spec():
+    return (
+        Path(uci_get("frpc_pid_file", str(DEFAULT_FRPC_PID)) or str(DEFAULT_FRPC_PID)),
+        Path(uci_get("frpc_config", str(DEFAULT_FRPC_CONFIG)) or str(DEFAULT_FRPC_CONFIG)),
+    )
+
+
+def all_owned_frpc_specs():
+    specs = []
+
+    def add_spec(pid_file, config_file):
+        if frpc_config_error(config_file):
+            return
+        specs.append((pid_file, config_file))
+
+    add_spec(*effective_frpc_spec())
+    for package, default_pid, default_config in (
+        (CONFIG_NAME, DEFAULT_FRPC_PID, DEFAULT_FRPC_CONFIG),
+        (LEGACY_CONFIG_NAME, LEGACY_FRPC_PID, LEGACY_FRPC_CONFIG),
+    ):
+        pid_file = Path(package_get(package, "frpc_pid_file", str(default_pid)) or str(default_pid))
+        config_file = Path(package_get(package, "frpc_config", str(default_config)) or str(default_config))
+        add_spec(pid_file, config_file)
+    add_spec(DEFAULT_FRPC_PID, DEFAULT_FRPC_CONFIG)
+    add_spec(LEGACY_FRPC_PID, LEGACY_FRPC_CONFIG)
+    result = []
+    seen = set()
+    for pid_file, config_file in specs:
+        key = (str(pid_file), str(config_file))
+        if key not in seen:
+            seen.add(key)
+            result.append((pid_file, config_file))
+    return result
+
+
+def frpc_process_state(pid_file=None, config_file=None):
+    if pid_file is None or config_file is None:
+        pid_file, config_file = effective_frpc_spec()
+    config_error = frpc_config_error(config_file)
+    if config_error:
+        return {
+            "pid": 0,
+            "running": False,
+            "owned": False,
+            "message": config_error,
+        }
+    pid = read_pid(pid_file)
+    if not pid:
+        return {
+            "pid": 0,
+            "running": False,
+            "owned": False,
+            "message": "frpc 未运行",
+        }
+    if not pid_running(pid):
+        return {
+            "pid": pid,
+            "running": False,
+            "owned": False,
+            "message": "frpc 进程号文件已失效",
+        }
+    config_paths = [config_file, DEFAULT_FRPC_CONFIG, LEGACY_FRPC_CONFIG]
+    owned = cmdline_owns_frpc(process_cmdline(pid), config_paths)
+    return {
+        "pid": pid,
+        "running": True,
+        "owned": owned,
+        "message": "frpc 正在运行（进程号 %d）" % pid if owned else "进程号 %d 不属于本节点程序，已拒绝操作" % pid,
+    }
+
+
+def stop_frpc(all_owned=True):
+    success = True
+    specs = all_owned_frpc_specs() if all_owned else [effective_frpc_spec()]
+    for pid_file, config_file in specs:
+        config_error = frpc_config_error(config_file)
+        if config_error:
+            success = False
+            log(config_error)
+            continue
+        pid = read_pid(pid_file)
+        if not pid:
+            continue
+        if not pid_running(pid):
+            try:
+                pid_file.unlink()
+            except OSError:
+                pass
+            continue
+        config_paths = [config_file, DEFAULT_FRPC_CONFIG, LEGACY_FRPC_CONFIG]
+        if not cmdline_owns_frpc(process_cmdline(pid), config_paths):
+            success = False
+            log("拒绝停止进程号 %d：命令行不属于本节点程序的 frpc 配置" % pid)
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        deadline = time.time() + 5
+        while time.time() < deadline and pid_running(pid):
+            time.sleep(0.2)
+        if pid_running(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        if pid_running(pid):
+            success = False
+            log("frpc 进程号 %d 未能停止" % pid)
+            continue
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+    return success
+
+
+def observe_frpc_output(text):
+    global STATUS_STORE
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    lowered = clean.lower()
+    login_success_markers = ("login to server success", "login success")
+    login_failure_markers = (
+        "login to server failed",
+        "authentication failed",
+        "token in login doesn't match",
+        "connect to server error",
+        "connection refused",
+        "dial tcp",
+    )
+    tunnel_success_markers = (
+        "start proxy success",
+        "proxy added",
+        "all proxy started",
+        "start proxy success",
+    )
+    tunnel_failure_markers = (
+        "start proxy error",
+        "start error",
+        "port already used",
+        "proxy name conflicts",
+    )
+    if STATUS_STORE is None:
+        return
+    values = {
+        "latest_log": sanitize_text(clean),
+        "latest_log_at": utc_now(),
+    }
+    if any(marker in lowered for marker in login_success_markers):
+        values.update(
+            login_state="success",
+            last_control_event_at=utc_now(),
+            last_control_event="frpc 已确认登录 FRP 服务",
+        )
+    elif any(marker in lowered for marker in login_failure_markers):
+        values.update(
+            login_state="failed",
+            last_control_event_at=utc_now(),
+            last_control_event=sanitize_text(clean),
+        )
+    if any(marker in lowered for marker in tunnel_success_markers):
+        values.update(
+            tunnel_state="success",
+            last_tunnel_event_at=utc_now(),
+            last_tunnel_event="frpc 已确认 Raw 映射启动",
+        )
+    elif any(marker in lowered for marker in tunnel_failure_markers):
+        values.update(
+            tunnel_state="failed",
+            last_tunnel_event_at=utc_now(),
+            last_tunnel_event=sanitize_text(clean),
+        )
+    STATUS_STORE.update_section("frpc", **values)
+
+
+def pump_frpc_output(proc, pid_file):
+    try:
+        if proc.stdout is not None:
+            for raw in proc.stdout:
+                text = raw.rstrip()
+                if text:
+                    observe_frpc_output(text)
+                    log("frpc：%s" % text)
+    except Exception:
+        pass
+    finally:
+        try:
+            return_code = proc.wait(timeout=1)
+        except Exception:
+            return_code = -1
+        if read_pid(pid_file) == proc.pid:
+            try:
+                pid_file.unlink()
+            except OSError:
+                pass
+        if STATUS_STORE is not None and not STOP_EVENT.is_set():
+            STATUS_STORE.update_section(
+                "frpc",
+                process_running=False,
+                process_ok=False,
+                process_message="frpc 已退出（状态码 %d）" % return_code,
+            )
+
+
+def start_frpc():
+    frpc_bin = uci_get("frpc_bin", "/usr/bin/frpc")
+    pid_file, frpc_config = effective_frpc_spec()
+    require_managed_frpc_config(frpc_config)
+    state = frpc_process_state(pid_file, frpc_config)
+    if state["running"] and state["owned"]:
+        return state["pid"]
+    if state["running"] and not state["owned"]:
+        raise RuntimeError(state["message"])
+    if not frpc_config.exists():
+        raise RuntimeError("frpc 配置不存在：%s" % frpc_config)
+    if not Path(frpc_bin).exists():
+        raise RuntimeError("frpc 程序不存在：%s" % frpc_bin)
+
+    try:
+        pid_file.unlink()
+    except OSError:
+        pass
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        [frpc_bin, "-c", str(frpc_config)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    pid_file.write_text(str(proc.pid), encoding="utf-8")
+    os.chmod(str(pid_file), 0o600)
+    threading.Thread(target=pump_frpc_output, args=(proc, pid_file), daemon=True).start()
+    if STATUS_STORE is not None:
+        STATUS_STORE.update_section(
+            "frpc",
+            login_state="unknown",
+            tunnel_state="unknown",
+            process_running=True,
+            process_ok=True,
+            process_message="frpc 正在运行（进程号 %d）" % proc.pid,
+        )
+    log("已启动独立 frpc，进程号=%d，配置=%s" % (proc.pid, frpc_config))
+    return proc.pid
+
+
+def restart_frpc():
+    if not stop_frpc(all_owned=False):
+        raise RuntimeError("旧 frpc 进程未安全停止")
+    return start_frpc()
+
+
+def first_value(mapping, names, default=None, allow_empty=False):
+    if not isinstance(mapping, dict):
+        return default
+    for name in names:
+        if name not in mapping:
+            continue
+        value = mapping.get(name)
+        if allow_empty or value not in (None, ""):
+            return value
+    return default
+
+
+def bool_value(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def safe_frp_name(value):
+    raw = str(value or "").strip()
+    raw = re.sub(r"(?i)^nowind[-_.]*", "xiass-", raw)
+    out = []
+    for char in raw:
+        if ("a" <= char <= "z") or ("A" <= char <= "Z") or ("0" <= char <= "9") or char in "._-":
+            out.append(char)
+        else:
+            out.append("-")
+    name = re.sub(r"-+", "-", "".join(out)).strip("-._")
+    return name or "xiass-socks"
+
+
+def safe_frp_scalar(value, field_name):
+    text = str(value or "").strip()
+    if "\n" in text or "\r" in text:
+        raise RuntimeError("%s 包含非法换行" % field_name)
+    return text
+
+
+def desired_enabled(desired):
+    return bool_value(first_value(desired, ("enabled", "agent_enabled", "xiass_enabled", "nowind_enabled"), False))
+
+
+def desired_mapping_list(desired):
+    value = first_value(desired, ("mappings", "frp_mappings", "proxy_mappings"), [])
+    return value if isinstance(value, list) else []
+
+
+def normalized_desired_mapping(item):
+    if not isinstance(item, dict):
+        return None
+    enabled = bool_value(first_value(item, ("enabled", "active"), True), True)
+    local_port = to_port(first_value(item, ("openwrt_port", "local_port", "port"), 0))
+    remote_port = to_port(first_value(item, ("raw_remote_port", "remote_port", "frp_remote_port"), 0))
+    if not enabled or not local_port or not remote_port:
+        return None
+    mapping_id = first_value(item, ("id", "mapping_id"), remote_port)
+    default_name = "xiass-%s-%d" % (mapping_id, remote_port)
+    name = safe_frp_name(first_value(item, ("name", "proxy_name"), default_name))
+    return name, local_port, remote_port
+
+
+def desired_runtime(desired):
+    host = safe_frp_scalar(
+        first_value(desired, ("frp_server_host", "frp_host", "server_addr", "server_host"), ""),
+        "FRP 服务地址",
+    )
+    port = to_port(first_value(desired, ("frp_server_port", "frp_port", "server_port"), 0))
+    mappings = [item for item in (normalized_desired_mapping(raw) for raw in desired_mapping_list(desired)) if item]
+    return {
+        "required": desired_enabled(desired) and bool(mappings),
+        "control_host": host,
+        "control_port": port,
+        "proxy_count": len(mappings),
+        "mappings": mappings,
+    }
+
+
+def render_frpc_config(desired):
+    runtime = desired_runtime(desired)
+    if not runtime["required"]:
+        return ""
+
+    host = runtime["control_host"]
+    port = runtime["control_port"]
+    token = safe_frp_scalar(
+        first_value(desired, ("frp_token", "token", "server_token", "nowind_frp_token"), ""),
+        "FRP 令牌",
+    )
+    remember_secret(token)
+    if not host or not port or not token:
+        raise RuntimeError("面板下发配置缺少 FRP 服务地址、端口或令牌")
+
+    local_ip = safe_frp_scalar(uci_get("local_ip", "127.0.0.1") or "127.0.0.1", "本机监听地址")
+    lines = [
+        "[common]",
+        "server_addr = %s" % host,
+        "server_port = %d" % port,
+        "token = %s" % token,
+        "tcp_mux = true",
+        "login_fail_exit = false",
+        "log_level = info",
+        "",
+    ]
+    for name, local_port, remote_port in runtime["mappings"]:
+        lines.extend(
+            [
+                "[%s]" % name,
+                "type = tcp",
+                "local_ip = %s" % local_ip,
+                "local_port = %d" % local_port,
+                "remote_port = %d" % remote_port,
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def apply_desired_config(desired):
+    text = render_frpc_config(desired)
+    _, frpc_config = effective_frpc_spec()
+    require_managed_frpc_config(frpc_config)
+    if not text:
+        if not stop_frpc(all_owned=False):
+            raise RuntimeError("无需运行 frpc，但旧进程未能安全停止")
+        return False
+
+    frpc_config.parent.mkdir(parents=True, exist_ok=True)
+    old = frpc_config.read_text(encoding="utf-8") if frpc_config.exists() else ""
+    if old != text:
+        tmp = Path(str(frpc_config) + ".tmp.%d" % os.getpid())
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.chmod(str(tmp), 0o600)
+            os.replace(str(tmp), str(frpc_config))
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        log("frpc 配置已更新：%s" % frpc_config)
+        restart_frpc()
+    else:
+        start_frpc()
+    return True
+
+
+def tcp_endpoint_ok(host, port, timeout=2):
+    if not host or not valid_port(port):
+        return False, "FRP 控制地址或端口为空"
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            pass
+        return True, "FRP 控制端口可达（%s:%d）" % (host, int(port))
+    except Exception as exc:
+        return False, "FRP 控制端口不可达：%s" % sanitize_text(exc)
+
+
+def compute_frpc_status(existing=None, desired=None):
+    existing = existing if isinstance(existing, dict) else {}
+    if isinstance(desired, dict):
+        runtime = desired_runtime(desired)
+        required = runtime["required"]
+        host = runtime["control_host"]
+        port = runtime["control_port"]
+        proxy_count = runtime["proxy_count"]
+    else:
+        required = bool(existing.get("required", False))
+        host = str(existing.get("control_host") or "")
+        port = to_port(existing.get("control_port"), 0)
+        proxy_count = int(existing.get("proxy_count") or 0)
+
+    pid_file, config_file = effective_frpc_spec()
+    login_state = str(existing.get("login_state") or "unknown")
+    tunnel_state = str(existing.get("tunnel_state") or "unknown")
+    config_error = frpc_config_error(config_file)
+    if config_error:
+        return {
+            "ok": False,
+            "required": required,
+            "process_ok": False,
+            "process_running": False,
+            "process_owned": False,
+            "pid": 0,
+            "process_message": config_error,
+            "control_ok": False,
+            "control_reachable": False,
+            "control_message": "已拒绝使用非 Agent 管理的配置，未检测或操作 FRP 隧道",
+            "control_host": host,
+            "control_port": port,
+            "proxy_count": proxy_count,
+            "login_state": login_state,
+            "tunnel_state": tunnel_state,
+            "latest_log": str(existing.get("latest_log") or "暂无 frpc 日志"),
+            "latest_log_at": str(existing.get("latest_log_at") or ""),
+            "last_control_event": str(existing.get("last_control_event") or ""),
+            "last_control_event_at": str(existing.get("last_control_event_at") or ""),
+            "last_tunnel_event": str(existing.get("last_tunnel_event") or ""),
+            "last_tunnel_event_at": str(existing.get("last_tunnel_event_at") or ""),
+            "config_path": str(config_file),
+            "checked_at": utc_now(),
+            "message": config_error,
+        }
+    process = frpc_process_state(pid_file, config_file)
+    if not required:
+        process_ok = not process["running"]
+        process_message = "面板当前未下发 FRP 映射，无需运行 frpc" if process_ok else "当前无需 frpc，但检测到进程仍在运行"
+        control_ok = process_ok
+        control_reachable = False
+        control_message = "当前无需建立 FRP 控制链路" if control_ok else "请先停止不再需要的 frpc 进程"
+    else:
+        process_ok = process["running"] and process["owned"]
+        process_message = process["message"]
+        if process_ok:
+            control_reachable, control_message = tcp_endpoint_ok(host, port)
+            control_ok = control_reachable and login_state == "success" and tunnel_state == "success"
+            if control_ok:
+                control_message = "FRP 隧道正常，frpc 已确认登录并启动 Raw 映射"
+            elif control_reachable and login_state == "failed":
+                control_message = "FRP 控制端口可达，但 frpc 登录失败"
+            elif control_reachable and tunnel_state == "failed":
+                control_message = "frpc 已连接控制端口，但 Raw 映射启动失败"
+            elif control_reachable and login_state != "success" and tunnel_state != "success":
+                control_message = "FRP 控制端口可达，等待 frpc 登录和 Raw 映射确认"
+            elif control_reachable and login_state != "success":
+                control_message = "FRP 控制端口可达，等待 frpc 登录确认"
+            elif control_reachable and tunnel_state != "success":
+                control_message = "frpc 已登录，等待 Raw 映射启动确认"
+            elif control_reachable:
+                control_message = "FRP 隧道状态未确认"
+        else:
+            control_reachable = False
+            control_ok = False
+            control_message = "frpc 未正常运行，FRP 隧道不可用"
+
+    overall = process_ok and control_ok
+    return {
+        "ok": overall,
+        "required": required,
+        "process_ok": process_ok,
+        "process_running": process["running"],
+        "process_owned": process["owned"],
+        "pid": process["pid"],
+        "process_message": process_message,
+        "control_ok": control_ok,
+        "control_reachable": control_reachable,
+        "control_message": control_message,
+        "control_host": host,
+        "control_port": port,
+        "proxy_count": proxy_count,
+        "login_state": login_state,
+        "tunnel_state": tunnel_state,
+        "latest_log": str(existing.get("latest_log") or "暂无 frpc 日志"),
+        "latest_log_at": str(existing.get("latest_log_at") or ""),
+        "last_control_event": str(existing.get("last_control_event") or ""),
+        "last_control_event_at": str(existing.get("last_control_event_at") or ""),
+        "last_tunnel_event": str(existing.get("last_tunnel_event") or ""),
+        "last_tunnel_event_at": str(existing.get("last_tunnel_event_at") or ""),
+        "config_path": str(config_file),
+        "checked_at": utc_now(),
+        "message": "frpc 与 FRP 隧道正常" if overall else "%s；%s" % (process_message, control_message),
+    }
+
+
+def refresh_frpc_status(status, desired=None):
+    current = status.snapshot().get("frpc", {})
+    status.update_section("frpc", **compute_frpc_status(current, desired))
+
+
+def perform_cycle(status):
+    status.heartbeat()
+    panel_ok, panel_message, http_status, latency_ms = probe_xiass_api()
+    status.signal(
+        "xiass_api",
+        panel_ok,
+        panel_message,
+        http_status=http_status,
+        latency_ms=latency_ms,
+        endpoint=safe_url_display(api_url()),
+    )
+
+    if not cfg_bool("enabled", False):
+        status.signal("report", False, "节点未启用，未执行上报")
+        status.signal("pull", False, "节点未启用，未拉取配置")
+        status.signal("exit", False, "节点未启用，未检测 PassWall 出口")
+        status.signal("config_apply", True, "节点未启用，无需应用配置")
+        stop_frpc(all_owned=True)
+        refresh_frpc_status(status, {"enabled": False, "mappings": []})
+        return None
+
+    report = build_report()
+    exit_ok, exit_message, exit_details = exit_status_from_report(report)
+    status.signal(
+        "exit",
+        exit_ok,
+        exit_message,
+        attempted=True,
+        success=exit_ok,
+        **exit_details
+    )
+    try:
+        api_request("POST", "/api/v1/soft-router/agent/report", report)
+        status.signal(
+            "report",
+            True,
+            "最近一次节点上报成功，共发现 %d 个 SOCKS 监听" % len(report["socks"]),
+            attempted=True,
+            success=True,
+            node_count=len(report["socks"]),
+        )
+        update_panel_from_api_result(status)
+    except Exception as exc:
+        status.signal(
+            "report",
+            False,
+            "节点上报失败：%s" % api_error_message(exc),
+            attempted=True,
+            node_count=len(report["socks"]),
+        )
+        update_panel_from_api_result(status, exc)
+        log("节点上报失败：%s" % api_error_message(exc))
+
+    desired = None
+    try:
+        pulled = api_request("GET", "/api/v1/soft-router/agent/config")
+        if not isinstance(pulled, dict):
+            raise RuntimeError("面板返回的节点配置不是 JSON 对象")
+        desired = pulled
+        runtime = desired_runtime(desired)
+        status.signal(
+            "pull",
+            True,
+            "最近一次配置拉取成功，共 %d 条 FRP 映射" % runtime["proxy_count"],
+            attempted=True,
+            success=True,
+            mapping_count=runtime["proxy_count"],
+        )
+        update_panel_from_api_result(status)
+    except Exception as exc:
+        status.signal(
+            "pull",
+            False,
+            "配置拉取失败：%s" % api_error_message(exc),
+            attempted=True,
+        )
+        update_panel_from_api_result(status, exc)
+        log("配置拉取失败：%s" % api_error_message(exc))
+
+    if desired is not None:
+        try:
+            running = apply_desired_config(desired)
+            status.signal(
+                "config_apply",
+                True,
+                "配置已应用，frpc 正在运行" if running else "配置已应用，当前无需运行 frpc",
+                attempted=True,
+                success=True,
+            )
+        except Exception as exc:
+            status.signal(
+                "config_apply",
+                False,
+                "配置应用失败：%s" % sanitize_text(exc),
+                attempted=True,
+            )
+            log("配置应用失败：%s" % sanitize_text(exc))
+        refresh_frpc_status(status, desired)
+    else:
+        refresh_frpc_status(status)
+    return desired
+
+
+def health_check():
+    result = {
+        "schema_version": 2,
+        "service": APP_NAME,
+        "product": PRODUCT_NAME,
+        "ok": False,
+        "xiass_api": {"ok": False, "message": "尚未检测"},
+        "report": {"ok": False, "message": "尚未执行"},
+        "pull": {"ok": False, "message": "尚未执行"},
+        "frpc_control": {"ok": True, "message": "当前无需建立 FRP 隧道"},
+        "exit": {"ok": False, "message": "尚未检测"},
+    }
+    if not cfg_bool("enabled", False):
+        result["xiass_api"] = {"ok": False, "message": "节点未启用，无法执行迁移健康检查"}
+        print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+        return 1
+
+    panel_ok, panel_message, http_status, latency_ms = probe_xiass_api()
+    result["xiass_api"] = {
+        "ok": panel_ok,
+        "message": panel_message,
+        "http_status": http_status,
+        "latency_ms": latency_ms,
+    }
+    if not panel_ok:
+        print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+        return 1
+
+    try:
+        report = build_report()
+        exit_ok, exit_message, exit_details = exit_status_from_report(report)
+        result["exit"] = {"ok": exit_ok, "message": exit_message, **exit_details}
+        api_request("POST", "/api/v1/soft-router/agent/report", report)
+        result["report"] = {
+            "ok": True,
+            "message": "候选节点程序上报成功",
+            "node_count": len(report["socks"]),
+        }
+    except Exception as exc:
+        result["report"] = {"ok": False, "message": "候选节点程序上报失败：%s" % api_error_message(exc)}
+        print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+        return 1
+
+    try:
+        desired = api_request("GET", "/api/v1/soft-router/agent/config")
+        if not isinstance(desired, dict):
+            raise RuntimeError("面板返回的节点配置不是 JSON 对象")
+        runtime = desired_runtime(desired)
+        # 仅校验新节点程序能解析面板配置，不在迁移检查期间写入或启动 frpc。
+        render_frpc_config(desired)
+        result["pull"] = {
+            "ok": True,
+            "message": "候选节点程序配置拉取成功",
+            "mapping_count": runtime["proxy_count"],
+        }
+        if runtime["required"]:
+            frpc_bin = Path(uci_get("frpc_bin", "/usr/bin/frpc"))
+            _, frpc_config = effective_frpc_spec()
+            config_error = frpc_config_error(frpc_config)
+            if config_error:
+                result["frpc_control"] = {"ok": False, "message": config_error}
+                print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+                return 1
+            if not frpc_bin.is_file() or not os.access(str(frpc_bin), os.X_OK):
+                result["frpc_control"] = {"ok": False, "message": "frpc 程序不可执行：%s" % frpc_bin}
+                print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+                return 1
+            if not frpc_config.parent.is_dir() or not os.access(str(frpc_config.parent), os.W_OK):
+                result["frpc_control"] = {"ok": False, "message": "frpc 配置目录不可写：%s" % frpc_config.parent}
+                print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+                return 1
+            control_ok, control_message = tcp_endpoint_ok(runtime["control_host"], runtime["control_port"], timeout=5)
+            result["frpc_control"] = {"ok": control_ok, "message": control_message}
+            if not control_ok:
+                print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+                return 1
+    except Exception as exc:
+        result["pull"] = {"ok": False, "message": "候选节点程序拉取或校验失败：%s" % api_error_message(exc)}
+        print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+        return 1
+
+    result["ok"] = True
+    print(json.dumps(sanitize_status_data(result), ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+def poll_interval(desired=None):
+    interval = cfg_int("interval", 20)
+    if isinstance(desired, dict):
+        interval = to_port(
+            first_value(desired, ("poll_seconds", "agent_poll_seconds", "interval"), interval),
+            interval,
+        )
+    return max(5, min(interval, 3600))
+
+
+def heartbeat_sleep(seconds, status):
+    deadline = time.monotonic() + seconds
+    while not STOP_EVENT.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        STOP_EVENT.wait(min(5, remaining))
+        if STOP_EVENT.is_set():
+            return
+        status.heartbeat("节点程序正在等待下一次同步")
+        refresh_frpc_status(status)
+
+
+def loop():
+    global STATUS_STORE
+    STATUS_STORE = StatusStore()
+    try:
+        while not STOP_EVENT.is_set():
+            desired = None
+            try:
+                desired = perform_cycle(STATUS_STORE)
+            except Exception as exc:
+                log("节点程序同步周期异常：%s" % sanitize_text(exc))
+                STATUS_STORE.update_section(
+                    "agent",
+                    running=True,
+                    pid=os.getpid(),
+                    heartbeat_at=utc_now(),
+                    message="同步周期发生异常：%s" % sanitize_text(exc),
+                )
+                refresh_frpc_status(STATUS_STORE)
+            heartbeat_sleep(poll_interval(desired), STATUS_STORE)
+    finally:
+        stop_frpc(all_owned=False)
+        STATUS_STORE.update_section(
+            "agent",
+            running=False,
+            pid=0,
+            heartbeat_at=utc_now(),
+            message="节点程序已停止",
+        )
+
+
+def current_status_snapshot():
+    data = default_status()
+    previous = load_status_file()
+    for key in data:
+        if key in previous:
+            data[key] = previous[key]
+    data["schema_version"] = 2
+    data["service"] = APP_NAME
+    data["product"] = PRODUCT_NAME
+    data["version"] = VERSION
+    data["enabled"] = cfg_bool("enabled", False)
+    data["configuration"] = {"compatibility_mode": active_config_is_legacy()}
+
+    agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+    pid = int(agent.get("pid") or 0)
+    try:
+        age = time.time() - STATUS_FILE.stat().st_mtime
+    except OSError:
+        age = 10**9
+    running = pid_running(pid) and agent_pid_owned(pid) and age <= 20
+    if not data["enabled"]:
+        running = False
+        agent_message = "节点未启用"
+    elif running:
+        agent_message = "节点程序正在运行"
+    else:
+        agent_message = "节点程序未运行或心跳已超时"
+    data["agent"] = {
+        "running": running,
+        "pid": pid if running else 0,
+        "heartbeat_at": agent.get("heartbeat_at", ""),
+        "message": agent_message,
+    }
+
+    if data["enabled"] and not running:
+        for name, label in (
+            ("xiass_api", "XIASS API"),
+            ("report", "节点上报"),
+            ("pull", "配置拉取"),
+            ("exit", "PassWall 出口"),
+        ):
+            section = data.get(name) if isinstance(data.get(name), dict) else status_signal("")
+            last_success = section.get("last_success_at") or "无"
+            section["ok"] = False
+            section["message"] = "节点程序未运行，无法实时检测%s；最近成功时间：%s" % (label, last_success)
+            data[name] = section
+    elif not data["enabled"]:
+        data["report"].update({"ok": False, "message": "节点未启用，未执行上报"})
+        data["pull"].update({"ok": False, "message": "节点未启用，未拉取配置"})
+        data["exit"].update({"ok": False, "message": "节点未启用，未检测 PassWall 出口"})
+
+    existing_frpc = data.get("frpc") if isinstance(data.get("frpc"), dict) else {}
+    data["frpc"] = compute_frpc_status(existing_frpc)
+    data["updated_at"] = utc_now()
+    return sanitize_status_data(data)
+
+
+def handle_stop_signal(signum, frame):
+    del signum, frame
+    STOP_EVENT.set()
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] == "--stop-frpc":
+        return 0 if stop_frpc(all_owned=True) else 1
+    if args and args[0] == "--status-json":
+        print(json.dumps(current_status_snapshot(), ensure_ascii=False, separators=(",", ":")))
+        return 0
+    if args and args[0] == "--health-check":
+        return health_check()
+    if args and args[0] == "--is-enabled":
+        return 0 if cfg_bool("enabled", False) else 1
+    if args and args[0] in {"--once", "--report-preview"}:
+        print(json.dumps(build_report(), ensure_ascii=False, indent=2))
+        return 0
+    if args and args[0] == "--version":
+        print("%s %s" % (APP_NAME, VERSION))
+        return 0
+    if args:
+        print("未知参数：%s" % args[0], file=sys.stderr)
+        return 2
+
+    signal.signal(signal.SIGTERM, handle_stop_signal)
+    signal.signal(signal.SIGINT, handle_stop_signal)
+    loop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

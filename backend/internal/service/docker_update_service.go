@@ -9,11 +9,13 @@ import (
 )
 
 const (
-	deploymentModeEnv       = "NOWIND_DEPLOYMENT_MODE"
-	legacyDeploymentModeEnv = "SUB2API_DEPLOYMENT_MODE"
-	watchtowerUpdateURL     = "http://watchtower:8080/v1/update"
-	watchtowerTokenEnv      = "NOWIND_WATCHTOWER_TOKEN"
-	legacyWatchtowerToken   = "sub2api-update-token"
+	deploymentModeEnv          = "XIASS_DEPLOYMENT_MODE"
+	previousDeploymentModeEnv  = "NOWIND_DEPLOYMENT_MODE"
+	legacyDeploymentModeEnv    = "SUB2API_DEPLOYMENT_MODE"
+	watchtowerUpdateURL        = "http://watchtower:8080/v1/update"
+	watchtowerTokenEnv         = "XIASS_WATCHTOWER_TOKEN"
+	previousWatchtowerTokenEnv = "NOWIND_WATCHTOWER_TOKEN"
+	legacyWatchtowerToken      = "sub2api-update-token"
 )
 
 // IsRunningInContainer selects the updater without changing existing Docker
@@ -21,6 +23,9 @@ const (
 // deterministic (for example systemd inside a container host namespace).
 func IsRunningInContainer() bool {
 	mode := strings.TrimSpace(os.Getenv(deploymentModeEnv))
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv(previousDeploymentModeEnv))
+	}
 	if mode == "" {
 		mode = strings.TrimSpace(os.Getenv(legacyDeploymentModeEnv))
 	}
@@ -85,6 +90,9 @@ func newWatchtowerUpdateRequest(ctx context.Context) (*http.Request, error) {
 	}
 
 	token := strings.TrimSpace(os.Getenv(watchtowerTokenEnv))
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv(previousWatchtowerTokenEnv))
+	}
 	if token == "" {
 		token = legacyWatchtowerToken
 	}

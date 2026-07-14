@@ -149,8 +149,10 @@ type SoftRouterProxyMapping struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	PublicURL     string     `json:"public_url,omitempty"`
-	NoWindURL     string     `json:"nowind_url,omitempty"`
-	EnabledSet    bool       `json:"-"`
+	XiassURL      string     `json:"xiass_url,omitempty"`
+	// NoWindURL is retained for API consumers that were built before the XIASS rename.
+	NoWindURL  string `json:"nowind_url,omitempty"`
+	EnabledSet bool   `json:"-"`
 }
 
 type SoftRouterOverview struct {
@@ -393,7 +395,7 @@ func (s *SoftRouterProxyService) InstallFRP(ctx context.Context, input SoftRoute
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}
 	}
-	result.Metadata["restart_hint"] = "docker compose up -d --force-recreate sub2api"
+	result.Metadata["restart_hint"] = "docker compose up -d --force-recreate xiass-api"
 	return result, nil
 }
 
@@ -1017,7 +1019,8 @@ func attachMappingsToNodes(nodes []SoftRouterSocksNode, mappings []SoftRouterPro
 func attachSoftRouterURLs(cfg SoftRouterProxyConfig, mappings []SoftRouterProxyMapping) {
 	for i := range mappings {
 		mappings[i].PublicURL = softRouterURL("socks5", cfg.PublicHost, mappings[i].PublicPort, mappings[i].Username, mappings[i].Password)
-		mappings[i].NoWindURL = softRouterURL("socks5", cfg.UpstreamHost, mappings[i].PublicPort, mappings[i].Username, mappings[i].Password)
+		mappings[i].XiassURL = softRouterURL("socks5", cfg.UpstreamHost, mappings[i].PublicPort, mappings[i].Username, mappings[i].Password)
+		mappings[i].NoWindURL = mappings[i].XiassURL
 	}
 }
 

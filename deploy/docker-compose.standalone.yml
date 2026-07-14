@@ -11,9 +11,9 @@
 # =============================================================================
 
 services:
-  nowind-api:
+  xiass-api:
     image: ghcr.io/xyf0104/xiass-api:latest
-    container_name: nowind-api
+    container_name: xiass-api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -40,7 +40,9 @@ services:
       # System Update Configuration
       # =======================================================================
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - NOWIND_WATCHTOWER_TOKEN=${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}
+      - XIASS_DEPLOYMENT_MODE=container
+      - XIASS_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
+      - NOWIND_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
 
       # =======================================================================
       # Server Configuration
@@ -80,7 +82,7 @@ services:
       # =======================================================================
       # Admin Account (auto-created on first run)
       # =======================================================================
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@nowind.local}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@xiass.local}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
       # =======================================================================
@@ -138,5 +140,6 @@ services:
       start_period: 30s
 
 volumes:
+  # Historical key retained so existing named-volume installs keep their data.
   sub2api_data:
     driver: local

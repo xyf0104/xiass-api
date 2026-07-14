@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	DefaultDataManagementAgentSocketPath = "/tmp/sub2api-datamanagement.sock"
+	DefaultDataManagementAgentSocketPath = "/tmp/xiass-api-datamanagement.sock"
+	LegacyDataManagementAgentSocketPath  = "/tmp/sub2api-datamanagement.sock"
 	LegacyBackupAgentSocketPath          = "/tmp/sub2api-backup.sock"
 
 	DataManagementDeprecatedReason         = "DATA_MANAGEMENT_DEPRECATED"

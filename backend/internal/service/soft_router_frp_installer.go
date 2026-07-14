@@ -19,14 +19,15 @@ import (
 )
 
 const (
-	softRouterFRPServiceName     = "frps-nowind-soft-router"
-	softRouterFRPConfigPath      = "/etc/frp-nowind-soft-router/frps.toml"
+	softRouterFRPServiceName     = "xiass-frps-soft-router"
+	softRouterFRPConfigPath      = "/etc/xiass-frps-soft-router/frps.toml"
+	softRouterFRPBinaryPath      = "/usr/local/bin/xiass-frps-soft-router"
 	softRouterDockerSocketPath   = "/var/run/docker.sock"
 	softRouterFRPHelperImage     = "alpine:3.20"
 	softRouterFRPInstallMethod   = "docker_host_helper"
 	softRouterFRPInstallTimeout  = 4 * time.Minute
 	softRouterDockerAPIVersion   = "v1.40"
-	softRouterDefaultDeployDir   = "/opt/nowind-api/deploy"
+	softRouterDefaultDeployDir   = "/opt/xiass-api/deploy"
 	softRouterFRPInstallLogLimit = 32 * 1024
 )
 
@@ -97,7 +98,7 @@ func (i *DockerSoftRouterFRPInstaller) Install(ctx context.Context, cfg SoftRout
 	if _, err := os.Stat(i.socketPath); err != nil {
 		return nil, infraerrors.ServiceUnavailable(
 			"SOFT_ROUTER_DOCKER_SOCKET_MISSING",
-			"当前 Nowind 容器没有挂载 /var/run/docker.sock，无法从面板安装 FRP。请使用新版一键安装脚本或更新 compose 后重建容器。",
+			"当前 XIASS API 容器没有挂载 /var/run/docker.sock，无法从面板安装 FRP。请使用新版一键安装脚本或更新 compose 后重建容器。",
 		).WithCause(err)
 	}
 	if err := i.pingDocker(ctx); err != nil {
@@ -153,7 +154,7 @@ func (i *DockerSoftRouterFRPInstaller) Install(ctx context.Context, cfg SoftRout
 	return &SoftRouterFRPInstallResult{
 		Status:          status,
 		RestartRequired: true,
-		Message:         "FRP 已安装，宿主机 .env 已写入端口范围。请重启或重建当前 Nowind 容器让公网 SOCKS 端口映射生效。",
+		Message:         "FRP 已安装，宿主机 .env 已写入端口范围。请重启或重建当前 XIASS API 容器让公网 SOCKS 端口映射生效。",
 		Log:             trimInstallLog(logText),
 		Metadata: map[string]string{
 			"deploy_dir":       deployDir,
@@ -262,7 +263,7 @@ func (i *DockerSoftRouterFRPInstaller) pingDocker(ctx context.Context) error {
 
 func (i *DockerSoftRouterFRPInstaller) inspectCurrentContainer(ctx context.Context) (dockerCurrentContainerInfo, error) {
 	hostname, _ := os.Hostname()
-	candidates := []string{strings.TrimSpace(hostname), "sub2api"}
+	candidates := []string{strings.TrimSpace(hostname), "xiass-api", "nowind-api", "sub2api"}
 	var lastErr error
 	for _, candidate := range candidates {
 		if candidate == "" {
@@ -335,26 +336,26 @@ func (i *DockerSoftRouterFRPInstaller) pullImage(ctx context.Context) error {
 }
 
 func (i *DockerSoftRouterFRPInstaller) createHelperContainer(ctx context.Context, cfg SoftRouterProxyConfig, deployDir, proxyBindAddr, ownedPublicPorts string) (string, error) {
-	name := "nowind-frp-installer-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	cmd := "cat <<'NOWIND_FRP_INSTALL_SCRIPT' | chroot /host /bin/sh\n" + softRouterFRPHostInstallScript + "\nNOWIND_FRP_INSTALL_SCRIPT\n"
+	name := "xiass-frp-installer-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	cmd := "cat <<'XIASS_FRP_INSTALL_SCRIPT' | chroot /host /bin/sh\n" + softRouterFRPHostInstallScript + "\nXIASS_FRP_INSTALL_SCRIPT\n"
 	body := map[string]any{
 		"Image": i.image,
 		"Cmd":   []string{"/bin/sh", "-c", cmd},
 		"Tty":   true,
 		"Env": []string{
 			"SERVICE_NAME=" + softRouterFRPServiceName,
-			"CONFIG_DIR=/etc/frp-nowind-soft-router",
+			"CONFIG_DIR=/etc/xiass-frps-soft-router",
 			"CONFIG_FILE=" + softRouterFRPConfigPath,
-			"FRPS_BIN=/usr/local/bin/frps-nowind-soft-router",
+			"FRPS_BIN=" + softRouterFRPBinaryPath,
 			"FRP_TOKEN=" + cfg.FRPToken,
 			"BIND_PORT=" + strconv.Itoa(cfg.FRPServerPort),
 			"RAW_PORT_START=" + strconv.Itoa(cfg.RawPortStart),
 			"RAW_PORT_END=" + strconv.Itoa(cfg.RawPortEnd),
 			"PUBLIC_PORT_START=" + strconv.Itoa(cfg.PublicPortStart),
 			"PUBLIC_PORT_END=" + strconv.Itoa(cfg.PublicPortEnd),
-			"PUBLIC_PORTS_OWNED_BY_NOWIND=" + ownedPublicPorts,
+			"PUBLIC_PORTS_OWNED_BY_XIASS=" + ownedPublicPorts,
 			"PROXY_BIND_ADDR=" + proxyBindAddr,
-			"NOWIND_DEPLOY_DIR=" + deployDir,
+			"XIASS_DEPLOY_DIR=" + deployDir,
 		},
 		"HostConfig": map[string]any{
 			"Binds":       []string{"/:/host"},
@@ -470,28 +471,80 @@ func firstInstallErrorLine(logText string) string {
 const softRouterFRPHostInstallScript = `#!/bin/sh
 set -eu
 
-SERVICE_NAME="${SERVICE_NAME:-frps-nowind-soft-router}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/frp-nowind-soft-router}"
+SERVICE_NAME="${SERVICE_NAME:-xiass-frps-soft-router}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/xiass-frps-soft-router}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/frps.toml}"
-FRPS_BIN="${FRPS_BIN:-/usr/local/bin/frps-nowind-soft-router}"
+FRPS_BIN="${FRPS_BIN:-/usr/local/bin/xiass-frps-soft-router}"
 FRP_TOKEN="${FRP_TOKEN:-}"
 BIND_PORT="${BIND_PORT:-7010}"
 RAW_PORT_START="${RAW_PORT_START:-12083}"
 RAW_PORT_END="${RAW_PORT_END:-12150}"
 PUBLIC_PORT_START="${PUBLIC_PORT_START:-1101}"
 PUBLIC_PORT_END="${PUBLIC_PORT_END:-1120}"
-PUBLIC_PORTS_OWNED_BY_NOWIND="${PUBLIC_PORTS_OWNED_BY_NOWIND:-}"
+PUBLIC_PORTS_OWNED_BY_XIASS="${PUBLIC_PORTS_OWNED_BY_XIASS:-${PUBLIC_PORTS_OWNED_BY_NOWIND:-}}"
 PROXY_BIND_ADDR="${PROXY_BIND_ADDR:-127.0.0.1}"
-NOWIND_DEPLOY_DIR="${NOWIND_DEPLOY_DIR:-/opt/nowind-api/deploy}"
+XIASS_DEPLOY_DIR="${XIASS_DEPLOY_DIR:-${NOWIND_DEPLOY_DIR:-/opt/xiass-api/deploy}}"
+LEGACY_SERVICE_NAMES="${LEGACY_SERVICE_NAMES:-frps-nowind-soft-router frps-us}"
 RUN_USER="${RUN_USER:-root}"
-STOPPED_EXISTING_SERVICE=0
+ROLLBACK_DIR=""
+PREVIOUS_CONFIG_BACKUP=""
+PREVIOUS_BINARY_BACKUP=""
+PREVIOUS_UNIT_BACKUP=""
+PREVIOUS_UNIT_PATH=""
+PREVIOUS_ENV_FILE=""
+PREVIOUS_ENV_BACKUP=""
+PREVIOUS_SERVICE_EXISTS=0
+PREVIOUS_SERVICE_ACTIVE=0
+PREVIOUS_SERVICE_ENABLED=""
+CURRENT_SERVICE_STOPPED=0
+NEW_SERVICE_STARTED=0
+MIGRATION_COMPLETE=0
+TEMP_DIR=""
 
 info() { printf '%s\n' "$*"; }
+rollback_migration() {
+    status=$?
+    trap - EXIT INT TERM
+    if [ "$status" -ne 0 ] && [ "$MIGRATION_COMPLETE" != "1" ]; then
+        info "FRP installation failed; restoring the previous XIASS service state"
+        if command -v systemctl >/dev/null 2>&1; then
+            if [ "$CURRENT_SERVICE_STOPPED" = "1" ] || [ "$NEW_SERVICE_STARTED" = "1" ]; then
+                systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+            fi
+            if [ "$PREVIOUS_SERVICE_EXISTS" = "1" ]; then
+                [ -n "$PREVIOUS_CONFIG_BACKUP" ] && cp -a "$PREVIOUS_CONFIG_BACKUP" "$CONFIG_FILE" >/dev/null 2>&1 || true
+                [ -n "$PREVIOUS_BINARY_BACKUP" ] && cp -a "$PREVIOUS_BINARY_BACKUP" "$FRPS_BIN" >/dev/null 2>&1 || true
+                if [ -n "$PREVIOUS_UNIT_BACKUP" ] && [ -n "$PREVIOUS_UNIT_PATH" ]; then
+                    rm -f "/etc/systemd/system/$SERVICE_NAME.service" >/dev/null 2>&1 || true
+                    cp -a "$PREVIOUS_UNIT_BACKUP" "$PREVIOUS_UNIT_PATH" >/dev/null 2>&1 || true
+                fi
+                systemctl daemon-reload >/dev/null 2>&1 || true
+                case "$PREVIOUS_SERVICE_ENABLED" in
+                    enabled|enabled-runtime|linked|linked-runtime)
+                        systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+                        ;;
+                    *)
+                        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+                        ;;
+                esac
+                if [ "$PREVIOUS_SERVICE_ACTIVE" = "1" ]; then
+                    systemctl start "$SERVICE_NAME" >/dev/null 2>&1 || true
+                    systemctl is-active --quiet "$SERVICE_NAME" || info "Warning: previous XIASS FRP service did not recover automatically"
+                fi
+            else
+                systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+            fi
+        fi
+        if [ -n "$PREVIOUS_ENV_BACKUP" ] && [ -n "$PREVIOUS_ENV_FILE" ]; then
+            cp -a "$PREVIOUS_ENV_BACKUP" "$PREVIOUS_ENV_FILE" >/dev/null 2>&1 || true
+        fi
+    fi
+    [ -n "$TEMP_DIR" ] && rm -rf "$TEMP_DIR" >/dev/null 2>&1 || true
+    [ -n "$ROLLBACK_DIR" ] && rm -rf "$ROLLBACK_DIR" >/dev/null 2>&1 || true
+    exit "$status"
+}
 fail() {
     printf 'Error: %s\n' "$*" >&2
-    if [ "$STOPPED_EXISTING_SERVICE" = "1" ] && command -v systemctl >/dev/null 2>&1; then
-        systemctl start "$SERVICE_NAME" >/dev/null 2>&1 || true
-    fi
     exit 1
 }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"; }
@@ -523,20 +576,60 @@ port_listening() {
     return 1
 }
 
-port_owned_by_nowind() {
-    case ",$PUBLIC_PORTS_OWNED_BY_NOWIND," in
+port_owned_by_xiass() {
+    case ",$PUBLIC_PORTS_OWNED_BY_XIASS," in
         *",$1,"*) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-assert_ports_free() {
-    if command -v systemctl >/dev/null 2>&1; then
-        if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-            systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-            STOPPED_EXISTING_SERVICE=1
+assert_no_active_legacy_service() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    for service in $LEGACY_SERVICE_NAMES; do
+        [ "$service" = "$SERVICE_NAME" ] && continue
+        if systemctl is-active --quiet "$service" 2>/dev/null; then
+            fail "legacy FRP service $service is running; use xiass-frps-migrate.sh to preserve its current token and configuration"
         fi
+    done
+}
+
+prepare_xiass_rollback() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    if ! systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+        return 0
     fi
+    PREVIOUS_SERVICE_EXISTS=1
+    ROLLBACK_DIR=$(mktemp -d /tmp/xiass-frp-rollback.XXXXXX)
+    PREVIOUS_UNIT_PATH=$(systemctl show --property FragmentPath --value "$SERVICE_NAME" 2>/dev/null || true)
+    if [ -n "$PREVIOUS_UNIT_PATH" ] && [ -f "$PREVIOUS_UNIT_PATH" ]; then
+        PREVIOUS_UNIT_BACKUP="$ROLLBACK_DIR/unit.service"
+        cp -a "$PREVIOUS_UNIT_PATH" "$PREVIOUS_UNIT_BACKUP"
+    fi
+    if [ -f "$CONFIG_FILE" ]; then
+        PREVIOUS_CONFIG_BACKUP="$ROLLBACK_DIR/$(basename "$CONFIG_FILE")"
+        cp -a "$CONFIG_FILE" "$PREVIOUS_CONFIG_BACKUP"
+    fi
+    if [ -f "$FRPS_BIN" ]; then
+        PREVIOUS_BINARY_BACKUP="$ROLLBACK_DIR/$(basename "$FRPS_BIN")"
+        cp -a "$FRPS_BIN" "$PREVIOUS_BINARY_BACKUP"
+    fi
+    PREVIOUS_SERVICE_ENABLED=$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        PREVIOUS_SERVICE_ACTIVE=1
+    fi
+}
+
+stop_current_xiass_service() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        info "Stopping existing XIASS FRP service for update"
+        systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || fail "could not stop existing XIASS FRP service"
+        CURRENT_SERVICE_STOPPED=1
+    fi
+}
+
+assert_ports_free() {
+    stop_current_xiass_service
     if port_listening "$BIND_PORT"; then
         fail "FRP control port $BIND_PORT is already in use"
     fi
@@ -549,7 +642,7 @@ assert_ports_free() {
     done
     p="$PUBLIC_PORT_START"
     while [ "$p" -le "$PUBLIC_PORT_END" ]; do
-        if port_listening "$p" && ! port_owned_by_nowind "$p"; then
+        if port_listening "$p" && ! port_owned_by_xiass "$p"; then
             fail "Public SOCKS port $p is already in use"
         fi
         p=$((p + 1))
@@ -605,14 +698,15 @@ install_frps() {
     arch="$(detect_arch)"
     archive="frp_${version_no_v}_linux_${arch}.tar.gz"
     url="https://github.com/fatedier/frp/releases/download/v${version_no_v}/${archive}"
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+    TEMP_DIR="$(mktemp -d)"
     info "Downloading frp ${version}"
-    fetch_url "$url" "$tmp_dir/$archive"
-    tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
-    src="$(find "$tmp_dir" -type f -name frps | head -n 1)"
+    fetch_url "$url" "$TEMP_DIR/$archive"
+    tar -xzf "$TEMP_DIR/$archive" -C "$TEMP_DIR"
+    src="$(find "$TEMP_DIR" -type f -name frps | head -n 1)"
     [ -n "$src" ] || fail "frps binary not found"
     install -m 0755 "$src" "$FRPS_BIN"
+    rm -rf "$TEMP_DIR"
+    TEMP_DIR=""
 }
 
 write_config() {
@@ -639,7 +733,7 @@ write_service() {
     unit="/etc/systemd/system/$SERVICE_NAME.service"
     cat > "$unit" <<EOF
 [Unit]
-Description=FRP server for Nowind soft-router proxy nodes
+Description=XIASS API FRP server for soft-router proxy nodes
 After=network-online.target
 Wants=network-online.target
 
@@ -671,19 +765,30 @@ upsert_env_value() {
     fi
 }
 
-update_nowind_env() {
-    env_file="$NOWIND_DEPLOY_DIR/.env"
-    if [ ! -f "$env_file" ] && [ -f /opt/nowind-api/deploy/.env ]; then
-        env_file="/opt/nowind-api/deploy/.env"
+update_xiass_env() {
+    env_file="$XIASS_DEPLOY_DIR/.env"
+    if [ ! -f "$env_file" ]; then
+        for candidate in /opt/xiass-api/deploy/.env /opt/nowind-api/deploy/.env /opt/sub2api/deploy/.env; do
+            if [ -f "$candidate" ]; then
+                env_file="$candidate"
+                break
+            fi
+        done
     fi
     if [ ! -f "$env_file" ]; then
-        info "Nowind .env not found, skip env update"
+        info "XIASS API .env not found, skip port-range update"
         return
     fi
+    if [ -z "$ROLLBACK_DIR" ]; then
+        ROLLBACK_DIR=$(mktemp -d /tmp/xiass-frp-rollback.XXXXXX)
+    fi
+    PREVIOUS_ENV_FILE="$env_file"
+    PREVIOUS_ENV_BACKUP="$ROLLBACK_DIR/env"
+    cp -a "$env_file" "$PREVIOUS_ENV_BACKUP"
     cp "$env_file" "${env_file}.bak.$(date +%Y%m%d%H%M%S)"
     upsert_env_value "$env_file" "SOFT_ROUTER_PROXY_RAW_PORT_RANGE" "$RAW_PORT_START-$RAW_PORT_END"
     upsert_env_value "$env_file" "SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE" "$PUBLIC_PORT_START-$PUBLIC_PORT_END"
-    info "Updated Nowind env: $env_file"
+    info "Updated XIASS API env: $env_file"
 }
 
 open_firewall_ports() {
@@ -701,22 +806,29 @@ open_firewall_ports() {
 start_service() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload
-        systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+        systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
         systemctl restart "$SERVICE_NAME"
         systemctl is-active --quiet "$SERVICE_NAME" || fail "$SERVICE_NAME did not become active"
+        NEW_SERVICE_STARTED=1
     else
         info "systemctl not found, service file written but not started"
     fi
 }
 
 validate_config
+assert_no_active_legacy_service
+prepare_xiass_rollback
+trap rollback_migration EXIT INT TERM
 install_frps
 assert_ports_free
 write_config
 write_service
 open_firewall_ports
-update_nowind_env
+update_xiass_env
 start_service
+MIGRATION_COMPLETE=1
+trap - EXIT INT TERM
+[ -n "$ROLLBACK_DIR" ] && rm -rf "$ROLLBACK_DIR"
 
 info "Installed $SERVICE_NAME"
 info "frps config: $CONFIG_FILE"
@@ -724,5 +836,5 @@ info "frps bind port: $BIND_PORT"
 info "raw FRP range: $RAW_PORT_START-$RAW_PORT_END"
 info "public SOCKS range: $PUBLIC_PORT_START-$PUBLIC_PORT_END"
 info "proxy bind address: $PROXY_BIND_ADDR"
-info "Restart or recreate the Nowind container for updated public port publishing."
+info "Restart or recreate the XIASS API container for updated public port publishing."
 `

@@ -21,7 +21,7 @@ import (
 const (
 	grokComposerImageBridgeVisionModel     = "grok-build-0.1"
 	grokComposerImageBridgeMaxOutputTokens = 512
-	grokUpstreamUserAgent                  = "nowind-api-grok/1.0"
+	grokUpstreamUserAgent                  = "xiass-api-grok/1.0"
 	grokCLIVersion                         = "0.2.93"
 	grokRateLimitFallbackCooldown          = 2 * time.Minute
 )
