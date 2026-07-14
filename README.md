@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.72-0ea5e9" alt="当前版本 v1.0.72" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.73-0ea5e9" alt="当前版本 v1.0.73" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,9 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.72
+> 当前版本：v1.0.73
 
-v1.0.72 修复深色主题页面刷新时短暂显示浅色界面的问题：在浏览器首次绘制前同步恢复已保存主题，并提供与主题匹配的初始画布颜色。首页、登录注册页、用户控制台和管理员后台共用同一首屏主题逻辑；不修改业务接口、数据库迁移、持久化目录、在线更新和软路由 FRP 功能。
+v1.0.73 修复首页与使用记录的日期下拉面板被后续内容卡片遮挡的问题，并按 v1.0.65 回归校验软路由 FRP 链路：保留 Agent、FRPS、Raw 端口和公网 SOCKS 的原有逻辑，恢复旧版在线部署实际使用的 `sub2api` 容器重建目标。本次不修改数据库迁移、持久化目录、代理节点数据和现有端口配置。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

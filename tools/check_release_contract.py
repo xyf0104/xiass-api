@@ -529,6 +529,32 @@ def check_update_bridge(errors: list[str]) -> None:
         errors.append("xiass-update.sh 禁止覆盖或移动持久化数据")
 
 
+def check_soft_router_compatibility(errors: list[str]) -> None:
+    service = read("backend/internal/service/soft_router_proxy.go")
+    service_test = read("backend/internal/service/soft_router_proxy_test.go")
+    installer = read("deploy/frps-soft-router-install.sh")
+    restart_hint = "docker compose up -d --force-recreate sub2api"
+
+    require_all(
+        "backend/internal/service/soft_router_proxy.go",
+        service,
+        [f'result.Metadata["restart_hint"] = "{restart_hint}"'],
+        errors,
+    )
+    require_all(
+        "backend/internal/service/soft_router_proxy_test.go",
+        service_test,
+        [restart_hint],
+        errors,
+    )
+    require_all(
+        "deploy/frps-soft-router-install.sh",
+        installer,
+        ["name=^/nowind-api$", "name=^/sub2api$"],
+        errors,
+    )
+
+
 def check_migration_immutability(errors: list[str]) -> None:
     try:
         tags = git_output("tag", "--list", "v[0-9]*", "--sort=-v:refname").splitlines()
@@ -563,6 +589,7 @@ def main() -> int:
     check_compose_branding(errors)
     check_persistence(errors)
     check_update_bridge(errors)
+    check_soft_router_compatibility(errors)
     if not args.skip_migrations:
         check_migration_immutability(errors)
 

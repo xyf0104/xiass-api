@@ -211,7 +211,7 @@ func TestSoftRouterProxyServiceInstallFRPAllowsPublicPortsAlreadyPublished(t *te
 	require.Equal(t, "api.example.com", repo.config.PublicHost)
 	require.Equal(t, rawFree, installer.installedConfig.RawPortStart)
 	require.Equal(t, publicPublished, installer.installedConfig.PublicPortStart)
-	require.Equal(t, "docker compose up -d --force-recreate nowind-api", result.Metadata["restart_hint"])
+	require.Equal(t, "docker compose up -d --force-recreate sub2api", result.Metadata["restart_hint"])
 }
 
 func TestSoftRouterProxyServiceDeleteMappingRemovesGeneratedProxyWithoutAccounts(t *testing.T) {

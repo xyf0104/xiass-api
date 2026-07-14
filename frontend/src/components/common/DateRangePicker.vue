@@ -19,9 +19,16 @@
         />
       </span>
     </button>
+  </div>
 
+  <Teleport to="body">
     <Transition name="date-picker-dropdown">
-      <div v-if="isOpen" class="date-picker-dropdown">
+      <div
+        v-if="isOpen"
+        ref="dropdownRef"
+        class="date-picker-dropdown"
+        :style="dropdownStyle"
+      >
         <!-- Quick presets -->
         <div class="date-picker-presets">
           <button
@@ -72,11 +79,11 @@
         </div>
       </div>
     </Transition>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -104,6 +111,8 @@ const { t, locale } = useI18n()
 
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
+const dropdownRef = ref<HTMLElement | null>(null)
+const dropdownStyle = ref<Record<string, string>>({})
 const localStartDate = ref(props.startDate)
 const localEndDate = ref(props.endDate)
 const activePreset = ref<string | null>('last24Hours')
@@ -263,8 +272,39 @@ const onDateChange = () => {
   }
 }
 
-const toggle = () => {
+const updateDropdownPosition = () => {
+  if (!isOpen.value || !containerRef.value) return
+
+  const triggerRect = containerRef.value.getBoundingClientRect()
+  const dropdownWidth = dropdownRef.value?.offsetWidth || 320
+  const dropdownHeight = dropdownRef.value?.offsetHeight || 0
+  const viewportPadding = 8
+  const gap = 8
+
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - dropdownWidth - viewportPadding)
+  const left = Math.min(Math.max(triggerRect.left, viewportPadding), maxLeft)
+  let top = triggerRect.bottom + gap
+
+  if (
+    dropdownHeight > 0 &&
+    top + dropdownHeight > window.innerHeight - viewportPadding &&
+    triggerRect.top - dropdownHeight - gap >= viewportPadding
+  ) {
+    top = triggerRect.top - dropdownHeight - gap
+  }
+
+  dropdownStyle.value = {
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`
+  }
+}
+
+const toggle = async () => {
   isOpen.value = !isOpen.value
+  if (isOpen.value) {
+    await nextTick()
+    updateDropdownPosition()
+  }
 }
 
 const apply = () => {
@@ -279,7 +319,12 @@ const apply = () => {
 }
 
 const handleClickOutside = (event: MouseEvent) => {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
+  const target = event.target as Node
+  if (
+    containerRef.value &&
+    !containerRef.value.contains(target) &&
+    !dropdownRef.value?.contains(target)
+  ) {
     isOpen.value = false
   }
 }
@@ -310,6 +355,8 @@ watch(
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleEscape)
+  window.addEventListener('resize', updateDropdownPosition)
+  window.addEventListener('scroll', updateDropdownPosition, true)
   // Initialize active preset detection
   onDateChange()
 })
@@ -317,6 +364,8 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('keydown', handleEscape)
+  window.removeEventListener('resize', updateDropdownPosition)
+  window.removeEventListener('scroll', updateDropdownPosition, true)
 })
 </script>
 
@@ -350,13 +399,14 @@ onUnmounted(() => {
 }
 
 .date-picker-dropdown {
-  @apply absolute left-0 z-[100] mt-2;
+  @apply fixed z-[10000];
   @apply bg-white dark:bg-dark-800;
   @apply rounded-xl;
   @apply border border-gray-200 dark:border-dark-700;
   @apply shadow-lg shadow-black/10 dark:shadow-black/30;
   @apply overflow-hidden;
   @apply min-w-[320px];
+  max-width: calc(100vw - 1rem);
 }
 
 .date-picker-presets {

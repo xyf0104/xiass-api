@@ -393,7 +393,7 @@ func (s *SoftRouterProxyService) InstallFRP(ctx context.Context, input SoftRoute
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}
 	}
-	result.Metadata["restart_hint"] = "docker compose up -d --force-recreate nowind-api"
+	result.Metadata["restart_hint"] = "docker compose up -d --force-recreate sub2api"
 	return result, nil
 }
 
