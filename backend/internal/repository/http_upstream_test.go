@@ -79,7 +79,8 @@ func TestHTTPUpstreamGrokAccessDeniedFallbackWrapsSelectedTransport(t *testing.T
 		}
 		t.Run(name, func(t *testing.T) {
 			upstream := NewHTTPUpstream(nil)
-			svc := upstream.(*httpUpstreamService)
+			svc, ok := upstream.(*httpUpstreamService)
+			require.True(t, ok)
 			const accountID int64 = 4421
 			isolation := svc.getIsolationMode()
 			proxyKey := directProxyKey
