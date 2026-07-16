@@ -91,6 +91,87 @@ jobs:
           path: backend/internal/web/dist/
           retention-days: 1
 
+  build-codex-helper-macos:
+    if: ${{ github.event.inputs.simple_release != 'true' && vars.SIMPLE_RELEASE != 'true' }}
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: tools/xiass-codex-helper/go.sum
+
+      - name: Build universal macOS helper
+        working-directory: tools/xiass-codex-helper
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${VERSION#v}"
+          go test ./...
+          mkdir -p build/macos/arm64 build/macos/amd64 "build/XIASS Codex Helper.app/Contents/MacOS"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o build/macos/arm64/xiass-codex-helper .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o build/macos/amd64/xiass-codex-helper .
+          lipo -create build/macos/arm64/xiass-codex-helper build/macos/amd64/xiass-codex-helper -output "build/XIASS Codex Helper.app/Contents/MacOS/xiass-codex-helper"
+          cp package/macos/Info.plist "build/XIASS Codex Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "build/XIASS Codex Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "build/XIASS Codex Helper.app/Contents/Info.plist"
+          codesign --force --deep --sign - "build/XIASS Codex Helper.app"
+          ditto -c -k --keepParent "build/XIASS Codex Helper.app" build/xiass-codex-helper-macos-universal.zip
+
+      - name: Upload macOS helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-codex-helper-macos
+          path: tools/xiass-codex-helper/build/xiass-codex-helper-macos-universal.zip
+          retention-days: 1
+
+  build-codex-helper-windows:
+    if: ${{ github.event.inputs.simple_release != 'true' && vars.SIMPLE_RELEASE != 'true' }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: tools/xiass-codex-helper/go.sum
+
+      - name: Build Windows helper
+        working-directory: tools/xiass-codex-helper
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.tag }}"
+          } else {
+            $version = "${env:GITHUB_REF}" -replace '^refs/tags/', ''
+          }
+          $version = $version -replace '^v', ''
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          go test ./...
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$version" -o build/xiass-codex-helper-windows-x64.exe .
+
+      - name: Upload Windows helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-codex-helper-windows
+          path: tools/xiass-codex-helper/build/xiass-codex-helper-windows-x64.exe
+          retention-days: 1
+
   release:
     needs: [update-version, build-frontend]
     runs-on: ubuntu-latest
@@ -302,6 +383,37 @@ jobs:
                 parse_mode: "Markdown",
                 disable_web_page_preview: true
               }')"
+
+  upload-codex-helper-assets:
+    needs: [release, build-codex-helper-macos, build-codex-helper-windows]
+    if: ${{ needs.release.result == 'success' && needs.build-codex-helper-macos.result == 'success' && needs.build-codex-helper-windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS helper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xiass-codex-helper-macos
+          path: helper-assets
+
+      - name: Download Windows helper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xiass-codex-helper-windows
+          path: helper-assets
+
+      - name: Upload and verify Codex helper assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          else
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          fi
+          gh release upload "$TAG_NAME" helper-assets/xiass-codex-helper-macos-universal.zip helper-assets/xiass-codex-helper-windows-x64.exe --clobber
+          ASSETS=$(gh release view "$TAG_NAME" --json assets --jq '[.assets[].name]')
+          echo "$ASSETS" | grep -q 'xiass-codex-helper-macos-universal.zip'
+          echo "$ASSETS" | grep -q 'xiass-codex-helper-windows-x64.exe'
 
   sync-version-file:
     needs: [release]

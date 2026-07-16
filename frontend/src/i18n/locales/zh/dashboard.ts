@@ -65,6 +65,18 @@ export default {
     subscription: '订阅'
   },
 
+  codexHelper: {
+    title: '连接 XIASS Codex 配置助手',
+    description: '选择一个 OpenAI 分组的有效密钥。配置只会发送到您电脑上的本地助手。',
+    useThisKey: '使用此密钥配置',
+    noKeys: '没有可用于 Codex 的密钥',
+    noKeysHint: '请先创建并启用一个绑定到 OpenAI 分组的 API 密钥。',
+    manageKeys: '管理 API 密钥',
+    securityNote: 'API 密钥仅写入本机回环地址的 URL 片段，不会进入 XIASS API、代理服务器或浏览器请求日志。',
+    loadFailed: '读取 API 密钥失败',
+    connectFailed: '连接本地配置助手失败'
+  },
+
   // API Keys
   keys: {
     title: 'API 密钥',
@@ -141,7 +153,14 @@ export default {
         configTomlHint: '请确保以下内容位于 config.toml 文件的开头部分',
         note: '请确保配置目录存在。macOS/Linux 用户可运行 mkdir -p ~/.codex 创建目录。',
         noteWindows:
-          '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
+          '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。',
+        helper: {
+          title: 'XIASS Codex 配置助手',
+          description: '免安装运行，自动检测 Codex、备份并校验配置，完成后自动重启；也可以随时恢复原配置。',
+          macos: '下载 macOS 版',
+          windows: '下载 Windows 版',
+          hint: '下载后打开助手，它会返回 XIASS API 让您选择自己的密钥，无需手动填写。首次运行若系统拦截，请在系统提示中确认仍要打开。'
+        }
       },
       cliTabs: {
         claudeCode: 'Claude Code',

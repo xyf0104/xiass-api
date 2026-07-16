@@ -215,6 +215,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/codex-helper/connect',
+    name: 'CodexHelperConnect',
+    component: () => import('@/views/user/CodexHelperConnectView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'XIASS Codex Helper',
+      titleKey: 'codexHelper.title'
+    }
+  },
+  {
     path: '/batch-image',
     name: 'BatchImageGuide',
     alias: '/docs/batch-image',

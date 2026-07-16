@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>XIASS Codex 配置助手</title>
+  <style>
+    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f4f6f8; color: #172033; }
+    main { width: min(760px, calc(100% - 32px)); margin: 36px auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .version { color: #6b7280; font-size: 12px; }
+    .panel { margin-bottom: 16px; border: 1px solid #d9dee7; border-radius: 8px; background: rgba(255,255,255,.92); padding: 20px; box-shadow: 0 8px 30px rgba(20,30,50,.07); }
+    h2 { margin: 0 0 14px; font-size: 16px; }
+    .row { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid #edf0f4; }
+    .row:last-child { border: 0; }
+    .label { color: #667085; }
+    .value { min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #d04444; }
+    .dot.ok { background: #1f9d68; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button, .button { appearance: none; border: 1px solid #cbd3df; border-radius: 7px; padding: 10px 15px; background: #fff; color: #172033; cursor: pointer; text-decoration: none; font: inherit; font-weight: 600; }
+    button:hover, .button:hover { background: #f2f5f9; }
+    .primary { border-color: #1677ff; background: #1677ff; color: #fff; }
+    .primary:hover { background: #0968df; }
+    .danger { color: #b42318; }
+    button:disabled { opacity: .55; cursor: wait; }
+    select { width: 100%; border: 1px solid #cbd3df; border-radius: 7px; padding: 10px; background: #fff; color: inherit; }
+    .hint { margin: 10px 0 0; color: #667085; font-size: 13px; line-height: 1.6; }
+    #message { display: none; margin-bottom: 16px; border-radius: 7px; padding: 12px 14px; line-height: 1.5; }
+    #message.show { display: block; }
+    #message.success { background: #e8f7ef; color: #176b49; border: 1px solid #b8e3cb; }
+    #message.error { background: #fff0ef; color: #9b2c24; border: 1px solid #f0c4c0; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #11151c; color: #eef2f8; }
+      .panel { background: rgba(27,33,43,.96); border-color: #343d4b; box-shadow: none; }
+      .row { border-color: #303846; }
+      .label, .hint, .version { color: #9ca8b8; }
+      button, .button, select { background: #242c38; color: #eef2f8; border-color: #465163; }
+      button:hover, .button:hover { background: #303a48; }
+      .primary { background: #2586ff; border-color: #2586ff; }
+      #message.success { background: #123a2a; color: #a7e7c9; border-color: #246447; }
+      #message.error { background: #431f20; color: #ffc2bd; border-color: #743536; }
+    }
+    @media (max-width: 560px) { main { margin-top: 20px; } .row { grid-template-columns: 1fr; gap: 4px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>XIASS Codex 配置助手</h1>
+      <span id="version" class="version"></span>
+    </header>
+    <div id="message"></div>
+
+    <section class="panel">
+      <h2>本机检测</h2>
+      <div class="row"><span class="label">Codex App</span><span id="codex-status" class="value">检测中...</span></div>
+      <div class="row"><span class="label">程序位置</span><span id="codex-path" class="value">-</span></div>
+      <div class="row"><span class="label">配置位置</span><span id="config-path" class="value">-</span></div>
+      <div class="row"><span class="label">可恢复备份</span><span id="backup-count" class="value">0</span></div>
+      <div class="actions">
+        <a id="connect-button" class="button primary" href="#">连接 XIASS API 并选择密钥</a>
+        <button id="refresh-button" type="button">重新检测</button>
+      </div>
+      <p class="hint">写入前会完整备份现有 config.toml；写入后会重新读取并逐项校验。只有校验成功后才会重启 Codex。</p>
+    </section>
+
+    <section class="panel">
+      <h2>恢复原配置</h2>
+      <select id="backup-select"><option value="">正在读取备份...</option></select>
+      <div class="actions">
+        <button id="restore-button" type="button" class="danger">恢复所选备份并重启 Codex</button>
+      </div>
+      <p class="hint">恢复前还会再次备份当前配置，因此即使选错备份也可以继续恢复回来。</p>
+    </section>
+
+    <div class="actions">
+      <button id="quit-button" type="button">退出配置助手</button>
+    </div>
+  </main>
+  <script>
+    const helperState = {{printf "%q" .State}};
+    const message = document.getElementById('message');
+
+    function showMessage(text, kind) {
+      message.textContent = text;
+      message.className = `show ${kind}`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-XIASS-Helper-State': helperState,
+          ...(options.headers || {})
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || `请求失败 (${response.status})`);
+      return data;
+    }
+
+    async function loadStatus() {
+      const data = await request('/api/status');
+      document.getElementById('version').textContent = `v${data.version}`;
+      document.getElementById('config-path').textContent = data.config_path;
+      document.getElementById('backup-count').textContent = String(data.backup_count);
+      document.getElementById('codex-path').textContent = data.codex.app_path || data.codex.executable || '未找到';
+      document.getElementById('codex-status').innerHTML = '';
+      const status = document.createElement('span');
+      status.className = 'status';
+      const dot = document.createElement('span');
+      dot.className = `dot ${data.codex.found ? 'ok' : ''}`;
+      status.append(dot, document.createTextNode(data.codex.found ? (data.codex.running ? '已找到，正在运行' : '已找到，当前未运行') : '未找到 Codex App'));
+      document.getElementById('codex-status').append(status);
+      const connect = document.getElementById('connect-button');
+      connect.href = data.connect_url;
+      connect.setAttribute('aria-disabled', String(!data.codex.found));
+    }
+
+    async function loadBackups() {
+      const data = await request('/api/backups');
+      const select = document.getElementById('backup-select');
+      select.innerHTML = '';
+      if (!data.items.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '暂无可恢复备份';
+        select.append(option);
+        document.getElementById('restore-button').disabled = true;
+        return;
+      }
+      for (const item of data.items) {
+        const option = document.createElement('option');
+        option.value = item.id;
+        const reason = item.reason === 'pre_restore' ? '恢复前安全备份' : '配置前备份';
+        option.textContent = `${new Date(item.created_at).toLocaleString()} · ${reason}`;
+        select.append(option);
+      }
+      document.getElementById('restore-button').disabled = false;
+    }
+
+    async function refresh() {
+      try { await Promise.all([loadStatus(), loadBackups()]); }
+      catch (error) { showMessage(error.message, 'error'); }
+    }
+
+    document.getElementById('refresh-button').addEventListener('click', refresh);
+    document.getElementById('restore-button').addEventListener('click', async () => {
+      const backupID = document.getElementById('backup-select').value;
+      if (!backupID || !confirm('确定恢复所选配置并重启 Codex 吗？当前配置会先另行备份。')) return;
+      const button = document.getElementById('restore-button');
+      button.disabled = true;
+      try {
+        const data = await request('/api/restore', { method: 'POST', body: JSON.stringify({ backup_id: backupID }) });
+        showMessage(data.message, 'success');
+        await refresh();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    document.getElementById('quit-button').addEventListener('click', async () => {
+      try {
+        await request('/api/shutdown', { method: 'POST', body: '{}' });
+        document.body.innerHTML = '<main><section class="panel"><h2>配置助手已退出</h2><p class="hint">现在可以关闭此页面。</p></section></main>';
+      } catch (error) { showMessage(error.message, 'error'); }
+    });
+    refresh();
+  </script>
+</body>
+</html>

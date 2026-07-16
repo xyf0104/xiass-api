@@ -72,6 +72,36 @@
           </nav>
         </div>
 
+        <div
+          v-if="platform === 'openai' && activeClientTab === 'codex'"
+          class="rounded-lg border border-primary-200 bg-primary-50/70 p-4 dark:border-primary-800 dark:bg-primary-900/15"
+        >
+          <div class="flex items-start gap-3">
+            <Icon name="download" size="md" class="mt-0.5 flex-shrink-0 text-primary-600 dark:text-primary-400" />
+            <div class="min-w-0 flex-1">
+              <p class="font-medium text-gray-900 dark:text-white">
+                {{ t('keys.useKeyModal.openai.helper.title') }}
+              </p>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {{ t('keys.useKeyModal.openai.helper.description') }}
+              </p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <a :href="macHelperDownloadURL" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+                  <Icon name="download" size="sm" class="mr-2" />
+                  {{ t('keys.useKeyModal.openai.helper.macos') }}
+                </a>
+                <a :href="windowsHelperDownloadURL" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+                  <Icon name="download" size="sm" class="mr-2" />
+                  {{ t('keys.useKeyModal.openai.helper.windows') }}
+                </a>
+              </div>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.useKeyModal.openai.helper.hint') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <!-- Code Blocks (Stacked for multi-file platforms) -->
         <div class="space-y-4">
           <div
@@ -175,6 +205,9 @@ const { copyToClipboard: clipboardCopy } = useClipboard()
 const copiedIndex = ref<number | null>(null)
 const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
+const helperReleaseBase = 'https://github.com/xyf0104/xiass-api/releases/latest/download'
+const macHelperDownloadURL = `${helperReleaseBase}/xiass-codex-helper-macos-universal.zip`
+const windowsHelperDownloadURL = `${helperReleaseBase}/xiass-codex-helper-windows-x64.exe`
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {

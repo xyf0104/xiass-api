@@ -108,6 +108,14 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('model_context_window')
     expect(configToml).not.toContain('model_auto_compact_token_limit')
     expect(configToml).toContain('[features]\ngoals = true')
+
+    const helperDownloads = wrapper.findAll('a').map((link) => link.attributes('href'))
+    expect(helperDownloads).toContain(
+      'https://github.com/xyf0104/xiass-api/releases/latest/download/xiass-codex-helper-macos-universal.zip'
+    )
+    expect(helperDownloads).toContain(
+      'https://github.com/xyf0104/xiass-api/releases/latest/download/xiass-codex-helper-windows-x64.exe'
+    )
   })
 
   it('renders GPT-5.5 and goals feature in OpenAI Codex WebSocket config', async () => {

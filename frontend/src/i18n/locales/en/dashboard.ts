@@ -65,6 +65,18 @@ export default {
     subscription: 'Sub'
   },
 
+  codexHelper: {
+    title: 'Connect XIASS Codex Helper',
+    description: 'Select an active key assigned to an OpenAI group. The configuration is sent only to the local helper on your computer.',
+    useThisKey: 'Configure with this key',
+    noKeys: 'No Codex-compatible key found',
+    noKeysHint: 'Create and enable an API key assigned to an OpenAI group first.',
+    manageKeys: 'Manage API keys',
+    securityNote: 'The API key is placed only in a loopback URL fragment. It is never included in XIASS API, proxy-server, or browser request logs.',
+    loadFailed: 'Failed to load API keys',
+    connectFailed: 'Failed to connect to the local helper',
+  },
+
   // API Keys
   keys: {
     title: 'API Keys',
@@ -141,6 +153,13 @@ export default {
         configTomlHint: 'Make sure the following content is at the beginning of the config.toml file',
         note: 'Make sure the config directory exists. macOS/Linux users can run mkdir -p ~/.codex to create it.',
         noteWindows: 'Press Win+R and enter %userprofile%\\.codex to open the config directory. Create it manually if it does not exist.',
+        helper: {
+          title: 'XIASS Codex Helper',
+          description: 'Runs without installation, detects Codex, backs up and verifies the configuration, restarts Codex, and can restore the original configuration.',
+          macos: 'Download for macOS',
+          windows: 'Download for Windows',
+          hint: 'Open the downloaded helper. It returns to XIASS API so you can select your own key without entering it manually. Confirm the system prompt if the first launch is blocked.',
+        },
       },
       cliTabs: {
         claudeCode: 'Claude Code',
