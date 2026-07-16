@@ -16,7 +16,7 @@ func TestHelperServerApplyAndRestoreFlow(t *testing.T) {
 	if err := os.WriteFile(manager.ConfigPath, []byte(testOriginalConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://api.xiass.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,11 +33,11 @@ func TestHelperServerApplyAndRestoreFlow(t *testing.T) {
 
 	statusResponse := getJSON(t, handler, "/api/status")
 	connectURL, _ := statusResponse["connect_url"].(string)
-	if !strings.HasPrefix(connectURL, "https://api.xiass.com/codex-helper/connect?") {
+	if !strings.HasPrefix(connectURL, "https://gateway.example.com/codex-helper/connect?") {
 		t.Fatalf("connect_url = %q", connectURL)
 	}
 
-	applyBody := []byte(`{"base_url":"https://api.xiass.com","api_key":"sk-test-1234567890","key_name":"Codex"}`)
+	applyBody := []byte(`{"base_url":"https://gateway.example.com","api_key":"sk-test-1234567890","key_name":"Codex"}`)
 	apply := postHelperJSON(t, handler, "/api/apply", helper.state, applyBody, http.StatusOK)
 	if ok, _ := apply["ok"].(bool); !ok {
 		t.Fatalf("apply response = %+v", apply)
@@ -76,17 +76,65 @@ func TestHelperServerApplyAndRestoreFlow(t *testing.T) {
 }
 
 func TestHelperServerRejectsMissingStateAndForeignBaseURL(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "https://api.xiass.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	helper.restart = func(CodexInstallation) error { return nil }
 	handler := helper.routes()
 
-	body := []byte(`{"base_url":"https://api.xiass.com","api_key":"sk-test-1234567890","key_name":"Codex"}`)
+	body := []byte(`{"base_url":"https://gateway.example.com","api_key":"sk-test-1234567890","key_name":"Codex"}`)
 	postHelperJSON(t, handler, "/api/apply", "", body, http.StatusForbidden)
 	foreign := []byte(`{"base_url":"https://evil.example","api_key":"sk-test-1234567890","key_name":"Codex"}`)
 	postHelperJSON(t, handler, "/api/apply", helper.state, foreign, http.StatusBadRequest)
+}
+
+func TestHelperServerSelectsSiteAtRuntime(t *testing.T) {
+	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := helper.routes()
+
+	before := getJSON(t, handler, "/api/status")
+	if before["connect_url"] != "" || before["site_url"] != "" {
+		t.Fatalf("unconfigured status = %+v", before)
+	}
+
+	selected := postHelperJSON(
+		t,
+		handler,
+		"/api/site",
+		helper.state,
+		[]byte(`{"site_url":"https://gateway.example.com/"}`),
+		http.StatusOK,
+	)
+	connectURL, _ := selected["connect_url"].(string)
+	if !strings.HasPrefix(connectURL, "https://gateway.example.com/codex-helper/connect?") {
+		t.Fatalf("runtime connect_url = %q", connectURL)
+	}
+	if selected["site_url"] != "https://gateway.example.com" {
+		t.Fatalf("runtime site_url = %v", selected["site_url"])
+	}
+}
+
+func TestHelperIndexRendersUsableSessionState(t *testing.T) {
+	const state = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1"
+	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "127.0.0.1:43123"
+	response := httptest.NewRecorder()
+	helper.routes().ServeHTTP(response, request)
+	body := response.Body.String()
+	if !strings.Contains(body, `name="xiass-helper-state" content="`+state+`"`) {
+		t.Fatal("helper session state was not rendered as a plain meta attribute")
+	}
+	if strings.Contains(body, `content="&`) || strings.Contains(body, `content="\&quot;`) {
+		t.Fatal("helper session state contains an extra escaped quote layer")
+	}
 }
 
 func getJSON(t *testing.T, handler http.Handler, target string) map[string]any {

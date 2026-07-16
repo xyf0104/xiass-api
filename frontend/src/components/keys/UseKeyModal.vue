@@ -86,11 +86,11 @@
                 {{ t('keys.useKeyModal.openai.helper.description') }}
               </p>
               <div class="mt-3 flex flex-wrap gap-2">
-                <a :href="macHelperDownloadURL" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+                <a :href="macHelperDownloadURL" class="btn btn-primary" target="_blank" rel="noopener noreferrer" @click="copyHelperSiteURL">
                   <Icon name="download" size="sm" class="mr-2" />
                   {{ t('keys.useKeyModal.openai.helper.macos') }}
                 </a>
-                <a :href="windowsHelperDownloadURL" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+                <a :href="windowsHelperDownloadURL" class="btn btn-secondary" target="_blank" rel="noopener noreferrer" @click="copyHelperSiteURL">
                   <Icon name="download" size="sm" class="mr-2" />
                   {{ t('keys.useKeyModal.openai.helper.windows') }}
                 </a>
@@ -208,6 +208,11 @@ const activeClientTab = ref<string>('claude')
 const helperReleaseBase = 'https://github.com/xyf0104/xiass-api/releases/latest/download'
 const macHelperDownloadURL = `${helperReleaseBase}/xiass-codex-helper-macos-universal.zip`
 const windowsHelperDownloadURL = `${helperReleaseBase}/xiass-codex-helper-windows-x64.exe`
+const helperSiteURL = window.location.origin
+
+function copyHelperSiteURL() {
+  void clipboardCopy(helperSiteURL)
+}
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {

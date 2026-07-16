@@ -92,7 +92,7 @@ jobs:
           retention-days: 1
 
   build-codex-helper-macos:
-    if: ${{ github.event.inputs.simple_release != 'true' && vars.SIMPLE_RELEASE != 'true' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.simple_release != 'true' }}
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -134,7 +134,7 @@ jobs:
           retention-days: 1
 
   build-codex-helper-windows:
-    if: ${{ github.event.inputs.simple_release != 'true' && vars.SIMPLE_RELEASE != 'true' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.simple_release != 'true' }}
     runs-on: windows-latest
     steps:
       - name: Checkout

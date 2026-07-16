@@ -1,9 +1,10 @@
 # XIASS Codex Helper
 
 XIASS Codex Helper is a portable local configurator for macOS and Windows. It
-binds only to a random `127.0.0.1` port, opens the signed-in XIASS API website,
-and receives the selected user API key through a URL fragment. API keys are not
-placed in website requests or proxy logs.
+binds only to a random `127.0.0.1` port and asks the user to confirm their own
+XIASS API website before opening it. The selected user API key is returned
+through a URL fragment, so API keys are not placed in website requests or proxy
+logs. The source code has no maintainer deployment URL default.
 
 Before applying a configuration, the helper:
 

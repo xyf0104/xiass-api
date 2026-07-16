@@ -36,7 +36,7 @@ import CodexHelperConnectView from '../CodexHelperConnectView.vue'
 
 describe('CodexHelperConnectView', () => {
   it('shows only active API keys assigned to an OpenAI group', async () => {
-    getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.xiass.com' })
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://gateway.example.com' })
     listKeys.mockResolvedValue({
       items: [
         {

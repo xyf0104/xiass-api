@@ -158,7 +158,7 @@ export default {
           description: 'Runs without installation, detects Codex, backs up and verifies the configuration, restarts Codex, and can restore the original configuration.',
           macos: 'Download for macOS',
           windows: 'Download for Windows',
-          hint: 'Open the downloaded helper. It returns to XIASS API so you can select your own key without entering it manually. Confirm the system prompt if the first launch is blocked.',
+          hint: 'Downloading also copies the current site address. Paste it into the helper to select your own key. Confirm the system prompt if the first launch is blocked.',
         },
       },
       cliTabs: {

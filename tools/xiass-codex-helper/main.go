@@ -16,7 +16,7 @@ import (
 var version = "dev"
 
 func main() {
-	siteURL := flag.String("site", "https://api.xiass.com", "XIASS API website URL")
+	siteURL := flag.String("site", "", "XIASS API website URL")
 	noBrowser := flag.Bool("no-browser", false, "do not open the browser automatically")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()

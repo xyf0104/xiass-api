@@ -23,6 +23,7 @@ var webFiles embed.FS
 type helperServer struct {
 	manager      *ConfigManager
 	state        string
+	siteMu       sync.RWMutex
 	siteURL      *url.URL
 	index        *template.Template
 	callback     []byte
@@ -37,6 +38,7 @@ type statusResponse struct {
 	ConfigPath  string            `json:"config_path"`
 	Codex       CodexInstallation `json:"codex"`
 	ConnectURL  string            `json:"connect_url"`
+	SiteURL     string            `json:"site_url"`
 	BackupCount int               `json:"backup_count"`
 }
 
@@ -50,9 +52,13 @@ type operationResponse struct {
 }
 
 func newHelperServer(manager *ConfigManager, site string, state string) (*helperServer, error) {
-	parsedSite, err := url.Parse(strings.TrimSpace(site))
-	if err != nil || parsedSite.Scheme != "https" || parsedSite.Hostname() == "" {
-		return nil, errors.New("site must be a valid HTTPS URL")
+	var parsedSite *url.URL
+	if strings.TrimSpace(site) != "" {
+		var err error
+		parsedSite, err = parseSiteURL(site)
+		if err != nil {
+			return nil, err
+		}
 	}
 	indexBytes, err := webFiles.ReadFile("web/index.html")
 	if err != nil {
@@ -84,6 +90,7 @@ func (s *helperServer) routes() http.Handler {
 	mux.HandleFunc("GET /callback", s.handleCallback)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/backups", s.handleBackups)
+	mux.HandleFunc("POST /api/site", s.handleSite)
 	mux.HandleFunc("POST /api/apply", s.handleApply)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -102,19 +109,42 @@ func (s *helperServer) handleCallback(w http.ResponseWriter, _ *http.Request) {
 
 func (s *helperServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	backups, _ := s.manager.ListBackups()
-	connect := *s.siteURL
-	connect.Path = "/codex-helper/connect"
-	query := connect.Query()
-	query.Set("callback", "http://"+r.Host+"/callback")
-	query.Set("state", s.state)
-	connect.RawQuery = query.Encode()
-	connect.Fragment = ""
+	connectURL, siteURL := s.connectionDetails(r.Host)
 	writeJSON(w, http.StatusOK, statusResponse{
 		Version:     version,
 		ConfigPath:  s.manager.ConfigPath,
 		Codex:       s.detect(),
-		ConnectURL:  connect.String(),
+		ConnectURL:  connectURL,
+		SiteURL:     siteURL,
 		BackupCount: len(backups),
+	})
+}
+
+func (s *helperServer) handleSite(w http.ResponseWriter, r *http.Request) {
+	if !s.validState(r) {
+		writeError(w, http.StatusForbidden, errors.New("invalid local helper session"))
+		return
+	}
+	var request struct {
+		SiteURL string `json:"site_url"`
+	}
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	parsed, err := parseSiteURL(request.SiteURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	s.siteMu.Lock()
+	s.siteURL = parsed
+	s.siteMu.Unlock()
+	connectURL, siteURL := s.connectionDetails(r.Host)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"site_url":    siteURL,
+		"connect_url": connectURL,
 	})
 }
 
@@ -137,8 +167,13 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	site := s.currentSiteURL()
+	if site == nil {
+		writeError(w, http.StatusBadRequest, errors.New("XIASS API site has not been configured"))
+		return
+	}
 	parsedBase, err := url.Parse(input.BaseURL)
-	if err != nil || !strings.EqualFold(parsedBase.Hostname(), s.siteURL.Hostname()) {
+	if err != nil || parsedBase.Scheme != "https" || !strings.EqualFold(parsedBase.Host, site.Host) {
 		writeError(w, http.StatusBadRequest, errors.New("configuration does not belong to this XIASS API site"))
 		return
 	}
@@ -165,6 +200,42 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		Restarted:      true,
 		ConfigVerified: true,
 	})
+}
+
+func parseSiteURL(value string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+		return nil, errors.New("site must be a valid HTTPS URL")
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed, nil
+}
+
+func (s *helperServer) currentSiteURL() *url.URL {
+	s.siteMu.RLock()
+	defer s.siteMu.RUnlock()
+	if s.siteURL == nil {
+		return nil
+	}
+	copy := *s.siteURL
+	return &copy
+}
+
+func (s *helperServer) connectionDetails(callbackHost string) (string, string) {
+	site := s.currentSiteURL()
+	if site == nil {
+		return "", ""
+	}
+	connect := *site
+	connect.Path = "/codex-helper/connect"
+	query := connect.Query()
+	query.Set("callback", "http://"+callbackHost+"/callback")
+	query.Set("state", s.state)
+	connect.RawQuery = query.Encode()
+	connect.Fragment = ""
+	return connect.String(), site.String()
 }
 
 func (s *helperServer) handleRestore(w http.ResponseWriter, r *http.Request) {

@@ -34,7 +34,7 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 	}
 
 	input := ApplyConfig{
-		BaseURL: "https://api.xiass.com/v1/",
+		BaseURL: "https://gateway.example.com/v1/",
 		APIKey:  "sk-test-1234567890",
 		KeyName: "Codex",
 	}
@@ -65,13 +65,13 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 	if count := strings.Count(text, "[model_providers.xiass]"); count != 1 {
 		t.Fatalf("XIASS provider count = %d, want 1", count)
 	}
-	if !strings.Contains(text, `http_headers = { "x-openai-actor-authorization" = "api.xiass.com" }`) {
+	if !strings.Contains(text, `http_headers = { "x-openai-actor-authorization" = "gateway.example.com" }`) {
 		t.Fatal("actor authorization header does not match the working XIASS Codex configuration")
 	}
 	if strings.Contains(text, `x-openai-actor-authorization" = "https://`) {
 		t.Fatal("actor authorization header must contain the XIASS hostname, not a URL")
 	}
-	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: input.APIKey}); err != nil {
+	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: input.APIKey}); err != nil {
 		t.Fatalf("written config verification failed: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 
 func TestApplyIsIdempotent(t *testing.T) {
 	manager := NewConfigManager(t.TempDir())
-	input := ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: "sk-test-1234567890"}
+	input := ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"}
 	if _, err := manager.Apply(input); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestApplyRefusesInvalidExistingConfig(t *testing.T) {
 	if err := os.WriteFile(manager.ConfigPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := manager.Apply(ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: "sk-test-1234567890"})
+	_, err := manager.Apply(ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"})
 	if err == nil || !strings.Contains(err.Error(), "existing config.toml is invalid") {
 		t.Fatalf("Apply() error = %v, want invalid existing config error", err)
 	}
@@ -141,7 +141,7 @@ func TestRestoreRejectsCorruptBackup(t *testing.T) {
 	if err := os.WriteFile(manager.ConfigPath, []byte(testOriginalConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.Apply(ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: "sk-test-1234567890"})
+	result, err := manager.Apply(ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestRestoreRejectsCorruptBackup(t *testing.T) {
 
 func TestRestoreRemovesConfigCreatedByHelper(t *testing.T) {
 	manager := NewConfigManager(t.TempDir())
-	result, err := manager.Apply(ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: "sk-test-1234567890"})
+	result, err := manager.Apply(ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestApplyRejectsSymbolicLinkConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := manager.Apply(ApplyConfig{BaseURL: "https://api.xiass.com", APIKey: "sk-test-1234567890"})
+	_, err := manager.Apply(ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"})
 	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("Apply() error = %v, want symbolic link rejection", err)
 	}
