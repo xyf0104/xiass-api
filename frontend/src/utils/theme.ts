@@ -3,6 +3,8 @@ export type AppTheme = 'light' | 'dark'
 const THEME_STORAGE_KEY = 'theme'
 const TRANSITION_CLASS = 'theme-transitioning'
 const TRANSITION_DURATION_MS = 520
+const THEME_BACKGROUND_READY_EVENT = 'xiass-theme-background-ready'
+const THEME_BACKGROUND_READY_TIMEOUT_MS = 2400
 
 let transitionTimer: number | undefined
 
@@ -55,20 +57,53 @@ export function applyTheme(
   }
 }
 
+export function notifyThemeBackgroundReady(theme: AppTheme): void {
+  const root = document.documentElement
+  root.dataset.themeBackgroundReady = theme
+  window.dispatchEvent(new CustomEvent(THEME_BACKGROUND_READY_EVENT, {
+    detail: { theme }
+  }))
+}
+
 export function releaseThemeBootstrapGuard(): void {
   const root = document.documentElement
-  const reveal = () => {
-    delete root.dataset.themeBooting
+  const expectedTheme = getCurrentTheme()
+  const hasThemeBackground = document.querySelector('.theme-video-background') !== null
+  let settled = false
+
+  const revealAfterPaint = () => {
+    const reveal = () => {
+      delete root.dataset.themeBooting
+    }
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(reveal))
+      return
+    }
+
+    window.setTimeout(reveal, 0)
   }
 
-  // Wait until the mounted application has had two chances to paint using
-  // the same theme selected by the inline HTML bootstrap.
-  if (typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(reveal))
+  const finish = () => {
+    if (settled) return
+    settled = true
+    window.removeEventListener(THEME_BACKGROUND_READY_EVENT, onBackgroundReady)
+    window.clearTimeout(timeoutId)
+    revealAfterPaint()
+  }
+
+  const onBackgroundReady = (event: Event) => {
+    const detail = (event as CustomEvent<{ theme?: AppTheme }>).detail
+    if (detail?.theme === expectedTheme) finish()
+  }
+
+  if (!hasThemeBackground || root.dataset.themeBackgroundReady === expectedTheme) {
+    revealAfterPaint()
     return
   }
 
-  window.setTimeout(reveal, 0)
+  const timeoutId = window.setTimeout(finish, THEME_BACKGROUND_READY_TIMEOUT_MS)
+  window.addEventListener(THEME_BACKGROUND_READY_EVENT, onBackgroundReady)
 }
 
 export function toggleTheme(): AppTheme {
