@@ -162,7 +162,7 @@ func TestGetGeminiBaseURL(t *testing.T) {
 	}
 }
 
-func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
+func TestGetGrokBaseURLRequiresExplicitOAuthEndpointOptIn(t *testing.T) {
 	tests := []struct {
 		name     string
 		account  Account
@@ -178,7 +178,7 @@ func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 			expected: xai.DefaultCLIBaseURL,
 		},
 		{
-			name: "oauth legacy API default is migrated at runtime to CLI subscription proxy",
+			name: "legacy oauth base_url remains on CLI without opt-in",
 			account: Account{
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
@@ -189,92 +189,64 @@ func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 			expected: xai.DefaultCLIBaseURL,
 		},
 		{
-			name: "oauth legacy API default with trailing slash is migrated at runtime",
+			name: "oauth official API is honored",
 			account: Account{
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": xai.DefaultBaseURL + "/",
+					"base_url":                     xai.DefaultBaseURL,
+					"grok_custom_base_url_enabled": true,
+				},
+			},
+			expected: xai.DefaultBaseURL,
+		},
+		{
+			name: "oauth regional API is honored",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url":                     "https://us-west-2.api.x.ai/v1",
+					"grok_custom_base_url_enabled": true,
+				},
+			},
+			expected: "https://us-west-2.api.x.ai/v1",
+		},
+		{
+			name: "oauth explicit CLI is honored",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url":                     xai.DefaultCLIBaseURL,
+					"grok_custom_base_url_enabled": true,
 				},
 			},
 			expected: xai.DefaultCLIBaseURL,
 		},
 		{
-			name: "oauth legacy API root is migrated at runtime",
+			name: "oauth unparseable value falls back to CLI",
 			account: Account{
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": "https://api.x.ai",
+					"base_url":                     "not a url",
+					"grok_custom_base_url_enabled": true,
 				},
 			},
 			expected: xai.DefaultCLIBaseURL,
 		},
 		{
-			name: "oauth legacy API root with canonical HTTPS port is migrated at runtime",
+			name: "oauth custom relay is honored",
 			account: Account{
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": "HTTPS://API.X.AI:443/",
+					"base_url":                     "https://relay.example.com/xai/v1",
+					"grok_custom_base_url_enabled": true,
 				},
 			},
-			expected: xai.DefaultCLIBaseURL,
-		},
-		{
-			name: "oauth legacy API canonical port with leading zeroes is migrated at runtime",
-			account: Account{
-				Type:     AccountTypeOAuth,
-				Platform: PlatformGrok,
-				Credentials: map[string]any{
-					"base_url": "https://api.x.ai:0443/v1",
-				},
-			},
-			expected: xai.DefaultCLIBaseURL,
-		},
-		{
-			name: "oauth legacy API encoded version path is migrated at runtime",
-			account: Account{
-				Type:     AccountTypeOAuth,
-				Platform: PlatformGrok,
-				Credentials: map[string]any{
-					"base_url": "https://api.x.ai/%76%31",
-				},
-			},
-			expected: xai.DefaultCLIBaseURL,
-		},
-		{
-			name: "oauth legacy API encoded trailing slash is migrated at runtime",
-			account: Account{
-				Type:     AccountTypeOAuth,
-				Platform: PlatformGrok,
-				Credentials: map[string]any{
-					"base_url": "https://api.x.ai/v1%2F",
-				},
-			},
-			expected: xai.DefaultCLIBaseURL,
-		},
-		{
-			name: "oauth non-default API port remains an explicit override",
-			account: Account{
-				Type:     AccountTypeOAuth,
-				Platform: PlatformGrok,
-				Credentials: map[string]any{
-					"base_url": "https://api.x.ai:8443/v1",
-				},
-			},
-			expected: "https://api.x.ai:8443/v1",
-		},
-		{
-			name: "oauth explicit custom base_url stays pinned to CLI proxy by default",
-			account: Account{
-				Type:     AccountTypeOAuth,
-				Platform: PlatformGrok,
-				Credentials: map[string]any{
-					"base_url": "https://custom.example.com/v1",
-				},
-			},
-			expected: xai.DefaultCLIBaseURL,
+			expected: "https://relay.example.com/xai/v1",
 		},
 		{
 			name: "API key without base_url uses official credit-backed API",
@@ -294,15 +266,27 @@ func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 	}
 }
 
-func TestGetGrokBaseURLAllowsExplicitOAuthOverrideWhenUnsafeOverridesEnabled(t *testing.T) {
-	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
-	account := Account{
-		Type:     AccountTypeOAuth,
-		Platform: PlatformGrok,
-		Credentials: map[string]any{
-			"base_url": "https://custom.example.com/v1",
-		},
+func TestGetGrokMediaBaseURLRoutesOnlyCLIToOfficialAPI(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		enabled  bool
+		expected string
+	}{
+		{name: "default CLI", expected: xai.DefaultBaseURL},
+		{name: "explicit CLI", baseURL: xai.DefaultCLIBaseURL, enabled: true, expected: xai.DefaultBaseURL},
+		{name: "official API", baseURL: xai.DefaultBaseURL, enabled: true, expected: xai.DefaultBaseURL},
+		{name: "regional API", baseURL: "https://eu-west-1.api.x.ai/v1", enabled: true, expected: "https://eu-west-1.api.x.ai/v1"},
+		{name: "custom relay", baseURL: "https://relay.example.com/xai/v1", enabled: true, expected: "https://relay.example.com/xai/v1"},
+		{name: "invalid falls back through CLI", baseURL: "not a url", enabled: true, expected: xai.DefaultBaseURL},
 	}
-
-	require.Equal(t, "https://custom.example.com/v1", account.GetGrokBaseURL())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := Account{Type: AccountTypeOAuth, Platform: PlatformGrok, Credentials: map[string]any{
+				"base_url":                     tt.baseURL,
+				"grok_custom_base_url_enabled": tt.enabled,
+			}}
+			require.Equal(t, tt.expected, account.GetGrokMediaBaseURL())
+		})
+	}
 }

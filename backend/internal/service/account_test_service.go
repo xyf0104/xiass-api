@@ -22,7 +22,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -695,7 +694,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported Grok account type: %s", account.Type))
 	}
 
-	apiURL, err := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	apiURL, err := buildGrokResponsesURL(account, s.cfg)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok base URL: %s", err.Error()))
 	}
@@ -717,14 +716,18 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
+	upstreamCtx := WithHTTPUpstreamRedirectsDisabled(ctx)
+	req, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Grok request")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+authToken)
-	applyGrokCLIHeaders(req.Header)
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(apiURL) {
+		applyGrokCLIHeaders(req.Header)
+	}
+	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

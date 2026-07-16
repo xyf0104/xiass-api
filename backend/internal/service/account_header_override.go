@@ -9,7 +9,8 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-// 请求头覆写（header override）：仅对 Anthropic / OpenAI 平台的 api_key 账号生效。
+// 请求头覆写（header override）：对 Anthropic / OpenAI 的 api_key 账号，
+// 以及 Grok 的 api_key / oauth 账号生效。
 // 管理员在账号上配置一组 header name -> value，转发到上游前用配置值覆盖同名请求头
 // （匹配不区分大小写）；value 为空的条目视为"未填写"，不参与覆盖。
 const (
@@ -59,6 +60,7 @@ var headerOverrideBlockedNames = map[string]struct{}{
 	"chatgpt-account-id":       {},
 	"x-claude-code-session-id": {},
 	"x-client-request-id":      {},
+	"x-grok-conv-id":           {},
 }
 
 func isHeaderOverrideBlockedName(lowerName string) bool {
@@ -67,12 +69,19 @@ func isHeaderOverrideBlockedName(lowerName string) bool {
 }
 
 // IsHeaderOverrideEligible 报告账号类型是否支持请求头覆写。
-// 目前仅开放 Anthropic / OpenAI 两个平台的 api_key 账号。
+// Anthropic / OpenAI 仅开放 api_key；Grok 开放 api_key 与 oauth。
 func (a *Account) IsHeaderOverrideEligible() bool {
-	if a == nil || a.Type != AccountTypeAPIKey {
+	if a == nil {
 		return false
 	}
-	return a.Platform == PlatformAnthropic || a.Platform == PlatformOpenAI
+	switch a.Platform {
+	case PlatformAnthropic, PlatformOpenAI:
+		return a.Type == AccountTypeAPIKey
+	case PlatformGrok:
+		return a.Type == AccountTypeAPIKey || a.Type == AccountTypeOAuth
+	default:
+		return false
+	}
 }
 
 // IsHeaderOverrideEnabled 报告账号是否启用了请求头覆写。

@@ -157,15 +157,16 @@ func (s *AccountTestService) buildGrokUpstreamModelsRequest(ctx context.Context,
 		return nil, newUpstreamModelSyncConfigError("No Grok API key is available", nil)
 	}
 
-	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
-	if baseURL == "" {
-		baseURL = "https://api.x.ai"
+	validator, err := grokBaseURLValidator(account, s.cfg)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid Grok account", err)
 	}
-	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+	normalizedBaseURL, err := validator(account.GetGrokBaseURL())
 	if err != nil {
 		return nil, newUpstreamModelSyncConfigError("Invalid Grok base URL", err)
 	}
 
+	ctx = WithHTTPUpstreamRedirectsDisabled(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
 	if err != nil {
 		return nil, newUpstreamModelSyncConfigError("Invalid Grok model list URL", err)

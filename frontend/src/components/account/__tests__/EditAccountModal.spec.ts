@@ -241,7 +241,7 @@ function buildAntigravityAccount(projectId = 'configured-project') {
   } as any
 }
 
-function buildGrokOAuthAccount() {
+function buildGrokOAuthAccount(baseUrl = 'https://api.x.ai/v1', customBaseUrlEnabled = true) {
   return {
     id: 5,
     name: 'Grok OAuth',
@@ -250,7 +250,8 @@ function buildGrokOAuthAccount() {
     type: 'oauth',
     credentials: {
       refresh_token: 'grok-rt',
-      base_url: 'https://api.x.ai/v1',
+      base_url: baseUrl,
+      ...(customBaseUrlEnabled ? { grok_custom_base_url_enabled: true } : {}),
       model_mapping: {
         'grok-latest': 'grok-4.3'
       }
@@ -424,6 +425,68 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it.each([
+    ['official', 'https://api.x.ai/v1'],
+    ['regional', 'https://us-west-2.api.x.ai/v1'],
+    ['third-party', 'https://relay.example.com/xai/v1']
+  ])('echoes and saves a %s Grok OAuth base URL', async (_label, baseUrl) => {
+    const account = buildGrokOAuthAccount(baseUrl)
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(
+      (wrapper.get('[data-testid="grok-custom-base-url-input"]').element as HTMLInputElement)
+        .value
+    ).toBe(baseUrl)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await vi.waitFor(() => expect(updateAccountMock).toHaveBeenCalledTimes(1))
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe(baseUrl)
+    expect(
+      updateAccountMock.mock.calls[0]?.[1]?.credentials?.grok_custom_base_url_enabled
+    ).toBe(true)
+  })
+
+  it('keeps a legacy unmarked base_url inactive and preserves it during unrelated saves', async () => {
+    const account = buildGrokOAuthAccount('https://api.x.ai/v1', false)
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="grok-custom-base-url-input"]').exists()).toBe(false)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await vi.waitFor(() => expect(updateAccountMock).toHaveBeenCalledTimes(1))
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.x.ai/v1')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
+      'grok_custom_base_url_enabled'
+    )
+  })
+
+  it('removes an explicitly enabled Grok OAuth upstream when the toggle is disabled', async () => {
+    const account = buildGrokOAuthAccount('https://relay.example.com/xai/v1')
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="grok-custom-base-url-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await vi.waitFor(() => expect(updateAccountMock).toHaveBeenCalledTimes(1))
+
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials).not.toHaveProperty('base_url')
+    expect(credentials).not.toHaveProperty('grok_custom_base_url_enabled')
+  })
+
   it('uses the official xAI base URL when a Grok API-key account omits base_url', async () => {
     const account = buildGrokAPIKeyAccount()
     updateAccountMock.mockReset()
@@ -440,6 +503,21 @@ describe('EditAccountModal', () => {
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.x.ai/v1')
+  })
+
+  it('rejects an invalid official xAI path for a Grok API-key account', async () => {
+    const account = buildGrokAPIKeyAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('input[placeholder="https://api.x.ai/v1"]').setValue(
+      'https://api.x.ai/not-v1'
+    )
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
   })
 
   it('only submits model mapping credentials when saving an OpenAI spark shadow account', async () => {

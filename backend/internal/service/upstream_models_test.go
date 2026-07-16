@@ -188,6 +188,7 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://xai.example.com/v1/models", grokReq.URL.String())
 	require.Equal(t, "Bearer xai-key", grokReq.Header.Get("Authorization"))
+	require.True(t, HTTPUpstreamRedirectsDisabled(grokReq.Context()))
 
 	geminiReq, err := svc.buildGeminiUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformGemini,
@@ -212,6 +213,21 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://gateway.example.com/antigravity/v1/models", antigravityReq.URL.String())
 	require.Equal(t, "antigravity-key", antigravityReq.Header.Get("x-api-key"))
+}
+
+func TestBuildGrokUpstreamModelsRequestTrustsOfficialAPIWithLegacyAllowlist(t *testing.T) {
+	svc := &AccountTestService{cfg: &config.Config{}}
+	svc.cfg.Security.URLAllowlist.Enabled = true
+	svc.cfg.Security.URLAllowlist.UpstreamHosts = []string{"api.openai.com"}
+
+	req, err := svc.buildGrokUpstreamModelsRequest(context.Background(), &Account{
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "xai-key"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://api.x.ai/v1/models", req.URL.String())
+	require.True(t, HTTPUpstreamRedirectsDisabled(req.Context()))
 }
 
 func TestBuildUpstreamModelsRequestRejectsGrokOAuth(t *testing.T) {

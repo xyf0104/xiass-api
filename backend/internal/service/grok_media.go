@@ -268,25 +268,6 @@ func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(ctx context.Cont
 	return s.BindStickySession(ctx, groupID, GrokMediaVideoRequestSessionHash(requestID), accountID)
 }
 
-func (e GrokMediaEndpoint) upstreamURL(baseURL, requestID string) (string, error) {
-	switch e {
-	case GrokMediaEndpointImagesGenerations:
-		return xai.BuildImagesGenerationsURL(baseURL)
-	case GrokMediaEndpointImagesEdits:
-		return xai.BuildImagesEditsURL(baseURL)
-	case GrokMediaEndpointVideosGenerations:
-		return xai.BuildVideosGenerationsURL(baseURL)
-	case GrokMediaEndpointVideosEdits:
-		return xai.BuildVideosEditsURL(baseURL)
-	case GrokMediaEndpointVideosExtensions:
-		return xai.BuildVideosExtensionsURL(baseURL)
-	case GrokMediaEndpointVideoStatus:
-		return xai.BuildVideoURL(baseURL, requestID)
-	default:
-		return "", fmt.Errorf("unsupported grok media endpoint: %s", e)
-	}
-}
-
 func (s *OpenAIGatewayService) ForwardGrokMedia(
 	ctx context.Context,
 	c *gin.Context,
@@ -308,7 +289,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	if err != nil {
 		return nil, err
 	}
-	targetURL, err := endpoint.upstreamURL(account.GetGrokBaseURL(), requestID)
+	targetURL, err := buildGrokMediaURL(account, s.cfg, endpoint, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -333,13 +314,16 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
+	upstreamCtx = WithHTTPUpstreamRedirectsDisabled(upstreamCtx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, endpoint.httpMethod(), targetURL, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 	upstreamReq.Header.Set("Authorization", "Bearer "+token)
 	upstreamReq.Header.Set("Accept", "application/json")
-	applyGrokCLIHeaders(upstreamReq.Header)
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
+		applyGrokCLIHeaders(upstreamReq.Header)
+	}
 	if endpoint.RequiresRequestBody() {
 		contentType = strings.TrimSpace(contentType)
 		if contentType == "" {
@@ -347,6 +331,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		}
 		upstreamReq.Header.Set("Content-Type", contentType)
 	}
+	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

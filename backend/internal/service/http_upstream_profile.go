@@ -12,6 +12,7 @@ const (
 )
 
 type httpUpstreamProfileContextKey struct{}
+type httpUpstreamRedirectsDisabledContextKey struct{}
 
 // WithHTTPUpstreamProfile injects an upstream transport profile into ctx.
 func WithHTTPUpstreamProfile(ctx context.Context, profile HTTPUpstreamProfile) context.Context {
@@ -39,4 +40,21 @@ func HTTPUpstreamProfileFromContext(ctx context.Context) HTTPUpstreamProfile {
 	default:
 		return HTTPUpstreamProfileDefault
 	}
+}
+
+// WithHTTPUpstreamRedirectsDisabled prevents credential-bearing requests from
+// following an upstream redirect to a different origin.
+func WithHTTPUpstreamRedirectsDisabled(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, httpUpstreamRedirectsDisabledContextKey{}, true)
+}
+
+func HTTPUpstreamRedirectsDisabled(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	disabled, _ := ctx.Value(httpUpstreamRedirectsDisabledContextKey{}).(bool)
+	return disabled
 }

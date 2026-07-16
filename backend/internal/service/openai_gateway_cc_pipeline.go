@@ -173,6 +173,9 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
+	if account.Platform == PlatformGrok {
+		upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamRedirectsDisabled(upstreamReq.Context()))
+	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Authorization", "Bearer "+bearerToken)
 	if stream {
@@ -194,12 +197,13 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 		upstreamReq.Header.Set("user-agent", userAgent)
 	}
 
-	// 账号级请求头覆写（仅 openai api_key 账号启用时生效）
-	account.ApplyHeaderOverrides(upstreamReq.Header)
 	if account.Platform == PlatformGrok {
-		applyGrokCLIHeaders(upstreamReq.Header)
+		if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
+			applyGrokCLIHeaders(upstreamReq.Header)
+		}
 		applyGrokCacheHeaders(upstreamReq.Header, grokCacheIdentity)
 	}
+	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := ""
 	if account.Proxy != nil {

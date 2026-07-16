@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -41,6 +42,7 @@ type GrokQuotaService struct {
 	proxyRepo     ProxyRepository
 	tokenProvider *GrokTokenProvider
 	httpUpstream  HTTPUpstream
+	cfg           *config.Config
 }
 
 func NewGrokQuotaService(
@@ -48,12 +50,18 @@ func NewGrokQuotaService(
 	proxyRepo ProxyRepository,
 	tokenProvider *GrokTokenProvider,
 	httpUpstream HTTPUpstream,
+	configs ...*config.Config,
 ) *GrokQuotaService {
+	var cfg *config.Config
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
 	return &GrokQuotaService{
 		accountRepo:   accountRepo,
 		proxyRepo:     proxyRepo,
 		tokenProvider: tokenProvider,
 		httpUpstream:  httpUpstream,
+		cfg:           cfg,
 	}
 }
 
@@ -68,13 +76,14 @@ func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*Gr
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadRequest, "GROK_QUOTA_PROBE_BODY_ERROR", "failed to build probe body: %v", err)
 	}
-	targetURL, err := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	targetURL, err := buildGrokResponsesURL(account, s.cfg)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadRequest, "GROK_QUOTA_BASE_URL_INVALID", "invalid Grok base_url: %v", err)
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, grokQuotaUpstreamTimeout)
 	defer cancel()
+	callCtx = WithHTTPUpstreamRedirectsDisabled(callCtx)
 	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "GROK_QUOTA_PROBE_REQUEST_BUILD_FAILED", "failed to build upstream request: %v", err)
@@ -82,8 +91,11 @@ func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*Gr
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	applyGrokCLIHeaders(req.Header)
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
+		applyGrokCLIHeaders(req.Header)
+	}
 	req.Header.Set("User-Agent", "xiass-api-grok-quota-probe/1.0")
+	account.ApplyHeaderOverrides(req.Header)
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, maxInt(account.Concurrency, 1))
 	if err != nil {

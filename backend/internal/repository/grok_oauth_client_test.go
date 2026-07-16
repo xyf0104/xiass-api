@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -84,6 +85,27 @@ func TestGrokOAuthClientRefreshForbiddenClassifiesEntitlement(t *testing.T) {
 	_, err := client.RefreshToken(context.Background(), "refresh-token", "", "client-id")
 	require.Error(t, err)
 	require.Contains(t, strings.ToUpper(err.Error()), "GROK_OAUTH_ENTITLEMENT_DENIED")
+}
+
+func TestGrokOAuthClientDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
+	var redirectedRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectedRequests.Add(1)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+	t.Setenv(xai.EnvTokenURL, redirector.URL)
+
+	client := NewGrokOAuthClient()
+	_, exchangeErr := client.ExchangeCode(context.Background(), "auth-code", "verifier-secret", "http://127.0.0.1/callback", "", "client-id")
+	require.Error(t, exchangeErr)
+	_, refreshErr := client.RefreshToken(context.Background(), "refresh-secret", "", "client-id")
+	require.Error(t, refreshErr)
+	require.Zero(t, redirectedRequests.Load())
 }
 
 func TestGrokOAuthClientStatusErrorRedactsSensitiveResponseBody(t *testing.T) {

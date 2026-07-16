@@ -331,6 +331,7 @@ const clientTabs = computed((): TabConfig[] => {
     case 'grok':
       return [
         { id: 'grok', label: t('keys.useKeyModal.cliTabs.grokCli'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
     default:
@@ -376,6 +377,9 @@ const platformDescription = computed(() => {
     case 'antigravity':
       return t('keys.useKeyModal.antigravity.description')
     case 'grok':
+      if (activeClientTab.value === 'codex') {
+        return t('keys.useKeyModal.grok.codexDescription')
+      }
       return t('keys.useKeyModal.grok.description')
     default:
       return t('keys.useKeyModal.description')
@@ -398,6 +402,11 @@ const platformNote = computed(() => {
         ? t('keys.useKeyModal.antigravity.claudeNote')
         : t('keys.useKeyModal.antigravity.geminiNote')
     case 'grok':
+      if (activeClientTab.value === 'codex') {
+        return activeTab.value === 'windows'
+          ? t('keys.useKeyModal.grok.codexNoteWindows')
+          : t('keys.useKeyModal.grok.codexNote')
+      }
       return activeTab.value === 'windows'
         ? t('keys.useKeyModal.grok.noteWindows')
         : t('keys.useKeyModal.grok.note')
@@ -482,6 +491,9 @@ const currentFiles = computed((): FileConfig[] => {
       }
       return generateAnthropicFiles(`${baseUrl}/antigravity`, apiKey)
     case 'grok':
+      if (activeClientTab.value === 'codex') {
+        return generateGrokCodexFiles(apiBase, apiKey)
+      }
       return generateGrokFiles(apiBase, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
@@ -645,6 +657,43 @@ supports_backend_search = true`
     content: configContent,
     hint: t('keys.useKeyModal.grok.configTomlHint')
   }]
+}
+
+function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  const isWindows = activeTab.value === 'windows'
+  const configPath = isWindows
+    ? '%USERPROFILE%\\.codex\\config.toml'
+    : '~/.codex/config.toml'
+  const configContent = `model_provider = "xiass_grok"
+model = "grok-4.5"
+review_model = "grok-4.5"
+model_reasoning_effort = "high"
+model_context_window = 1000000
+
+[model_providers.xiass_grok]
+name = "XIASS Grok"
+base_url = "${baseUrl}"
+env_key = "XIASS_API_KEY"
+wire_api = "responses"
+supports_websockets = true
+
+[features]
+responses_websockets_v2 = true`
+  const environmentContent = isWindows
+    ? `$env:XIASS_API_KEY="${apiKey}"`
+    : `export XIASS_API_KEY="${apiKey}"`
+
+  return [
+    {
+      path: configPath,
+      content: configContent,
+      hint: t('keys.useKeyModal.grok.codexConfigTomlHint')
+    },
+    {
+      path: isWindows ? 'PowerShell' : 'Terminal',
+      content: environmentContent
+    }
+  ]
 }
 
 function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {

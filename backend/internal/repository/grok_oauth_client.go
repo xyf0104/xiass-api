@@ -89,10 +89,16 @@ func (c *grokOAuthClient) RefreshToken(ctx context.Context, refreshToken, proxyU
 }
 
 func createGrokReqClient(proxyURL string) (*req.Client, error) {
-	return getSharedReqClient(reqClientOptions{
+	client, err := getSharedReqClient(reqClientOptions{
 		ProxyURL: proxyURL,
 		Timeout:  60 * time.Second,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Clone before changing redirect policy because the cached req client may
+	// also be shared by unrelated integrations with identical pool options.
+	return client.Clone().SetRedirectPolicy(req.NoRedirectPolicy()), nil
 }
 
 func grokOAuthStatusError(code, message string, resp *req.Response) error {

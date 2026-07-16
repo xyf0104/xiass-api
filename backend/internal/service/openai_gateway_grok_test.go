@@ -252,7 +252,13 @@ func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T)
 		Platform: PlatformGrok,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"base_url": "https://xai.test/v1/",
+			"base_url":                     "https://xai.test/v1/",
+			"grok_custom_base_url_enabled": true,
+			"header_override_enabled":      true,
+			"header_overrides": map[string]any{
+				"user-agent": "relay-client/1.0",
+				"x-relay":    "enabled",
+			},
 		},
 	}
 
@@ -263,8 +269,11 @@ func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T)
 	require.Equal(t, "Bearer access-token", req.Header.Get("Authorization"))
 	require.Equal(t, "application/json", req.Header.Get("Content-Type"))
 	require.Contains(t, req.Header.Get("Accept"), "text/event-stream")
-	require.Equal(t, grokCLIVersion, req.Header.Get("X-Grok-Client-Version"))
+	require.Empty(t, req.Header.Get("X-Grok-Client-Version"))
+	require.Equal(t, "relay-client/1.0", req.Header.Get("User-Agent"))
+	require.Equal(t, "enabled", getHeaderRaw(req.Header, "x-relay"))
 	require.Equal(t, "isolated-cache-id", req.Header.Get(grokConversationIDHeader))
+	require.True(t, HTTPUpstreamRedirectsDisabled(req.Context()))
 
 	data, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
@@ -286,20 +295,22 @@ func TestBuildGrokResponsesRequestAllowsPublicAPIKeyBaseURLByDefault(t *testing.
 	require.Equal(t, "Bearer api-key", req.Header.Get("Authorization"))
 }
 
-func TestBuildGrokResponsesRequestPinsOAuthCustomBaseURLByDefault(t *testing.T) {
+func TestBuildGrokResponsesRequestHonorsOAuthCustomBaseURLByDefault(t *testing.T) {
 	t.Parallel()
 
 	account := &Account{
 		Platform: PlatformGrok,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"base_url": "https://xai.test/v1",
+			"base_url":                     "https://xai.test/v1",
+			"grok_custom_base_url_enabled": true,
 		},
 	}
 
 	req, err := buildGrokResponsesRequest(context.Background(), nil, account, []byte(`{"model":"grok-4.3"}`), "access-token", "")
 	require.NoError(t, err)
-	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", req.URL.String())
+	require.Equal(t, "https://xai.test/v1/responses", req.URL.String())
+	require.Empty(t, req.Header.Get("X-Grok-Client-Version"))
 }
 
 func TestGrokMediaGenerationGateCoversImagesAndVideo(t *testing.T) {
@@ -425,7 +436,7 @@ func TestForwardGrokMediaImagesGenerationNormalizesImagineAlias(t *testing.T) {
 	require.Equal(t, http.MethodPost, upstream.lastReq.Method)
 	require.Equal(t, "Bearer api-key", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Content-Type"))
-	require.Equal(t, grokCLIVersion, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
+	require.Empty(t, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
 	require.JSONEq(t, `{"model":"grok-imagine-image-quality","prompt":"draw a cat"}`, string(upstream.lastBody))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.JSONEq(t, `{"data":[]}`, recorder.Body.String())

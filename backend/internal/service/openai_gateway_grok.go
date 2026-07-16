@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
@@ -60,7 +61,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
-	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, patchedBody, token, cacheIdentity)
+	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, patchedBody, token, cacheIdentity, s.cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -539,7 +540,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	// Image-description probes are auxiliary requests, not conversation turns.
 	// Do not bind them to the caller's Grok prompt-cache identity.
-	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, body, token, "")
+	upstreamReq, err := buildGrokResponsesRequest(upstreamCtx, c, account, body, token, "", s.cfg)
 	releaseUpstreamCtx()
 	if err != nil {
 		return "", OpenAIUsage{}, fmt.Errorf("build grok composer image bridge request: %w", err)
@@ -704,11 +705,16 @@ func addOpenAIUsage(dst *OpenAIUsage, usage OpenAIUsage) {
 	dst.ImageOutputTokens += usage.ImageOutputTokens
 }
 
-func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, cacheIdentity string) (*http.Request, error) {
-	targetURL, err := xai.BuildResponsesURL(account.GetGrokBaseURL())
+func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, cacheIdentity string, configs ...*config.Config) (*http.Request, error) {
+	var cfg *config.Config
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	targetURL, err := buildGrokResponsesURL(account, cfg)
 	if err != nil {
 		return nil, err
 	}
+	ctx = WithHTTPUpstreamRedirectsDisabled(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -716,13 +722,16 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	applyGrokCLIHeaders(req.Header)
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
+		applyGrokCLIHeaders(req.Header)
+	}
 	applyGrokCacheHeaders(req.Header, cacheIdentity)
 	if c != nil {
 		if v := c.GetHeader("OpenAI-Beta"); strings.TrimSpace(v) != "" {
 			req.Header.Set("OpenAI-Beta", v)
 		}
 	}
+	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
 

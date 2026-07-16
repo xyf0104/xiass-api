@@ -1118,6 +1118,11 @@
             "
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
+          <GrokBaseUrlPresets
+            v-if="form.platform === 'grok'"
+            class="mt-2"
+            @select="apiKeyBaseUrl = $event"
+          />
         </div>
         <div>
           <!-- Batch Mode Toggle -->
@@ -1559,9 +1564,9 @@
           </div>
         </div>
 
-        <!-- Header Override Section (anthropic/openai apikey only) -->
+        <!-- Header Override Section (anthropic/openai/grok apikey) -->
         <div
-          v-if="isHeaderOverridePlatform(form.platform)"
+          v-if="isHeaderOverrideCapable(form.platform, 'apikey')"
           class="border-t border-gray-200 pt-4 dark:border-dark-600"
         >
           <div class="mb-3 flex items-center justify-between">
@@ -2031,7 +2036,154 @@
         />
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- Grok OAuth Custom Upstream URL -->
+      <div
+        v-if="form.platform === 'grok' && isOAuthFlow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.grokCustomBaseUrl.title') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.grokCustomBaseUrl.hint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="grok-custom-base-url-toggle"
+            @click="grokOAuthCustomBaseUrlEnabled = !grokOAuthCustomBaseUrlEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              grokOAuthCustomBaseUrlEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                grokOAuthCustomBaseUrlEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="grokOAuthCustomBaseUrlEnabled" class="space-y-2">
+          <input
+            v-model="grokOAuthBaseUrl"
+            type="text"
+            class="input"
+            data-testid="grok-custom-base-url-input"
+            :placeholder="t('admin.accounts.grokCustomBaseUrl.placeholder')"
+          />
+          <GrokBaseUrlPresets @select="grokOAuthBaseUrl = $event" />
+        </div>
+      </div>
+
+      <!-- Grok OAuth Header Override -->
+      <div
+        v-if="form.platform === 'grok' && isOAuthFlow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.headerOverride.title') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.headerOverride.hint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="grok-header-override-toggle"
+            @click="headerOverrideEnabled = !headerOverrideEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              headerOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="headerOverrideEnabled" class="space-y-3">
+          <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
+            <p class="text-xs text-blue-700 dark:text-blue-400">
+              <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
+              {{ t('admin.accounts.headerOverride.info') }}
+            </p>
+          </div>
+          <div v-if="headerOverrideRows.length > 0" class="space-y-2">
+            <div
+              v-for="(row, index) in headerOverrideRows"
+              :key="getHeaderOverrideRowKey(row)"
+              class="flex items-center gap-2"
+            >
+              <input
+                v-model="row.name"
+                :data-testid="`header-override-name-${index}`"
+                type="text"
+                class="input flex-1"
+                :placeholder="t('admin.accounts.headerOverride.namePlaceholder')"
+              />
+              <input
+                v-model="row.value"
+                :data-testid="`header-override-value-${index}`"
+                type="text"
+                class="input flex-1"
+                :placeholder="t('admin.accounts.headerOverride.valuePlaceholder')"
+              />
+              <button
+                type="button"
+                @click="removeHeaderOverrideRow(index)"
+                class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+              >
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            data-testid="header-override-add-row"
+            @click="addHeaderOverrideRow"
+            class="w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
+          >
+            <svg class="mr-1 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            {{ t('admin.accounts.headerOverride.addRow') }}
+          </button>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              @click="fillHeaderOverrideTemplate"
+              class="rounded-lg bg-primary-50 px-3 py-1 text-xs text-primary-700 transition-colors hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-400 dark:hover:bg-primary-900/50"
+            >
+              + {{ t('admin.accounts.headerOverride.fillTemplate') }}
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.headerOverride.emptyValueHint') }}
+          </p>
+        </div>
+      </div>
+
+      <!-- OpenAI/Grok OAuth Model Mapping -->
       <div
         v-if="(form.platform === 'openai' || form.platform === 'grok') && accountCategory === 'oauth-based'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -3582,12 +3734,15 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
+import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import {
   applyAntigravityProjectID,
   applyHeaderOverride,
   applyInterceptWarmup,
   getHeaderOverrideTemplate,
-  isHeaderOverridePlatform,
+  GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY,
+  isHeaderOverrideCapable,
+  validateGrokBaseUrlInput,
   validateHeaderOverrideRows,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
@@ -3841,7 +3996,7 @@ const fillHeaderOverrideTemplate = () => {
 }
 
 const applyHeaderOverrideConfig = (credentials: Record<string, unknown>) => {
-  if (!isHeaderOverridePlatform(form.platform)) {
+  if (!isHeaderOverrideCapable(form.platform, form.type)) {
     return true
   }
   if (headerOverrideEnabled.value) {
@@ -3853,6 +4008,35 @@ const applyHeaderOverrideConfig = (credentials: Record<string, unknown>) => {
   }
   applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
   return true
+}
+
+const grokOAuthCustomBaseUrlEnabled = ref(false)
+const grokOAuthBaseUrl = ref('')
+
+const validateGrokOAuthUpstreamConfig = (): boolean => {
+  if (grokOAuthCustomBaseUrlEnabled.value) {
+    const validationError = validateGrokBaseUrlInput(grokOAuthBaseUrl.value)
+    if (validationError) {
+      appStore.showError(t(`admin.accounts.grokCustomBaseUrl.${validationError}`))
+      return false
+    }
+  }
+  if (headerOverrideEnabled.value) {
+    const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+    if (headerError) {
+      appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
+      return false
+    }
+  }
+  return true
+}
+
+const applyGrokOAuthUpstreamConfig = (credentials: Record<string, unknown>) => {
+  if (grokOAuthCustomBaseUrlEnabled.value) {
+    credentials.base_url = grokOAuthBaseUrl.value.trim()
+    credentials[GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY] = true
+  }
+  applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
 }
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
@@ -4381,6 +4565,8 @@ watch(
     // 避免上一平台的模板行被提交到新平台账号
     headerOverrideEnabled.value = false
     headerOverrideRows.value = []
+    grokOAuthCustomBaseUrlEnabled.value = false
+    grokOAuthBaseUrl.value = ''
     // Reset OAuth states
     oauth.resetState()
     openaiOAuth.resetState()
@@ -4774,6 +4960,8 @@ const resetForm = () => {
   customErrorCodeInput.value = null
   headerOverrideEnabled.value = false
   headerOverrideRows.value = []
+  grokOAuthCustomBaseUrlEnabled.value = false
+  grokOAuthBaseUrl.value = ''
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
@@ -5168,6 +5356,16 @@ const handleSubmit = async () => {
     return
   }
 
+  if (form.platform === 'grok') {
+    const validationError = validateGrokBaseUrlInput(
+      apiKeyBaseUrl.value.trim() || 'https://api.x.ai/v1'
+    )
+    if (validationError) {
+      appStore.showError(t(`admin.accounts.grokCustomBaseUrl.${validationError}`))
+      return
+    }
+  }
+
   // For apikey type — supports both single and batch mode
   // NOTE: 批量模式复用完全相同的 credentials 构建逻辑，确保每个账号与单独添加效果一致
   if (isBatchMode.value) {
@@ -5486,6 +5684,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
     grokOAuth.error.value = t('admin.accounts.oauth.grok.pleaseEnterRefreshToken')
     return
   }
+  if (!validateGrokOAuthUpstreamConfig()) return
 
   grokOAuth.loading.value = true
   grokOAuth.error.value = ''
@@ -5506,6 +5705,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
         }
 
         const credentials = grokOAuth.buildCredentials(tokenInfo)
+        applyGrokOAuthUpstreamConfig(credentials)
         const extra = grokOAuth.buildExtraInfo(tokenInfo)
         const accountName = refreshTokens.length > 1 ? `${form.name || tokenInfo.email || 'Grok OAuth Account'} #${i + 1}` : (form.name || tokenInfo.email || 'Grok OAuth Account')
 
@@ -6098,6 +6298,7 @@ const handleAntigravityExchange = async (authCode: string) => {
 // Grok OAuth 授权码兑换
 const handleGrokExchange = async (authCode: string) => {
   if (!authCode.trim() || !grokOAuth.sessionId.value) return
+  if (!validateGrokOAuthUpstreamConfig()) return
 
   grokOAuth.loading.value = true
   grokOAuth.error.value = ''
@@ -6120,6 +6321,7 @@ const handleGrokExchange = async (authCode: string) => {
     if (!tokenInfo) return
 
     const credentials = grokOAuth.buildCredentials(tokenInfo)
+    applyGrokOAuthUpstreamConfig(credentials)
     const extra = grokOAuth.buildExtraInfo(tokenInfo)
     await createAccountAndFinish('grok', 'oauth', credentials, extra)
   } catch (error: any) {

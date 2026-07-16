@@ -78,6 +78,59 @@ describe('UseKeyModal', () => {
     expect(parsed.provider.grok.models['gpt-5.6']).toBeUndefined()
   })
 
+  it('renders XIASS Grok Codex config with WebSocket v2 and high reasoning', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-codex-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+
+    let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    const configToml = codeBlocks.find((content) =>
+      content.includes('[model_providers.xiass_grok]')
+    )
+    expect(configToml).toBeDefined()
+    expect(configToml).toContain('model_provider = "xiass_grok"')
+    expect(configToml).toContain('name = "XIASS Grok"')
+    expect(configToml).toContain('model_reasoning_effort = "high"')
+    expect(configToml).toContain('supports_websockets = true')
+    expect(configToml).toContain('[features]\nresponses_websockets_v2 = true')
+    expect(configToml).toContain('env_key = "XIASS_API_KEY"')
+    expect(configToml).not.toMatch(/Sub2API|NoWind/i)
+    expect(codeBlocks).toContain('export XIASS_API_KEY="sk-grok-codex-test"')
+
+    const windowsTab = wrapper.findAll('button').find(
+      (button) => button.text().trim() === 'Windows'
+    )
+    expect(windowsTab).toBeDefined()
+    await windowsTab!.trigger('click')
+    await nextTick()
+
+    codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    expect(wrapper.text()).toContain('%USERPROFILE%\\.codex\\config.toml')
+    expect(codeBlocks).toContain('$env:XIASS_API_KEY="sk-grok-codex-test"')
+  })
+
   it('renders GPT-5.5 and goals feature in OpenAI Codex config', () => {
     const wrapper = mount(UseKeyModal, {
       props: {

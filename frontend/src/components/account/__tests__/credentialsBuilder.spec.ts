@@ -10,10 +10,15 @@ import {
   buildHeaderOverridesObject,
   buildPlanTypeOptions,
   getHeaderOverrideTemplate,
+  GROK_BASE_URL_PRESETS,
+  GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY,
+  isGrokCustomBaseUrlEnabled,
+  isHeaderOverrideCapable,
   isHeaderOverridePlatform,
   planTypeDisplayLabel,
   readPlanType,
   splitHeaderOverridesObject,
+  validateGrokBaseUrlInput,
   validateHeaderOverrideRows
 } from '../credentialsBuilder'
 
@@ -102,6 +107,53 @@ describe('isHeaderOverridePlatform', () => {
     expect(isHeaderOverridePlatform('grok')).toBe(false)
     expect(isHeaderOverridePlatform('antigravity')).toBe(false)
     expect(isHeaderOverridePlatform('')).toBe(false)
+  })
+})
+
+describe('isHeaderOverrideCapable', () => {
+  it('preserves apikey-only behavior for anthropic/openai and enables grok apikey/oauth', () => {
+    expect(isHeaderOverrideCapable('anthropic', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('anthropic', 'oauth')).toBe(false)
+    expect(isHeaderOverrideCapable('openai', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('openai', 'oauth')).toBe(false)
+    expect(isHeaderOverrideCapable('grok', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('grok', 'oauth')).toBe(true)
+    expect(isHeaderOverrideCapable('grok', 'setup-token')).toBe(false)
+  })
+})
+
+describe('Grok base URL configuration', () => {
+  it('keeps presets in CLI, official, us-east-1, us-west-2, eu-west-1 order', () => {
+    expect(GROK_BASE_URL_PRESETS.map((preset) => preset.url)).toEqual([
+      'https://cli-chat-proxy.grok.com/v1',
+      'https://api.x.ai/v1',
+      'https://us-east-1.api.x.ai/v1',
+      'https://us-west-2.api.x.ai/v1',
+      'https://eu-west-1.api.x.ai/v1'
+    ])
+  })
+
+  it('requires an explicit opt-in marker so legacy credentials keep v1.0.80 routing', () => {
+    expect(isGrokCustomBaseUrlEnabled({ base_url: 'https://api.x.ai/v1' })).toBe(false)
+    expect(
+      isGrokCustomBaseUrlEnabled({
+        base_url: 'https://api.x.ai/v1',
+        [GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY]: true
+      })
+    ).toBe(true)
+  })
+
+  it('validates the complete URL shape accepted by the backend', () => {
+    expect(validateGrokBaseUrlInput('https://api.x.ai/v1')).toBeNull()
+    expect(validateGrokBaseUrlInput('http://relay.example.com/xai/v1')).toBeNull()
+    expect(validateGrokBaseUrlInput('')).toBe('required')
+    expect(validateGrokBaseUrlInput('https://')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('ftp://relay.example.com/v1')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('https://user:pass@relay.example.com/v1')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('https://relay.example.com/v1?token=secret')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('https://relay.example.com/v1#fragment')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('https://api.x.ai/not-v1')).toBe('invalid')
+    expect(validateGrokBaseUrlInput('https://us-east-1.api.x.ai/not-v1')).toBe('invalid')
   })
 })
 
@@ -198,6 +250,11 @@ describe('getHeaderOverrideTemplate', () => {
     expect(names).toContain('originator')
     expect(names).toContain('openai-beta')
     expect(validateHeaderOverrideRows(rows)).toBeNull()
+  })
+
+  it('returns Grok forwarding headers for grok', () => {
+    const names = getHeaderOverrideTemplate('grok').map((row) => row.name)
+    expect(names).toEqual(['user-agent', 'x-xai-token-auth', 'x-grok-client-version'])
   })
 })
 

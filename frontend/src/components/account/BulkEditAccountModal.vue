@@ -110,6 +110,11 @@
           :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')"
           aria-labelledby="bulk-edit-base-url-label"
         />
+        <GrokBaseUrlPresets
+          v-if="allTargetsGrok"
+          class="mt-2"
+          @select="baseUrl = $event; enableBaseUrl = true"
+        />
         <p class="input-hint">
           {{ t('admin.accounts.bulkEdit.baseUrlNotice') }}
         </p>
@@ -486,7 +491,7 @@
         </div>
       </div>
 
-      <!-- Header Override (anthropic/openai apikey only) -->
+      <!-- Header Override -->
       <div v-if="allHeaderOverrideCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="flex items-center justify-between">
           <div class="flex-1 pr-4">
@@ -1268,6 +1273,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import Icon from '@/components/icons/Icon.vue'
+import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
   getPresetMappingsByPlatform
@@ -1275,7 +1281,9 @@ import {
 import {
   buildHeaderOverridesObject,
   getHeaderOverrideTemplate,
-  isHeaderOverridePlatform,
+  GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY,
+  isHeaderOverrideCapable,
+  validateGrokBaseUrlInput,
   validateHeaderOverrideRows,
   HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY,
   HEADER_OVERRIDES_CREDENTIAL_KEY,
@@ -1321,6 +1329,11 @@ const targetMode = computed(() => props.target?.mode ?? 'selected')
 const targetPreviewCount = computed(() => props.target?.previewCount ?? props.accountIds.length)
 const targetSelectedPlatforms = computed(() => props.target?.selectedPlatforms ?? props.selectedPlatforms)
 const targetSelectedTypes = computed(() => props.target?.selectedTypes ?? props.selectedTypes)
+const allTargetsGrok = computed(
+  () =>
+    targetSelectedPlatforms.value.length > 0 &&
+    targetSelectedPlatforms.value.every((platform) => platform === 'grok')
+)
 const isMixedPlatform = computed(() => targetSelectedPlatforms.value.length > 1)
 
 const allOpenAIPassthroughCapable = computed(() => {
@@ -1350,13 +1363,14 @@ const allOpenAIAPIKey = computed(() => {
   )
 })
 
-// 是否全部为 anthropic/openai 平台的 apikey 账号（请求头覆写仅在此条件下显示）
+// 所选平台与类型的全组合都必须支持请求头覆写。
 const allHeaderOverrideCapable = computed(() => {
   return (
     targetSelectedPlatforms.value.length > 0 &&
-    targetSelectedPlatforms.value.every(p => isHeaderOverridePlatform(p)) &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'apikey')
+    targetSelectedPlatforms.value.every((platform) =>
+      targetSelectedTypes.value.every((type) => isHeaderOverrideCapable(platform, type))
+    )
   )
 })
 
@@ -1458,6 +1472,7 @@ const fillHeaderOverrideTemplate = () => {
   }
   headerOverrideRows.value = rows
 }
+
 const proxyId = ref<number | null>(null)
 const concurrency = ref(1)
 const loadFactor = ref<number | null>(null)
@@ -1657,7 +1672,17 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (enableBaseUrl.value) {
     const baseUrlValue = baseUrl.value.trim()
     if (baseUrlValue) {
+      if (allTargetsGrok.value) {
+        const validationError = validateGrokBaseUrlInput(baseUrlValue)
+        if (validationError) {
+          appStore.showError(t(`admin.accounts.grokCustomBaseUrl.${validationError}`))
+          return null
+        }
+      }
       credentials.base_url = baseUrlValue
+      if (allTargetsGrok.value) {
+        credentials[GROK_CUSTOM_BASE_URL_ENABLED_CREDENTIAL_KEY] = true
+      }
       credentialsChanged = true
     }
   }

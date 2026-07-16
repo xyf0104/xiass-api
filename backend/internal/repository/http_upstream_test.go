@@ -1,9 +1,11 @@
 package repository
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-func TestHTTPUpstreamDoAppliesGrokCLIIdentityBeforeOAuthRoundTrip(t *testing.T) {
+func TestHTTPUpstreamDoFillsMissingGrokCLIIdentityBeforeOAuthRoundTrip(t *testing.T) {
 	t.Setenv("XAI_GROK_CLI_VERSION", "")
 
 	for _, endpoint := range []string{"responses", "chat/completions"} {
@@ -64,9 +66,110 @@ func TestHTTPUpstreamDoAppliesGrokCLIIdentityBeforeOAuthRoundTrip(t *testing.T) 
 
 			require.Equal(t, "0.2.93", capturedHeaders.Get("x-grok-client-version"))
 			require.Equal(t, "xai-grok-cli", capturedHeaders.Get("X-XAI-Token-Auth"))
-			require.Equal(t, "xai-grok-workspace/0.2.93", capturedHeaders.Get("User-Agent"))
+			require.Equal(t, "xiass-api-grok/1.0", capturedHeaders.Get("User-Agent"))
 		})
 	}
+}
+
+func TestHTTPUpstreamGrokAccessDeniedFallbackWrapsSelectedTransport(t *testing.T) {
+	for _, useTLS := range []bool{false, true} {
+		name := "Do"
+		if useTLS {
+			name = "DoWithTLS"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := NewHTTPUpstream(nil)
+			svc := upstream.(*httpUpstreamService)
+			const accountID int64 = 4421
+			isolation := svc.getIsolationMode()
+			proxyKey := directProxyKey
+			settings := svc.resolvePoolSettings(isolation, 1)
+
+			cacheKey := ""
+			poolKey := ""
+			protocolMode := upstreamProtocolModeDefault
+			if useTLS {
+				cacheKey = "tls:" + buildCacheKey(isolation, proxyKey, accountID, protocolMode)
+				poolKey = buildPoolKey(settings, protocolMode) + ":tls"
+			} else {
+				protocolMode = svc.resolveProtocolMode(service.HTTPUpstreamProfileDefault, proxyKey, nil)
+				cacheKey = buildCacheKey(isolation, proxyKey, accountID, protocolMode)
+				poolKey = buildPoolKey(settings, protocolMode)
+			}
+
+			payload := []byte(`{"model":"grok-4.5","input":"hello"}`)
+			calls := 0
+			svc.clients[cacheKey] = &upstreamClientEntry{
+				client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					calls++
+					body, err := io.ReadAll(req.Body)
+					require.NoError(t, err)
+					require.Equal(t, payload, body)
+					if calls == 1 {
+						require.Equal(t, grokCLIProxyHost, req.URL.Hostname())
+						return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":"Access denied"}`)), Request: req}, nil
+					}
+					require.Equal(t, grokOfficialAPIHost, req.URL.Hostname())
+					require.Equal(t, "/v1/responses", req.URL.Path)
+					require.Equal(t, "Bearer oauth-token", req.Header.Get("Authorization"))
+					require.Empty(t, req.Header.Get("X-XAI-Token-Auth"))
+					require.Empty(t, req.Header.Get("X-Grok-Client-Version"))
+					require.Empty(t, req.Header.Get("User-Agent"))
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"response-ok"}`)), Request: req}, nil
+				})},
+				proxyKey: proxyKey,
+				poolKey:  poolKey,
+			}
+
+			req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", bytes.NewReader(payload))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer oauth-token")
+			var resp *http.Response
+			if useTLS {
+				resp, err = svc.DoWithTLS(req, "", accountID, 1, &tlsfingerprint.Profile{Name: "test"})
+			} else {
+				resp, err = svc.Do(req, "", accountID, 1)
+			}
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, 2, calls)
+			require.NoError(t, resp.Body.Close())
+		})
+	}
+}
+
+func TestGrokAccessDeniedFallbackKeepsOther403Responses(t *testing.T) {
+	transport := &grokAccessDeniedFallbackTransport{base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":"subscription required"}`)), Request: req}, nil
+	})}
+	req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", strings.NewReader(`{"model":"grok-4.5"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer oauth-token")
+	req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"error":"subscription required"}`, string(body))
+	require.NoError(t, resp.Body.Close())
+}
+
+func TestHTTPClientForUpstreamRequestDisablesRedirectsPerRequest(t *testing.T) {
+	base := &http.Client{}
+	req, err := http.NewRequestWithContext(
+		service.WithHTTPUpstreamRedirectsDisabled(t.Context()),
+		http.MethodGet,
+		"https://relay.example.test/v1/responses",
+		nil,
+	)
+	require.NoError(t, err)
+
+	client := httpClientForUpstreamRequest(base, req)
+	require.NotSame(t, base, client)
+	require.ErrorIs(t, client.CheckRedirect(req, nil), http.ErrUseLastResponse)
+	require.Nil(t, base.CheckRedirect)
 }
 
 func TestApplyGrokCLIProxyHeaders(t *testing.T) {
@@ -74,13 +177,27 @@ func TestApplyGrokCLIProxyHeaders(t *testing.T) {
 		t.Setenv("XAI_GROK_CLI_VERSION", "")
 		req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", nil)
 		require.NoError(t, err)
-		req.Header.Set("User-Agent", "xiass-api-grok/1.0")
 
 		applyGrokCLIProxyHeaders(req)
 
 		require.Equal(t, "0.2.93", req.Header.Get("x-grok-client-version"))
 		require.Equal(t, "xai-grok-cli", req.Header.Get("X-XAI-Token-Auth"))
 		require.Equal(t, "xai-grok-workspace/0.2.93", req.Header.Get("User-Agent"))
+	})
+
+	t.Run("preserves explicit account header overrides", func(t *testing.T) {
+		t.Setenv("XAI_GROK_CLI_VERSION", "")
+		req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-XAI-Token-Auth", "custom-auth")
+		req.Header.Set("X-Grok-Client-Version", "custom-version")
+		req.Header.Set("User-Agent", "custom-agent/1.0")
+
+		applyGrokCLIProxyHeaders(req)
+
+		require.Equal(t, "custom-auth", req.Header.Get("X-XAI-Token-Auth"))
+		require.Equal(t, "custom-version", req.Header.Get("X-Grok-Client-Version"))
+		require.Equal(t, "custom-agent/1.0", req.Header.Get("User-Agent"))
 	})
 
 	t.Run("accepts a valid operator override", func(t *testing.T) {

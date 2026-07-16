@@ -20,4 +20,30 @@ describe('CreateAccountModal Grok account types', () => {
     )
     expect(grokDefaults?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
+
+  it('wires endpoint presets to API key and OAuth inputs without adding SSO UI', () => {
+    expect(source).toContain('@select="apiKeyBaseUrl = $event"')
+    expect(source).toContain('data-testid="grok-custom-base-url-toggle"')
+    expect(source).toContain('data-testid="grok-custom-base-url-input"')
+    expect(source).toContain('@select="grokOAuthBaseUrl = $event"')
+    expect(source).not.toContain('grok-sso')
+  })
+
+  it('applies validated Grok OAuth upstream config to auth-code and refresh-token creation', () => {
+    const validateCalls = source.match(/if \(!validateGrokOAuthUpstreamConfig\(\)\) return/g)
+    const applyCalls = source.match(/applyGrokOAuthUpstreamConfig\(credentials\)/g)
+
+    expect(validateCalls).toHaveLength(2)
+    expect(applyCalls).toHaveLength(2)
+  })
+
+  it('validates the Grok API-key base URL before single or batch creation', () => {
+    expect(source).toContain("if (form.platform === 'grok')")
+    expect(source).toContain(
+      "apiKeyBaseUrl.value.trim() || 'https://api.x.ai/v1'"
+    )
+    expect(source).toContain(
+      'appStore.showError(t(`admin.accounts.grokCustomBaseUrl.${validationError}`))'
+    )
+  })
 })

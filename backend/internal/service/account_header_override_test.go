@@ -30,7 +30,8 @@ func TestIsHeaderOverrideEligible(t *testing.T) {
 		{"anthropic oauth", PlatformAnthropic, AccountTypeOAuth, false},
 		{"openai oauth", PlatformOpenAI, AccountTypeOAuth, false},
 		{"gemini apikey", PlatformGemini, AccountTypeAPIKey, false},
-		{"grok apikey", PlatformGrok, AccountTypeAPIKey, false},
+		{"grok apikey", PlatformGrok, AccountTypeAPIKey, true},
+		{"grok oauth", PlatformGrok, AccountTypeOAuth, true},
 		{"antigravity apikey", PlatformAntigravity, AccountTypeAPIKey, false},
 		{"anthropic bedrock", PlatformAnthropic, AccountTypeBedrock, false},
 	}
@@ -112,6 +113,7 @@ func TestGetHeaderOverrides(t *testing.T) {
 			"sec-websocket-key":        "forged",
 			"content-type":             "application/json", // 名单扩充前落库的数据也要被拦截
 			"x-claude-code-session-id": "pinned-session",
+			"x-grok-conv-id":           "pinned-conversation",
 			"x-ok":                     "ok",
 		},
 	})

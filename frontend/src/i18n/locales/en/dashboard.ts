@@ -182,10 +182,14 @@ export default {
         note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
       },
       grok: {
-        description: 'Configure Grok Build or OpenCode to send Responses API traffic through your XIASS API Grok group.',
+        description: 'Configure Grok Build, Codex, or OpenCode to send Responses API traffic through your XIASS API Grok group.',
+        codexDescription: 'Configure Codex to send Responses API traffic through your XIASS API Grok group.',
         configTomlHint: 'Back up an existing config.toml before merging this model entry. Run grok inspect after saving to verify the effective configuration.',
+        codexConfigTomlHint: 'Back up an existing config.toml before merging this XIASS provider configuration.',
         note: 'Save the file as ~/.grok/config.toml, then run grok inspect and select xiass-grok from /model.',
         noteWindows: 'Save the file as %USERPROFILE%\\.grok\\config.toml, then run grok inspect and select xiass-grok from /model.',
+        codexNote: 'Save config.toml under ~/.codex and set XIASS_API_KEY before starting Codex.',
+        codexNoteWindows: 'Save config.toml under %USERPROFILE%\\.codex and set XIASS_API_KEY in PowerShell before starting Codex.',
       },
       opencode: {
         title: 'OpenCode Example',

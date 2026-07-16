@@ -6,7 +6,6 @@ import (
 	"errors"
 	"hash/fnv"
 	"log/slog"
-	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1251,19 +1250,22 @@ func (a *Account) GetOpenAIRefreshToken() string {
 	return a.GetCredential("refresh_token")
 }
 
+const grokCustomBaseURLEnabledCredentialKey = "grok_custom_base_url_enabled"
+
 func (a *Account) GetGrokBaseURL() string {
 	if !a.IsGrok() {
 		return ""
 	}
-	baseURL := a.GetCredential("base_url")
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
 	if a.IsGrokOAuth() {
-		if strings.TrimSpace(baseURL) == "" || isOfficialGrokAPIBaseURL(baseURL) {
+		// v1.0.80 and earlier always routed OAuth traffic through the CLI
+		// gateway. Require an explicit opt-in flag so historical base_url values
+		// cannot silently change an existing account's upstream after upgrade.
+		enabled, _ := a.Credentials[grokCustomBaseURLEnabledCredentialKey].(bool)
+		if !enabled || baseURL == "" || !xai.IsParseableBaseURL(baseURL) {
 			return xai.DefaultCLIBaseURL
 		}
-		if _, err := xai.ValidateTrustedBaseURL(baseURL); err == nil {
-			return baseURL
-		}
-		return xai.DefaultCLIBaseURL
+		return baseURL
 	}
 	if baseURL != "" {
 		return baseURL
@@ -1271,26 +1273,17 @@ func (a *Account) GetGrokBaseURL() string {
 	return xai.DefaultBaseURL
 }
 
-func isOfficialGrokAPIBaseURL(raw string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
+// GetGrokMediaBaseURL keeps explicitly selected API/regional/relay endpoints,
+// but moves OAuth media off the CLI gateway because of its smaller body limit.
+func (a *Account) GetGrokMediaBaseURL() string {
+	if !a.IsGrok() {
+		return ""
 	}
-	defaultURL, err := url.Parse(xai.DefaultBaseURL)
-	if err != nil {
-		return false
+	baseURL := a.GetGrokBaseURL()
+	if a.IsGrokOAuth() && isGrokCLIProxyTarget(baseURL) {
+		return xai.DefaultBaseURL
 	}
-	if !strings.EqualFold(parsed.Scheme, defaultURL.Scheme) || !strings.EqualFold(parsed.Hostname(), defaultURL.Hostname()) {
-		return false
-	}
-	if port := parsed.Port(); port != "" {
-		portNumber, err := strconv.Atoi(port)
-		if err != nil || portNumber != 443 {
-			return false
-		}
-	}
-	path := strings.TrimRight(parsed.Path, "/")
-	return path == "" || path == strings.TrimRight(defaultURL.Path, "/")
+	return baseURL
 }
 
 func (a *Account) GetGrokAccessToken() string {

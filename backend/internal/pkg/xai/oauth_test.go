@@ -165,6 +165,43 @@ func TestValidateBaseURLAllowsPublicThirdPartyGrokAPI(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestGrokEndpointBaseURLSemantics(t *testing.T) {
+	for _, raw := range []string{
+		DefaultBaseURL,
+		DefaultCLIBaseURL,
+		"https://us-east-1.api.x.ai/v1",
+		"https://eu-west-1.api.x.ai/v1",
+	} {
+		require.True(t, IsOfficialBaseURL(raw), raw)
+		validated, err := ValidateTrustedBaseURL(raw)
+		require.NoError(t, err)
+		require.Equal(t, raw, validated)
+	}
+
+	custom, err := ValidateBaseURL("https://relay.example.test/tenant/xai/v1/")
+	require.NoError(t, err)
+	require.Equal(t, "https://relay.example.test/tenant/xai/v1", custom)
+
+	_, err = ValidateTrustedBaseURL("https://us-east-1.api.x.ai/not-v1")
+	require.Error(t, err)
+	require.False(t, IsOfficialBaseURL("https://api.x.ai.evil.example/v1"))
+	require.False(t, IsParseableBaseURL("not a url"))
+}
+
+func TestBuildResponsesURLWithValidatorRejectsUnsafeComponents(t *testing.T) {
+	permissive := func(raw string) (string, error) { return raw, nil }
+	for _, raw := range []string{
+		"https://user:secret@relay.example.test/v1",
+		"https://relay.example.test/v1?token=secret",
+		"https://relay.example.test/v1?",
+		"https://relay.example.test/v1#secret",
+	} {
+		_, err := BuildResponsesURLWithValidator(raw, permissive)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "secret")
+	}
+}
+
 func TestValidateXAIURLsAllowUnsafeDevOverride(t *testing.T) {
 	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 

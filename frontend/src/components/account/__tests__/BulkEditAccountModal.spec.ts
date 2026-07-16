@@ -130,6 +130,38 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('全部目标为 Grok 时显示预设，点击预设同时勾选并提交 base_url', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['grok'],
+      selectedTypes: ['oauth']
+    })
+
+    const presets = wrapper.findAll('[data-testid="grok-base-url-preset"]')
+    expect(presets).toHaveLength(5)
+    expect(wrapper.find('#bulk-edit-header-override-enabled').exists()).toBe(true)
+
+    await presets[2].trigger('click')
+    expect((wrapper.get('#bulk-edit-base-url-enabled').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      credentials: {
+        base_url: 'https://us-east-1.api.x.ai/v1',
+        grok_custom_base_url_enabled: true
+      }
+    })
+  })
+
+  it('混合平台目标隐藏 Grok 预设', () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['grok', 'anthropic'],
+      selectedTypes: ['apikey']
+    })
+
+    expect(wrapper.find('[data-testid="grok-base-url-preset"]').exists()).toBe(false)
+  })
+
   it('OpenAI 账号批量编辑可开启自动透传', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

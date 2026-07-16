@@ -140,8 +140,9 @@ func ProvideGrokQuotaService(
 	proxyRepo ProxyRepository,
 	tokenProvider *GrokTokenProvider,
 	httpUpstream HTTPUpstream,
+	cfg *config.Config,
 ) *GrokQuotaService {
-	return NewGrokQuotaService(accountRepo, proxyRepo, tokenProvider, httpUpstream)
+	return NewGrokQuotaService(accountRepo, proxyRepo, tokenProvider, httpUpstream, cfg)
 }
 
 // ProvideGeminiTokenProvider creates GeminiTokenProvider with OAuthRefreshAPI injection
