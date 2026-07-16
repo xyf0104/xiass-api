@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.79-0ea5e9" alt="当前版本 v1.0.79" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.80-0ea5e9" alt="当前版本 v1.0.80" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,9 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.79
+> 当前版本：v1.0.80
 
-v1.0.79 新增 XIASS Codex 配置助手：macOS 与 Windows 用户可从密钥使用弹窗直接下载免安装助手，自动检测 Codex、备份并校验 `config.toml`、写入所选 XIASS API 密钥、重启 Codex，并可随时恢复原配置。
+v1.0.80 正式提供 XIASS Codex 配置助手：macOS 与 Windows 用户可从密钥使用弹窗直接下载免安装助手，自动检测 Codex、备份并校验 `config.toml`、写入所选 XIASS API 密钥、重启 Codex，并可随时恢复原配置。助手默认不连接任何维护者站点，适用于独立部署。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

@@ -404,6 +404,7 @@ jobs:
       - name: Upload and verify Codex helper assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG_NAME="${{ github.event.inputs.tag }}"
