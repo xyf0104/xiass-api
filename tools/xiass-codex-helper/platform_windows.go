@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,45 +183,86 @@ func runWindowsPowerShellLines(dialog bool, command string) []string {
 }
 
 func restartCodex(installation CodexInstallation) error {
+	if err := stopCodex(installation); err != nil {
+		return err
+	}
+	return startCodex(installation)
+}
+
+func stopCodex(installation CodexInstallation) error {
 	if !installation.Found || (installation.Executable == "" && installation.LaunchTarget == "") {
 		return errors.New("Codex App was not found")
 	}
 	if installation.Executable == "" {
-		if installation.Running {
-			for _, processID := range windowsCodexProcessIDsByName() {
+		processIDs, err := windowsCodexProcessIDsByNameWithError()
+		if err != nil {
+			return fmt.Errorf("could not verify whether Codex is running: %w", err)
+		}
+		if len(processIDs) > 0 {
+			for _, processID := range processIDs {
 				_ = exec.Command("taskkill.exe", "/PID", processID, "/T").Run()
 			}
 			deadline := time.Now().Add(15 * time.Second)
-			for isWindowsCodexAppRunning() && time.Now().Before(deadline) {
+			for len(processIDs) > 0 && time.Now().Before(deadline) {
 				time.Sleep(250 * time.Millisecond)
+				processIDs, err = windowsCodexProcessIDsByNameWithError()
+				if err != nil {
+					return fmt.Errorf("could not verify that Codex exited: %w", err)
+				}
 			}
-			if isWindowsCodexAppRunning() {
+			if len(processIDs) > 0 {
 				return errors.New("Codex did not exit within 15 seconds; configuration is saved but the app was not force-closed")
 			}
 		}
+		return nil
+	}
+	processIDs, err := windowsProcessIDsWithError(installation.Executable)
+	if err != nil {
+		return fmt.Errorf("could not verify whether Codex is running: %w", err)
+	}
+	if len(processIDs) > 0 {
+		for _, processID := range processIDs {
+			_ = exec.Command("taskkill.exe", "/PID", processID, "/T").Run()
+		}
+		deadline := time.Now().Add(15 * time.Second)
+		for len(processIDs) > 0 && time.Now().Before(deadline) {
+			time.Sleep(250 * time.Millisecond)
+			processIDs, err = windowsProcessIDsWithError(installation.Executable)
+			if err != nil {
+				return fmt.Errorf("could not verify that Codex exited: %w", err)
+			}
+		}
+		if len(processIDs) > 0 {
+			return errors.New("Codex did not exit within 15 seconds; configuration is saved but the app was not force-closed")
+		}
+	}
+	return nil
+}
+
+func startCodex(installation CodexInstallation) error {
+	if !installation.Found || (installation.Executable == "" && installation.LaunchTarget == "") {
+		return errors.New("Codex App was not found")
+	}
+	if installation.Executable == "" {
 		if err := exec.Command("explorer.exe", `shell:AppsFolder\`+installation.LaunchTarget).Start(); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(15 * time.Second)
-		for !isWindowsCodexAppRunning() && time.Now().Before(deadline) {
-			time.Sleep(250 * time.Millisecond)
+		processIDs, statusErr := windowsCodexProcessIDsByNameWithError()
+		if statusErr != nil {
+			return fmt.Errorf("could not verify that Codex started: %w", statusErr)
 		}
-		if !isWindowsCodexAppRunning() {
+		for len(processIDs) == 0 && time.Now().Before(deadline) {
+			time.Sleep(250 * time.Millisecond)
+			processIDs, statusErr = windowsCodexProcessIDsByNameWithError()
+			if statusErr != nil {
+				return fmt.Errorf("could not verify that Codex started: %w", statusErr)
+			}
+		}
+		if len(processIDs) == 0 {
 			return errors.New("Codex did not start within 15 seconds")
 		}
 		return nil
-	}
-	if installation.Running || isWindowsExecutableRunning(installation.Executable) {
-		for _, processID := range windowsProcessIDs(installation.Executable) {
-			_ = exec.Command("taskkill.exe", "/PID", processID, "/T").Run()
-		}
-		deadline := time.Now().Add(15 * time.Second)
-		for isWindowsExecutableRunning(installation.Executable) && time.Now().Before(deadline) {
-			time.Sleep(250 * time.Millisecond)
-		}
-		if isWindowsExecutableRunning(installation.Executable) {
-			return errors.New("Codex did not exit within 15 seconds; configuration is saved but the app was not force-closed")
-		}
 	}
 	command := exec.Command(installation.Executable)
 	command.Dir = filepath.Dir(installation.Executable)
@@ -228,10 +270,18 @@ func restartCodex(installation CodexInstallation) error {
 		return err
 	}
 	deadline := time.Now().Add(15 * time.Second)
-	for !isWindowsExecutableRunning(installation.Executable) && time.Now().Before(deadline) {
-		time.Sleep(250 * time.Millisecond)
+	processIDs, statusErr := windowsProcessIDsWithError(installation.Executable)
+	if statusErr != nil {
+		return fmt.Errorf("could not verify that Codex started: %w", statusErr)
 	}
-	if !isWindowsExecutableRunning(installation.Executable) {
+	for len(processIDs) == 0 && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+		processIDs, statusErr = windowsProcessIDsWithError(installation.Executable)
+		if statusErr != nil {
+			return fmt.Errorf("could not verify that Codex started: %w", statusErr)
+		}
+	}
+	if len(processIDs) == 0 {
 		return errors.New("Codex did not start within 15 seconds")
 	}
 	return nil
@@ -242,13 +292,18 @@ func openBrowser(target string) error {
 }
 
 func windowsProcessIDs(executable string) []string {
+	processIDs, _ := windowsProcessIDsWithError(executable)
+	return processIDs
+}
+
+func windowsProcessIDsWithError(executable string) ([]string, error) {
 	escapedPath := strings.ReplaceAll(executable, "'", "''")
 	command := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '` + escapedPath + `' } | Select-Object -ExpandProperty ProcessId`
 	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return strings.Fields(string(output))
+	return strings.Fields(string(output)), nil
 }
 
 func isWindowsExecutableRunning(executable string) bool {
@@ -256,8 +311,26 @@ func isWindowsExecutableRunning(executable string) bool {
 }
 
 func windowsCodexProcessIDsByName() []string {
+	processIDs, _ := windowsCodexProcessIDsByNameWithError()
+	return processIDs
+}
+
+func windowsCodexProcessIDsByNameWithError() ([]string, error) {
 	command := `Get-Process -Name 'Codex' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`
-	return windowsPowerShellLines(command)
+	return runWindowsPowerShellLinesWithError(command)
+}
+
+func runWindowsPowerShellLinesWithError(command string) ([]string, error) {
+	script := `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` + command
+	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.FieldsFunc(string(output), func(r rune) bool { return r == '\r' || r == '\n' })
+	for index := range lines {
+		lines[index] = strings.TrimSpace(strings.TrimPrefix(lines[index], "\ufeff"))
+	}
+	return lines, nil
 }
 
 func isWindowsCodexAppRunning() bool {

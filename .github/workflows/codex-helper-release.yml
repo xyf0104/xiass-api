@@ -109,7 +109,7 @@ jobs:
           VERSION=$(tr -d '\r\n' < tools/xiass-codex-helper/VERSION)
           TAG="codex-helper-latest"
           TITLE="XIASS Codex 配置助手 v${VERSION}"
-          NOTES="独立发布的 XIASS Codex 配置助手。固定下载地址保持不变，不影响 XIASS API 的版本检测和 Docker 镜像。"
+          NOTES="独立发布的 XIASS Codex 配置助手。写入或恢复配置前会备份并修复历史会话，校验失败自动回滚；固定下载地址保持不变，不影响 XIASS API 的版本检测和 Docker 镜像。"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease
           else

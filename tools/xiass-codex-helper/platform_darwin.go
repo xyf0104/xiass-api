@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,27 +89,59 @@ func selectCodexInstallation() (CodexInstallation, error) {
 }
 
 func restartCodex(installation CodexInstallation) error {
+	if err := stopCodex(installation); err != nil {
+		return err
+	}
+	return startCodex(installation)
+}
+
+func stopCodex(installation CodexInstallation) error {
 	if !installation.Found || installation.AppPath == "" {
 		return errors.New("Codex App was not found")
 	}
-	if installation.Running || processMatches(installation.Executable) {
-		_ = exec.Command("osascript", "-e", `tell application id "com.openai.codex" to quit`).Run()
-		deadline := time.Now().Add(15 * time.Second)
-		for processMatches(installation.Executable) && time.Now().Before(deadline) {
-			time.Sleep(250 * time.Millisecond)
+	running, err := processStatus(installation.Executable)
+	if err != nil {
+		return fmt.Errorf("could not verify whether Codex is running: %w", err)
+	}
+	if running {
+		if err := exec.Command("osascript", "-e", `tell application id "com.openai.codex" to quit`).Run(); err != nil {
+			return fmt.Errorf("could not ask Codex to quit: %w", err)
 		}
-		if processMatches(installation.Executable) {
+		deadline := time.Now().Add(15 * time.Second)
+		for running && time.Now().Before(deadline) {
+			time.Sleep(250 * time.Millisecond)
+			running, err = processStatus(installation.Executable)
+			if err != nil {
+				return fmt.Errorf("could not verify that Codex exited: %w", err)
+			}
+		}
+		if running {
 			return errors.New("Codex did not exit within 15 seconds; configuration is saved but the app was not force-closed")
 		}
+	}
+	return nil
+}
+
+func startCodex(installation CodexInstallation) error {
+	if !installation.Found || installation.AppPath == "" {
+		return errors.New("Codex App was not found")
 	}
 	if err := exec.Command("open", installation.AppPath).Start(); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(15 * time.Second)
-	for !processMatches(installation.Executable) && time.Now().Before(deadline) {
-		time.Sleep(250 * time.Millisecond)
+	running, statusErr := processStatus(installation.Executable)
+	if statusErr != nil {
+		return fmt.Errorf("could not verify that Codex started: %w", statusErr)
 	}
-	if !processMatches(installation.Executable) {
+	for !running && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+		running, statusErr = processStatus(installation.Executable)
+		if statusErr != nil {
+			return fmt.Errorf("could not verify that Codex started: %w", statusErr)
+		}
+	}
+	if !running {
 		return errors.New("Codex did not start within 15 seconds")
 	}
 	return nil
@@ -119,21 +152,29 @@ func openBrowser(target string) error {
 }
 
 func processMatches(executable string) bool {
+	running, _ := processStatus(executable)
+	return running
+}
+
+func processStatus(executable string) (bool, error) {
 	if executable == "" {
-		return false
+		return false, errors.New("Codex executable path is empty")
 	}
 	output, err := exec.Command("ps", "ax", "-o", "command=").Output()
 	if err != nil {
-		return false
+		return false, err
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		command := strings.TrimSpace(scanner.Text())
 		if command == executable || strings.HasPrefix(command, executable+" ") {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func isCodexBundle(appPath string) bool {

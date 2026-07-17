@@ -23,6 +23,14 @@ func restartCodex(CodexInstallation) error {
 	return errors.New("automatic Codex restart is currently supported on macOS and Windows")
 }
 
+func stopCodex(CodexInstallation) error {
+	return errors.New("automatic Codex shutdown is currently supported on macOS and Windows")
+}
+
+func startCodex(CodexInstallation) error {
+	return errors.New("automatic Codex launch is currently supported on macOS and Windows")
+}
+
 func openBrowser(target string) error {
 	return exec.Command("xdg-open", target).Start()
 }

@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	providerID   = "xiass"
-	providerName = "XIASS API"
-	defaultModel = "gpt-5.6-sol"
+	providerID       = "codex_local_access"
+	legacyProviderID = "xiass"
+	providerName     = "XIASS API"
+	defaultModel     = "gpt-5.6-sol"
 )
 
 var managedTopLevelKeys = map[string]struct{}{
@@ -61,13 +62,30 @@ type BackupInfo struct {
 }
 
 type ApplyResult struct {
-	BackupID  string `json:"backup_id"`
-	ConfigSHA string `json:"config_sha256"`
+	BackupID   string `json:"backup_id"`
+	ConfigSHA  string `json:"config_sha256"`
+	ProviderID string `json:"provider_id"`
 }
 
 type RestoreResult struct {
 	RestoredBackupID string `json:"restored_backup_id"`
 	SafetyBackupID   string `json:"safety_backup_id"`
+}
+
+type ConfigMutationError struct {
+	Cause       error
+	RollbackErr error
+}
+
+func (e *ConfigMutationError) Error() string {
+	if e.RollbackErr != nil {
+		return fmt.Sprintf("configuration mutation failed: %v; automatic rollback also failed: %v", e.Cause, e.RollbackErr)
+	}
+	return fmt.Sprintf("configuration mutation failed and was rolled back safely: %v", e.Cause)
+}
+
+func (e *ConfigMutationError) Unwrap() error {
+	return e.Cause
 }
 
 type ConfigManager struct {
@@ -107,8 +125,9 @@ func (m *ConfigManager) Apply(input ApplyConfig) (ApplyResult, error) {
 			return fmt.Errorf("create backup: %w", err)
 		}
 
-		updated := patchConfig(original, normalized)
-		if err := verifyManagedConfig(updated, normalized); err != nil {
+		managedProviderID := managedProviderIDForConfig(original)
+		updated := patchConfig(original, normalized, managedProviderID)
+		if err := verifyManagedConfig(updated, normalized, managedProviderID); err != nil {
 			return fmt.Errorf("generated config verification failed: %w", err)
 		}
 
@@ -129,7 +148,7 @@ func (m *ConfigManager) Apply(input ApplyConfig) (ApplyResult, error) {
 				m.ConfigPath, original, existed, mode,
 			)
 		}
-		if err := verifyManagedConfig(written, normalized); err != nil {
+		if err := verifyManagedConfig(written, normalized, managedProviderID); err != nil {
 			return rollbackConfigError(
 				fmt.Errorf("written config verification failed: %w", err),
 				m.ConfigPath, original, existed, mode,
@@ -144,10 +163,37 @@ func (m *ConfigManager) Apply(input ApplyConfig) (ApplyResult, error) {
 			)
 		}
 
-		result = ApplyResult{BackupID: manifest.ID, ConfigSHA: manifest.AppliedSHA256}
+		result = ApplyResult{BackupID: manifest.ID, ConfigSHA: manifest.AppliedSHA256, ProviderID: managedProviderID}
 		return nil
 	})
 	return result, err
+}
+
+func (m *ConfigManager) UpgradeLegacyProvider() (ApplyResult, bool, error) {
+	data, existed, _, err := readConfigFile(m.ConfigPath)
+	if err != nil {
+		return ApplyResult{}, false, err
+	}
+	if !existed {
+		return ApplyResult{}, false, nil
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		return ApplyResult{}, false, fmt.Errorf("read restored legacy config: %w", err)
+	}
+	current, _ := root["model_provider"].(string)
+	if strings.TrimSpace(current) != legacyProviderID {
+		return ApplyResult{}, false, nil
+	}
+	providers, _ := root["model_providers"].(map[string]any)
+	legacy, _ := providers[legacyProviderID].(map[string]any)
+	baseURL, _ := legacy["base_url"].(string)
+	apiKey, _ := legacy["experimental_bearer_token"].(string)
+	if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(apiKey) == "" {
+		return ApplyResult{}, false, errors.New("restored legacy XIASS provider is incomplete and cannot be upgraded safely")
+	}
+	result, err := m.Apply(ApplyConfig{BaseURL: baseURL, APIKey: apiKey})
+	return result, true, err
 }
 
 func (m *ConfigManager) Restore(backupID string) (RestoreResult, error) {
@@ -330,22 +376,11 @@ func (m *ConfigManager) originalPath(id string) string {
 }
 
 func (m *ConfigManager) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(m.LockPath), 0o700); err != nil {
+	release, err := acquireProcessLock(m.LockPath, "another XIASS Codex configuration operation is already running")
+	if err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(m.LockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		if info, statErr := os.Stat(m.LockPath); statErr == nil && time.Since(info.ModTime()) > 10*time.Minute {
-			_ = os.Remove(m.LockPath)
-			lock, err = os.OpenFile(m.LockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		}
-	}
-	if err != nil {
-		return errors.New("another XIASS Codex configuration operation is already running")
-	}
-	_, _ = fmt.Fprintf(lock, "%d\n", os.Getpid())
-	_ = lock.Close()
-	defer os.Remove(m.LockPath)
+	defer release()
 	return fn()
 }
 
@@ -368,7 +403,30 @@ func normalizeApplyConfig(input ApplyConfig) (ApplyConfig, error) {
 	return input, nil
 }
 
-func patchConfig(original []byte, input ApplyConfig) []byte {
+func managedProviderIDForConfig(original []byte) string {
+	if len(strings.TrimSpace(string(original))) == 0 {
+		return providerID
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(original, &root); err != nil {
+		return providerID
+	}
+	current, _ := root["model_provider"].(string)
+	current = strings.TrimSpace(current)
+	if current == legacyProviderID || current == providerID {
+		return providerID
+	}
+	if !validHistoryProviderID(current) {
+		return providerID
+	}
+	providers, _ := root["model_providers"].(map[string]any)
+	if _, ok := providers[current].(map[string]any); ok {
+		return current
+	}
+	return providerID
+}
+
+func patchConfig(original []byte, input ApplyConfig, managedProviderID string) []byte {
 	text := strings.ReplaceAll(string(original), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 	body := make([]string, 0, len(lines))
@@ -378,7 +436,7 @@ func patchConfig(original []byte, input ApplyConfig) []byte {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if section, ok := tomlSectionName(trimmed); ok {
-			if section == "model_providers."+providerID || strings.HasPrefix(section, "model_providers."+providerID+".") {
+			if isManagedProviderSection(section, managedProviderID) {
 				skipProvider = true
 				inTop = false
 				continue
@@ -401,7 +459,7 @@ func patchConfig(original []byte, input ApplyConfig) []byte {
 
 	bodyText := strings.Trim(strings.Join(body, "\n"), "\n")
 	top := []string{
-		`model_provider = "` + providerID + `"`,
+		`model_provider = "` + managedProviderID + `"`,
 		`model = "` + defaultModel + `"`,
 		`review_model = "` + defaultModel + `"`,
 		"model_context_window = 372000",
@@ -409,7 +467,7 @@ func patchConfig(original []byte, input ApplyConfig) []byte {
 		`web_search = "live"`,
 	}
 	provider := []string{
-		"[model_providers." + providerID + "]",
+		"[model_providers." + managedProviderID + "]",
 		`name = "` + providerName + `"`,
 		`base_url = "` + escapeTOML(input.BaseURL) + `"`,
 		`wire_api = "responses"`,
@@ -427,13 +485,22 @@ func patchConfig(original []byte, input ApplyConfig) []byte {
 	return []byte(strings.Join(parts, "\n\n") + "\n")
 }
 
-func verifyManagedConfig(data []byte, expected ApplyConfig) error {
+func isManagedProviderSection(section, managedProviderID string) bool {
+	for _, id := range []string{managedProviderID, providerID, legacyProviderID} {
+		if section == "model_providers."+id || strings.HasPrefix(section, "model_providers."+id+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyManagedConfig(data []byte, expected ApplyConfig, managedProviderID string) error {
 	var root map[string]any
 	if err := toml.Unmarshal(data, &root); err != nil {
 		return err
 	}
 	checks := map[string]string{
-		"model_provider": providerID,
+		"model_provider": managedProviderID,
 		"model":          defaultModel,
 		"review_model":   defaultModel,
 		"web_search":     "live",
@@ -451,7 +518,7 @@ func verifyManagedConfig(data []byte, expected ApplyConfig) error {
 	if !ok {
 		return errors.New("model_providers table missing")
 	}
-	provider, ok := providers[providerID].(map[string]any)
+	provider, ok := providers[managedProviderID].(map[string]any)
 	if !ok {
 		return errors.New("XIASS provider table missing")
 	}
@@ -586,9 +653,9 @@ func restoreOriginalVerified(path string, data []byte, existed bool, mode fs.Fil
 
 func rollbackConfigError(cause error, path string, data []byte, existed bool, mode fs.FileMode) error {
 	if rollbackErr := restoreOriginalVerified(path, data, existed, mode); rollbackErr != nil {
-		return fmt.Errorf("%v; automatic rollback failed: %w", cause, rollbackErr)
+		return &ConfigMutationError{Cause: cause, RollbackErr: rollbackErr}
 	}
-	return fmt.Errorf("%w; previous configuration was restored and verified", cause)
+	return &ConfigMutationError{Cause: cause}
 }
 
 func ensureConfigUnchanged(path string, expected []byte, expectedExisted bool) error {

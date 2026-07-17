@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -62,8 +63,11 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 			t.Errorf("updated config did not preserve %q", preserved)
 		}
 	}
-	if count := strings.Count(text, "[model_providers.xiass]"); count != 1 {
+	if count := strings.Count(text, "[model_providers.official]"); count != 1 {
 		t.Fatalf("XIASS provider count = %d, want 1", count)
+	}
+	if !strings.Contains(text, `model_provider = "official"`) {
+		t.Fatal("existing custom provider ID was not preserved")
 	}
 	if !strings.Contains(text, `http_headers = { "x-openai-actor-authorization" = "gateway.example.com" }`) {
 		t.Fatal("actor authorization header does not match the working XIASS Codex configuration")
@@ -71,7 +75,7 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 	if strings.Contains(text, `x-openai-actor-authorization" = "https://`) {
 		t.Fatal("actor authorization header must contain the XIASS hostname, not a URL")
 	}
-	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: input.APIKey}); err != nil {
+	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: input.APIKey}, "official"); err != nil {
 		t.Fatalf("written config verification failed: %v", err)
 	}
 
@@ -112,8 +116,68 @@ func TestApplyIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count := strings.Count(string(written), "[model_providers.xiass]"); count != 1 {
+	if count := strings.Count(string(written), "[model_providers.codex_local_access]"); count != 1 {
 		t.Fatalf("XIASS provider count after repeated apply = %d, want 1", count)
+	}
+}
+
+func TestApplyRemovesLegacyXIASSProviderSection(t *testing.T) {
+	manager := NewConfigManager(t.TempDir())
+	original := `model_provider = "xiass"
+
+[model_providers.xiass]
+name = "XIASS API"
+base_url = "https://old.example.com"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "old-secret"
+`
+	if err := os.WriteFile(manager.ConfigPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: "sk-test-1234567890"}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(manager.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(written)
+	if strings.Contains(text, "[model_providers.xiass]") || strings.Contains(text, "old-secret") {
+		t.Fatal("legacy XIASS provider section was not removed")
+	}
+	if strings.Count(text, "[model_providers.codex_local_access]") != 1 {
+		t.Fatal("new stable provider section is missing")
+	}
+}
+
+func TestUpgradeLegacyProviderReusesConnectionUnderStableID(t *testing.T) {
+	manager := NewConfigManager(t.TempDir())
+	original := `model_provider = "xiass"
+
+[model_providers.xiass]
+name = "XIASS API"
+base_url = "https://gateway.example.com"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "sk-test-1234567890"
+`
+	if err := os.WriteFile(manager.ConfigPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, upgraded, err := manager.UpgradeLegacyProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !upgraded || result.ProviderID != providerID {
+		t.Fatalf("legacy upgrade result = upgraded %v, result %+v", upgraded, result)
+	}
+	written, err := os.ReadFile(manager.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "[model_providers.xiass]") || !strings.Contains(string(written), "[model_providers.codex_local_access]") {
+		t.Fatal("legacy provider was not upgraded to the stable provider ID")
 	}
 }
 
@@ -222,5 +286,17 @@ func TestEnsureConfigUnchangedDetectsExternalEdit(t *testing.T) {
 	}
 	if err := ensureConfigUnchanged(path, original, true); err == nil || !strings.Contains(err.Error(), "changed during") {
 		t.Fatalf("ensureConfigUnchanged() error = %v, want concurrent edit rejection", err)
+	}
+}
+
+func TestRollbackConfigErrorReportsUnverifiedRollback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config-as-directory")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := rollbackConfigError(errors.New("forced mutation failure"), path, []byte("model = \"before\"\n"), true, 0o600)
+	var mutationErr *ConfigMutationError
+	if !errors.As(err, &mutationErr) || mutationErr.RollbackErr == nil {
+		t.Fatalf("rollbackConfigError() = %v, want ConfigMutationError with rollback failure", err)
 	}
 }

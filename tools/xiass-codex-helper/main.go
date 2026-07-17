@@ -45,13 +45,7 @@ func main() {
 		_ = listener.Close()
 		log.Fatalf("initialize helper: %v", err)
 	}
-	server := &http.Server{
-		Handler:           helper.routes(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-	}
+	server := newLocalHTTPServer(helper.routes())
 
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -75,7 +69,16 @@ func main() {
 	case <-helper.shutdown:
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = server.Shutdown(ctx)
+	_ = server.Shutdown(context.Background())
+}
+
+func newLocalHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		// History snapshots and verified rollback can take longer on large Codex homes.
+		WriteTimeout: 3 * time.Minute,
+		IdleTimeout:  2 * time.Minute,
+	}
 }

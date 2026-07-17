@@ -63,6 +63,7 @@
       <div class="row"><span class="label">程序位置</span><span id="codex-path" class="value">-</span></div>
       <div class="row"><span class="label">配置位置</span><span id="config-path" class="value">-</span></div>
       <div class="row"><span class="label">可恢复备份</span><span id="backup-count" class="value">0</span></div>
+	  <div class="row"><span class="label">历史会话保护</span><span class="value"><span class="status"><span class="dot ok"></span>每次助手重启前自动执行</span></span></div>
       <div class="row">
         <label class="label" for="site-url">XIASS API 地址</label>
         <input id="site-url" type="url" inputmode="url" autocomplete="url" value="{{.SiteURL}}" placeholder="https://api.xiass.com">
@@ -72,8 +73,17 @@
         <button id="refresh-button" type="button">重新检测</button>
         <button id="select-app-button" type="button">手动选择 Codex App</button>
       </div>
-      <p class="hint">填写您当前使用的 XIASS API 网站地址。写入前会完整备份现有 config.toml；写入后会重新读取并逐项校验。只有校验成功后才会重启 Codex。</p>
+	  <p class="hint">填写您当前使用的 XIASS API 网站地址。助手会先退出 Codex，再备份配置和会话索引，同步所有历史对话并校验会话数量；只有全部成功才会重新启动。</p>
     </section>
+
+	<section class="panel">
+	  <h2>历史会话修复</h2>
+	  <div class="row"><span class="label">上次结果</span><span id="history-result" class="value">尚未在本次运行中执行</span></div>
+	  <div class="actions">
+		<button id="repair-history-button" type="button">立即修复历史会话并重启 Codex</button>
+	  </div>
+	  <p class="hint">用于切换 provider 后历史对话不显示的情况。助手会像 Codex++ 的历史修复一样，把普通会话、归档会话和数据库索引统一到当前 provider，让全部对话重新可见。修改前会创建包含 WAL 已提交数据的 SQLite 一致性快照并备份原始会话元数据；失败或意外中断会自动恢复。</p>
+	</section>
 
     <section class="panel">
       <h2>恢复原配置</h2>
@@ -129,6 +139,7 @@
       document.getElementById('codex-status').append(status);
       const connect = document.getElementById('connect-button');
       connect.disabled = !data.codex.found;
+	  document.getElementById('repair-history-button').disabled = !data.codex.found;
     }
 
     async function loadBackups() {
@@ -203,6 +214,22 @@
         button.disabled = false;
       }
     });
+	document.getElementById('repair-history-button').addEventListener('click', async () => {
+	  if (!confirm('修复期间 Codex 会先退出，校验完成后自动重新启动。确定继续吗？')) return;
+	  const button = document.getElementById('repair-history-button');
+	  button.disabled = true;
+	  try {
+		const data = await request('/api/repair-history', { method: 'POST', body: '{}' });
+		const history = data.history || {};
+		const summary = `扫描 ${history.scanned_session_files || 0} 个会话文件、${history.scanned_databases || 0} 个数据库；修复 ${history.updated_session_files || 0} 个会话文件和 ${history.updated_database_rows || 0} 行索引。`;
+		document.getElementById('history-result').textContent = summary;
+		showMessage(`${data.message} ${summary}`, 'success');
+	  } catch (error) {
+		showMessage(error.message, 'error');
+	  } finally {
+		button.disabled = false;
+	  }
+	});
     document.getElementById('quit-button').addEventListener('click', async () => {
       try {
         await request('/api/shutdown', { method: 'POST', body: '{}' });
