@@ -135,6 +135,9 @@ func TestHelperIndexRendersUsableSessionState(t *testing.T) {
 	if strings.Contains(body, `content="&`) || strings.Contains(body, `content="\&quot;`) {
 		t.Fatal("helper session state contains an extra escaped quote layer")
 	}
+	if !strings.Contains(body, `value="`+defaultXIASSAPIURL+`"`) {
+		t.Fatal("helper index does not render the default XIASS API URL")
+	}
 }
 
 func getJSON(t *testing.T, handler http.Handler, target string) map[string]any {

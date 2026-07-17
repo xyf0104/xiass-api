@@ -6,10 +6,11 @@ import (
 )
 
 type CodexInstallation struct {
-	AppPath    string `json:"app_path"`
-	Executable string `json:"executable"`
-	Running    bool   `json:"running"`
-	Found      bool   `json:"found"`
+	AppPath      string `json:"app_path"`
+	Executable   string `json:"executable"`
+	LaunchTarget string `json:"launch_target,omitempty"`
+	Running      bool   `json:"running"`
+	Found        bool   `json:"found"`
 }
 
 func defaultCodexHome() (string, error) {

@@ -99,7 +99,14 @@ func (s *helperServer) routes() http.Handler {
 
 func (s *helperServer) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.index.Execute(w, map[string]string{"State": s.state})
+	siteURL := defaultXIASSAPIURL
+	if configured := s.currentSiteURL(); configured != nil {
+		siteURL = configured.String()
+	}
+	_ = s.index.Execute(w, map[string]string{
+		"State":   s.state,
+		"SiteURL": siteURL,
+	})
 }
 
 func (s *helperServer) handleCallback(w http.ResponseWriter, _ *http.Request) {
