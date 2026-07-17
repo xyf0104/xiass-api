@@ -18,6 +18,8 @@
 
         root.classList.toggle('dark', theme === 'dark')
         root.dataset.theme = theme
+        const path = window.location.pathname.replace(/\/+$/, '') || '/'
+        root.dataset.themeBackground = path === '/' || path === '/home' ? 'clear' : 'blurred'
         root.dataset.themeBooting = 'true'
         root.style.colorScheme = theme
       })()
@@ -25,12 +27,61 @@
     <style nonce="__CSP_NONCE_VALUE__">
       html,
       body {
+        min-height: 100%;
+        margin: 0;
         background-color: #061720;
       }
 
       html[data-theme='light'],
       html[data-theme='light'] body {
         background-color: #cdd8df;
+      }
+
+      #theme-boot-background {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        pointer-events: none;
+        background-color: #061720;
+        opacity: 1;
+        transition: opacity 180ms ease;
+      }
+
+      #theme-boot-background::before {
+        position: absolute;
+        inset: -24px;
+        content: '';
+        background: url('/media/xiass-dark-bokeh-poster.png') center / cover no-repeat;
+        transform: scale(1.03);
+      }
+
+      html[data-theme='light'] #theme-boot-background {
+        background-color: #cdd8df;
+      }
+
+      html[data-theme='light'] #theme-boot-background::before {
+        background-image: url('/media/xiass-light-water-poster.png');
+        filter: grayscale(1) brightness(0.7) contrast(3.4) blur(2px);
+        mix-blend-mode: screen;
+        opacity: 0.72;
+      }
+
+      html[data-theme-background='blurred'] #theme-boot-background::before {
+        filter: blur(10px) brightness(0.72) saturate(0.92);
+        transform: scale(1.06);
+      }
+
+      html[data-theme='light'][data-theme-background='blurred'] #theme-boot-background::before {
+        filter: grayscale(1) brightness(0.68) contrast(3.2) blur(10px);
+        mix-blend-mode: screen;
+        opacity: 0.65;
+      }
+
+      #app {
+        position: relative;
+        z-index: 1;
+        min-height: 100vh;
       }
 
       /*
@@ -46,6 +97,10 @@
       html[data-theme-booting] * {
         transition: none !important;
       }
+
+      html:not([data-theme-booting]) #theme-boot-background {
+        opacity: 0;
+      }
     </style>
     <link rel="icon" type="image/png" href="/favicon-dark.png?v=1.0.68" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=1.0.68" />
@@ -54,6 +109,7 @@
     <title>XIASS API</title>
   </head>
   <body>
+    <div id="theme-boot-background" aria-hidden="true"></div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

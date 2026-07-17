@@ -13,6 +13,7 @@ describe('pre-paint theme bootstrap', () => {
     expect(indexHTML).toContain('nonce="__CSP_NONCE_VALUE__"')
     expect(indexHTML).toContain("root.classList.toggle('dark', theme === 'dark')")
     expect(indexHTML).toContain('root.dataset.theme = theme')
+    expect(indexHTML).toContain('root.dataset.themeBackground =')
     expect(indexHTML).toContain("root.dataset.themeBooting = 'true'")
     expect(themeBootstrap).toBeGreaterThan(-1)
     expect(applicationModule).toBeGreaterThan(themeBootstrap)
@@ -24,5 +25,17 @@ describe('pre-paint theme bootstrap', () => {
     expect(indexHTML).toContain('background-color: #cdd8df')
     expect(indexHTML).toContain('html[data-theme-booting] #app')
     expect(indexHTML).toContain('transition: none !important')
+  })
+
+  it('paints the matching video poster behind the hidden application', () => {
+    const bootBackground = indexHTML.indexOf('<div id="theme-boot-background"')
+    const applicationRoot = indexHTML.indexOf('<div id="app"')
+
+    expect(indexHTML).toContain("url('/media/xiass-dark-bokeh-poster.png')")
+    expect(indexHTML).toContain("url('/media/xiass-light-water-poster.png')")
+    expect(indexHTML).toContain("html[data-theme-background='blurred']")
+    expect(indexHTML).toContain("html:not([data-theme-booting]) #theme-boot-background")
+    expect(bootBackground).toBeGreaterThan(-1)
+    expect(applicationRoot).toBeGreaterThan(bootBackground)
   })
 })
