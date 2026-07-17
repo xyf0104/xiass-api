@@ -35,6 +35,9 @@ Before applying a configuration, the helper:
     protected package binary directly. Optional SQLite files that cannot be
     confirmed as thread-provider databases are skipped; `state_*` databases
     remain strictly validated.
+12. Windows process polling uses native Toolhelp APIs. Remaining PowerShell and
+    task-control commands run with no-window flags, preventing repeated console
+    flashes during shutdown and launch verification.
 
 Restore operations validate the selected backup and create another safety
 backup before replacing the current configuration. The local page also exposes

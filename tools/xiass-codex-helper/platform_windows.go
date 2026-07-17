@@ -8,8 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 func detectCodexInstallation() CodexInstallation {
@@ -191,7 +196,7 @@ func runWindowsPowerShellLines(dialog bool, command string) []string {
 		arguments = append(arguments, "-NonInteractive")
 	}
 	arguments = append(arguments, "-Command", script)
-	output, err := exec.Command("powershell.exe", arguments...).Output()
+	output, err := hiddenWindowsCommand("powershell.exe", arguments...).Output()
 	if err != nil {
 		return nil
 	}
@@ -219,7 +224,7 @@ func stopCodex(installation CodexInstallation) error {
 	}
 	if len(processIDs) > 0 {
 		for _, processID := range processIDs {
-			_ = exec.Command("taskkill.exe", "/PID", processID, "/T").Run()
+			_ = hiddenWindowsCommand("taskkill.exe", "/PID", processID, "/T").Run()
 		}
 		deadline := time.Now().Add(15 * time.Second)
 		for len(processIDs) > 0 && time.Now().Before(deadline) {
@@ -294,13 +299,22 @@ func windowsProcessIDs(executable string) []string {
 }
 
 func windowsProcessIDsWithError(executable string) ([]string, error) {
-	escapedPath := strings.ReplaceAll(executable, "'", "''")
-	command := `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '` + escapedPath + `' } | Select-Object -ExpandProperty ProcessId`
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output()
+	target := filepath.Clean(executable)
+	targetName := filepath.Base(target)
+	processes, err := snapshotWindowsProcesses()
 	if err != nil {
 		return nil, err
 	}
-	return strings.Fields(string(output)), nil
+	var processIDs []string
+	for _, process := range processes {
+		if !strings.EqualFold(process.Name, targetName) || process.Path == "" {
+			continue
+		}
+		if strings.EqualFold(filepath.Clean(process.Path), target) {
+			processIDs = append(processIDs, strconv.FormatUint(uint64(process.ID), 10))
+		}
+	}
+	return processIDs, nil
 }
 
 func isWindowsExecutableRunning(executable string) bool {
@@ -313,13 +327,33 @@ func windowsCodexProcessIDsByName() []string {
 }
 
 func windowsCodexProcessIDsByNameWithError() ([]string, error) {
-	command := `Get-Process -Name 'Codex','ChatGPT' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`
-	return runWindowsPowerShellLinesWithError(command)
+	processes, err := snapshotWindowsProcesses()
+	if err != nil {
+		return nil, err
+	}
+	var processIDs []string
+	for _, process := range processes {
+		if strings.EqualFold(process.Name, "Codex.exe") {
+			processIDs = append(processIDs, strconv.FormatUint(uint64(process.ID), 10))
+			continue
+		}
+		if !strings.EqualFold(process.Name, "ChatGPT.exe") {
+			continue
+		}
+		path := strings.ToLower(filepath.Clean(process.Path))
+		if strings.Contains(path, "openai.codex_") || strings.Contains(path, `\codex\`) {
+			processIDs = append(processIDs, strconv.FormatUint(uint64(process.ID), 10))
+		}
+	}
+	return processIDs, nil
 }
 
 func windowsInstallationProcessIDsWithError(installation CodexInstallation) ([]string, error) {
 	if installation.Executable != "" {
-		return windowsProcessIDsWithError(installation.Executable)
+		processIDs, err := windowsProcessIDsWithError(installation.Executable)
+		if err != nil || len(processIDs) > 0 || installation.LaunchTarget == "" {
+			return processIDs, err
+		}
 	}
 	return windowsCodexProcessIDsByNameWithError()
 }
@@ -337,7 +371,7 @@ func windowsStartedProcessIDsWithError(installation CodexInstallation) ([]string
 
 func runWindowsPowerShellLinesWithError(command string) ([]string, error) {
 	script := `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` + command
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	output, err := hiddenWindowsCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +380,63 @@ func runWindowsPowerShellLinesWithError(command string) ([]string, error) {
 		lines[index] = strings.TrimSpace(strings.TrimPrefix(lines[index], "\ufeff"))
 	}
 	return lines, nil
+}
+
+type windowsProcess struct {
+	ID   uint32
+	Name string
+	Path string
+}
+
+func snapshotWindowsProcesses() ([]windowsProcess, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(snapshot)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return nil, err
+	}
+	var processes []windowsProcess
+	for {
+		processes = append(processes, windowsProcess{
+			ID:   entry.ProcessID,
+			Name: windows.UTF16ToString(entry.ExeFile[:]),
+			Path: windowsProcessImagePath(entry.ProcessID),
+		})
+		err := windows.Process32Next(snapshot, &entry)
+		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return processes, nil
+}
+
+func windowsProcessImagePath(processID uint32) string {
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, processID)
+	if err != nil {
+		return ""
+	}
+	defer windows.CloseHandle(process)
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(process, 0, &buffer[0], &size); err != nil {
+		return ""
+	}
+	return windows.UTF16ToString(buffer[:size])
+}
+
+func hiddenWindowsCommand(name string, arguments ...string) *exec.Cmd {
+	command := exec.Command(name, arguments...)
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NO_WINDOW,
+	}
+	return command
 }
 
 func isWindowsCodexAppRunning() bool {

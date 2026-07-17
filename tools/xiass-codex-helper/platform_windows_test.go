@@ -2,7 +2,11 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"strconv"
+	"testing"
+)
 
 func TestNormalizeWindowsExecutable(t *testing.T) {
 	got := normalizeWindowsExecutable(`"C:\Users\Test User\AppData\Local\Programs\Codex\Codex.exe",0`)
@@ -31,5 +35,33 @@ func TestWindowsPackagedExecutableDetection(t *testing.T) {
 	}
 	if isWindowsPackagedExecutable(`C:\Program Files\Codex\Codex.exe`) {
 		t.Fatal("ordinary Codex installation was misclassified as a Store package")
+	}
+}
+
+func TestWindowsNativeProcessLookupFindsCurrentExecutable(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIDs, err := windowsProcessIDsWithError(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strconv.Itoa(os.Getpid())
+	for _, processID := range processIDs {
+		if processID == want {
+			return
+		}
+	}
+	t.Fatalf("current process %s was not found in %v", want, processIDs)
+}
+
+func TestHiddenWindowsCommandUsesNoWindowFlags(t *testing.T) {
+	command := hiddenWindowsCommand("cmd.exe", "/c", "exit", "0")
+	if command.SysProcAttr == nil || !command.SysProcAttr.HideWindow {
+		t.Fatal("hidden command is missing the Windows hide-window flag")
+	}
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
 	}
 }
