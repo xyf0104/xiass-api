@@ -134,8 +134,26 @@ func registeredCodexExecutables() []string {
 }
 
 func windowsCodexLaunchTargets() []string {
-	command := `$targets = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object { ($_.Name -match '(?i)codex' -or $_.AppID -match '(?i)codex') -and $_.Name -notmatch '(?i)helper' } | Select-Object -ExpandProperty AppID); if ($targets.Count -eq 0) { Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)codex' -or $_.PackageFamilyName -match '(?i)codex' } | ForEach-Object { $package = $_; try { $manifest = $package | Get-AppxPackageManifest -ErrorAction Stop; foreach ($app in @($manifest.Package.Applications.Application)) { if ($app.Id -and $app.Id -notmatch '(?i)helper') { $targets += $package.PackageFamilyName + '!' + $app.Id } } } catch {} } }; $targets | Where-Object { $_ } | Sort-Object -Unique`
-	return windowsPowerShellLines(command)
+	command := `$targets = @(); Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'OpenAI.Codex' -or $_.PackageFamilyName -match '(?i)^OpenAI\.Codex_' } | ForEach-Object { $package = $_; try { $manifest = $package | Get-AppxPackageManifest -ErrorAction Stop; foreach ($app in @($manifest.Package.Applications.Application)) { if ($app.Id) { $targets += $package.PackageFamilyName + '!' + $app.Id } } } catch {} }; if ($targets.Count -eq 0) { $targets += @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'Codex' -and $_.AppID -match '(?i)^OpenAI\.Codex_' } | Select-Object -ExpandProperty AppID) }; $targets | Where-Object { $_ } | Sort-Object -Unique`
+	return filterOfficialWindowsCodexLaunchTargets(windowsPowerShellLines(command))
+}
+
+func filterOfficialWindowsCodexLaunchTargets(targets []string) []string {
+	seen := make(map[string]struct{}, len(targets))
+	filtered := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		lower := strings.ToLower(target)
+		if !strings.HasPrefix(lower, "openai.codex_") || !strings.Contains(lower, "!") {
+			continue
+		}
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		seen[lower] = struct{}{}
+		filtered = append(filtered, target)
+	}
+	return filtered
 }
 
 func selectCodexInstallation() (CodexInstallation, error) {
@@ -445,6 +463,11 @@ func isWindowsCodexAppRunning() bool {
 
 func isWindowsCodexExecutable(executable string) bool {
 	lower := strings.ToLower(filepath.Clean(executable))
+	for _, incompatiblePath := range []string{`\codex++\`, `\codexplusplus\`, `\codex-plus-plus\`, `\codex_plus_plus\`} {
+		if strings.Contains(lower, incompatiblePath) {
+			return false
+		}
+	}
 	if isWindowsPackagedExecutable(executable) {
 		return strings.Contains(lower, "openai.codex_") || strings.Contains(lower, `\codex_`)
 	}

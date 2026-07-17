@@ -21,10 +21,24 @@ func TestWindowsCodexExecutableRejectsCommonCLIPaths(t *testing.T) {
 		`C:\Users\Test\AppData\Roaming\npm\codex.exe`,
 		`C:\Users\Test\.cargo\bin\codex.exe`,
 		`C:\Users\Test\scoop\apps\codex\current\codex.exe`,
+		`C:\Program Files\Codex++\Codex.exe`,
+		`C:\Users\Test\AppData\Local\Programs\CodexPlusPlus\Codex.exe`,
 	} {
 		if isWindowsCodexExecutable(candidate) {
 			t.Fatalf("CLI path was detected as Codex App: %s", candidate)
 		}
+	}
+}
+
+func TestFilterOfficialWindowsCodexLaunchTargetsRejectsCodexPlusPlus(t *testing.T) {
+	targets := filterOfficialWindowsCodexLaunchTargets([]string{
+		`BigPizzaV3.CodexPlusPlus_abcd1234!App`,
+		`OpenAI.Codex_2p2nqsd0c76g0!App`,
+		`OpenAI.Codex_2p2nqsd0c76g0!App`,
+		`xiass.codex-helper_1234!App`,
+	})
+	if len(targets) != 1 || targets[0] != `OpenAI.Codex_2p2nqsd0c76g0!App` {
+		t.Fatalf("official launch targets = %v", targets)
 	}
 }
 
