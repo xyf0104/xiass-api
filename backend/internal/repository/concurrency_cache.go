@@ -30,6 +30,11 @@ const (
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
 	apiKeySlotKeyPrefix = "concurrency:api_key:"
+	// Stats-only group leases identify the actual API-key group used by a
+	// request. A short TTL plus service-side refresh prevents stale capacity
+	// badges without changing real account concurrency enforcement.
+	groupSlotKeyPrefix  = "concurrency:group:"
+	groupSlotTTLSeconds = 75
 	// API-key-scoped client WebSocket ingress leases use a shorter TTL than
 	// ordinary request slots, because idle ingress sessions do not hold a turn slot.
 	openAIWSIngressLeaseKeyPrefix  = "concurrency:openai_ws_ingress:api_key:"
@@ -328,6 +333,10 @@ func userSlotKey(userID int64) string {
 
 func apiKeySlotKey(apiKeyID int64) string {
 	return fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
+}
+
+func groupSlotKey(groupID int64) string {
+	return fmt.Sprintf("%s%d", groupSlotKeyPrefix, groupID)
 }
 
 func openAIWSIngressLeaseKey(apiKeyID int64) string {
@@ -672,6 +681,52 @@ func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, 
 func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
 	key := apiKeySlotKey(apiKeyID)
 	return c.rdb.ZRem(ctx, key, requestID).Err()
+}
+
+func (c *concurrencyCache) TrackGroupSlot(ctx context.Context, groupID int64, requestID string) error {
+	if c == nil || c.rdb == nil || groupID <= 0 || requestID == "" {
+		return nil
+	}
+	_, err := trackSlotScript.Run(ctx, c.rdb, []string{groupSlotKey(groupID)}, groupSlotTTLSeconds, requestID).Result()
+	return err
+}
+
+func (c *concurrencyCache) ReleaseGroupSlot(ctx context.Context, groupID int64, requestID string) error {
+	if c == nil || c.rdb == nil || groupID <= 0 || requestID == "" {
+		return nil
+	}
+	return c.rdb.ZRem(ctx, groupSlotKey(groupID), requestID).Err()
+}
+
+func (c *concurrencyCache) GetGroupConcurrencyBatch(ctx context.Context, groupIDs []int64) (map[int64]int, error) {
+	result := make(map[int64]int, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return result, nil
+	}
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+	cutoffTime := now.Unix() - groupSlotTTLSeconds
+
+	pipe := c.rdb.Pipeline()
+	type groupCmd struct {
+		groupID int64
+		zcard   *redis.IntCmd
+	}
+	cmds := make([]groupCmd, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		key := groupSlotKey(groupID)
+		pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(cutoffTime, 10))
+		cmds = append(cmds, groupCmd{groupID: groupID, zcard: pipe.ZCard(ctx, key)})
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("pipeline exec: %w", err)
+	}
+	for _, cmd := range cmds {
+		result[cmd.groupID] = int(cmd.zcard.Val())
+	}
+	return result, nil
 }
 
 func (c *concurrencyCache) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {

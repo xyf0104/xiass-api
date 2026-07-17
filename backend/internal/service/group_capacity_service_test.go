@@ -36,6 +36,29 @@ type groupCapacityConcurrencyCacheStub struct {
 	requested []int64
 }
 
+type groupCapacityGroupConcurrencyCacheStub struct {
+	*groupCapacityConcurrencyCacheStub
+	groupCounts     map[int64]int
+	requestedGroups []int64
+}
+
+func (s *groupCapacityGroupConcurrencyCacheStub) TrackGroupSlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (s *groupCapacityGroupConcurrencyCacheStub) ReleaseGroupSlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (s *groupCapacityGroupConcurrencyCacheStub) GetGroupConcurrencyBatch(_ context.Context, groupIDs []int64) (map[int64]int, error) {
+	s.requestedGroups = append([]int64(nil), groupIDs...)
+	out := make(map[int64]int, len(groupIDs))
+	for _, id := range groupIDs {
+		out[id] = s.groupCounts[id]
+	}
+	return out, nil
+}
+
 func (s *groupCapacityConcurrencyCacheStub) GetAccountConcurrencyBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
 	s.requested = append([]int64(nil), accountIDs...)
 	out := make(map[int64]int, len(accountIDs))
@@ -175,5 +198,30 @@ func TestGetAllGroupCapacityBatchKeepsEmptyGroupRows(t *testing.T) {
 	require.Equal(t, []GroupCapacitySummary{
 		{GroupID: 10},
 		{GroupID: 20, ConcurrencyMax: 4},
+	}, results)
+}
+
+func TestGetAllGroupCapacityUsesActualRequestGroupForSharedAccounts(t *testing.T) {
+	accountRepo := &groupCapacityAccountRepoStub{
+		rows: []GroupAccountCapacityRow{
+			{GroupID: 10, AccountID: 1, Concurrency: 50},
+			{GroupID: 20, AccountID: 1, Concurrency: 50},
+		},
+	}
+	groupRepo := &groupCapacityGroupRepoStub{groupIDs: []int64{10, 20}}
+	accountCache := &groupCapacityConcurrencyCacheStub{counts: map[int64]int{1: 2}}
+	groupCache := &groupCapacityGroupConcurrencyCacheStub{
+		groupCapacityConcurrencyCacheStub: accountCache,
+		groupCounts:                       map[int64]int{10: 2, 20: 0},
+	}
+	svc := NewGroupCapacityService(accountRepo, groupRepo, NewConcurrencyService(groupCache), nil, nil)
+
+	results, err := svc.GetAllGroupCapacity(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []int64{10, 20}, groupCache.requestedGroups)
+	require.Empty(t, accountCache.requested, "group-scoped leases must replace shared account counts")
+	require.Equal(t, []GroupCapacitySummary{
+		{GroupID: 10, ConcurrencyUsed: 2, ConcurrencyMax: 50},
+		{GroupID: 20, ConcurrencyUsed: 0, ConcurrencyMax: 50},
 	}, results)
 }

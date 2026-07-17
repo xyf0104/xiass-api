@@ -498,6 +498,29 @@ func openAIAccountSchedulingPriority(account *Account) int {
 	return account.Priority
 }
 
+func openAIRequestHasStickyAnchor(req OpenAIAccountScheduleRequest) bool {
+	return req.StickyPreviousAccountID > 0 || req.StickyAccountID > 0
+}
+
+func highestPriorityOpenAICandidates(candidates []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+	if len(candidates) <= 1 {
+		return candidates
+	}
+	minPriority := openAIAccountSchedulingPriority(candidates[0].account)
+	for i := 1; i < len(candidates); i++ {
+		if priority := openAIAccountSchedulingPriority(candidates[i].account); priority < minPriority {
+			minPriority = priority
+		}
+	}
+	filtered := make([]openAIAccountCandidateScore, 0, len(candidates))
+	for _, candidate := range candidates {
+		if openAIAccountSchedulingPriority(candidate.account) == minPriority {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
 func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int64, cfg openAIStickyEscapeConfig) (reason string, errorRate float64, ttft float64, shouldEscape bool) {
 	if !cfg.enabled || s == nil || s.stats == nil || accountID <= 0 {
 		return "", 0, 0, false
@@ -567,6 +590,50 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 		return left.loadInfo.WaitingCount < right.loadInfo.WaitingCount
 	}
 	return left.account.ID < right.account.ID
+}
+
+func isOpenAINewSessionCandidateBetter(left openAIAccountCandidateScore, right openAIAccountCandidateScore) bool {
+	if left.account.Priority != right.account.Priority {
+		return left.account.Priority < right.account.Priority
+	}
+	if left.loadInfo.LoadRate != right.loadInfo.LoadRate {
+		return left.loadInfo.LoadRate < right.loadInfo.LoadRate
+	}
+	if left.loadInfo.WaitingCount != right.loadInfo.WaitingCount {
+		return left.loadInfo.WaitingCount < right.loadInfo.WaitingCount
+	}
+	if left.errorRate != right.errorRate {
+		return left.errorRate < right.errorRate
+	}
+	switch {
+	case left.account.LastUsedAt == nil && right.account.LastUsedAt != nil:
+		return true
+	case left.account.LastUsedAt != nil && right.account.LastUsedAt == nil:
+		return false
+	case left.account.LastUsedAt != nil && right.account.LastUsedAt != nil && !left.account.LastUsedAt.Equal(*right.account.LastUsedAt):
+		return left.account.LastUsedAt.Before(*right.account.LastUsedAt)
+	}
+	if left.score != right.score {
+		return left.score > right.score
+	}
+	return left.account.ID < right.account.ID
+}
+
+func openAICandidatesHaveDistinctLastUsed(candidates []openAIAccountCandidateScore) bool {
+	if len(candidates) <= 1 {
+		return false
+	}
+	first := candidates[0].account.LastUsedAt
+	for i := 1; i < len(candidates); i++ {
+		current := candidates[i].account.LastUsedAt
+		if (first == nil) != (current == nil) {
+			return true
+		}
+		if first != nil && current != nil && !first.Equal(*current) {
+			return true
+		}
+	}
+	return false
 }
 
 func selectTopKOpenAICandidates(candidates []openAIAccountCandidateScore, topK int) []openAIAccountCandidateScore {
@@ -751,6 +818,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			candidates = append(candidates, candidate)
 		}
 	}
+	// Priority is an operator command for a new conversation, not merely one
+	// weighted score input. Existing sticky conversations retain their account,
+	// while an unbound conversation only competes inside the best priority tier.
+	if !openAIRequestHasStickyAnchor(req) {
+		candidates = highestPriorityOpenAICandidates(candidates)
+	}
 
 	plan := openAIAccountLoadPlan{
 		allCandidates:             allCandidates,
@@ -900,6 +973,16 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		groupTopK := plan.topK
 		if groupTopK > len(pool) {
 			groupTopK = len(pool)
+		}
+		if !openAIRequestHasStickyAnchor(req) {
+			if !openAICandidatesHaveDistinctLastUsed(pool) {
+				return buildOpenAIWeightedSelectionOrder(selectTopKOpenAICandidates(pool, groupTopK), req)
+			}
+			ranked := append([]openAIAccountCandidateScore(nil), pool...)
+			sort.SliceStable(ranked, func(i, j int) bool {
+				return isOpenAINewSessionCandidateBetter(ranked[i], ranked[j])
+			})
+			return ranked[:groupTopK]
 		}
 		ranked := selectTopKOpenAICandidates(pool, groupTopK)
 		if req.StickyWeighted {

@@ -184,8 +184,22 @@ func (s *GroupCapacityService) getGroupCapacitiesBatch(ctx context.Context, grou
 	}
 
 	concurrencyMap := map[int64]int{}
+	groupConcurrencyMap := map[int64]int{}
+	useGroupConcurrency := false
 	if s.concurrencyService != nil {
-		concurrencyMap, _ = s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+		var groupErr error
+		groupConcurrencyMap, useGroupConcurrency, groupErr = s.concurrencyService.GetGroupConcurrencyBatch(ctx, groupIDs)
+		if groupErr != nil {
+			return nil, groupErr
+		}
+		if !useGroupConcurrency {
+			concurrencyMap, _ = s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+		}
+	}
+	if useGroupConcurrency {
+		for i := range results {
+			results[i].ConcurrencyUsed = groupConcurrencyMap[results[i].GroupID]
+		}
 	}
 
 	sessionAccountIDs := accountIDsForGroupsWithLimit(refs, groupIndex, results, func(summary GroupCapacitySummary) bool {
@@ -206,7 +220,9 @@ func (s *GroupCapacityService) getGroupCapacitiesBatch(ctx context.Context, grou
 
 	for _, ref := range refs {
 		idx := groupIndex[ref.groupID]
-		results[idx].ConcurrencyUsed += concurrencyMap[ref.accountID]
+		if !useGroupConcurrency {
+			results[idx].ConcurrencyUsed += concurrencyMap[ref.accountID]
+		}
 		if sessionsMap != nil && results[idx].SessionsMax > 0 {
 			results[idx].SessionsUsed += sessionsMap[ref.accountID]
 		}
@@ -267,8 +283,21 @@ func (s *GroupCapacityService) getGroupCapacity(ctx context.Context, groupID int
 		}
 	}
 
-	// Batch query runtime data from Redis
-	concurrencyMap, _ := s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+	// Batch query runtime data from Redis. Prefer group-scoped request leases;
+	// account-level slots are only a compatibility fallback for older caches.
+	concurrencyMap := map[int64]int{}
+	groupConcurrencyMap := map[int64]int{}
+	useGroupConcurrency := false
+	if s.concurrencyService != nil {
+		var groupErr error
+		groupConcurrencyMap, useGroupConcurrency, groupErr = s.concurrencyService.GetGroupConcurrencyBatch(ctx, []int64{groupID})
+		if groupErr != nil {
+			return GroupCapacitySummary{}, groupErr
+		}
+		if !useGroupConcurrency {
+			concurrencyMap, _ = s.concurrencyService.GetAccountConcurrencyBatch(ctx, accountIDs)
+		}
+	}
 
 	var sessionsMap map[int64]int
 	if sessionsMax > 0 && s.sessionLimitCache != nil {
@@ -281,9 +310,12 @@ func (s *GroupCapacityService) getGroupCapacity(ctx context.Context, groupID int
 	}
 
 	// Aggregate
-	var concurrencyUsed, sessionsUsed, rpmUsed int
+	concurrencyUsed := groupConcurrencyMap[groupID]
+	var sessionsUsed, rpmUsed int
 	for _, id := range accountIDs {
-		concurrencyUsed += concurrencyMap[id]
+		if !useGroupConcurrency {
+			concurrencyUsed += concurrencyMap[id]
+		}
 		if sessionsMap != nil {
 			sessionsUsed += sessionsMap[id]
 		}

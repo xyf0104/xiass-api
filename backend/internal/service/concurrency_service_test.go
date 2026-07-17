@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,35 @@ type ingressLeaseCacheForTest struct {
 	releaseIngressCalls  int
 }
 
+type groupLeaseCacheForTest struct {
+	stubConcurrencyCacheForTest
+	trackedGroupIDs         []int64
+	trackedGroupRequestIDs  []string
+	releasedGroupIDs        []int64
+	releasedGroupRequestIDs []string
+	groupCounts             map[int64]int
+}
+
+func (c *groupLeaseCacheForTest) TrackGroupSlot(_ context.Context, groupID int64, requestID string) error {
+	c.trackedGroupIDs = append(c.trackedGroupIDs, groupID)
+	c.trackedGroupRequestIDs = append(c.trackedGroupRequestIDs, requestID)
+	return nil
+}
+
+func (c *groupLeaseCacheForTest) ReleaseGroupSlot(_ context.Context, groupID int64, requestID string) error {
+	c.releasedGroupIDs = append(c.releasedGroupIDs, groupID)
+	c.releasedGroupRequestIDs = append(c.releasedGroupRequestIDs, requestID)
+	return nil
+}
+
+func (c *groupLeaseCacheForTest) GetGroupConcurrencyBatch(_ context.Context, groupIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(groupIDs))
+	for _, groupID := range groupIDs {
+		out[groupID] = c.groupCounts[groupID]
+	}
+	return out, nil
+}
+
 func (c *ingressLeaseCacheForTest) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {
 	c.acquireIngressCalls++
 	if c.acquireIngressFn != nil {
@@ -86,6 +116,7 @@ func (c *ingressLeaseCacheForTest) ReleaseOpenAIWSIngressLease(ctx context.Conte
 
 var _ ConcurrencyCache = (*stubConcurrencyCacheForTest)(nil)
 var _ OpenAIWSIngressLeaseCache = (*ingressLeaseCacheForTest)(nil)
+var _ GroupConcurrencyCache = (*groupLeaseCacheForTest)(nil)
 
 func (c *stubConcurrencyCacheForTest) AcquireAccountSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
 	return c.acquireResult, c.acquireErr
@@ -248,6 +279,23 @@ func TestAcquireAccountSlot_ReleaseDecrements(t *testing.T) {
 	require.Equal(t, int64(42), cache.releasedAccountIDs[0])
 	require.Len(t, cache.releasedRequestIDs, 1)
 	require.NotEmpty(t, cache.releasedRequestIDs[0], "requestID 不应为空")
+}
+
+func TestAcquireAccountSlotTracksAndReleasesActualGroup(t *testing.T) {
+	cache := &groupLeaseCacheForTest{stubConcurrencyCacheForTest: stubConcurrencyCacheForTest{acquireResult: true}}
+	svc := NewConcurrencyService(cache)
+	ctx := context.WithValue(context.Background(), ctxkey.Group, &Group{ID: 77})
+
+	result, err := svc.AcquireAccountSlot(ctx, 42, 5)
+	require.NoError(t, err)
+	require.True(t, result.Acquired)
+	require.Equal(t, []int64{77}, cache.trackedGroupIDs)
+	require.Len(t, cache.trackedGroupRequestIDs, 1)
+
+	result.ReleaseFunc()
+	require.Equal(t, []int64{77}, cache.releasedGroupIDs)
+	require.Equal(t, cache.trackedGroupRequestIDs, cache.releasedGroupRequestIDs)
+	require.Equal(t, []int64{42}, cache.releasedAccountIDs)
 }
 
 func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {

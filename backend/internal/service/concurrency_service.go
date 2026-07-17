@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -59,6 +60,15 @@ type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
+}
+
+// GroupConcurrencyCache tracks short-lived, stats-only request leases by the
+// API key's actual group. It is intentionally separate from account slots so
+// one shared account is not reported as active in every group it belongs to.
+type GroupConcurrencyCache interface {
+	TrackGroupSlot(ctx context.Context, groupID int64, requestID string) error
+	ReleaseGroupSlot(ctx context.Context, groupID int64, requestID string) error
+	GetGroupConcurrencyBatch(ctx context.Context, groupIDs []int64) (map[int64]int, error)
 }
 
 // OpenAIWSIngressLeaseCache owns the short-lived distributed lease used to
@@ -225,6 +235,8 @@ const (
 	maxAccountLoadBatchCacheEntries = 256
 	apiKeyConcurrencyFetchTimeout   = 3 * time.Second
 	apiKeySlotTrackTimeout          = 2 * time.Second
+	groupSlotRefreshInterval        = 20 * time.Second
+	groupSlotOperationTimeout       = time.Second
 )
 
 // ConcurrencyService 管理账号和用户的并发限制。
@@ -357,9 +369,13 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 	}
 
 	if acquired {
+		groupReleaseFunc := s.trackGroupSlot(ctx, requestID)
 		return &AcquireResult{
 			Acquired: true,
 			ReleaseFunc: func() {
+				// Clear the display-only group lease first so the admin capacity
+				// badge returns to zero even if the account-slot cleanup retries.
+				groupReleaseFunc()
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := s.cache.ReleaseAccountSlot(bgCtx, accountID, requestID); err != nil {
@@ -373,6 +389,119 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 		Acquired:    false,
 		ReleaseFunc: nil,
 	}, nil
+}
+
+func (s *ConcurrencyService) trackGroupSlot(ctx context.Context, requestID string) func() {
+	if s == nil || s.cache == nil || requestID == "" || ctx == nil {
+		return func() {}
+	}
+	cache, ok := s.cache.(GroupConcurrencyCache)
+	if !ok {
+		return func() {}
+	}
+	group, _ := ctx.Value(ctxkey.Group).(*Group)
+	if group == nil || group.ID <= 0 {
+		return func() {}
+	}
+
+	groupID := group.ID
+	trackCtx, trackCancel := context.WithTimeout(context.WithoutCancel(ctx), groupSlotOperationTimeout)
+	err := cache.TrackGroupSlot(trackCtx, groupID, requestID)
+	trackCancel()
+	if err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: failed to track group slot for %d (req=%s): %v", groupID, requestID, err)
+		return func() {}
+	}
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	var stopOnce sync.Once
+	var remoteReleaseOnce sync.Once
+
+	releaseRemote := func() {
+		remoteReleaseOnce.Do(func() {
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), groupSlotOperationTimeout)
+			releaseErr := cache.ReleaseGroupSlot(releaseCtx, groupID, requestID)
+			releaseCancel()
+			if releaseErr == nil {
+				return
+			}
+			logger.LegacyPrintf("service.concurrency", "Warning: failed to release group slot for %d (req=%s): %v", groupID, requestID, releaseErr)
+			go retryGroupSlotRelease(cache, groupID, requestID)
+		})
+	}
+
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(groupSlotRefreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				releaseRemote()
+				return
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				refreshCtx, refreshCancel := context.WithTimeout(context.Background(), groupSlotOperationTimeout)
+				refreshErr := cache.TrackGroupSlot(refreshCtx, groupID, requestID)
+				refreshCancel()
+				if refreshErr != nil {
+					logger.LegacyPrintf("service.concurrency", "Warning: failed to refresh group slot for %d (req=%s): %v", groupID, requestID, refreshErr)
+				}
+			}
+		}
+	}()
+
+	return func() {
+		stopOnce.Do(func() { close(stopCh) })
+		<-doneCh
+		releaseRemote()
+	}
+}
+
+func retryGroupSlotRelease(cache GroupConcurrencyCache, groupID int64, requestID string) {
+	for attempt := 1; attempt <= 2; attempt++ {
+		time.Sleep(time.Duration(attempt) * 150 * time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), groupSlotOperationTimeout)
+		err := cache.ReleaseGroupSlot(ctx, groupID, requestID)
+		cancel()
+		if err == nil {
+			return
+		}
+		if attempt == 2 {
+			logger.LegacyPrintf("service.concurrency", "Warning: group slot release retries exhausted for %d (req=%s): %v", groupID, requestID, err)
+		}
+	}
+}
+
+// GetGroupConcurrencyBatch returns active request counts scoped to the API
+// key group that actually received each request. The bool reports whether the
+// backing cache supports this newer, accurate statistic.
+func (s *ConcurrencyService) GetGroupConcurrencyBatch(ctx context.Context, groupIDs []int64) (map[int64]int, bool, error) {
+	result := make(map[int64]int, len(groupIDs))
+	for _, groupID := range groupIDs {
+		result[groupID] = 0
+	}
+	if len(groupIDs) == 0 || s == nil || s.cache == nil {
+		return result, false, nil
+	}
+	cache, ok := s.cache.(GroupConcurrencyCache)
+	if !ok {
+		return result, false, nil
+	}
+
+	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountLoadBatchFetchTimeout)
+	defer cancel()
+	counts, err := cache.GetGroupConcurrencyBatch(fetchCtx, groupIDs)
+	if err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: get group concurrency batch failed: %v", err)
+		return result, true, nil
+	}
+	for _, groupID := range groupIDs {
+		result[groupID] = counts[groupID]
+	}
+	return result, true, nil
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.

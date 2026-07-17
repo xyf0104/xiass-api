@@ -1,7 +1,6 @@
 <template>
   <div class="theme-video-background pointer-events-none fixed inset-0" aria-hidden="true">
     <img
-      ref="lightPosterRef"
       class="theme-video-background__media theme-video-background__poster theme-video-background__media--light"
       :class="[
         { 'theme-video-background__media--active': !isDark },
@@ -9,8 +8,6 @@
       ]"
       :src="lightPoster"
       alt=""
-      @load="handlePosterSettled('light')"
-      @error="handlePosterSettled('light')"
     />
     <video
       ref="lightVideoRef"
@@ -28,7 +25,6 @@
       @ended="handleEnded('light')"
     ></video>
     <img
-      ref="darkPosterRef"
       class="theme-video-background__media theme-video-background__poster theme-video-background__media--dark"
       :class="[
         { 'theme-video-background__media--active': isDark },
@@ -36,8 +32,6 @@
       ]"
       :src="darkPoster"
       alt=""
-      @load="handlePosterSettled('dark')"
-      @error="handlePosterSettled('dark')"
     />
     <video
       ref="darkVideoRef"
@@ -59,7 +53,6 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { notifyThemeBackgroundReady } from '@/utils/theme'
 
 type ThemeVideo = 'light' | 'dark'
 
@@ -85,22 +78,15 @@ const props = withDefaults(defineProps<{
 
 const darkVideoRef = ref<HTMLVideoElement | null>(null)
 const lightVideoRef = ref<HTMLVideoElement | null>(null)
-const darkPosterRef = ref<HTMLImageElement | null>(null)
-const lightPosterRef = ref<HTMLImageElement | null>(null)
 const darkLoopFading = ref(false)
 const lightLoopFading = ref(false)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const resetInProgress: Record<ThemeVideo, boolean> = { light: false, dark: false }
-const posterSettled: Record<ThemeVideo, boolean> = { light: false, dark: false }
 let themeObserver: MutationObserver | null = null
 let unmounted = false
 
 function videoFor(theme: ThemeVideo): HTMLVideoElement | null {
   return theme === 'dark' ? darkVideoRef.value : lightVideoRef.value
-}
-
-function posterFor(theme: ThemeVideo): HTMLImageElement | null {
-  return theme === 'dark' ? darkPosterRef.value : lightPosterRef.value
 }
 
 function playbackRateFor(theme: ThemeVideo): number {
@@ -109,18 +95,6 @@ function playbackRateFor(theme: ThemeVideo): number {
 
 function themeIsVisible(theme: ThemeVideo): boolean {
   return theme === 'dark' ? isDark.value : !isDark.value
-}
-
-function handlePosterSettled(theme: ThemeVideo) {
-  posterSettled[theme] = true
-  if (themeIsVisible(theme)) notifyThemeBackgroundReady(theme)
-}
-
-function notifyIfActivePosterSettled() {
-  const theme: ThemeVideo = isDark.value ? 'dark' : 'light'
-  const poster = posterFor(theme)
-  if (poster?.complete) posterSettled[theme] = true
-  if (posterSettled[theme]) notifyThemeBackgroundReady(theme)
 }
 
 function setLoopFading(theme: ThemeVideo, fading: boolean) {
@@ -204,7 +178,6 @@ function handleEnded(theme: ThemeVideo) {
 
 function syncPlaybackWithTheme() {
   isDark.value = document.documentElement.classList.contains('dark')
-  notifyIfActivePosterSettled()
 
   void nextTick(() => {
     configurePlaybackRate(darkVideoRef.value, props.darkPlaybackRate)

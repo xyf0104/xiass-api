@@ -2079,6 +2079,35 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_NewConversationUsesLRUWithinPriority(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10124)
+	now := time.Now()
+	older := now.Add(-time.Hour)
+	accounts := []Account{
+		{ID: 21641, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, LastUsedAt: &now, GroupIDs: []int64{groupID}},
+		{ID: 21642, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, LastUsedAt: &older, GroupIDs: []int64{groupID}},
+	}
+	cfg := newSchedulerTestSubscriptionPriorityConfig()
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "new-session-after-priority-update", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(21642), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestDefaultOpenAIAccountScheduler_ShouldEscapeStickyAccount_ThresholdBoundary(t *testing.T) {
 	stats := newOpenAIAccountRuntimeStats()
 	accountID := int64(21501)
@@ -2634,6 +2663,47 @@ func TestSelectTopKOpenAICandidates(t *testing.T) {
 	require.Equal(t, int64(11), topAll[1].account.ID)
 	require.Equal(t, int64(12), topAll[2].account.ID)
 	require.Equal(t, int64(14), topAll[3].account.ID)
+}
+
+func TestHighestPriorityOpenAICandidatesKeepsOnlyOperatorSelectedTier(t *testing.T) {
+	candidates := []openAIAccountCandidateScore{
+		{account: &Account{ID: 21, Priority: 2}},
+		{account: &Account{ID: 22, Priority: 1}},
+		{account: &Account{ID: 23, Priority: 1}},
+	}
+
+	filtered := highestPriorityOpenAICandidates(candidates)
+	require.Len(t, filtered, 2)
+	require.Equal(t, int64(22), filtered[0].account.ID)
+	require.Equal(t, int64(23), filtered[1].account.ID)
+}
+
+func TestBuildOpenAISelectionOrderNewSessionUsesLRUWithinHighestPriority(t *testing.T) {
+	now := time.Now()
+	older := now.Add(-time.Hour)
+	candidates := []openAIAccountCandidateScore{
+		{
+			account:  &Account{ID: 31, Priority: 1, LastUsedAt: &now},
+			loadInfo: &AccountLoadInfo{AccountID: 31},
+			score:    5,
+		},
+		{
+			account:  &Account{ID: 32, Priority: 1, LastUsedAt: &older},
+			loadInfo: &AccountLoadInfo{AccountID: 32},
+			score:    5,
+		},
+	}
+	scheduler := &defaultOpenAIAccountScheduler{}
+	order := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{
+		SessionHash: "new-unbound-conversation",
+	}, openAIAccountLoadPlan{
+		candidates: candidates,
+		topK:       2,
+	})
+
+	require.Len(t, order, 2)
+	require.Equal(t, int64(32), order[0].account.ID)
+	require.Equal(t, int64(31), order[1].account.ID)
 }
 
 func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing.T) {
