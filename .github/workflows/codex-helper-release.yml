@@ -1,0 +1,132 @@
+name: Codex Helper Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/xiass-codex-helper/**'
+      - '.github/workflows/codex-helper-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-helper-release
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: tools/xiass-codex-helper/go.sum
+
+      - name: Build universal macOS helper
+        working-directory: tools/xiass-codex-helper
+        run: |
+          VERSION=$(tr -d '\r\n' < VERSION)
+          go test ./...
+          mkdir -p build/macos/arm64 build/macos/amd64 "build/XIASS Codex Helper.app/Contents/MacOS"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o build/macos/arm64/xiass-codex-helper .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o build/macos/amd64/xiass-codex-helper .
+          lipo -create build/macos/arm64/xiass-codex-helper build/macos/amd64/xiass-codex-helper -output "build/XIASS Codex Helper.app/Contents/MacOS/xiass-codex-helper"
+          cp package/macos/Info.plist "build/XIASS Codex Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "build/XIASS Codex Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "build/XIASS Codex Helper.app/Contents/Info.plist"
+          codesign --force --deep --sign - "build/XIASS Codex Helper.app"
+          ditto -c -k --keepParent "build/XIASS Codex Helper.app" build/xiass-codex-helper-macos-universal.zip
+
+      - name: Upload macOS helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-codex-helper-macos
+          path: tools/xiass-codex-helper/build/xiass-codex-helper-macos-universal.zip
+          retention-days: 1
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: tools/xiass-codex-helper/go.sum
+
+      - name: Build Windows helper
+        working-directory: tools/xiass-codex-helper
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          go test ./...
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$version" -o build/xiass-codex-helper-windows-x64.exe .
+
+      - name: Upload Windows helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-codex-helper-windows
+          path: tools/xiass-codex-helper/build/xiass-codex-helper-windows-x64.exe
+          retention-days: 1
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS helper
+        uses: actions/download-artifact@v4
+        with:
+          name: xiass-codex-helper-macos
+          path: helper-assets
+
+      - name: Download Windows helper
+        uses: actions/download-artifact@v4
+        with:
+          name: xiass-codex-helper-windows
+          path: helper-assets
+
+      - name: Publish fixed helper downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION=$(tr -d '\r\n' < tools/xiass-codex-helper/VERSION)
+          TAG="codex-helper-latest"
+          TITLE="XIASS Codex 配置助手 v${VERSION}"
+          NOTES="独立发布的 XIASS Codex 配置助手。固定下载地址保持不变，不影响 XIASS API 的版本检测和 Docker 镜像。"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes "$NOTES" --prerelease
+          fi
+          gh release upload "$TAG" helper-assets/xiass-codex-helper-macos-universal.zip helper-assets/xiass-codex-helper-windows-x64.exe --clobber
+          ASSETS=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
+          echo "$ASSETS" | grep -q 'xiass-codex-helper-macos-universal.zip'
+          echo "$ASSETS" | grep -q 'xiass-codex-helper-windows-x64.exe'
+          PRERELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.prerelease')
+          test "$PRERELEASE" = "true"
+          LATEST_API_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')
+          case "$LATEST_API_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              gh release upload "$LATEST_API_TAG" helper-assets/xiass-codex-helper-macos-universal.zip helper-assets/xiass-codex-helper-windows-x64.exe --clobber
+              ;;
+            *)
+              echo "No stable XIASS API release is available for legacy download mirroring"
+              ;;
+          esac

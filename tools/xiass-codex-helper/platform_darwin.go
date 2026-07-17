@@ -63,6 +63,30 @@ func detectCodexInstallation() CodexInstallation {
 	return CodexInstallation{}
 }
 
+func selectCodexInstallation() (CodexInstallation, error) {
+	output, err := exec.Command("osascript", "-e", `POSIX path of (choose application with prompt "Select Codex App")`).Output()
+	if err != nil {
+		return CodexInstallation{}, errors.New("no Codex App was selected")
+	}
+	appPath := strings.TrimRight(strings.TrimSpace(string(output)), "/")
+	if !isCodexBundle(appPath) {
+		return CodexInstallation{}, errors.New("the selected application is not Codex App")
+	}
+	executable := filepath.Join(appPath, "Contents", "MacOS", "ChatGPT")
+	if _, err := os.Stat(executable); err != nil {
+		executable = filepath.Join(appPath, "Contents", "MacOS", "Codex")
+	}
+	if info, err := os.Stat(executable); err != nil || info.IsDir() {
+		return CodexInstallation{}, errors.New("the selected Codex App executable does not exist")
+	}
+	return CodexInstallation{
+		AppPath:    appPath,
+		Executable: executable,
+		Running:    processMatches(executable),
+		Found:      true,
+	}, nil
+}
+
 func restartCodex(installation CodexInstallation) error {
 	if !installation.Found || installation.AppPath == "" {
 		return errors.New("Codex App was not found")

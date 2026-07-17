@@ -70,6 +70,7 @@
       <div class="actions">
         <button id="connect-button" class="primary" type="button">连接 XIASS API 并选择密钥</button>
         <button id="refresh-button" type="button">重新检测</button>
+        <button id="select-app-button" type="button">手动选择 Codex App</button>
       </div>
       <p class="hint">填写您当前使用的 XIASS API 网站地址。写入前会完整备份现有 config.toml；写入后会重新读取并逐项校验。只有校验成功后才会重启 Codex。</p>
     </section>
@@ -158,6 +159,19 @@
     }
 
     document.getElementById('refresh-button').addEventListener('click', refresh);
+    document.getElementById('select-app-button').addEventListener('click', async () => {
+      const button = document.getElementById('select-app-button');
+      button.disabled = true;
+      try {
+        await request('/api/select-app', { method: 'POST', body: '{}' });
+        showMessage('已选择并验证 Codex App。', 'success');
+        await loadStatus();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
     document.getElementById('connect-button').addEventListener('click', async () => {
       const siteURL = document.getElementById('site-url').value.trim();
       if (!siteURL) {

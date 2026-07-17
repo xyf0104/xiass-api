@@ -164,10 +164,10 @@ describe('UseKeyModal', () => {
 
     const helperDownloads = wrapper.findAll('a').map((link) => link.attributes('href'))
     expect(helperDownloads).toContain(
-      'https://github.com/xyf0104/xiass-api/releases/latest/download/xiass-codex-helper-macos-universal.zip'
+      'https://github.com/xyf0104/xiass-api/releases/download/codex-helper-latest/xiass-codex-helper-macos-universal.zip'
     )
     expect(helperDownloads).toContain(
-      'https://github.com/xyf0104/xiass-api/releases/latest/download/xiass-codex-helper-windows-x64.exe'
+      'https://github.com/xyf0104/xiass-api/releases/download/codex-helper-latest/xiass-codex-helper-windows-x64.exe'
     )
   })
 

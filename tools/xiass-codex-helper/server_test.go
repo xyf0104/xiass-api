@@ -118,6 +118,35 @@ func TestHelperServerSelectsSiteAtRuntime(t *testing.T) {
 	}
 }
 
+func TestHelperServerSelectsCodexAppAtRuntime(t *testing.T) {
+	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper.detect = func() CodexInstallation { return CodexInstallation{} }
+	helper.selectApp = func() (CodexInstallation, error) {
+		return CodexInstallation{
+			AppPath:    `C:\Program Files\Codex`,
+			Executable: `C:\Program Files\Codex\Codex.exe`,
+			Found:      true,
+		}, nil
+	}
+	handler := helper.routes()
+
+	selected := postHelperJSON(t, handler, "/api/select-app", helper.state, []byte(`{}`), http.StatusOK)
+	if ok, _ := selected["ok"].(bool); !ok {
+		t.Fatalf("select app response = %+v", selected)
+	}
+	status := getJSON(t, handler, "/api/status")
+	codex, _ := status["codex"].(map[string]any)
+	if found, _ := codex["found"].(bool); !found {
+		t.Fatalf("selected Codex app was not retained: %+v", status)
+	}
+	if codex["executable"] != `C:\Program Files\Codex\Codex.exe` {
+		t.Fatalf("selected Codex executable = %v", codex["executable"])
+	}
+}
+
 func TestHelperIndexRendersUsableSessionState(t *testing.T) {
 	const state = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1"
 	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", state)

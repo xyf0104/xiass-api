@@ -21,16 +21,19 @@ import (
 var webFiles embed.FS
 
 type helperServer struct {
-	manager      *ConfigManager
-	state        string
-	siteMu       sync.RWMutex
-	siteURL      *url.URL
-	index        *template.Template
-	callback     []byte
-	shutdown     chan struct{}
-	shutdownOnce sync.Once
-	detect       func() CodexInstallation
-	restart      func(CodexInstallation) error
+	manager       *ConfigManager
+	state         string
+	siteMu        sync.RWMutex
+	siteURL       *url.URL
+	codexMu       sync.RWMutex
+	selectedCodex *CodexInstallation
+	index         *template.Template
+	callback      []byte
+	shutdown      chan struct{}
+	shutdownOnce  sync.Once
+	detect        func() CodexInstallation
+	selectApp     func() (CodexInstallation, error)
+	restart       func(CodexInstallation) error
 }
 
 type statusResponse struct {
@@ -73,14 +76,15 @@ func newHelperServer(manager *ConfigManager, site string, state string) (*helper
 		return nil, err
 	}
 	return &helperServer{
-		manager:  manager,
-		state:    state,
-		siteURL:  parsedSite,
-		index:    index,
-		callback: callback,
-		shutdown: make(chan struct{}),
-		detect:   detectCodexInstallation,
-		restart:  restartCodex,
+		manager:   manager,
+		state:     state,
+		siteURL:   parsedSite,
+		index:     index,
+		callback:  callback,
+		shutdown:  make(chan struct{}),
+		detect:    detectCodexInstallation,
+		selectApp: selectCodexInstallation,
+		restart:   restartCodex,
 	}, nil
 }
 
@@ -91,6 +95,7 @@ func (s *helperServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/backups", s.handleBackups)
 	mux.HandleFunc("POST /api/site", s.handleSite)
+	mux.HandleFunc("POST /api/select-app", s.handleSelectApp)
 	mux.HandleFunc("POST /api/apply", s.handleApply)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -120,7 +125,7 @@ func (s *helperServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, statusResponse{
 		Version:     version,
 		ConfigPath:  s.manager.ConfigPath,
-		Codex:       s.detect(),
+		Codex:       s.codexInstallation(),
 		ConnectURL:  connectURL,
 		SiteURL:     siteURL,
 		BackupCount: len(backups),
@@ -153,6 +158,36 @@ func (s *helperServer) handleSite(w http.ResponseWriter, r *http.Request) {
 		"site_url":    siteURL,
 		"connect_url": connectURL,
 	})
+}
+
+func (s *helperServer) handleSelectApp(w http.ResponseWriter, r *http.Request) {
+	if !s.validState(r) {
+		writeError(w, http.StatusForbidden, errors.New("invalid local helper session"))
+		return
+	}
+	installation, err := s.selectApp()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	s.codexMu.Lock()
+	s.selectedCodex = &installation
+	s.codexMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"codex": installation,
+	})
+}
+
+func (s *helperServer) codexInstallation() CodexInstallation {
+	s.codexMu.RLock()
+	if s.selectedCodex != nil {
+		installation := *s.selectedCodex
+		s.codexMu.RUnlock()
+		return installation
+	}
+	s.codexMu.RUnlock()
+	return s.detect()
 }
 
 func (s *helperServer) handleBackups(w http.ResponseWriter, _ *http.Request) {
@@ -190,7 +225,7 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	installation := s.detect()
+	installation := s.codexInstallation()
 	if err := s.restart(installation); err != nil {
 		writeJSON(w, http.StatusInternalServerError, operationResponse{
 			OK:             false,
@@ -262,7 +297,7 @@ func (s *helperServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	installation := s.detect()
+	installation := s.codexInstallation()
 	if err := s.restart(installation); err != nil {
 		writeJSON(w, http.StatusInternalServerError, operationResponse{
 			OK:             false,

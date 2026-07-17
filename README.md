@@ -157,12 +157,14 @@ ss -lntp | grep ':8080'
 
 登录 XIASS API 后进入“API 密钥”，打开一个绑定到 OpenAI 分组的有效密钥，选择 Codex 标签页，即可下载：
 
-- `xiass-codex-helper-macos-universal.zip`：同时支持 Apple Silicon 与 Intel Mac。
-- `xiass-codex-helper-windows-x64.exe`：支持 64 位 Windows。
+- [`xiass-codex-helper-macos-universal.zip`](https://github.com/xyf0104/xiass-api/releases/download/codex-helper-latest/xiass-codex-helper-macos-universal.zip)：同时支持 Apple Silicon 与 Intel Mac。
+- [`xiass-codex-helper-windows-x64.exe`](https://github.com/xyf0104/xiass-api/releases/download/codex-helper-latest/xiass-codex-helper-windows-x64.exe)：支持 64 位 Windows。
+
+配置助手使用独立版本和固定下载地址。助手更新只替换 `codex-helper-latest` 预发布中的附件，不会改变 XIASS API 版本、触发 Docker 镜像更新或影响网站的在线更新检测。
 
 助手无需安装。首次运行若被系统安全提示拦截，请在系统提示中确认仍要打开。启动后助手会：
 
-1. 自动寻找 Codex App 和当前用户的 `~/.codex/config.toml`。
+1. 自动寻找 Codex App 和当前用户的 `~/.codex/config.toml`；未识别到 App 时可使用系统文件选择器手动指定并验证程序路径。
 2. 默认填入 `https://api.xiass.com`，也可改为当前使用的 XIASS 站点地址；随后打开已登录页面并只显示绑定到 OpenAI 分组的有效密钥。
 3. 在本机创建原配置的完整备份与 SHA-256 校验记录。
 4. 保留已有推理强度、MCP、插件、项目和桌面设置，仅更新 XIASS Provider 必需字段。

@@ -15,6 +15,10 @@ func detectCodexInstallation() CodexInstallation {
 	return CodexInstallation{Executable: executable, AppPath: executable, Found: true}
 }
 
+func selectCodexInstallation() (CodexInstallation, error) {
+	return CodexInstallation{}, errors.New("manual Codex App selection is currently supported on macOS and Windows")
+}
+
 func restartCodex(CodexInstallation) error {
 	return errors.New("automatic Codex restart is currently supported on macOS and Windows")
 }

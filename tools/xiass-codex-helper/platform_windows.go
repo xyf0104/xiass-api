@@ -125,6 +125,27 @@ func windowsCodexLaunchTargets() []string {
 	return windowsPowerShellLines(command)
 }
 
+func selectCodexInstallation() (CodexInstallation, error) {
+	command := `Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Title = 'Select Codex App'; $dialog.Filter = 'Codex App|Codex.exe;ChatGPT.exe|Windows applications|*.exe'; $dialog.CheckFileExists = $true; $dialog.Multiselect = $false; if ($env:LOCALAPPDATA) { $dialog.InitialDirectory = $env:LOCALAPPDATA }; try { if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.FileName } } finally { $dialog.Dispose() }`
+	selected := windowsPowerShellDialogLines(command)
+	if len(selected) == 0 {
+		return CodexInstallation{}, errors.New("no Codex App was selected")
+	}
+	executable := normalizeWindowsExecutable(selected[0])
+	if info, err := os.Stat(executable); err != nil || info.IsDir() {
+		return CodexInstallation{}, errors.New("the selected Codex App does not exist")
+	}
+	if !isWindowsCodexExecutable(executable) {
+		return CodexInstallation{}, errors.New("the selected application is not Codex App")
+	}
+	return CodexInstallation{
+		AppPath:    filepath.Dir(executable),
+		Executable: executable,
+		Running:    isWindowsExecutableRunning(executable),
+		Found:      true,
+	}, nil
+}
+
 func appendWindowsCandidate(candidates *[]string, root string, parts ...string) {
 	if strings.TrimSpace(root) == "" {
 		return
@@ -133,8 +154,23 @@ func appendWindowsCandidate(candidates *[]string, root string, parts ...string) 
 }
 
 func windowsPowerShellLines(command string) []string {
+	return runWindowsPowerShellLines(false, command)
+}
+
+func windowsPowerShellDialogLines(command string) []string {
+	return runWindowsPowerShellLines(true, command)
+}
+
+func runWindowsPowerShellLines(dialog bool, command string) []string {
 	script := `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` + command
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	arguments := []string{"-NoProfile"}
+	if dialog {
+		arguments = append(arguments, "-STA")
+	} else {
+		arguments = append(arguments, "-NonInteractive")
+	}
+	arguments = append(arguments, "-Command", script)
+	output, err := exec.Command("powershell.exe", arguments...).Output()
 	if err != nil {
 		return nil
 	}

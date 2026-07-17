@@ -2,13 +2,14 @@
 
 XIASS Codex Helper is a portable local configurator for macOS and Windows. It
 binds only to a random `127.0.0.1` port and asks the user to confirm their own
-XIASS API website before opening it. The selected user API key is returned
+XIASS API website before opening it. The default site is
+`https://api.xiass.com`. The selected user API key is returned
 through a URL fragment, so API keys are not placed in website requests or proxy
-logs. The source code has no maintainer deployment URL default.
+logs.
 
 Before applying a configuration, the helper:
 
-1. Locates the user-level Codex `config.toml`.
+1. Locates the user-level Codex `config.toml` and supports validated manual App selection when automatic discovery is unavailable.
 2. Validates the existing TOML.
 3. Creates a byte-for-byte backup with a SHA-256 manifest.
 4. Preserves unrelated MCP, plugin, project, desktop, and reasoning settings.
@@ -31,7 +32,11 @@ GOCACHE=/tmp/xiass-go-build-cache GOSUMDB=off go test ./...
 CGO_ENABLED=0 go build -trimpath -o xiass-codex-helper .
 ```
 
-Release builds are produced by `.github/workflows/release.yml` as:
+Release builds are produced independently by
+`.github/workflows/codex-helper-release.yml` as:
 
 - `xiass-codex-helper-macos-universal.zip`
 - `xiass-codex-helper-windows-x64.exe`
+
+Both files are replaced in the `codex-helper-latest` prerelease so their public
+download URLs remain stable without changing the XIASS API release version.

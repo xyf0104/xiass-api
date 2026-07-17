@@ -13,6 +13,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_DOCS = ("README.md", "deploy/README.md", "deploy/DOCKER.md")
+ALLOWED_PUBLIC_API_REFERENCES = {
+    "tools/check_release_contract.py": ("https://api.xiass.com",),
+    "README.md": ("`https://api.xiass.com`",),
+    "tools/xiass-codex-helper/README.md": ("`https://api.xiass.com`",),
+    "tools/xiass-codex-helper/main.go": (
+        'const defaultXIASSAPIURL = "https://api.xiass.com"',
+    ),
+    "tools/xiass-codex-helper/web/index.html": (
+        'placeholder="https://api.xiass.com"',
+    ),
+}
 
 
 def read(path: str) -> str:
@@ -96,7 +107,10 @@ def check_public_branding_and_privacy(errors: list[str]) -> None:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if re.search(r"(?i)(?:api\.)?xiass\.com", content):
+        domain_scan = content
+        for allowed in ALLOWED_PUBLIC_API_REFERENCES.get(relative, ()):
+            domain_scan = domain_scan.replace(allowed, "")
+        if re.search(r"(?i)(?:api\.)?xiass\.com", domain_scan):
             errors.append(f"检测到维护者线上域名硬编码: {relative}")
         if re.search(r"admin-[0-9a-f]{48,}", content):
             errors.append(f"检测到疑似管理员密钥: {relative}")
