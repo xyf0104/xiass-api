@@ -75,7 +75,7 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 	if strings.Contains(text, `x-openai-actor-authorization" = "https://`) {
 		t.Fatal("actor authorization header must contain the XIASS hostname, not a URL")
 	}
-	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://gateway.example.com", APIKey: input.APIKey}, "official"); err != nil {
+	if err := verifyManagedConfig(written, ApplyConfig{BaseURL: "https://gateway.example.com/v1", APIKey: input.APIKey}, "official"); err != nil {
 		t.Fatalf("written config verification failed: %v", err)
 	}
 
@@ -100,6 +100,79 @@ func TestApplyAndRestorePreservesOriginalConfig(t *testing.T) {
 	}
 	if string(restored) != testOriginalConfig {
 		t.Fatal("restored config is not byte-for-byte identical to the original")
+	}
+}
+
+func TestNormalizeApplyConfigSupportsHTTPSAndLoopbackHTTP(t *testing.T) {
+	tests := map[string]string{
+		"https":                   "https://gateway.example.com/v1",
+		"localhost":               "http://localhost:54843/v1",
+		"loopback IPv4":           "http://127.0.0.1:54843/V1",
+		"loopback IPv4 no scheme": "127.0.0.1:54843/V1",
+		"loopback IPv6":           "http://[::1]:54843/v1",
+	}
+	wants := map[string]string{
+		"https":                   "https://gateway.example.com/v1",
+		"localhost":               "http://localhost:54843/v1",
+		"loopback IPv4":           "http://127.0.0.1:54843/V1",
+		"loopback IPv4 no scheme": "http://127.0.0.1:54843/V1",
+		"loopback IPv6":           "http://[::1]:54843/v1",
+	}
+	for name, baseURL := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := normalizeApplyConfig(ApplyConfig{BaseURL: baseURL + "/", APIKey: "local-key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.BaseURL != wants[name] {
+				t.Fatalf("base URL = %q, want %q", got.BaseURL, wants[name])
+			}
+			if got.Model != defaultModel || got.ProviderName != providerName {
+				t.Fatalf("defaults = model %q, provider %q", got.Model, got.ProviderName)
+			}
+		})
+	}
+}
+
+func TestNormalizeApplyConfigRejectsRemoteHTTP(t *testing.T) {
+	for _, baseURL := range []string{
+		"http://gateway.example.com/v1",
+		"http://localhost.example.com:54843/v1",
+		"ftp://127.0.0.1:54843/v1",
+	} {
+		if _, err := normalizeApplyConfig(ApplyConfig{BaseURL: baseURL, APIKey: "local-key"}); err == nil {
+			t.Fatalf("unsafe base URL was accepted: %s", baseURL)
+		}
+	}
+}
+
+func TestApplySupportsCustomProviderAndModel(t *testing.T) {
+	manager := NewConfigManager(t.TempDir())
+	input := ApplyConfig{
+		BaseURL:      "http://127.0.0.1:54843/V1",
+		APIKey:       "local-key",
+		Model:        "local-codex-model",
+		ProviderName: "Custom API",
+	}
+	if _, err := manager.Apply(input); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(manager.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(written)
+	for _, expected := range []string{
+		`model = "local-codex-model"`,
+		`review_model = "local-codex-model"`,
+		`name = "Custom API"`,
+		`base_url = "http://127.0.0.1:54843/V1"`,
+		`experimental_bearer_token = "local-key"`,
+		`http_headers = { "x-openai-actor-authorization" = "127.0.0.1" }`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("custom config is missing %q", expected)
+		}
 	}
 }
 

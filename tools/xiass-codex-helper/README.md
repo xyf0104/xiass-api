@@ -1,11 +1,11 @@
 # XIASS Codex Helper
 
 XIASS Codex Helper is a portable local configurator for macOS and Windows. It
-binds only to a random `127.0.0.1` port and asks the user to confirm their own
-XIASS API website before opening it. The default site is
-`https://api.xiass.com`. The selected user API key is returned
-through a URL fragment, so API keys are not placed in website requests or proxy
-logs.
+binds only to a random `127.0.0.1` port. Users can connect to their own XIASS
+API website and select one of their own keys, or manually enter any compatible
+Responses API Base URL, API key, and model. The default XIASS site is
+`https://api.xiass.com`. Website-selected keys are returned through a URL
+fragment; manually entered keys are posted only to the loopback helper.
 
 Before applying a configuration, the helper:
 
@@ -47,8 +47,7 @@ an immediate history-repair action. Every restart initiated by this helper runs
 history verification first; later normal Codex launches retain the synchronized
 provider metadata.
 
-The repair behavior was cross-checked against the public
-[CodexPlusPlus provider-sync implementation](https://github.com/BigPizzaV3/CodexPlusPlus)
+The repair behavior was cross-checked against public provider-sync approaches
 and the [Codex cross-provider history issue](https://github.com/openai/codex/issues/15494).
 The XIASS implementation is written
 independently and adds stop-before-write, atomic rollout replacement, full

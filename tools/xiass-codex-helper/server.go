@@ -111,6 +111,7 @@ func (s *helperServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/site", s.handleSite)
 	mux.HandleFunc("POST /api/select-app", s.handleSelectApp)
 	mux.HandleFunc("POST /api/apply", s.handleApply)
+	mux.HandleFunc("POST /api/apply-manual", s.handleManualApply)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/repair-history", s.handleRepairHistory)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -215,6 +216,14 @@ func (s *helperServer) handleBackups(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
+	s.handleApplyRequest(w, r, false)
+}
+
+func (s *helperServer) handleManualApply(w http.ResponseWriter, r *http.Request) {
+	s.handleApplyRequest(w, r, true)
+}
+
+func (s *helperServer) handleApplyRequest(w http.ResponseWriter, r *http.Request, manual bool) {
 	if !s.validState(r) {
 		writeError(w, http.StatusForbidden, errors.New("invalid local helper session"))
 		return
@@ -224,15 +233,26 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	site := s.currentSiteURL()
-	if site == nil {
-		writeError(w, http.StatusBadRequest, errors.New("XIASS API site has not been configured"))
+	if manual {
+		input.ProviderName = "Custom API"
+	}
+	normalized, err := normalizeApplyConfig(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	parsedBase, err := url.Parse(input.BaseURL)
-	if err != nil || parsedBase.Scheme != "https" || !strings.EqualFold(parsedBase.Host, site.Host) {
-		writeError(w, http.StatusBadRequest, errors.New("configuration does not belong to this XIASS API site"))
-		return
+	input = normalized
+	if !manual {
+		site := s.currentSiteURL()
+		if site == nil {
+			writeError(w, http.StatusBadRequest, errors.New("XIASS API site has not been configured"))
+			return
+		}
+		parsedBase, err := url.Parse(input.BaseURL)
+		if err != nil || parsedBase.Scheme != "https" || !strings.EqualFold(parsedBase.Host, site.Host) {
+			writeError(w, http.StatusBadRequest, errors.New("configuration does not belong to this XIASS API site"))
+			return
+		}
 	}
 
 	if !s.beginOperation(w) {
@@ -329,9 +349,13 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	configurationName := "XIASS API"
+	if manual {
+		configurationName = "自定义 API"
+	}
 	writeJSON(w, http.StatusOK, operationResponse{
 		OK:             true,
-		Message:        "XIASS API 配置已写入；" + historySummary(history) + " Codex 已重新启动。",
+		Message:        configurationName + " 配置已写入；" + historySummary(history) + " Codex 已重新启动。",
 		BackupID:       result.BackupID,
 		Restarted:      true,
 		ConfigVerified: true,

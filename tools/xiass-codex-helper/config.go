@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -37,9 +38,11 @@ var managedTopLevelKeys = map[string]struct{}{
 }
 
 type ApplyConfig struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	KeyName string `json:"key_name"`
+	BaseURL      string `json:"base_url"`
+	APIKey       string `json:"api_key"`
+	KeyName      string `json:"key_name"`
+	Model        string `json:"model,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
 }
 
 type BackupManifest struct {
@@ -388,19 +391,51 @@ func normalizeApplyConfig(input ApplyConfig) (ApplyConfig, error) {
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.KeyName = strings.TrimSpace(input.KeyName)
-	if len(input.APIKey) < 16 || strings.ContainsAny(input.APIKey, "\r\n\x00") {
+	input.Model = strings.TrimSpace(input.Model)
+	input.ProviderName = strings.TrimSpace(input.ProviderName)
+	if input.APIKey == "" || len(input.APIKey) > 8192 || strings.ContainsAny(input.APIKey, "\r\n\x00") {
 		return input, errors.New("invalid API key")
 	}
+	if input.Model == "" {
+		input.Model = defaultModel
+	}
+	if input.ProviderName == "" {
+		input.ProviderName = providerName
+	}
+	if len(input.Model) > 200 || strings.ContainsAny(input.Model, "\r\n\x00") {
+		return input, errors.New("invalid model name")
+	}
+	if len(input.ProviderName) > 200 || strings.ContainsAny(input.ProviderName, "\r\n\x00") {
+		return input, errors.New("invalid provider name")
+	}
 
+	if !strings.Contains(input.BaseURL, "://") {
+		loopbackCandidate, err := url.Parse("http://" + input.BaseURL)
+		if err == nil && isLoopbackHostname(loopbackCandidate.Hostname()) {
+			input.BaseURL = loopbackCandidate.String()
+		}
+	}
 	parsed, err := url.Parse(input.BaseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
-		return input, errors.New("XIASS API base URL must be a valid HTTPS URL")
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
+		return input, errors.New("base URL must be a valid HTTPS URL or a loopback HTTP URL")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !isLoopbackHostname(parsed.Hostname())) {
+		return input, errors.New("base URL must use HTTPS; HTTP is allowed only for localhost, 127.0.0.0/8, or ::1")
 	}
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
-	parsed.Path = strings.TrimSuffix(strings.TrimRight(parsed.Path, "/"), "/v1")
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	input.BaseURL = strings.TrimRight(parsed.String(), "/")
 	return input, nil
+}
+
+func isLoopbackHostname(hostname string) bool {
+	if strings.EqualFold(strings.TrimSuffix(hostname, "."), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func managedProviderIDForConfig(original []byte) string {
@@ -460,15 +495,15 @@ func patchConfig(original []byte, input ApplyConfig, managedProviderID string) [
 	bodyText := strings.Trim(strings.Join(body, "\n"), "\n")
 	top := []string{
 		`model_provider = "` + managedProviderID + `"`,
-		`model = "` + defaultModel + `"`,
-		`review_model = "` + defaultModel + `"`,
+		`model = "` + escapeTOML(input.Model) + `"`,
+		`review_model = "` + escapeTOML(input.Model) + `"`,
 		"model_context_window = 372000",
 		"model_auto_compact_token_limit = 372000",
 		`web_search = "live"`,
 	}
 	provider := []string{
 		"[model_providers." + managedProviderID + "]",
-		`name = "` + providerName + `"`,
+		`name = "` + escapeTOML(input.ProviderName) + `"`,
 		`base_url = "` + escapeTOML(input.BaseURL) + `"`,
 		`wire_api = "responses"`,
 		"requires_openai_auth = false",
@@ -495,14 +530,19 @@ func isManagedProviderSection(section, managedProviderID string) bool {
 }
 
 func verifyManagedConfig(data []byte, expected ApplyConfig, managedProviderID string) error {
+	var err error
+	expected, err = normalizeApplyConfig(expected)
+	if err != nil {
+		return err
+	}
 	var root map[string]any
 	if err := toml.Unmarshal(data, &root); err != nil {
 		return err
 	}
 	checks := map[string]string{
 		"model_provider": managedProviderID,
-		"model":          defaultModel,
-		"review_model":   defaultModel,
+		"model":          expected.Model,
+		"review_model":   expected.Model,
 		"web_search":     "live",
 	}
 	for key, want := range checks {
@@ -523,7 +563,7 @@ func verifyManagedConfig(data []byte, expected ApplyConfig, managedProviderID st
 		return errors.New("XIASS provider table missing")
 	}
 	providerChecks := map[string]string{
-		"name":                      providerName,
+		"name":                      expected.ProviderName,
 		"base_url":                  expected.BaseURL,
 		"wire_api":                  "responses",
 		"experimental_bearer_token": expected.APIKey,

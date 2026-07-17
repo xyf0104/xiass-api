@@ -76,13 +76,33 @@
 	  <p class="hint">填写您当前使用的 XIASS API 网站地址。助手会先退出 Codex，再备份配置和会话索引，同步所有历史对话并校验会话数量；只有全部成功才会重新启动。</p>
     </section>
 
+    <section class="panel">
+      <h2>手动配置其他 API</h2>
+      <div class="row">
+        <label class="label" for="manual-base-url">Base URL</label>
+        <input id="manual-base-url" type="url" inputmode="url" autocomplete="url" placeholder="https://api.example.com 或 http://127.0.0.1:54843/v1">
+      </div>
+      <div class="row">
+        <label class="label" for="manual-api-key">API 密钥</label>
+        <input id="manual-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="请输入 API 密钥">
+      </div>
+      <div class="row">
+        <label class="label" for="manual-model">默认模型</label>
+        <input id="manual-model" type="text" autocomplete="off" spellcheck="false" value="gpt-5.6-sol" placeholder="gpt-5.6-sol">
+      </div>
+      <div class="actions">
+        <button id="manual-apply-button" type="button">写入手动配置并重启 Codex</button>
+      </div>
+      <p class="hint">支持任意兼容 Responses API 的 HTTPS 地址，也支持 localhost、127.0.0.0/8 和 ::1 的 HTTP 本地映射。API 密钥只会提交给本机配置助手并写入本地配置，不会发送到 XIASS API。</p>
+    </section>
+
 	<section class="panel">
 	  <h2>历史会话修复</h2>
 	  <div class="row"><span class="label">上次结果</span><span id="history-result" class="value">尚未在本次运行中执行</span></div>
 	  <div class="actions">
 		<button id="repair-history-button" type="button">立即修复历史会话并重启 Codex</button>
 	  </div>
-	  <p class="hint">用于切换 provider 后历史对话不显示的情况。助手会像 Codex++ 的历史修复一样，把普通会话、归档会话和数据库索引统一到当前 provider，让全部对话重新可见。修改前会创建包含 WAL 已提交数据的 SQLite 一致性快照并备份原始会话元数据；失败或意外中断会自动恢复。</p>
+	  <p class="hint">用于切换 provider 后历史对话不显示的情况。助手会把普通会话、归档会话和数据库索引统一到当前 provider，让全部对话重新可见。修改前会创建包含 WAL 已提交数据的 SQLite 一致性快照并备份原始会话元数据；失败或意外中断会自动恢复。</p>
 	</section>
 
     <section class="panel">
@@ -139,6 +159,7 @@
       document.getElementById('codex-status').append(status);
       const connect = document.getElementById('connect-button');
       connect.disabled = !data.codex.found;
+	  document.getElementById('manual-apply-button').disabled = !data.codex.found;
 	  document.getElementById('repair-history-button').disabled = !data.codex.found;
     }
 
@@ -196,6 +217,31 @@
         window.location.assign(data.connect_url);
       } catch (error) {
         showMessage(error.message, 'error');
+        button.disabled = false;
+      }
+    });
+    document.getElementById('manual-apply-button').addEventListener('click', async () => {
+      const baseURL = document.getElementById('manual-base-url').value.trim();
+      const apiKeyInput = document.getElementById('manual-api-key');
+      const apiKey = apiKeyInput.value.trim();
+      const model = document.getElementById('manual-model').value.trim();
+      if (!baseURL || !apiKey || !model) {
+        showMessage('请完整填写 Base URL、API 密钥和默认模型。', 'error');
+        return;
+      }
+      const button = document.getElementById('manual-apply-button');
+      button.disabled = true;
+      try {
+        const data = await request('/api/apply-manual', {
+          method: 'POST',
+          body: JSON.stringify({ base_url: baseURL, api_key: apiKey, model })
+        });
+        apiKeyInput.value = '';
+        showMessage(data.message, 'success');
+        await refresh();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      } finally {
         button.disabled = false;
       }
     });

@@ -98,6 +98,50 @@ func TestHelperServerRejectsMissingStateAndForeignBaseURL(t *testing.T) {
 	postHelperJSON(t, handler, "/api/apply", helper.state, foreign, http.StatusBadRequest)
 }
 
+func TestHelperServerManualApplySupportsLoopbackAndRejectsRemoteHTTP(t *testing.T) {
+	home := t.TempDir()
+	helper, err := newHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper.detect = func() CodexInstallation {
+		return CodexInstallation{Found: true, Running: true, AppPath: "/test/Codex.app"}
+	}
+	var stopped, started atomic.Int32
+	helper.stop = func(CodexInstallation) error { stopped.Add(1); return nil }
+	helper.start = func(CodexInstallation) error { started.Add(1); return nil }
+	handler := helper.routes()
+
+	body := []byte(`{"base_url":"127.0.0.1:54843/V1","api_key":"local-key","model":"local-codex-model"}`)
+	postHelperJSON(t, handler, "/api/apply-manual", "", body, http.StatusForbidden)
+	response := postHelperJSON(t, handler, "/api/apply-manual", helper.state, body, http.StatusOK)
+	if ok, _ := response["ok"].(bool); !ok {
+		t.Fatalf("manual apply response = %+v", response)
+	}
+	written, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`model = "local-codex-model"`,
+		`name = "Custom API"`,
+		`base_url = "http://127.0.0.1:54843/V1"`,
+	} {
+		if !strings.Contains(string(written), expected) {
+			t.Errorf("manual config is missing %q", expected)
+		}
+	}
+	if stopped.Load() != 1 || started.Load() != 1 {
+		t.Fatalf("manual lifecycle counts = stop %d, start %d", stopped.Load(), started.Load())
+	}
+
+	unsafeBody := []byte(`{"base_url":"http://gateway.example.com/v1","api_key":"remote-key","model":"remote-model"}`)
+	postHelperJSON(t, handler, "/api/apply-manual", helper.state, unsafeBody, http.StatusBadRequest)
+	if stopped.Load() != 1 || started.Load() != 1 {
+		t.Fatal("invalid remote HTTP input unexpectedly restarted Codex")
+	}
+}
+
 func TestHelperServerSelectsSiteAtRuntime(t *testing.T) {
 	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
@@ -175,6 +219,12 @@ func TestHelperIndexRendersUsableSessionState(t *testing.T) {
 	}
 	if !strings.Contains(body, `value="`+defaultXIASSAPIURL+`"`) {
 		t.Fatal("helper index does not render the default XIASS API URL")
+	}
+	if !strings.Contains(body, `id="manual-base-url"`) || !strings.Contains(body, `id="manual-api-key"`) {
+		t.Fatal("helper index does not expose manual API configuration")
+	}
+	if strings.Contains(strings.ToLower(body), "codex++") {
+		t.Fatal("helper index contains an unrelated product name")
 	}
 }
 
