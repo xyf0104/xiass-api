@@ -108,6 +108,38 @@ func TestHistoryDiscoverySkipsUnreadableOptionalDatabase(t *testing.T) {
 	}
 }
 
+func TestSQLiteFileURLFormatsWindowsUnicodePath(t *testing.T) {
+	location := sqliteFileURL(`C:\Users\夏\.codex\state_5.sqlite`)
+	query := location.Query()
+	query.Set("mode", "ro")
+	location.RawQuery = query.Encode()
+	want := "file:///C:/Users/%E5%A4%8F/.codex/state_5.sqlite?mode=ro"
+	if got := location.String(); got != want {
+		t.Fatalf("Windows SQLite URI = %q, want %q", got, want)
+	}
+}
+
+func TestOpenHistoryDatabaseReadOnlySupportsUnicodePath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "中文用户")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(home, "state_5.sqlite")
+	createHistoryDatabase(t, databasePath, map[string]string{"thread-a": legacyProviderID})
+	database, err := openHistoryDatabaseReadOnly(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM threads").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("thread count = %d, want 1", count)
+	}
+}
+
 func TestHistoryRepairRejectsInvalidTarget(t *testing.T) {
 	_, err := NewHistoryRepairer(t.TempDir()).Repair("bad provider\nvalue")
 	if err == nil {

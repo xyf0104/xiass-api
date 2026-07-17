@@ -1328,7 +1328,7 @@ func openHistoryDatabase(path string) (*sql.DB, error) {
 }
 
 func openHistoryDatabaseReadOnly(path string) (*sql.DB, error) {
-	location := url.URL{Scheme: "file", Path: path}
+	location := sqliteFileURL(path)
 	query := location.Query()
 	query.Set("mode", "ro")
 	location.RawQuery = query.Encode()
@@ -1346,6 +1346,21 @@ func openHistoryDatabaseReadOnly(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("read-only open failed: %v; immutable fallback failed: %w", err, fallbackErr)
 	}
 	return fallback, nil
+}
+
+func sqliteFileURL(path string) url.URL {
+	if len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		normalized := strings.ReplaceAll(path, `\`, "/")
+		return url.URL{Scheme: "file", Path: "/" + normalized}
+	}
+	if strings.HasPrefix(path, `\\`) {
+		normalized := strings.TrimPrefix(strings.ReplaceAll(path, `\`, "/"), "//")
+		parts := strings.SplitN(normalized, "/", 2)
+		if len(parts) == 2 {
+			return url.URL{Scheme: "file", Host: parts[0], Path: "/" + parts[1]}
+		}
+	}
+	return url.URL{Scheme: "file", Path: path}
 }
 
 func openHistoryDatabaseDSN(dsn string) (*sql.DB, error) {

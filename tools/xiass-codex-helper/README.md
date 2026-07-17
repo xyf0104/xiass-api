@@ -38,6 +38,8 @@ Before applying a configuration, the helper:
 12. Windows process polling uses native Toolhelp APIs. Remaining PowerShell and
     task-control commands run with no-window flags, preventing repeated console
     flashes during shutdown and launch verification.
+13. SQLite file URIs normalize Windows drive letters and percent-encode Unicode
+    profile paths, including Codex homes under non-ASCII Windows user names.
 
 Restore operations validate the selected backup and create another safety
 backup before replacing the current configuration. The local page also exposes
