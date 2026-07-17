@@ -23,3 +23,13 @@ func TestWindowsCodexExecutableRejectsCommonCLIPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsPackagedExecutableDetection(t *testing.T) {
+	packaged := `C:\Program Files\WindowsApps\OpenAI.Codex_26.707.12708.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe`
+	if !isWindowsPackagedExecutable(packaged) {
+		t.Fatalf("Windows Store Codex path was not detected: %s", packaged)
+	}
+	if isWindowsPackagedExecutable(`C:\Program Files\Codex\Codex.exe`) {
+		t.Fatal("ordinary Codex installation was misclassified as a Store package")
+	}
+}

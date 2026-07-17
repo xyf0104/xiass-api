@@ -123,12 +123,3 @@ jobs:
           echo "$ASSETS" | grep -q 'xiass-codex-helper-windows-x64.exe'
           PRERELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.prerelease')
           test "$PRERELEASE" = "true"
-          LATEST_API_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')
-          case "$LATEST_API_TAG" in
-            v[0-9]*.[0-9]*.[0-9]*)
-              gh release upload "$LATEST_API_TAG" helper-assets/xiass-codex-helper-macos-universal.zip helper-assets/xiass-codex-helper-windows-x64.exe --clobber
-              ;;
-            *)
-              echo "No stable XIASS API release is available for legacy download mirroring"
-              ;;
-          esac

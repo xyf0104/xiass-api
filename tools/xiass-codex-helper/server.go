@@ -235,7 +235,9 @@ func (s *helperServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.operationMu.Lock()
+	if !s.beginOperation(w) {
+		return
+	}
 	defer s.operationMu.Unlock()
 	releaseLifecycle, err := acquireLifecycleLock(filepath.Dir(s.manager.ConfigPath))
 	if err != nil {
@@ -385,7 +387,9 @@ func (s *helperServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	s.operationMu.Lock()
+	if !s.beginOperation(w) {
+		return
+	}
 	defer s.operationMu.Unlock()
 	releaseLifecycle, err := acquireLifecycleLock(filepath.Dir(s.manager.ConfigPath))
 	if err != nil {
@@ -520,7 +524,9 @@ func (s *helperServer) handleRepairHistory(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusForbidden, errors.New("invalid local helper session"))
 		return
 	}
-	s.operationMu.Lock()
+	if !s.beginOperation(w) {
+		return
+	}
 	defer s.operationMu.Unlock()
 	releaseLifecycle, err := acquireLifecycleLock(filepath.Dir(s.manager.ConfigPath))
 	if err != nil {
@@ -635,12 +641,22 @@ func historySummary(result HistoryRepairResult) string {
 	)
 }
 
+func (s *helperServer) beginOperation(w http.ResponseWriter) bool {
+	if s.operationMu.TryLock() {
+		return true
+	}
+	writeError(w, http.StatusConflict, errors.New("another Codex configuration operation is already running"))
+	return false
+}
+
 func (s *helperServer) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	if !s.validState(r) {
 		writeError(w, http.StatusForbidden, errors.New("invalid local helper session"))
 		return
 	}
-	s.operationMu.Lock()
+	if !s.beginOperation(w) {
+		return
+	}
 	defer s.operationMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	go func() {

@@ -30,6 +30,11 @@ Before applying a configuration, the helper:
 10. Records durable repair states, recovers interrupted operations on the next
     run, rolls back configuration/history on failure, and starts Codex only
     after every verification succeeds.
+11. On Windows, Microsoft Store/WindowsApps installations are launched through
+    their registered `shell:AppsFolder` target instead of executing the
+    protected package binary directly. Optional SQLite files that cannot be
+    confirmed as thread-provider databases are skipped; `state_*` databases
+    remain strictly validated.
 
 Restore operations validate the selected backup and create another safety
 backup before replacing the current configuration. The local page also exposes

@@ -1106,9 +1106,37 @@ func discoverHistoryDatabases(codexHome string) ([]string, error) {
 		} else if err != nil {
 			return nil, err
 		}
+		if !isRequiredHistoryDatabase(path) {
+			relevant, err := optionalHistoryDatabaseHasProviderThreads(path)
+			if err != nil || !relevant {
+				continue
+			}
+		}
 		result = append(result, path)
 	}
 	return result, nil
+}
+
+func isRequiredHistoryDatabase(path string) bool {
+	return strings.HasPrefix(strings.ToLower(filepath.Base(path)), "state_")
+}
+
+func optionalHistoryDatabaseHasProviderThreads(path string) (bool, error) {
+	database, err := openHistoryDatabaseReadOnly(path)
+	if err != nil {
+		return false, err
+	}
+	defer database.Close()
+	hasThreads, err := databaseHasTable(database, "threads")
+	if err != nil || !hasThreads {
+		return false, err
+	}
+	columns, err := databaseColumns(database, "threads")
+	if err != nil {
+		return false, err
+	}
+	_, relevant := columns["model_provider"]
+	return relevant, nil
 }
 
 func inspectHistoryDatabase(codexHome, path string, sourceProviders []string) (historyDatabasePlan, bool, error) {

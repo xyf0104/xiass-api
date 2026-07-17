@@ -341,6 +341,30 @@ func TestHelperRejectsConcurrentLifecycleOperationBeforeStoppingCodex(t *testing
 	}
 }
 
+func TestHelperRejectsDuplicateApplyWithoutQueueingRestart(t *testing.T) {
+	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper.detect = func() CodexInstallation {
+		return CodexInstallation{Found: true, Running: true, AppPath: "/test/Codex.app"}
+	}
+	var stopped atomic.Int32
+	helper.stop = func(CodexInstallation) error { stopped.Add(1); return nil }
+	helper.start = func(CodexInstallation) error { return nil }
+	helper.operationMu.Lock()
+	defer helper.operationMu.Unlock()
+
+	body, err := json.Marshal(map[string]string{"base_url": defaultXIASSAPIURL, "api_key": "sk-test-1234567890"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	postHelperJSON(t, helper.routes(), "/api/apply", helper.state, body, http.StatusConflict)
+	if stopped.Load() != 0 {
+		t.Fatal("duplicate apply request reached the Codex lifecycle")
+	}
+}
+
 func TestHelperStopFailureChangesNothing(t *testing.T) {
 	home := t.TempDir()
 	manager := NewConfigManager(home)

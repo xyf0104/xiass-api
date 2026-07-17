@@ -88,6 +88,26 @@ func TestHistoryRepairRejectsCorruptDatabaseBeforeChangingSessions(t *testing.T)
 	}
 }
 
+func TestHistoryDiscoverySkipsUnreadableOptionalDatabase(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "sqlite"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "sqlite", "codex-dev.db"), []byte("not a compatible sqlite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(home, "sqlite", "state_5.sqlite")
+	createHistoryDatabase(t, statePath, map[string]string{"thread-a": legacyProviderID})
+
+	paths, err := discoverHistoryDatabases(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != statePath {
+		t.Fatalf("history databases = %v, want only %s", paths, statePath)
+	}
+}
+
 func TestHistoryRepairRejectsInvalidTarget(t *testing.T) {
 	_, err := NewHistoryRepairer(t.TempDir()).Repair("bad provider\nvalue")
 	if err == nil {

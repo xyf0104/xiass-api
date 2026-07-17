@@ -13,6 +13,7 @@ import (
 )
 
 func detectCodexInstallation() CodexInstallation {
+	launchTargets := windowsCodexLaunchTargets()
 	candidates := make([]string, 0)
 	for _, executable := range runningCodexExecutables() {
 		if isWindowsCodexExecutable(executable) {
@@ -20,7 +21,6 @@ func detectCodexInstallation() CodexInstallation {
 		}
 	}
 	candidates = append(candidates, registeredCodexExecutables()...)
-	candidates = append(candidates, packagedCodexExecutables()...)
 
 	localAppData := os.Getenv("LOCALAPPDATA")
 	programFiles := os.Getenv("ProgramFiles")
@@ -69,6 +69,18 @@ func detectCodexInstallation() CodexInstallation {
 		if !isWindowsCodexExecutable(executable) {
 			continue
 		}
+		if isWindowsPackagedExecutable(executable) {
+			if len(launchTargets) == 0 {
+				continue
+			}
+			return CodexInstallation{
+				AppPath:      "Microsoft Store / WindowsApps",
+				Executable:   executable,
+				LaunchTarget: launchTargets[0],
+				Running:      isWindowsExecutableRunning(executable),
+				Found:        true,
+			}
+		}
 		return CodexInstallation{
 			AppPath:    filepath.Dir(executable),
 			Executable: executable,
@@ -77,7 +89,7 @@ func detectCodexInstallation() CodexInstallation {
 		}
 	}
 
-	for _, launchTarget := range windowsCodexLaunchTargets() {
+	for _, launchTarget := range launchTargets {
 		launchTarget = strings.TrimSpace(launchTarget)
 		if launchTarget == "" {
 			continue
@@ -116,13 +128,8 @@ func registeredCodexExecutables() []string {
 	return windowsPowerShellLines(command)
 }
 
-func packagedCodexExecutables() []string {
-	command := `Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)codex' -or $_.PackageFamilyName -match '(?i)codex' } | ForEach-Object { $package = $_; try { $manifest = $package | Get-AppxPackageManifest -ErrorAction Stop; foreach ($app in @($manifest.Package.Applications.Application)) { if ($app.Executable) { $candidate = Join-Path $package.InstallLocation $app.Executable; if (Test-Path -LiteralPath $candidate) { $candidate } } } } catch {}; if ($package.InstallLocation) { Get-ChildItem -LiteralPath $package.InstallLocation -Filter 'Codex.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } }`
-	return windowsPowerShellLines(command)
-}
-
 func windowsCodexLaunchTargets() []string {
-	command := `Get-StartApps -ErrorAction SilentlyContinue | Where-Object { ($_.Name -match '(?i)codex' -or $_.AppID -match '(?i)codex') -and $_.Name -notmatch '(?i)helper' } | Select-Object -ExpandProperty AppID`
+	command := `$targets = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object { ($_.Name -match '(?i)codex' -or $_.AppID -match '(?i)codex') -and $_.Name -notmatch '(?i)helper' } | Select-Object -ExpandProperty AppID); if ($targets.Count -eq 0) { Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)codex' -or $_.PackageFamilyName -match '(?i)codex' } | ForEach-Object { $package = $_; try { $manifest = $package | Get-AppxPackageManifest -ErrorAction Stop; foreach ($app in @($manifest.Package.Applications.Application)) { if ($app.Id -and $app.Id -notmatch '(?i)helper') { $targets += $package.PackageFamilyName + '!' + $app.Id } } } catch {} } }; $targets | Where-Object { $_ } | Sort-Object -Unique`
 	return windowsPowerShellLines(command)
 }
 
@@ -138,6 +145,19 @@ func selectCodexInstallation() (CodexInstallation, error) {
 	}
 	if !isWindowsCodexExecutable(executable) {
 		return CodexInstallation{}, errors.New("the selected application is not Codex App")
+	}
+	if isWindowsPackagedExecutable(executable) {
+		launchTargets := windowsCodexLaunchTargets()
+		if len(launchTargets) == 0 {
+			return CodexInstallation{}, errors.New("the selected Microsoft Store Codex App has no registered launch target")
+		}
+		return CodexInstallation{
+			AppPath:      "Microsoft Store / WindowsApps",
+			Executable:   executable,
+			LaunchTarget: launchTargets[0],
+			Running:      isWindowsExecutableRunning(executable),
+			Found:        true,
+		}, nil
 	}
 	return CodexInstallation{
 		AppPath:    filepath.Dir(executable),
@@ -193,30 +213,7 @@ func stopCodex(installation CodexInstallation) error {
 	if !installation.Found || (installation.Executable == "" && installation.LaunchTarget == "") {
 		return errors.New("Codex App was not found")
 	}
-	if installation.Executable == "" {
-		processIDs, err := windowsCodexProcessIDsByNameWithError()
-		if err != nil {
-			return fmt.Errorf("could not verify whether Codex is running: %w", err)
-		}
-		if len(processIDs) > 0 {
-			for _, processID := range processIDs {
-				_ = exec.Command("taskkill.exe", "/PID", processID, "/T").Run()
-			}
-			deadline := time.Now().Add(15 * time.Second)
-			for len(processIDs) > 0 && time.Now().Before(deadline) {
-				time.Sleep(250 * time.Millisecond)
-				processIDs, err = windowsCodexProcessIDsByNameWithError()
-				if err != nil {
-					return fmt.Errorf("could not verify that Codex exited: %w", err)
-				}
-			}
-			if len(processIDs) > 0 {
-				return errors.New("Codex did not exit within 15 seconds; configuration is saved but the app was not force-closed")
-			}
-		}
-		return nil
-	}
-	processIDs, err := windowsProcessIDsWithError(installation.Executable)
+	processIDs, err := windowsInstallationProcessIDsWithError(installation)
 	if err != nil {
 		return fmt.Errorf("could not verify whether Codex is running: %w", err)
 	}
@@ -227,7 +224,7 @@ func stopCodex(installation CodexInstallation) error {
 		deadline := time.Now().Add(15 * time.Second)
 		for len(processIDs) > 0 && time.Now().Before(deadline) {
 			time.Sleep(250 * time.Millisecond)
-			processIDs, err = windowsProcessIDsWithError(installation.Executable)
+			processIDs, err = windowsInstallationProcessIDsWithError(installation)
 			if err != nil {
 				return fmt.Errorf("could not verify that Codex exited: %w", err)
 			}
@@ -243,18 +240,18 @@ func startCodex(installation CodexInstallation) error {
 	if !installation.Found || (installation.Executable == "" && installation.LaunchTarget == "") {
 		return errors.New("Codex App was not found")
 	}
-	if installation.Executable == "" {
+	if installation.LaunchTarget != "" {
 		if err := exec.Command("explorer.exe", `shell:AppsFolder\`+installation.LaunchTarget).Start(); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(15 * time.Second)
-		processIDs, statusErr := windowsCodexProcessIDsByNameWithError()
+		processIDs, statusErr := windowsStartedProcessIDsWithError(installation)
 		if statusErr != nil {
 			return fmt.Errorf("could not verify that Codex started: %w", statusErr)
 		}
 		for len(processIDs) == 0 && time.Now().Before(deadline) {
 			time.Sleep(250 * time.Millisecond)
-			processIDs, statusErr = windowsCodexProcessIDsByNameWithError()
+			processIDs, statusErr = windowsStartedProcessIDsWithError(installation)
 			if statusErr != nil {
 				return fmt.Errorf("could not verify that Codex started: %w", statusErr)
 			}
@@ -316,8 +313,26 @@ func windowsCodexProcessIDsByName() []string {
 }
 
 func windowsCodexProcessIDsByNameWithError() ([]string, error) {
-	command := `Get-Process -Name 'Codex' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`
+	command := `Get-Process -Name 'Codex','ChatGPT' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`
 	return runWindowsPowerShellLinesWithError(command)
+}
+
+func windowsInstallationProcessIDsWithError(installation CodexInstallation) ([]string, error) {
+	if installation.Executable != "" {
+		return windowsProcessIDsWithError(installation.Executable)
+	}
+	return windowsCodexProcessIDsByNameWithError()
+}
+
+func windowsStartedProcessIDsWithError(installation CodexInstallation) ([]string, error) {
+	processIDs, err := windowsInstallationProcessIDsWithError(installation)
+	if err == nil && len(processIDs) > 0 {
+		return processIDs, nil
+	}
+	if installation.LaunchTarget == "" {
+		return processIDs, err
+	}
+	return windowsCodexProcessIDsByNameWithError()
 }
 
 func runWindowsPowerShellLinesWithError(command string) ([]string, error) {
@@ -339,6 +354,9 @@ func isWindowsCodexAppRunning() bool {
 
 func isWindowsCodexExecutable(executable string) bool {
 	lower := strings.ToLower(filepath.Clean(executable))
+	if isWindowsPackagedExecutable(executable) {
+		return strings.Contains(lower, "openai.codex_") || strings.Contains(lower, `\codex_`)
+	}
 	if strings.EqualFold(filepath.Base(executable), "Codex.exe") {
 		for _, cliPath := range []string{`\node_modules\`, `\npm\`, `\.cargo\`, `\scoop\apps\`, `\chocolatey\bin\`} {
 			if strings.Contains(lower, cliPath) {
@@ -354,4 +372,9 @@ func isWindowsCodexExecutable(executable string) bool {
 	command := `(Get-Item -LiteralPath '` + escapedPath + `').VersionInfo.ProductName`
 	output := windowsPowerShellLines(command)
 	return len(output) > 0 && strings.Contains(strings.ToLower(strings.Join(output, " ")), "codex")
+}
+
+func isWindowsPackagedExecutable(executable string) bool {
+	lower := strings.ToLower(filepath.Clean(executable))
+	return strings.Contains(lower, `\windowsapps\`)
 }
