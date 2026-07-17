@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.85-0ea5e9" alt="当前版本 v1.0.85" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.86-0ea5e9" alt="当前版本 v1.0.86" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,9 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.85
+> 当前版本：v1.0.86
 
-v1.0.85 完整保留 v1.0.84 的分组容量、OpenAI 调度及全部 XIASS API 二开能力，恢复经过验证的主题背景启动保护：深色或浅色页面刷新时先显示对应主题海报，待动态背景就绪后再显示应用，避免出现相反主题的页面骨架。浅色主题正常效果保持不变，XIASS Codex 配置助手继续独立维护在 v1.0.90。
+v1.0.86 完整保留 v1.0.85 的全部 XIASS API 二开能力，修复 `gpt-image-2` 分辨率档位计费：顾客明确请求 `1K/2K/4K` 时严格按请求档位计费；传入具体尺寸时按请求尺寸归档，其中 `1280x720`、`1536x1024` 等归入 1K；仅在请求为 `auto` 或未指定时读取实际输出图片尺寸，仍无法识别则按 OpenAI 默认 1K。前端、FRP、数据库结构和历史账单均未改动，XIASS Codex 配置助手继续独立维护在 v1.0.90。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

@@ -105,13 +105,20 @@ func (c *openAIImageOutputCounter) addDataArray(data gjson.Result) {
 		if !item.IsObject() {
 			continue
 		}
-		hasImageOutput := strings.TrimSpace(item.Get("url").String()) != "" ||
-			strings.TrimSpace(item.Get("b64_json").String()) != ""
+		result := strings.TrimSpace(item.Get("b64_json").String())
+		if result == "" {
+			result = strings.TrimSpace(item.Get("url").String())
+		}
+		hasImageOutput := result != ""
 		if !hasImageOutput {
 			continue
 		}
 		imageCount++
-		if size := strings.TrimSpace(item.Get("size").String()); size != "" {
+		size := strings.TrimSpace(item.Get("size").String())
+		if actualSize := detectOpenAIImageResultSize(result); actualSize != "" {
+			size = actualSize
+		}
+		if size != "" {
 			sizes = append(sizes, size)
 		}
 	}
@@ -165,6 +172,9 @@ func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		return
 	}
 	size := strings.TrimSpace(item.Get("size").String())
+	if actualSize := detectOpenAIImageResultSize(result); actualSize != "" {
+		size = actualSize
+	}
 	if _, exists := c.seen[key]; exists {
 		if size != "" && strings.TrimSpace(c.seenSizes[key]) == "" {
 			c.seenSizes[key] = size

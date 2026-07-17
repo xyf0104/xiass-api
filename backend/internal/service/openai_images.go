@@ -540,7 +540,10 @@ func isOpenAINativeImageOption(name string) bool {
 }
 
 func normalizeOpenAIImageSizeTier(size string) string {
-	return NormalizeImageBillingTierOrDefault(size)
+	if tier, ok := ClassifyImageBillingTier(size); ok {
+		return tier
+	}
+	return ImageBillingSize1K
 }
 
 func (s *OpenAIGatewayService) ForwardImages(

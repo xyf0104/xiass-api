@@ -87,7 +87,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T
 	require.Equal(t, "gpt-image-2", parsed.Model)
 	require.Equal(t, "replace background", parsed.Prompt)
 	require.Equal(t, "1536x1024", parsed.Size)
-	require.Equal(t, "2K", parsed.SizeTier)
+	require.Equal(t, "1K", parsed.SizeTier)
 	require.Len(t, parsed.Uploads, 1)
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
@@ -145,17 +145,18 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_NormalizesOfficialAndCusto
 		wantTier string
 	}{
 		{size: "1024x1024", wantTier: "1K"},
-		{size: "1536x1024", wantTier: "2K"},
-		{size: "1024x1536", wantTier: "2K"},
+		{size: "1536x1024", wantTier: "1K"},
+		{size: "1024x1536", wantTier: "1K"},
 		{size: "2048x2048", wantTier: "2K"},
 		{size: "2048x1152", wantTier: "2K"},
 		{size: "3840x2160", wantTier: "4K"},
 		{size: "2160x3840", wantTier: "4K"},
 		{size: "1024X768", wantTier: "1K"},
-		{size: "1280x768", wantTier: "2K"},
-		{size: "2560x1440", wantTier: "4K"},
-		{size: "2560x1600", wantTier: "4K"},
-		{size: "auto", wantTier: "2K"},
+		{size: "1280x720", wantTier: "1K"},
+		{size: "1280x768", wantTier: "1K"},
+		{size: "2560x1440", wantTier: "2K"},
+		{size: "2560x1600", wantTier: "2K"},
+		{size: "auto", wantTier: "1K"},
 	}
 
 	svc := &OpenAIGatewayService{}
@@ -189,8 +190,8 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_UnknownSizesDoNotBlockPass
 		{size: "4096x1024", wantTier: "4K"},
 		{size: "3840x1024", wantTier: "4K"},
 		{size: "512x512", wantTier: "1K"},
-		{size: "invalid", wantTier: "2K"},
-		{size: "999999999999999999999999999x2", wantTier: "2K"},
+		{size: "invalid", wantTier: "1K"},
+		{size: "999999999999999999999999999x2", wantTier: "1K"},
 	}
 
 	svc := &OpenAIGatewayService{}

@@ -51,10 +51,13 @@ func ClassifyImageBillingTier(size string) (string, bool) {
 	if height > maxEdge {
 		maxEdge = height
 	}
+	// Billing tiers describe output resolution classes, not aspect-ratio
+	// presets. OpenAI 1K outputs include 1536x1024 landscape/portrait images;
+	// 2K extends to a 2560px long edge. Only larger rasters belong to 4K.
 	switch {
-	case maxEdge <= 1024:
+	case maxEdge <= 1536:
 		return ImageBillingSize1K, true
-	case maxEdge <= 2048:
+	case maxEdge <= 2560:
 		return ImageBillingSize2K, true
 	default:
 		return ImageBillingSize4K, true
@@ -69,11 +72,30 @@ func NormalizeImageBillingTierOrDefault(size string) string {
 }
 
 func ResolveImageBillingSize(inputSize string, outputSizes []string) ImageBillingSizeResolution {
+	return resolveImageBillingSizeWithDefault(inputSize, outputSizes, ImageBillingSize2K, false)
+}
+
+func ResolveOpenAIImageBillingSize(inputSize string, outputSizes []string) ImageBillingSizeResolution {
+	return resolveImageBillingSizeWithDefault(inputSize, outputSizes, ImageBillingSize1K, true)
+}
+
+func resolveImageBillingSizeWithDefault(inputSize string, outputSizes []string, defaultTier string, preferRequestedSize bool) ImageBillingSizeResolution {
 	inputSize = strings.TrimSpace(inputSize)
 	outputSizes = compactTrimmedStrings(outputSizes)
 
 	breakdown := map[string]int{}
 	outputSize := firstDisplayImageOutputSize(outputSizes)
+	if preferRequestedSize {
+		if tier, ok := ClassifyImageBillingTier(inputSize); ok {
+			return ImageBillingSizeResolution{
+				BillingSize: tier,
+				InputSize:   inputSize,
+				OutputSize:  outputSize,
+				Source:      ImageSizeSourceInput,
+			}
+		}
+	}
+
 	outputTier := ""
 	for _, output := range outputSizes {
 		tier, ok := ClassifyImageBillingTier(output)
@@ -105,7 +127,7 @@ func ResolveImageBillingSize(inputSize string, outputSizes []string) ImageBillin
 	}
 
 	return ImageBillingSizeResolution{
-		BillingSize: ImageBillingSize2K,
+		BillingSize: defaultTier,
 		InputSize:   inputSize,
 		OutputSize:  outputSize,
 		Source:      ImageSizeSourceDefault,
@@ -117,14 +139,14 @@ func ApplyOpenAIImageBillingResolution(result *OpenAIForwardResult) {
 		return
 	}
 	inputSize := strings.TrimSpace(result.ImageInputSize)
-	if inputSize == "" && strings.TrimSpace(result.ImageSize) != ImageBillingSize2K {
+	if inputSize == "" {
 		inputSize = strings.TrimSpace(result.ImageSize)
 	}
 	outputSizes := result.ImageOutputSizes
 	if len(outputSizes) == 0 && strings.TrimSpace(result.ImageOutputSize) != "" {
 		outputSizes = []string{result.ImageOutputSize}
 	}
-	resolved := ResolveImageBillingSize(inputSize, outputSizes)
+	resolved := ResolveOpenAIImageBillingSize(inputSize, outputSizes)
 	applyImageBillingResolution(
 		&result.ImageSize,
 		&result.ImageInputSize,
