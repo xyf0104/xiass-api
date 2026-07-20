@@ -232,6 +232,14 @@ func restartCodex(installation CodexInstallation) error {
 	return startCodex(installation)
 }
 
+func prepareCodexOperation() error {
+	command := `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @('CodexPlusPlus','CodexPlusPlusManager','cockpit-tools') } | Stop-Process -ErrorAction Stop`
+	if err := hiddenWindowsCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Run(); err != nil {
+		return fmt.Errorf("could not stop a conflicting Codex manager: %w", err)
+	}
+	return nil
+}
+
 func stopCodex(installation CodexInstallation) error {
 	if !installation.Found || (installation.Executable == "" && installation.LaunchTarget == "") {
 		return errors.New("Codex App was not found")

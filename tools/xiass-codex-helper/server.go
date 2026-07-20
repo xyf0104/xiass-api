@@ -39,6 +39,7 @@ type helperServer struct {
 	shutdownOnce   sync.Once
 	detect         func() CodexInstallation
 	selectApp      func() (CodexInstallation, error)
+	prepare        func() error
 	stop           func(CodexInstallation) error
 	start          func(CodexInstallation) error
 }
@@ -97,6 +98,7 @@ func newHelperServer(manager *ConfigManager, site string, state string) (*helper
 		shutdown:       make(chan struct{}),
 		detect:         detectCodexInstallation,
 		selectApp:      selectCodexInstallation,
+		prepare:        prepareCodexOperation,
 		stop:           stopCodex,
 		start:          startCodex,
 	}, nil
@@ -266,6 +268,10 @@ func (s *helperServer) handleApplyRequest(w http.ResponseWriter, r *http.Request
 	}
 	defer releaseLifecycle()
 
+	if err := s.prepare(); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("无法安全退出会改写会话索引的第三方管理工具：%w", err))
+		return
+	}
 	installation := s.codexInstallation()
 	if err := s.stop(installation); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("Codex could not be stopped safely; no configuration was changed: %w", err))
@@ -422,6 +428,10 @@ func (s *helperServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseLifecycle()
 
+	if err := s.prepare(); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("无法安全退出会改写会话索引的第三方管理工具：%w", err))
+		return
+	}
 	installation := s.codexInstallation()
 	if err := s.stop(installation); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("Codex could not be stopped safely; no configuration was restored: %w", err))
@@ -559,6 +569,10 @@ func (s *helperServer) handleRepairHistory(w http.ResponseWriter, r *http.Reques
 	}
 	defer releaseLifecycle()
 
+	if err := s.prepare(); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("无法安全退出会改写会话索引的第三方管理工具：%w", err))
+		return
+	}
 	installation := s.codexInstallation()
 	if err := s.stop(installation); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("Codex could not be stopped safely; no conversation data was changed: %w", err))
@@ -655,8 +669,13 @@ func configRollbackFailed(err error) bool {
 }
 
 func historySummary(result HistoryRepairResult) string {
+	workspaceSummary := "项目映射校验通过；"
+	if result.WorkspaceState != nil && result.WorkspaceState.Updated {
+		workspaceSummary = fmt.Sprintf("已修复 %d 个项目的路径映射；", result.WorkspaceState.ProjectCount)
+	}
 	return fmt.Sprintf(
-		"已扫描 %d 个会话文件和 %d 个会话数据库，校验 %d 行会话索引，修复 %d 个文件和 %d 行索引；会话数量未减少。",
+		"%s已扫描 %d 个会话文件和 %d 个会话数据库，校验 %d 行会话索引，修复 %d 个文件和 %d 行索引；会话数量未减少。",
+		workspaceSummary,
 		result.ScannedSessionFiles,
 		result.ScannedDatabases,
 		result.ThreadCount,

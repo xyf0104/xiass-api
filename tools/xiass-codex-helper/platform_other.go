@@ -23,6 +23,10 @@ func restartCodex(CodexInstallation) error {
 	return errors.New("automatic Codex restart is currently supported on macOS and Windows")
 }
 
+func prepareCodexOperation() error {
+	return nil
+}
+
 func stopCodex(CodexInstallation) error {
 	return errors.New("automatic Codex shutdown is currently supported on macOS and Windows")
 }

@@ -16,29 +16,32 @@ Before applying a configuration, the helper:
 5. Discovers both legacy `~/.codex/state_5.sqlite` and current
    `~/.codex/sqlite/*` conversation databases.
 6. Creates coherent SHA-256-verified SQLite snapshots that include committed WAL data, and also
-   backs up session metadata, `session_index.jsonl`, and Codex desktop state
-   before repairing history visibility.
+   backs up session metadata, `session_index.jsonl`, Codex desktop state, and
+   workspace mappings before repairing history visibility.
 7. Reuses an existing configured custom provider ID whenever possible. New
    configurations use `codex_local_access`; provider metadata in normal and
    archived rollouts plus compatible `threads.model_provider` columns is
    synchronized to the active provider so every conversation remains visible
    after switching providers.
-8. Preserves unrelated MCP, plugin, project, desktop, and reasoning settings.
-9. Uses atomic file replacement and SQLite transactions, then verifies database
-   integrity, provider consistency, the exact thread-ID sets, and the rollout
-   file set.
-10. Records durable repair states, recovers interrupted operations on the next
+8. Validates project paths and `rootPaths`, repairs malformed macOS workspace
+   mappings that can hide intact conversations from the sidebar, and leaves
+   valid Windows paths unchanged.
+9. Preserves unrelated MCP, plugin, project, desktop, and reasoning settings.
+10. Uses atomic file replacement and SQLite transactions, then verifies database
+   integrity, provider consistency, the exact thread-ID sets, the rollout file
+   set, and workspace mappings.
+11. Records durable repair states, recovers interrupted operations on the next
     run, rolls back configuration/history on failure, and starts Codex only
     after every verification succeeds.
-11. On Windows, Microsoft Store/WindowsApps installations are launched through
+12. On Windows, Microsoft Store/WindowsApps installations are launched through
     their registered `shell:AppsFolder` target instead of executing the
     protected package binary directly. Optional SQLite files that cannot be
     confirmed as thread-provider databases are skipped; `state_*` databases
     remain strictly validated.
-12. Windows process polling uses native Toolhelp APIs. Remaining PowerShell and
+13. Windows process polling uses native Toolhelp APIs. Remaining PowerShell and
     task-control commands run with no-window flags, preventing repeated console
     flashes during shutdown and launch verification.
-13. SQLite file URIs normalize Windows drive letters and percent-encode Unicode
+14. SQLite file URIs normalize Windows drive letters and percent-encode Unicode
     profile paths, including Codex homes under non-ASCII Windows user names.
 
 Restore operations validate the selected backup and create another safety

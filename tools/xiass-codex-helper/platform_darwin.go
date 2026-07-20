@@ -95,6 +95,77 @@ func restartCodex(installation CodexInstallation) error {
 	return startCodex(installation)
 }
 
+func prepareCodexOperation() error {
+	conflicts := []struct {
+		bundleID    string
+		executables []string
+	}{
+		{
+			bundleID: "com.bigpizzav3.codexplusplus",
+			executables: []string{
+				"/Applications/Codex++.app/Contents/MacOS/CodexPlusPlus",
+				filepath.Join(os.Getenv("HOME"), "Applications", "Codex++.app", "Contents", "MacOS", "CodexPlusPlus"),
+			},
+		},
+		{
+			bundleID: "com.bigpizzav3.codexplusplus.manager",
+			executables: []string{
+				"/Applications/Codex++ 管理工具.app/Contents/MacOS/CodexPlusPlusManager",
+				filepath.Join(os.Getenv("HOME"), "Applications", "Codex++ 管理工具.app", "Contents", "MacOS", "CodexPlusPlusManager"),
+			},
+		},
+		{
+			bundleID: "com.jlcodes.cockpit-tools",
+			executables: []string{
+				"/Applications/Cockpit Tools.app/Contents/MacOS/cockpit-tools",
+				filepath.Join(os.Getenv("HOME"), "Applications", "Cockpit Tools.app", "Contents", "MacOS", "cockpit-tools"),
+			},
+		},
+	}
+
+	for _, conflict := range conflicts {
+		running := false
+		for _, executable := range conflict.executables {
+			if executable == "" {
+				continue
+			}
+			matched, err := processStatus(executable)
+			if err != nil {
+				return err
+			}
+			if matched {
+				running = true
+				break
+			}
+		}
+		if !running {
+			continue
+		}
+		if err := exec.Command("osascript", "-e", `tell application id "`+conflict.bundleID+`" to quit`).Run(); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for running && time.Now().Before(deadline) {
+			time.Sleep(250 * time.Millisecond)
+			running = false
+			for _, executable := range conflict.executables {
+				matched, err := processStatus(executable)
+				if err != nil {
+					return err
+				}
+				if matched {
+					running = true
+					break
+				}
+			}
+		}
+		if running {
+			return errors.New("a conflicting Codex manager did not exit within 10 seconds")
+		}
+	}
+	return nil
+}
+
 func stopCodex(installation CodexInstallation) error {
 	if !installation.Found || installation.AppPath == "" {
 		return errors.New("Codex App was not found")

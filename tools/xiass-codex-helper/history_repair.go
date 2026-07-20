@@ -45,14 +45,15 @@ type HistoryRepairer struct {
 }
 
 type HistoryRepairResult struct {
-	TargetProvider      string   `json:"target_provider"`
-	SourceProviders     []string `json:"source_providers,omitempty"`
-	ScannedSessionFiles int      `json:"scanned_session_files"`
-	UpdatedSessionFiles int      `json:"updated_session_files"`
-	ScannedDatabases    int      `json:"scanned_databases"`
-	UpdatedDatabaseRows int64    `json:"updated_database_rows"`
-	ThreadCount         int64    `json:"thread_count"`
-	BackupID            string   `json:"backup_id,omitempty"`
+	TargetProvider      string                      `json:"target_provider"`
+	SourceProviders     []string                    `json:"source_providers,omitempty"`
+	ScannedSessionFiles int                         `json:"scanned_session_files"`
+	UpdatedSessionFiles int                         `json:"updated_session_files"`
+	ScannedDatabases    int                         `json:"scanned_databases"`
+	UpdatedDatabaseRows int64                       `json:"updated_database_rows"`
+	ThreadCount         int64                       `json:"thread_count"`
+	BackupID            string                      `json:"backup_id,omitempty"`
+	WorkspaceState      *WorkspaceStateRepairResult `json:"workspace_state,omitempty"`
 }
 
 type HistoryRepairApplyError struct {
@@ -153,6 +154,10 @@ func (r *HistoryRepairer) Repair(targetProvider string) (HistoryRepairResult, er
 		if err := r.recoverInterruptedOperations(); err != nil {
 			return &HistoryRepairApplyError{Cause: errors.New("an interrupted history repair requires recovery"), RollbackErr: err}
 		}
+		workspaceState, err := repairWorkspaceState(r.CodexHome)
+		if err != nil {
+			return fmt.Errorf("repair Codex workspace state: %w", err)
+		}
 		var sourceProviders []string
 		if targetProvider != legacyProviderID {
 			var err error
@@ -171,6 +176,7 @@ func (r *HistoryRepairer) Repair(targetProvider string) (HistoryRepairResult, er
 			ScannedSessionFiles: plan.ScannedFiles,
 			ScannedDatabases:    len(plan.Databases),
 			ThreadCount:         plan.ThreadCount,
+			WorkspaceState:      &workspaceState,
 		}
 		needsDatabaseUpdate := false
 		for _, database := range plan.Databases {

@@ -14,12 +14,20 @@ import (
 	"time"
 )
 
+func newTestHelperServer(manager *ConfigManager, site, state string) (*helperServer, error) {
+	helper, err := newHelperServer(manager, site, state)
+	if err == nil {
+		helper.prepare = func() error { return nil }
+	}
+	return helper, err
+}
+
 func TestHelperServerApplyAndRestoreFlow(t *testing.T) {
 	manager := NewConfigManager(t.TempDir())
 	if err := os.WriteFile(manager.ConfigPath, []byte(testOriginalConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +92,7 @@ func TestHelperServerApplyAndRestoreFlow(t *testing.T) {
 }
 
 func TestHelperServerRejectsMissingStateAndForeignBaseURL(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +108,7 @@ func TestHelperServerRejectsMissingStateAndForeignBaseURL(t *testing.T) {
 
 func TestHelperServerManualApplySupportsLoopbackAndRejectsRemoteHTTP(t *testing.T) {
 	home := t.TempDir()
-	helper, err := newHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +151,7 @@ func TestHelperServerManualApplySupportsLoopbackAndRejectsRemoteHTTP(t *testing.
 }
 
 func TestHelperServerSelectsSiteAtRuntime(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), "", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +180,7 @@ func TestHelperServerSelectsSiteAtRuntime(t *testing.T) {
 }
 
 func TestHelperServerSelectsCodexAppAtRuntime(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +210,7 @@ func TestHelperServerSelectsCodexAppAtRuntime(t *testing.T) {
 
 func TestHelperIndexRendersUsableSessionState(t *testing.T) {
 	const state = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1"
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), "", state)
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), "", state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +241,7 @@ func TestHelperManualHistoryRepairStopsRepairsAndStarts(t *testing.T) {
 	writeHistoryConfig(t, home, "codex_local_access")
 	session := writeHistoryRollout(t, home, "sessions/rollout-a.jsonl", "xiass", "thread-a")
 	createHistoryDatabase(t, filepath.Join(home, "state_5.sqlite"), map[string]string{"thread-a": "xiass"})
-	helper, err := newHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +275,7 @@ func TestHelperApplyRollsBackConfigWhenHistoryValidationFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "sqlite", "state_5.sqlite"), []byte("corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +309,7 @@ func TestHelperRestoreMissingOriginalConfigAlignsConversationsWithOfficialProvid
 	session := writeHistoryRollout(t, home, "sessions/rollout-a.jsonl", "codex_local_access", "thread-a")
 	databasePath := filepath.Join(home, "state_5.sqlite")
 	createHistoryDatabase(t, databasePath, map[string]string{"thread-a": "codex_local_access"})
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +354,7 @@ experimental_bearer_token = "sk-test-1234567890"
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +377,7 @@ experimental_bearer_token = "sk-test-1234567890"
 func TestHelperRejectsConcurrentLifecycleOperationBeforeStoppingCodex(t *testing.T) {
 	home := t.TempDir()
 	writeHistoryConfig(t, home, "codex_local_access")
-	helper, err := newHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +400,7 @@ func TestHelperRejectsConcurrentLifecycleOperationBeforeStoppingCodex(t *testing
 }
 
 func TestHelperRejectsDuplicateApplyWithoutQueueingRestart(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +434,7 @@ func TestHelperStopFailureChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,8 +470,40 @@ func TestHelperStopFailureChangesNothing(t *testing.T) {
 	}
 }
 
+func TestHelperPrepareFailureChangesNothing(t *testing.T) {
+	home := t.TempDir()
+	manager := NewConfigManager(home)
+	if err := os.WriteFile(manager.ConfigPath, []byte(testOriginalConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper.prepare = func() error { return errors.New("conflicting manager is still running") }
+	var stopped, started atomic.Int32
+	helper.stop = func(CodexInstallation) error { stopped.Add(1); return nil }
+	helper.start = func(CodexInstallation) error { started.Add(1); return nil }
+
+	body := []byte(`{"base_url":"https://gateway.example.com","api_key":"sk-test-1234567890","key_name":"Codex"}`)
+	response := postHelperJSON(t, helper.routes(), "/api/apply", helper.state, body, http.StatusConflict)
+	if stopped.Load() != 0 || started.Load() != 0 {
+		t.Fatalf("prepare failure reached Codex lifecycle: stop=%d start=%d", stopped.Load(), started.Load())
+	}
+	written, err := os.ReadFile(manager.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != testOriginalConfig {
+		t.Fatal("configuration changed after prepare failure")
+	}
+	if message, _ := response["message"].(string); !strings.Contains(message, "第三方管理工具") {
+		t.Fatalf("prepare failure response is unclear: %q", message)
+	}
+}
+
 func TestHelperRetriesCodexLaunchAfterTransientFailure(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +527,7 @@ func TestHelperRetriesCodexLaunchAfterTransientFailure(t *testing.T) {
 func TestHelperDoesNotStartCodexAfterHistoryRollbackFailure(t *testing.T) {
 	home := t.TempDir()
 	writeHistoryConfig(t, home, "codex_local_access")
-	helper, err := newHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(home), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +554,7 @@ func TestHelperDoesNotStartCodexAfterHistoryRollbackFailure(t *testing.T) {
 }
 
 func TestHelperDoesNotStartCodexAfterApplyConfigRollbackFailure(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +587,7 @@ func TestHelperDoesNotStartCodexAfterApplyConfigRollbackFailure(t *testing.T) {
 }
 
 func TestHelperDoesNotStartCodexAfterRestoreConfigRollbackFailure(t *testing.T) {
-	helper, err := newHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(NewConfigManager(t.TempDir()), defaultXIASSAPIURL, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +625,7 @@ func TestHelperApplyRestoresOriginalStateWhenNewStateCannotStart(t *testing.T) {
 	if err := os.WriteFile(manager.ConfigPath, []byte(testOriginalConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,7 +668,7 @@ func TestHelperRestoreReturnsToPreRestoreStateWhenSelectedStateCannotStart(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +715,7 @@ experimental_bearer_token = "sk-old-1234567890"
 	session := writeHistoryRollout(t, home, "sessions/rollout-a.jsonl", "xiass", "thread-a")
 	databasePath := filepath.Join(home, "state_5.sqlite")
 	createHistoryDatabase(t, databasePath, map[string]string{"thread-a": "xiass"})
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -721,7 +761,7 @@ experimental_bearer_token = "sk-old-1234567890"
 	session := writeHistoryRollout(t, home, "sessions/rollout-a.jsonl", "xiass", "thread-a")
 	databasePath := filepath.Join(home, "state_5.sqlite")
 	createHistoryDatabase(t, databasePath, map[string]string{"thread-a": "xiass"})
-	helper, err := newHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
+	helper, err := newTestHelperServer(manager, "https://gateway.example.com", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO1")
 	if err != nil {
 		t.Fatal(err)
 	}
