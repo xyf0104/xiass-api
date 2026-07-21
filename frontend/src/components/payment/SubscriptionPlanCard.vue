@@ -147,7 +147,6 @@ const rateDisplay = computed(() => {
 })
 
 const appStore = useAppStore()
-
 const hasPeakRate = computed(() => groupHasPeakRate(props.plan))
 
 const peakRateDisplay = computed(() => {

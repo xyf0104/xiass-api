@@ -29,7 +29,8 @@ const (
 //   - authorization/x-api-key/cookie 等：上游认证头由账号凭据统一注入，禁止通过覆写篡改或重新引入；
 //   - accept-encoding：强制压缩会破坏网关对上游流式响应（SSE/usage）的解析；
 //   - sec-websocket-*：WebSocket 握手头由拨号器管理（OpenAI WS 模式）；
-//   - session_id/x-claude-code-session-id 等：逐请求会话隔离头，固定值会造成会话串扰。
+//   - session_id/x-claude-code-session-id/x-grok-conv-id 等：逐请求会话隔离头，
+//     固定值会造成会话串扰。
 var headerOverrideBlockedNames = map[string]struct{}{
 	"host":                     {},
 	"content-length":           {},

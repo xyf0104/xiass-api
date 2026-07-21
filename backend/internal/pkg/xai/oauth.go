@@ -303,6 +303,12 @@ func ValidateTrustedBaseURL(raw string) (string, error) {
 	return normalizeKnownBaseURLPath(normalized)
 }
 
+// normalizeKnownBaseURLPath 规范化 base URL 的 path 部分：
+//   - 官方主机固定使用 /v1 前缀（空 path 自动补齐，其余 path 拒绝）；
+//   - 其他主机保留管理员配置的任意 path 前缀（第三方转发地址常见
+//     /xxx/v1 之类的路由前缀），空 path 仍按惯例补 /v1。
+//
+// 所有主机统一禁止 userinfo/query/fragment，并去除尾部斜杠。
 func normalizeKnownBaseURLPath(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

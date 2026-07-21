@@ -131,6 +131,54 @@ describe('UseKeyModal', () => {
     expect(codeBlocks).toContain('$env:XIASS_API_KEY="sk-grok-codex-test"')
   })
 
+  it('renders Claude Code setup through the Grok Messages gateway', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-claude-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const claudeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.claudeCode')
+    )
+    expect(claudeTab).toBeDefined()
+    await claudeTab!.trigger('click')
+    await nextTick()
+
+    let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_BASE_URL="https://example.com"')
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_AUTH_TOKEN="sk-grok-claude-test"')
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_DEFAULT_FABLE_MODEL="grok-4.5"')
+    expect(codeBlocks.join('\n')).toContain('CLAUDE_CODE_SUBAGENT_MODEL="grok-4.5"')
+    const settings = codeBlocks.find((content) => content.includes('"$schema"'))
+    expect(settings).toBeDefined()
+    expect(JSON.parse(settings!).env.ANTHROPIC_MODEL).toBe('grok-4.5')
+    expect(wrapper.text()).toContain('keys.useKeyModal.grok.claudeNote')
+
+    const powershellTab = wrapper.findAll('button').find(
+      (button) => button.text().trim() === 'PowerShell'
+    )
+    expect(powershellTab).toBeDefined()
+    await powershellTab!.trigger('click')
+    await nextTick()
+    codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    expect(codeBlocks.join('\n')).toContain('$env:ANTHROPIC_MODEL="grok-4.5"')
+    expect(wrapper.text()).toContain('%USERPROFILE%\\.claude\\settings.json')
+  })
+
   it('renders GPT-5.5 and goals feature in OpenAI Codex config', () => {
     const wrapper = mount(UseKeyModal, {
       props: {

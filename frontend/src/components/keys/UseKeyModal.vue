@@ -29,11 +29,12 @@
         </p>
 
         <!-- Client Tabs -->
-        <div v-if="clientTabs.length" class="border-b border-gray-200 dark:border-dark-700">
-          <nav class="-mb-px flex space-x-6" aria-label="Client">
+        <div v-if="clientTabs.length" class="overflow-x-auto border-b border-gray-200 dark:border-dark-700">
+          <nav class="-mb-px flex min-w-max gap-4 sm:gap-6" aria-label="Client">
             <button
               v-for="tab in clientTabs"
               :key="tab.id"
+              type="button"
               @click="activeClientTab = tab.id"
               :class="[
                 'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
@@ -51,11 +52,12 @@
         </div>
 
         <!-- OS/Shell Tabs -->
-        <div v-if="showShellTabs" class="border-b border-gray-200 dark:border-dark-700">
-          <nav class="-mb-px flex space-x-4" aria-label="Tabs">
+        <div v-if="showShellTabs" class="overflow-x-auto border-b border-gray-200 dark:border-dark-700">
+          <nav class="-mb-px flex min-w-max gap-4" aria-label="Tabs">
             <button
               v-for="tab in currentTabs"
               :key="tab.id"
+              type="button"
               @click="activeTab = tab.id"
               :class="[
                 'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
@@ -117,10 +119,11 @@
             <div class="bg-gray-900 dark:bg-dark-900 rounded-xl overflow-hidden">
               <!-- Code Header -->
               <div class="flex items-center justify-between px-4 py-2 bg-gray-800 dark:bg-dark-800 border-b border-gray-700 dark:border-dark-700">
-                <span class="text-xs text-gray-400 font-mono">{{ file.path }}</span>
+                <span class="min-w-0 truncate text-xs text-gray-400 font-mono">{{ file.path }}</span>
                 <button
+                  type="button"
                   @click="copyContent(file.content, index)"
-                  class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
+                  class="flex flex-shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
                   :class="copiedIndex === index
                     ? 'bg-green-500/20 text-green-400'
                     : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'"
@@ -331,6 +334,7 @@ const clientTabs = computed((): TabConfig[] => {
     case 'grok':
       return [
         { id: 'grok', label: t('keys.useKeyModal.cliTabs.grokCli'), icon: TerminalIcon },
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
@@ -377,6 +381,9 @@ const platformDescription = computed(() => {
     case 'antigravity':
       return t('keys.useKeyModal.antigravity.description')
     case 'grok':
+      if (activeClientTab.value === 'claude') {
+        return t('keys.useKeyModal.grok.claudeDescription')
+      }
       if (activeClientTab.value === 'codex') {
         return t('keys.useKeyModal.grok.codexDescription')
       }
@@ -402,6 +409,9 @@ const platformNote = computed(() => {
         ? t('keys.useKeyModal.antigravity.claudeNote')
         : t('keys.useKeyModal.antigravity.geminiNote')
     case 'grok':
+      if (activeClientTab.value === 'claude') {
+        return t('keys.useKeyModal.grok.claudeNote')
+      }
       if (activeClientTab.value === 'codex') {
         return activeTab.value === 'windows'
           ? t('keys.useKeyModal.grok.codexNoteWindows')
@@ -491,6 +501,9 @@ const currentFiles = computed((): FileConfig[] => {
       }
       return generateAnthropicFiles(`${baseUrl}/antigravity`, apiKey)
     case 'grok':
+      if (activeClientTab.value === 'claude') {
+        return generateGrokClaudeFiles(baseRoot, apiKey)
+      }
       if (activeClientTab.value === 'codex') {
         return generateGrokCodexFiles(apiBase, apiKey)
       }
@@ -547,6 +560,63 @@ $env:CLAUDE_CODE_ATTRIBUTION_HEADER=0`
   return [
     { path, content },
     { path: vscodeSettingsPath, content: vscodeContent, hint: 'VSCode Claude Code' }
+  ]
+}
+
+function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  const environment = {
+    ANTHROPIC_BASE_URL: baseUrl,
+    ANTHROPIC_AUTH_TOKEN: apiKey,
+    ANTHROPIC_MODEL: 'grok-4.5',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.5',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
+    ANTHROPIC_DEFAULT_FABLE_MODEL: 'grok-4.5',
+    CLAUDE_CODE_SUBAGENT_MODEL: 'grok-4.5',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    CLAUDE_CODE_ATTRIBUTION_HEADER: '0'
+  }
+  let path: string
+  let content: string
+
+  switch (activeTab.value) {
+    case 'unix':
+      path = 'Terminal'
+      content = Object.entries(environment)
+        .map(([name, value]) => `export ${name}="${value}"`)
+        .join('\n')
+      break
+    case 'cmd':
+      path = 'Command Prompt'
+      content = Object.entries(environment)
+        .map(([name, value]) => `set ${name}=${value}`)
+        .join('\n')
+      break
+    case 'powershell':
+      path = 'PowerShell'
+      content = Object.entries(environment)
+        .map(([name, value]) => `$env:${name}="${value}"`)
+        .join('\n')
+      break
+    default:
+      path = 'Terminal'
+      content = ''
+  }
+
+  const settingsPath = activeTab.value === 'unix'
+    ? '~/.claude/settings.json'
+    : '%USERPROFILE%\\.claude\\settings.json'
+
+  return [
+    { path, content },
+    {
+      path: settingsPath,
+      content: JSON.stringify({
+        $schema: 'https://json.schemastore.org/claude-code-settings.json',
+        env: environment
+      }, null, 2),
+      hint: t('keys.useKeyModal.claudeSettingsHint')
+    }
   ]
 }
 

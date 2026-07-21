@@ -18,18 +18,22 @@ import (
 )
 
 type systemHandlerUpdateServiceStub struct {
-	performErr           error
-	updateInfo           *service.UpdateInfo
-	checkErr             error
-	checkForces          []bool
-	performCall          int
-	rollbackCall         int
-	rollbackToCall       int
-	rollbackToVersions   []string
-	rollbackToErr        error
-	rollbackVersions     []service.RollbackVersion
-	rollbackVersionsErr  error
-	rollbackVersionsCall int
+	performErr            error
+	updateInfo            *service.UpdateInfo
+	checkErr              error
+	checkForces           []bool
+	performCall           int
+	performCtxErr         error
+	performHasDeadline    bool
+	rollbackCall          int
+	rollbackToCall        int
+	rollbackToCtxErr      error
+	rollbackToHasDeadline bool
+	rollbackToVersions    []string
+	rollbackToErr         error
+	rollbackVersions      []service.RollbackVersion
+	rollbackVersionsErr   error
+	rollbackVersionsCall  int
 }
 
 func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bool) (*service.UpdateInfo, error) {
@@ -37,8 +41,10 @@ func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bo
 	return s.updateInfo, s.checkErr
 }
 
-func (s *systemHandlerUpdateServiceStub) PerformUpdate(context.Context) error {
+func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) error {
 	s.performCall++
+	s.performCtxErr = ctx.Err()
+	_, s.performHasDeadline = ctx.Deadline()
 	return s.performErr
 }
 
@@ -52,8 +58,10 @@ func (s *systemHandlerUpdateServiceStub) ListRollbackVersions(context.Context) (
 	return s.rollbackVersions, s.rollbackVersionsErr
 }
 
-func (s *systemHandlerUpdateServiceStub) RollbackToVersion(_ context.Context, version string) error {
+func (s *systemHandlerUpdateServiceStub) RollbackToVersion(ctx context.Context, version string) error {
 	s.rollbackToCall++
+	s.rollbackToCtxErr = ctx.Err()
+	_, s.rollbackToHasDeadline = ctx.Deadline()
 	s.rollbackToVersions = append(s.rollbackToVersions, version)
 	return s.rollbackToErr
 }

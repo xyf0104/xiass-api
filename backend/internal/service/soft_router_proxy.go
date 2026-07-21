@@ -390,7 +390,7 @@ func (s *SoftRouterProxyService) InstallFRP(ctx context.Context, input SoftRoute
 	result.Config = *out
 	result.RestartRequired = true
 	if result.Message == "" {
-		result.Message = "FRP 已安装，已保存代理节点配置。请重启或重建当前 Nowind 容器，让新的公网 SOCKS 端口映射生效。"
+		result.Message = "FRP 已安装，已保存代理节点配置。请重启或重建当前 XIASS API 容器，让新的公网 SOCKS 端口映射生效。"
 	}
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}

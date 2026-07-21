@@ -28,7 +28,6 @@ async function bootstrap() {
   if (appStore.siteName && appStore.siteName !== 'XIASS API') {
     document.title = `${appStore.siteName} - AI API Gateway`
   }
-
   await initI18n()
 
   app.use(router)

@@ -8,17 +8,16 @@ import (
 	"strings"
 )
 
-// staticAssetsCacheControl matches deploy/Caddyfile for hashed frontend assets.
-// Vite emits content-hashed filenames under assets/, so long-lived immutable
-// caching is safe without relying on a reverse proxy.
+// Vite emits content-hashed filenames under assets/, so the backend can apply
+// immutable caching without relying on a reverse proxy to classify paths.
 const staticAssetsCacheControl = "public, max-age=31536000, immutable"
 const stableBrandCacheControl = "no-cache"
 
 var viteHashedAssetPattern = regexp.MustCompile(`^assets/(?:.+/)?[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9.]+$`)
 
-// isLongCacheStaticPath reports whether a cleaned URL path (no leading slash)
-// should receive long-lived Cache-Control headers. Aligned with deploy/Caddyfile.
-func isLongCacheStaticPath(cleanPath string) bool {
+// isFingerprintedEmbeddedAssetPath reports whether a cleaned URL path refers to
+// a Vite asset whose filename contains the default eight-character build hash.
+func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
 	return viteHashedAssetPattern.MatchString(cleanPath)
 }

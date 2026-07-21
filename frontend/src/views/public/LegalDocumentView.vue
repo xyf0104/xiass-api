@@ -90,10 +90,10 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import { getPublicSettings } from '@/api/auth'
 import { getLocale } from '@/i18n'
 import { sanitizeUrl } from '@/utils/url'
-import type { LoginAgreementDocument, PublicSettings } from '@/types'
+import { useAppStore } from '@/stores/app'
+import type { LoginAgreementDocument } from '@/types'
 import zhAdminCompliance from '../../../../docs/legal/admin-compliance.zh.md?raw'
 import enAdminCompliance from '../../../../docs/legal/admin-compliance.en.md?raw'
 
@@ -101,8 +101,9 @@ type LegalDocumentIcon = 'document' | 'shield' | 'globe' | 'cog'
 
 const route = useRoute()
 const { t } = useI18n()
-const settings = ref<PublicSettings | null>(null)
-const loading = ref(true)
+const appStore = useAppStore()
+const settings = computed(() => appStore.cachedPublicSettings)
+const loading = ref(!settings.value)
 const loadError = ref(false)
 
 marked.setOptions({
@@ -166,15 +167,12 @@ const documentIcon = computed<LegalDocumentIcon>(() => {
 })
 
 onMounted(async () => {
-  loading.value = true
   loadError.value = false
-  try {
-    settings.value = await getPublicSettings()
-  } catch {
+  const loadedSettings = await appStore.fetchPublicSettings()
+  if (!loadedSettings) {
     loadError.value = true
-  } finally {
-    loading.value = false
   }
+  loading.value = false
 })
 </script>
 

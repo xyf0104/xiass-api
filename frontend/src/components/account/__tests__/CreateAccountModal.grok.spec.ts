@@ -29,12 +29,12 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).not.toContain('grok-sso')
   })
 
-  it('applies validated Grok OAuth upstream config to auth-code and refresh-token creation', () => {
+  it('applies validated Grok OAuth upstream config to auth-code, refresh-token, and SSO creation', () => {
     const validateCalls = source.match(/if \(!validateGrokOAuthUpstreamConfig\(\)\) return/g)
     const applyCalls = source.match(/applyGrokOAuthUpstreamConfig\(credentials\)/g)
 
-    expect(validateCalls).toHaveLength(2)
-    expect(applyCalls).toHaveLength(2)
+    expect(validateCalls).toHaveLength(3)
+    expect(applyCalls).toHaveLength(3)
   })
 
   it('validates the Grok API-key base URL before single or batch creation', () => {
@@ -45,5 +45,17 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).toContain(
       'appStore.showError(t(`admin.accounts.grokCustomBaseUrl.${validationError}`))'
     )
+  })
+
+  it('exposes custom upstream URL and header override for the OAuth create flow', () => {
+    expect(source).toContain('data-testid="grok-custom-base-url-toggle"')
+    expect(source).toContain('data-testid="grok-custom-base-url-input"')
+    expect(source).toContain('form.platform === \'grok\' && isOAuthFlow')
+  })
+
+  it('validates and applies upstream config on all three Grok OAuth create paths', () => {
+    // 授权码兑换 / RT 批量 / SSO 批量 3 处调用（定义为箭头函数，不计入）
+    expect(source.match(/validateGrokOAuthUpstreamConfig\(\)/g)?.length).toBe(3)
+    expect(source.match(/applyGrokOAuthUpstreamConfig\(credentials\)/g)?.length).toBe(3)
   })
 })

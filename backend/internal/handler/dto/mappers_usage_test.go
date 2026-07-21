@@ -274,6 +274,27 @@ func TestUsageLogFromService_IncludesVideoBillingMetadataForUserAndAdmin(t *test
 	}
 }
 
+func TestUsageLogFromService_IncludesLongContextAndImageInputBilling(t *testing.T) {
+	t.Parallel()
+
+	log := &service.UsageLog{
+		RequestID:                 "req_new_billing_metadata",
+		Model:                     "gpt-image-2",
+		LongContextBillingApplied: true,
+		ImageInputTokens:          352,
+		ImageInputCost:            0.002816,
+	}
+
+	userDTO := UsageLogFromService(log)
+	adminDTO := UsageLogFromServiceAdmin(log)
+
+	for _, got := range []*UsageLog{userDTO, &adminDTO.UsageLog} {
+		require.True(t, got.LongContextBillingApplied)
+		require.Equal(t, 352, got.ImageInputTokens)
+		require.InDelta(t, 0.002816, got.ImageInputCost, 1e-12)
+	}
+}
+
 func f64Ptr(value float64) *float64 {
 	return &value
 }

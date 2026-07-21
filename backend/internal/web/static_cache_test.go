@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestIsLongCacheStaticPath(t *testing.T) {
+func TestIsFingerprintedEmbeddedAssetPath(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -34,7 +34,7 @@ func TestIsLongCacheStaticPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, isLongCacheStaticPath(tc.path))
+			assert.Equal(t, tc.want, isFingerprintedEmbeddedAssetPath(tc.path))
 		})
 	}
 }
@@ -42,7 +42,7 @@ func TestIsLongCacheStaticPath(t *testing.T) {
 func TestApplyStaticAssetCacheHeaders(t *testing.T) {
 	t.Parallel()
 
-	t.Run("sets_immutable_cache_for_assets", func(t *testing.T) {
+	t.Run("sets_immutable_cache_for_fingerprinted_asset", func(t *testing.T) {
 		t.Parallel()
 		header := make(http.Header)
 		applyStaticAssetCacheHeaders(header, "assets/index-abc12345.js")
@@ -73,7 +73,7 @@ func TestApplyStaticAssetCacheHeaders(t *testing.T) {
 	t.Run("nil_header_is_noop", func(t *testing.T) {
 		t.Parallel()
 		assert.NotPanics(t, func() {
-			applyStaticAssetCacheHeaders(nil, "assets/x.js")
+			applyStaticAssetCacheHeaders(nil, "assets/index-AbCd1234.js")
 		})
 	})
 }

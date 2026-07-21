@@ -40,6 +40,7 @@ services:
       # System Update Configuration
       # =======================================================================
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
       - XIASS_DEPLOYMENT_MODE=container
       - XIASS_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
       - NOWIND_WATCHTOWER_TOKEN=${XIASS_WATCHTOWER_TOKEN:-${NOWIND_WATCHTOWER_TOKEN:-sub2api-update-token}}
@@ -50,6 +51,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
+      - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE=${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1101-1120}
       - SOFT_ROUTER_PROXY_RAW_PORT_RANGE=${SOFT_ROUTER_PROXY_RAW_PORT_RANGE:-12083-12150}
