@@ -38,7 +38,7 @@ func applyStaticAssetCacheHeaders(header http.Header, cleanPath string) {
 	if header == nil {
 		return
 	}
-	if isLongCacheStaticPath(cleanPath) {
+	if isFingerprintedEmbeddedAssetPath(cleanPath) {
 		header.Set("Cache-Control", staticAssetsCacheControl)
 		return
 	}

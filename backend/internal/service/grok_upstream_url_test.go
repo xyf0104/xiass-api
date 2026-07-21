@@ -129,7 +129,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": xai.DefaultBaseURL,
+				"base_url":                     xai.DefaultBaseURL,
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -144,7 +145,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://us-west-2.api.x.ai/v1",
+				"base_url":                     "https://us-west-2.api.x.ai/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -161,7 +163,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://relay.example.test/v1",
+				"base_url":                     "https://relay.example.test/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -177,7 +180,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://relay.example.test/xai/v1",
+				"base_url":                     "https://relay.example.test/xai/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -192,7 +196,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://relay.example.test/v1",
+				"base_url":                     "https://relay.example.test/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -208,7 +213,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "http://relay.example.test/v1",
+				"base_url":                     "http://relay.example.test/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}
@@ -237,7 +243,8 @@ func TestGrokOAuthURLPolicy(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "http://10.0.0.1/v1",
+				"base_url":                     "http://10.0.0.1/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		_, err := buildGrokResponsesURL(custom, cfg)
@@ -277,7 +284,8 @@ func TestGrokBillingURLFollowsAccountBaseURL(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://relay.example.test/v1",
+				"base_url":                     "https://relay.example.test/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 
@@ -293,7 +301,8 @@ func TestGrokBillingURLFollowsAccountBaseURL(t *testing.T) {
 			Platform: PlatformGrok,
 			Type:     AccountTypeOAuth,
 			Credentials: map[string]any{
-				"base_url": "https://relay.example.test/v1",
+				"base_url":                     "https://relay.example.test/v1",
+				"grok_custom_base_url_enabled": true,
 			},
 		}
 		cfg := &config.Config{}

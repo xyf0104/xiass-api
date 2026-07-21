@@ -22,7 +22,7 @@ import (
 const (
 	grokComposerImageBridgeVisionModel     = "grok-build-0.1"
 	grokComposerImageBridgeMaxOutputTokens = 512
-	grokUpstreamUserAgent                  = "sub2api-grok/1.0"
+	grokUpstreamUserAgent                  = "xiass-api-grok/1.0"
 	grokCLIVersion                         = "0.2.93"
 	grokDefaultResponsesModel              = "grok-4.5"
 	grokRateLimitFallbackCooldown          = 2 * time.Minute
@@ -1004,6 +1004,7 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	if err != nil {
 		return nil, err
 	}
+	ctx = WithHTTPUpstreamRedirectsDisabled(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1011,7 +1012,7 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if account.IsGrokOAuth() {
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
 		applyGrokCLIHeaders(req.Header)
 	}
 	applyGrokCacheHeaders(req.Header, cacheIdentity)

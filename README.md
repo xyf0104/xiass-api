@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.0.87-0ea5e9" alt="当前版本 v1.0.87" />
+    <img src="https://img.shields.io/badge/当前版本-v1.0.88-0ea5e9" alt="当前版本 v1.0.88" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,9 +14,9 @@
   </p>
 </div>
 
-> 当前版本：v1.0.87
+> 当前版本：v1.0.88
 
-v1.0.87 以 v1.0.86 为完整二开基线，融合上游 v0.1.162 的客户端真实 IP 配置、后台异步生图对象存储、Grok 客户端工具缓存、GitHub Token 更新检查、OpenAI/Codex failover 与模型发现修复、Grok 视频代理与配额探测优化、提示词安全审计和更新生命周期改进。XIASS 品牌、动态深浅主题与刷新无白底、人民币价格、批量导入与批量 API Key、FRP/软路由、7 天登录、在线更新和 Codex 配置助手均保持原有行为；数据库迁移只向前追加，现有数据卷和历史安装路径继续兼容。
+v1.0.88 以 v1.0.86 为完整二开基线，融合上游 v0.1.162 的客户端真实 IP 配置、后台异步生图对象存储、Grok 客户端工具缓存、GitHub Token 更新检查、OpenAI/Codex failover 与模型发现修复、Grok 视频代理与配额探测优化、提示词安全审计和更新生命周期改进；同时修复嵌入式静态资源的 Linux 发布构建，并将 Axios 升级到 1.18.0，修复 2026 年 7 月公开的 Node HTTP 代理继承高危漏洞。XIASS 品牌、动态深浅主题与刷新无白底、人民币价格、批量导入与批量 API Key、FRP/软路由、7 天登录、在线更新和 Codex 配置助手均保持原有行为；数据库迁移只向前追加，现有数据卷和历史安装路径继续兼容。
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 

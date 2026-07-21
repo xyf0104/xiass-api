@@ -186,7 +186,7 @@ func TestGetGrokBaseURLRequiresExplicitOAuthEndpointOptIn(t *testing.T) {
 					"base_url": xai.DefaultBaseURL,
 				},
 			},
-			expected: xai.DefaultBaseURL,
+			expected: xai.DefaultCLIBaseURL,
 		},
 		{
 			name: "oauth official API is honored",
@@ -345,7 +345,8 @@ func TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI(t *testing.T) {
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": xai.DefaultBaseURL,
+					"base_url":                     xai.DefaultBaseURL,
+					"grok_custom_base_url_enabled": true,
 				},
 			},
 			expected: xai.DefaultBaseURL,
@@ -356,7 +357,8 @@ func TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI(t *testing.T) {
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": "https://us-west-2.api.x.ai/v1",
+					"base_url":                     "https://us-west-2.api.x.ai/v1",
+					"grok_custom_base_url_enabled": true,
 				},
 			},
 			expected: "https://us-west-2.api.x.ai/v1",
@@ -367,7 +369,8 @@ func TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI(t *testing.T) {
 				Type:     AccountTypeOAuth,
 				Platform: PlatformGrok,
 				Credentials: map[string]any{
-					"base_url": "https://custom.example.com/v1",
+					"base_url":                     "https://custom.example.com/v1",
+					"grok_custom_base_url_enabled": true,
 				},
 			},
 			expected: "https://custom.example.com/v1",
@@ -407,7 +410,8 @@ func TestGetGrokMediaBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides(t *test
 		Type:     AccountTypeOAuth,
 		Platform: PlatformGrok,
 		Credentials: map[string]any{
-			"base_url": "https://custom.example.com/v1",
+			"base_url":                     "https://custom.example.com/v1",
+			"grok_custom_base_url_enabled": true,
 		},
 	}
 
