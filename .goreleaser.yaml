@@ -95,9 +95,6 @@ dockers:
     goarch: amd64
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64"
-      # Unadvertised v1.0.67 and older Watchtower compatibility aliases.
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     extra_files:
@@ -113,9 +110,6 @@ dockers:
     goarch: arm64
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-arm64"
-      # Unadvertised v1.0.67 and older Watchtower compatibility aliases.
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     extra_files:
@@ -173,28 +167,6 @@ docker_manifests:
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-arm64"
-
-  # Keep version and latest on the two legacy GHCR repositories. These aliases
-  # let existing Watchtower deployments cross both repository renames.
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
 
 release:
   github:

@@ -213,14 +213,8 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
             "binary: sub2api",
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-arm64',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-amd64',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}-arm64',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}"',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest"',
-            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}"',
-            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest"',
-            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"',
-            'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"',
         ],
         errors,
     )
@@ -232,10 +226,6 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
             "binary: sub2api",
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:{{ .Version }}',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/nowind-api:latest',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}',
-            'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest',
             'name_template: "XIASS API {{.Version}}"',
             "> 支持 linux/amd64 GHCR 镜像和安装包",
         ],
@@ -251,6 +241,9 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         footer = content.partition("footer: |")[2]
         if "/sub2api:" in footer:
             errors.append(f"{relative} 的公开 Release 文案宣传了旧镜像别名")
+        for legacy_image in ("/sub2api:", "/nowind-api:"):
+            if legacy_image in content:
+                errors.append(f"{relative} 仍会发布旧 GHCR 镜像: {legacy_image}")
 
     require_all(
         ".github/workflows/release.yml",
