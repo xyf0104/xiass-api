@@ -52,7 +52,9 @@ func TestOpenAICluster429RecoveryKeepsSharedDeadline(t *testing.T) {
 	require.Greater(t, time.Until(*account.RateLimitResetAt), 6*24*time.Hour)
 	value, ok := main.openaiAccountRuntimeBlockUntil.Load(account.ID)
 	require.True(t, ok)
-	require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), value.(time.Time), time.Second)
+	until, valid := value.(time.Time)
+	require.True(t, valid)
+	require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), until, time.Second)
 
 	// Advancing the process-local bridge cannot bypass the shared upstream limit.
 	main.openaiAccountRuntimeBlockUntil.Store(account.ID, time.Now().Add(-time.Second))
@@ -92,7 +94,9 @@ func TestOpenAICluster429BridgeScope(t *testing.T) {
 			value, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
 			require.True(t, ok)
 			if tc.capped {
-				require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), value.(time.Time), time.Second)
+				until, valid := value.(time.Time)
+				require.True(t, valid)
+				require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), until, time.Second)
 			} else {
 				require.Equal(t, until, value)
 			}
@@ -134,7 +138,9 @@ func TestOpenAICluster429PersistenceFailureRemainsBounded(t *testing.T) {
 		require.Nil(t, account.RateLimitResetAt)
 		require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 		value, _ := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
-		require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), value.(time.Time), time.Second)
+		until, valid := value.(time.Time)
+		require.True(t, valid)
+		require.WithinDuration(t, time.Now().Add(openAIStopSchedulingBridgeCooldown), until, time.Second)
 		svc.openaiAccountRuntimeBlockUntil.Store(account.ID, time.Now().Add(-time.Second))
 		require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	}

@@ -28,7 +28,9 @@ func TestCodexNormalizations_AllowedToolsPreservedAndAliased(t *testing.T) {
 					body := map[string]any{"model": "gpt-6-astra", "tool_choice": choice,
 						"instructions": "client", "tools": []any{map[string]any{"type": "web_search"}}}
 					if placement == "tools" {
-						body["tools"] = append(body["tools"].([]any), declaration)
+						declared, ok := body["tools"].([]any)
+						require.True(t, ok)
+						body["tools"] = append(declared, declaration)
 					} else {
 						body["input"] = []any{map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{declaration}}}
 					}
@@ -122,7 +124,9 @@ func TestCodexNormalizations_TransformAstraInstructions(t *testing.T) {
 		body := map[string]any{"model": "gpt-6-astra"}
 		result := applyCodexOAuthTransform(body, cli, false)
 		require.NoError(t, result.Error)
-		require.True(t, strings.HasPrefix(body["instructions"].(string), "You are Codex, an agent based on GPT-6."))
+		instructions, ok := body["instructions"].(string)
+		require.True(t, ok)
+		require.True(t, strings.HasPrefix(instructions, "You are Codex, an agent based on GPT-6."))
 	}
 }
 

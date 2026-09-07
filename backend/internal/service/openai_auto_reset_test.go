@@ -497,7 +497,8 @@ func TestOpenAIAutoResetManualHTTPRefusalVersusAmbiguousResult(t *testing.T) {
 				require.ErrorContains(t, err, "no credit was consumed")
 				_, err = quota.ResetCredit(context.Background(), 42)
 				require.ErrorIs(t, err, ErrOpenAIResetCooldown)
-				ledger := s.ledger.(*inMemoryIdempotencyRepo)
+				ledger, ok := s.ledger.(*inMemoryIdempotencyRepo)
+				require.True(t, ok)
 				ledger.mu.Lock()
 				for _, record := range ledger.data {
 					past := time.Now().Add(-time.Second)
