@@ -183,9 +183,15 @@ func ProvideOpenAIQuotaService(
 	tokenProvider *OpenAITokenProvider,
 	privacyClientFactory PrivacyClientFactory,
 	openAIGatewayService *OpenAIGatewayService,
+	settings SettingRepository,
+	ledger IdempotencyRepository,
+	admin *adminServiceImpl,
+	recoverer *RateLimitService,
 ) *OpenAIQuotaService {
 	service := NewOpenAIQuotaService(accountRepo, proxyRepo, tokenProvider, privacyClientFactory)
 	service.agentIdentityWS = openAIGatewayService
+	service.autoReset = &OpenAIAutoResetService{accounts: accountRepo, settings: settings, ledger: ledger, access: admin, quota: service, recoverer: recoverer}
+	service.autoReset.Start()
 	return service
 }
 

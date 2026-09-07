@@ -89,6 +89,7 @@ func newTestApplicationCleanup(inactiveUserCleanup *service.InactiveUserCleanupS
 		&service.SubscriptionService{},
 		oauthSvc,
 		openAIOAuthSvc,
+		nil, // openaiQuota
 		geminiOAuthSvc,
 		antigravityOAuthSvc,
 		nil, // grokOAuth

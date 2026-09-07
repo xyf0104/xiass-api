@@ -179,6 +179,26 @@ func TestOpenAIResetQuota_ResetFailureStopsWorkflow(t *testing.T) {
 	require.Zero(t, recoverer.calls)
 }
 
+func TestOpenAIResetQuota_CoordinatedResultDoesNotRepeatRecovery(t *testing.T) {
+	quota := successfulOpenAIQuotaWorkflowStub()
+	quota.resetResult.PostResetQuota = quota.queryResult
+	recoverer := &openAIAccountStateRecovererStub{}
+	handler := &OpenAIOAuthHandler{adminService: recoveredAccountStub(), quotaService: quota, rateLimitService: recoverer}
+	status, envelope := performOpenAIQuotaResetRequest(t, handler)
+	require.Equal(t, http.StatusOK, status)
+	require.True(t, envelope.Data.AccountStateRecovered)
+	require.True(t, envelope.Data.CacheRefreshed)
+	require.NotNil(t, envelope.Data.Quota)
+	require.NotNil(t, envelope.Data.Account)
+	require.False(t, envelope.Data.Account.Schedulable)
+	require.Zero(t, quota.queryCalls)
+	require.Zero(t, quota.cacheCalls)
+	require.Zero(t, recoverer.calls)
+	encoded, err := json.Marshal(quota.resetResult)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PostResetQuota")
+}
+
 // Account-state recovery is the reason the credit was spent (#3672 / #3740), so it
 // must run before — and independently of — the reset-credit display cache.
 func TestOpenAIResetQuota_RecoversAccountStateBeforeRefreshingCache(t *testing.T) {

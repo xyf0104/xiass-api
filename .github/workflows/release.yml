@@ -177,6 +177,9 @@ jobs:
       - name: Test install download integrity
         run: bash deploy/test-install-download-integrity.sh
 
+      - name: Verify bounded service logs
+        run: sh deploy/test-docker-compose-logging.sh
+
       - name: Test install GitHub authentication isolation
         run: bash deploy/tests/install-github-token-test.sh
 

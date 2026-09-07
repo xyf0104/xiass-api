@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
+vi.mock('../OpenAIAutoResetSettings.vue', () => ({ default: { template: '<div data-testid="auto-reset-settings-stub" />' } }))
+
 const { updateAccountMock, checkMixedChannelRiskMock, syncUpstreamModelsMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
@@ -318,6 +320,19 @@ describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
     syncUpstreamModelsMock.mockReset()
+  })
+
+  it('exposes auto Reset only while editing an OpenAI OAuth parent', async () => {
+    for (const account of [buildAccount(), buildOpenAISetupTokenAccount(), buildOpenAISparkShadowAccount(), buildAntigravityAccount()]) {
+      const wrapper = mountModal(account)
+      expect(wrapper.find('[data-testid="auto-reset-settings-stub"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+    const wrapper = mountModal({ ...buildAccount(), type: 'oauth' })
+    expect(wrapper.find('[data-testid="auto-reset-settings-stub"]').exists()).toBe(true)
+    await wrapper.setProps({ show: false })
+    expect(wrapper.find('[data-testid="auto-reset-settings-stub"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {

@@ -221,6 +221,7 @@ func openAIResponsesNamespaceNames(c *gin.Context) map[string]apicompat.Response
 }
 
 func restoreOpenAIResponsesNamespacePayload(c *gin.Context, payload []byte) ([]byte, error) {
+	payload = restoreCodexToolNamesFromContext(c, payload)
 	names := openAIResponsesNamespaceNames(c)
 	if len(names) == 0 || !json.Valid(payload) {
 		return payload, nil

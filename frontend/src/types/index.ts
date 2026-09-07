@@ -1608,6 +1608,14 @@ export interface CreateAccountRequest {
   confirm_mixed_channel_risk?: boolean
 }
 
+export interface OpenAIAutoResetConfig {
+  enabled: boolean
+  threshold_5h: number
+  threshold_7d: number
+  revision: string
+  pending?: boolean
+}
+
 export interface UpdateAccountRequest {
   name?: string
   notes?: string | null

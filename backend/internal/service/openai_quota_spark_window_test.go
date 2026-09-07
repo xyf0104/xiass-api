@@ -246,6 +246,7 @@ func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *test
 	svc := NewOpenAIQuotaService(repo, nil, nil, newQuotaRedirectingFactory(srv))
 	svc.agentIdentityWS = invalidator
 
+	svc.autoReset = &OpenAIAutoResetService{accounts: repo, access: &resetTestAccounts{}, ledger: newInMemoryIdempotencyRepo(), quota: svc}
 	result, err := svc.ResetCredit(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, "ok", result.Code)
@@ -306,6 +307,7 @@ func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 	t.Cleanup(func() { openAIAgentIdentityAuthAPIBaseURL = oldBase })
 
 	svc := NewOpenAIQuotaService(repo, nil, nil, newQuotaRedirectingFactory(srv))
+	svc.autoReset = &OpenAIAutoResetService{accounts: repo, access: &resetTestAccounts{}, ledger: newInMemoryIdempotencyRepo(), quota: svc}
 	result, err := svc.ResetCredit(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, "ok", result.Code)

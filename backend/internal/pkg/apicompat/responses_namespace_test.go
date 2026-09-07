@@ -73,6 +73,27 @@ func TestFlattenResponsesNamespaces_RejectsFlatNameCollision(t *testing.T) {
 	require.ErrorContains(t, err, "conflicts with a top-level tool")
 }
 
+func TestFlattenResponsesNamespaces_AllowedToolsReferencesFollowAliases(t *testing.T) {
+	for _, mode := range []string{"auto", "required"} {
+		t.Run(mode, func(t *testing.T) {
+			reference := map[string]any{"type": "function", "namespace": "code", "name": "python"}
+			unknown := map[string]any{"type": "function", "namespace": "missing", "name": "python"}
+			choice := map[string]any{"type": "allowed_tools", "mode": mode, "tools": []any{reference, unknown}}
+			req := map[string]any{"tool_choice": choice, "tools": []any{map[string]any{
+				"type": "namespace", "name": "code", "tools": []any{map[string]any{"type": "function", "name": "python"}},
+			}}}
+			_, changed, err := FlattenResponsesNamespaces(req)
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, choice, req["tool_choice"])
+			require.Equal(t, "code__python", reference["name"])
+			require.NotContains(t, reference, "namespace")
+			require.Equal(t, "missing", unknown["namespace"])
+			require.Equal(t, "python", unknown["name"])
+		})
+	}
+}
+
 func TestFlattenResponsesNamespaces_NamespaceGroupChoiceFallsBackToAuto(t *testing.T) {
 	req := map[string]any{
 		"tools": []any{map[string]any{

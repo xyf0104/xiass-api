@@ -38,6 +38,7 @@ type readOnlyUsageStatsRepo struct {
 	err        error
 	starts     []time.Time
 	rangeCalls int
+	rangeErr   error
 }
 
 func (r *readOnlyUsageStatsRepo) GetAccountWindowStats(_ context.Context, _ int64, start time.Time) (*usagestats.AccountStats, error) {
@@ -47,6 +48,9 @@ func (r *readOnlyUsageStatsRepo) GetAccountWindowStats(_ context.Context, _ int6
 
 func (r *readOnlyUsageStatsRepo) GetAccountWindowStatsRange(_ context.Context, _ int64, _, _ time.Time) (*usagestats.AccountStats, error) {
 	r.rangeCalls++
+	if r.rangeErr != nil {
+		return nil, r.rangeErr
+	}
 	if r.rangeStats != nil {
 		return r.rangeStats, r.err
 	}
@@ -272,4 +276,135 @@ func TestOpenAIPassiveUsageMissingWindowsDoesNotCreateWeeklyState(t *testing.T) 
 	require.Equal(t, windowStatsFromAccountStats(stats.stats), usage.FiveHour.WindowStats)
 	require.Len(t, stats.starts, 1)
 	require.Nil(t, account.Extra)
+}
+
+func TestOpenAIPassiveUsageSharedEndpointDoesNotDependOnLocalRangeRead(t *testing.T) {
+	for _, mode := range []string{openAIWeeklyEstimateModeLegacy, openAIWeeklyEstimateModeJoinAverage} {
+		t.Run(mode, func(t *testing.T) {
+			svc, account, stats := readOnlyUsageFixture()
+			state, ok := readOpenAIWeeklyFrozenEstimateState(account.Extra)
+			require.True(t, ok)
+			state.Mode = mode
+			if mode == openAIWeeklyEstimateModeLegacy {
+				state.BaselinePercent, state.BaselineCost = 0, 0
+				state.EstimateUSD = state.SnapshotCost / 0.24
+			}
+			account.Extra[openAIWeeklyEstimateBaselineKey] = openAIWeeklyFrozenEstimateStateUpdate(state)[openAIWeeklyEstimateBaselineKey]
+			account.Extra["codex_7d_used_percent"] = state.SnapshotPercent
+			account.Extra["codex_usage_updated_at"] = state.ObservedAt.Format(time.RFC3339Nano)
+			stats.rangeErr = errors.New("synthetic bounded aggregation unavailable")
+			before, err := json.Marshal(account)
+			require.NoError(t, err)
+
+			usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.NotNil(t, usage.SevenDay.WeeklyEstimateUSD)
+			require.Equal(t, state.EstimateUSD, *usage.SevenDay.WeeklyEstimateUSD)
+			require.Zero(t, stats.rangeCalls, "the owner already saved this exact endpoint")
+			after, err := json.Marshal(account)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+		})
+	}
+}
+
+func TestOpenAIPassiveUsageLocalCacheCannotRebaseSharedState(t *testing.T) {
+	for _, cachedCost := range []float64{0, 100, 120, 900} {
+		t.Run(strconv.FormatFloat(cachedCost, 'f', -1, 64), func(t *testing.T) {
+			svc, account, stats := readOnlyUsageFixture()
+			account.Extra["codex_7d_used_percent"] = 26.4
+			stats.stats.Cost = 150
+			stats.rangeStats = &usagestats.AccountStats{Cost: 140}
+			observed, ok := openAICodexSnapshotObservationAt(account, time.Now())
+			require.True(t, ok)
+			reset, err := parseTime(account.Extra["codex_7d_reset_at"].(string))
+			require.NoError(t, err)
+			svc.storeOpenAIWeeklyEstimateStats(account.ID, reset.Add(-7*24*time.Hour), observed,
+				&usagestats.AccountStats{Cost: cachedCost})
+			before, err := json.Marshal(account)
+			require.NoError(t, err)
+
+			usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.NotNil(t, usage.SevenDay.WeeklyEstimateUSD)
+			require.InDelta(t, 140.0/(26.4-20)*100, *usage.SevenDay.WeeklyEstimateUSD, 1e-9)
+			require.Equal(t, 1, stats.rangeCalls)
+			after, err := json.Marshal(account)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+		})
+	}
+}
+
+func TestOpenAIPassiveUsageKeepsFrozenPercentAcrossResetETAJitter(t *testing.T) {
+	for _, mode := range []string{openAIWeeklyEstimateModeLegacy, openAIWeeklyEstimateModeJoinAverage} {
+		for _, drift := range []time.Duration{19 * time.Second, 36 * time.Second} {
+			t.Run(mode+"/"+drift.String(), func(t *testing.T) {
+				svc, account, stats := readOnlyUsageFixture()
+				state, ok := readOpenAIWeeklyFrozenEstimateState(account.Extra)
+				require.True(t, ok)
+				state.Mode, state.AwaitingInterval = mode, true
+				state.BaselineSource, state.SnapshotCost = "cost_regression", 122
+				if mode == openAIWeeklyEstimateModeLegacy {
+					state.BaselinePercent, state.BaselineCost = 0, 0
+					state.EstimateUSD = state.CompletedCost / 0.24
+				}
+				account.Extra[openAIWeeklyEstimateBaselineKey] = openAIWeeklyFrozenEstimateStateUpdate(state)[openAIWeeklyEstimateBaselineKey]
+				account.Extra["codex_7d_used_percent"] = state.SnapshotPercent
+				account.Extra["codex_7d_reset_at"] = state.ResetAt.Add(drift).Format(time.RFC3339Nano)
+				// A later ETA moves the aggregation's lower bound. That different
+				// range is not evidence that the owner's frozen endpoint regressed.
+				stats.rangeStats = &usagestats.AccountStats{Cost: 100}
+				before, err := json.Marshal(account)
+				require.NoError(t, err)
+
+				usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+				require.NoError(t, err)
+				require.NotNil(t, usage.SevenDay.WeeklyEstimateUSD)
+				require.Equal(t, state.EstimateUSD, *usage.SevenDay.WeeklyEstimateUSD)
+				require.Zero(t, stats.rangeCalls)
+				after, err := json.Marshal(account)
+				require.NoError(t, err)
+				require.JSONEq(t, string(before), string(after))
+			})
+		}
+	}
+}
+
+func TestOpenAIPassiveUsageFrozenPercentStillValidatesScopeAndRegression(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*Account, *readOnlyUsageStatsRepo)
+	}{
+		{"identity changed", func(a *Account, _ *readOnlyUsageStatsRepo) { a.Credentials["chatgpt_account_id"] = "other" }},
+		{"new week", func(a *Account, _ *readOnlyUsageStatsRepo) {
+			a.Extra["codex_7d_reset_at"] = time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339Nano)
+		}},
+		{"old observation", func(a *Account, _ *readOnlyUsageStatsRepo) {
+			a.Extra["codex_usage_updated_at"] = time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano)
+		}},
+		{"missing observation", func(a *Account, _ *readOnlyUsageStatsRepo) { delete(a.Extra, "codex_usage_updated_at") }},
+		{"actual cost regressed", func(_ *Account, r *readOnlyUsageStatsRepo) { r.stats.Cost = 100 }},
+		{"missing baseline", func(a *Account, _ *readOnlyUsageStatsRepo) { delete(a.Extra, openAIWeeklyEstimateBaselineKey) }},
+		{"unknown baseline", func(a *Account, _ *readOnlyUsageStatsRepo) {
+			state, ok := readOpenAIWeeklyFrozenEstimateState(a.Extra)
+			require.True(t, ok)
+			state.Mode, state.HasEstimate = openAIWeeklyEstimateModeUnknown, false
+			a.Extra[openAIWeeklyEstimateBaselineKey] = openAIWeeklyFrozenEstimateStateUpdate(state)[openAIWeeklyEstimateBaselineKey]
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, account, stats := readOnlyUsageFixture()
+			account.Extra["codex_7d_used_percent"] = 25.0
+			tc.change(account, stats)
+			before, err := json.Marshal(account)
+			require.NoError(t, err)
+			usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.Nil(t, usage.SevenDay.WeeklyEstimateUSD)
+			after, err := json.Marshal(account)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+		})
+	}
 }

@@ -107,6 +107,16 @@ func (s *AccountUsageService) applyOpenAIWeeklyEstimateReadOnly(ctx context.Cont
 		progress.WeeklyEstimateUSD = estimate
 		return
 	}
+	// The owner has already frozen this raw percentage. A later observation at
+	// the same percent (including a reset ETA revision) cannot form a new interval.
+	// Do not replace that endpoint with a differently bounded local aggregation.
+	if state, valid := readOpenAIWeeklyFrozenEstimateState(account.Extra); valid &&
+		progress.ResetsAt != nil && state.matches(account.GetCredential("chatgpt_account_id"), *progress.ResetsAt, now) &&
+		!snapshotAt.Before(state.ObservedAt) && progress.Utilization == state.SnapshotPercent &&
+		currentCost >= state.SnapshotCost && state.value() != nil {
+		progress.WeeklyEstimateUSD = state.value()
+		return
+	}
 	rangeReader, ok := s.usageLogRepo.(accountWindowStatsRangeReader)
 	if !ok {
 		return
@@ -115,15 +125,11 @@ func (s *AccountUsageService) applyOpenAIWeeklyEstimateReadOnly(ctx context.Cont
 	if !startAt.Before(snapshotAt) {
 		return
 	}
-	stats := s.cachedOpenAIWeeklyEstimateStats(account.ID, startAt, snapshotAt)
-	if stats == nil {
-		stats, _ = rangeReader.GetAccountWindowStatsRange(ctx, account.ID, startAt, snapshotAt)
-		if stats == nil || !validOpenAIWeeklyEstimateValue(stats.Cost) {
-			return
-		}
-		// Keep the bounded read briefly so the 5h/7d display and a concurrent
-		// passive request do not repeat the same historical aggregation.
-		s.storeOpenAIWeeklyEstimateStats(account.ID, startAt, snapshotAt, stats)
+	// Local cached totals are not bound to shared state revisions. Pairing one
+	// with a newer owner state can falsely signal cost regression/external use.
+	stats, err := rangeReader.GetAccountWindowStatsRange(ctx, account.ID, startAt, snapshotAt)
+	if err != nil || stats == nil || !validOpenAIWeeklyEstimateValue(stats.Cost) {
+		return
 	}
 	estimate, _ := calculateOpenAIWeeklyFrozenEstimate(account, progress, stats.Cost, currentCost, true, snapshotAt)
 	progress.WeeklyEstimateUSD = estimate

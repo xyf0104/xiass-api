@@ -77,6 +77,8 @@ type codexTransformResult struct {
 	Modified        bool
 	NormalizedModel string
 	PromptCacheKey  string
+	ToolNameReverse map[string]string
+	Error           error
 }
 
 type codexOAuthTransformOptions struct {
@@ -238,6 +240,13 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if normalizeCodexTools(reqBody) {
 		result.Modified = true
 	}
+	reverse, aliased, err := aliasOpenAIOAuthReservedToolNames(reqBody)
+	if err != nil {
+		result.Error = err
+		return result
+	}
+	result.ToolNameReverse = reverse
+	result.Modified = result.Modified || aliased
 	if normalizeCodexToolChoice(reqBody) {
 		result.Modified = true
 	}
@@ -320,6 +329,11 @@ func normalizeCodexToolChoice(reqBody map[string]any) bool {
 	}
 	choiceType := strings.TrimSpace(firstNonEmptyString(choiceMap["type"]))
 	if choiceType == "" {
+		return false
+	}
+	if choiceType == "allowed_tools" {
+		// Preserve selection constraints, including malformed ones, for upstream
+		// validation. Replacing them with auto silently widens tool permissions.
 		return false
 	}
 	modified := false

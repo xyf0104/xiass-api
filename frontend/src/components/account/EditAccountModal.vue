@@ -2211,6 +2211,8 @@
         </div>
       </div>
 
+      <OpenAIAutoResetSettings v-if="show && account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow" :key="account.id" :account-id="account.id" />
+
       <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')"
@@ -2720,6 +2722,7 @@
 </template>
 
 <script setup lang="ts">
+import OpenAIAutoResetSettings from './OpenAIAutoResetSettings.vue'
 import { ref, reactive, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'

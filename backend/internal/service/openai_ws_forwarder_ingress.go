@@ -84,6 +84,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if c == nil {
 		return errors.New("gin context is nil")
 	}
+	setCodexToolNameReverse(c, nil)
 	if clientConn == nil {
 		return errors.New("client websocket is nil")
 	}
@@ -910,6 +911,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string) (*OpenAIForwardResult, error) {
+		if account.IsOpenAIOAuth() {
+			aliased, reverse, _, aliasErr := aliasOpenAIOAuthReservedToolNamesBody(payload)
+			if aliasErr != nil {
+				return nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, aliasErr.Error(), aliasErr)
+			}
+			payload = aliased
+			updateCodexToolNameReverseForWSFrame(c, payload, reverse)
+		}
 		responseModelObserver := &upstreamResponseModelObserver{}
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
@@ -1112,10 +1121,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						upstreamMessage = corrected
 					}
 				}
-				replayCollector.AddEvent(eventType, upstreamMessage)
+				clientMessage := restoreCodexToolNamesFromContext(c, upstreamMessage)
+				replayCollector.AddEvent(eventType, clientMessage)
 				// Rewrite only the client-facing copy of capacity-shed errors. The
 				// original payload remains available for account health and billing.
-				clientMessage := upstreamMessage
 				if eventType == "error" || eventType == "response.failed" {
 					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 						clientMessage = rewritten

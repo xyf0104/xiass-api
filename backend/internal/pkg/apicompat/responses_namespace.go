@@ -114,6 +114,14 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		choiceNamespace := strings.TrimSpace(stringValue(choice["name"]))
 		if strings.TrimSpace(stringValue(choice["type"])) == "namespace" && !preserved[choiceNamespace] {
 			req["tool_choice"] = "auto"
+		} else if strings.TrimSpace(stringValue(choice["type"])) == "allowed_tools" {
+			// Selection references must follow the declarations' flattened names.
+			references, _ := choice["tools"].([]any)
+			for _, raw := range references {
+				if reference, ok := raw.(map[string]any); ok && stringValue(reference["type"]) == "function" {
+					rewriteNamespaceQualifiedCall(reference, names)
+				}
+			}
 		} else {
 			rewriteNamespaceQualifiedCall(choice, names)
 		}

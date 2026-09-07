@@ -68,10 +68,10 @@ func TestNormalizedOptions_InvalidFallback(t *testing.T) {
 	if out.Output.FilePath != DefaultContainerLogPath {
 		t.Fatalf("normalized file path = %q", out.Output.FilePath)
 	}
-	if out.Rotation.MaxSizeMB != 100 {
+	if out.Rotation.MaxSizeMB != 10 {
 		t.Fatalf("normalized max_size_mb = %d", out.Rotation.MaxSizeMB)
 	}
-	if out.Rotation.MaxBackups != 10 {
+	if out.Rotation.MaxBackups != 3 {
 		t.Fatalf("normalized max_backups = %d", out.Rotation.MaxBackups)
 	}
 	if out.Rotation.MaxAgeDays != 7 {
@@ -79,6 +79,21 @@ func TestNormalizedOptions_InvalidFallback(t *testing.T) {
 	}
 	if out.Sampling.Initial != 100 || out.Sampling.Thereafter != 100 {
 		t.Fatalf("normalized sampling defaults invalid: %+v", out.Sampling)
+	}
+}
+
+func TestRotationDefaultsAndExplicitOverrides(t *testing.T) {
+	want := RotationOptions{MaxSizeMB: 10, MaxBackups: 3, MaxAgeDays: 7, Compress: true, LocalTime: true}
+	if got := bootstrapOptions().normalized().Rotation; got != want {
+		t.Fatalf("bootstrap rotation = %+v, want %+v", got, want)
+	}
+	for _, rotation := range []RotationOptions{
+		{MaxSizeMB: 100, MaxBackups: 10, MaxAgeDays: 14, Compress: true, LocalTime: true},
+		{MaxSizeMB: 25, MaxBackups: 0, MaxAgeDays: 0, Compress: false, LocalTime: false},
+	} {
+		if got := (InitOptions{Rotation: rotation}).normalized().Rotation; got != rotation {
+			t.Fatalf("explicit rotation changed: got %+v, want %+v", got, rotation)
+		}
 	}
 }
 

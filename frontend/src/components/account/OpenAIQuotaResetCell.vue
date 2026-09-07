@@ -268,6 +268,7 @@ const countButtonTitle = computed(() => {
 
 const truncatedError = computed(() => {
   if (!error.value) return ''
+  if (error.value === t('admin.accounts.autoResetCredit.pending')) return error.value
   return error.value.length > 80 ? `${error.value.slice(0, 80)}…` : error.value
 })
 
@@ -306,10 +307,14 @@ const extractErrorMessage = (e: unknown): string => {
   // back to the raw axios shape for the cancellation/network branches that
   // bypass the flattening, and finally to the generic i18n string.
   const err = e as {
+    code?: string
     message?: string
     reason?: string
-    response?: { data?: { message?: string; error?: string } }
+    response?: { data?: { code?: string; reason?: string; message?: string; error?: string } }
   }
+  const reason = err?.reason || err?.code || err?.response?.data?.reason || err?.response?.data?.code
+  if (reason === 'OPENAI_RESET_PENDING') return t('admin.accounts.autoResetCredit.pending')
+  if (reason === 'OPENAI_RESET_COOLDOWN') return t('admin.accounts.autoResetCredit.cooldown')
   return (
     err?.message ||
     err?.reason ||

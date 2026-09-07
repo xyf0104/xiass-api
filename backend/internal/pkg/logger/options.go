@@ -72,10 +72,10 @@ func (o InitOptions) normalized() InitOptions {
 	}
 	out.Output.FilePath = resolveLogFilePath(out.Output.FilePath)
 	if out.Rotation.MaxSizeMB <= 0 {
-		out.Rotation.MaxSizeMB = 100
+		out.Rotation.MaxSizeMB = 10
 	}
 	if out.Rotation.MaxBackups < 0 {
-		out.Rotation.MaxBackups = 10
+		out.Rotation.MaxBackups = 3
 	}
 	if out.Rotation.MaxAgeDays < 0 {
 		out.Rotation.MaxAgeDays = 7
@@ -114,8 +114,8 @@ func bootstrapOptions() InitOptions {
 			ToFile:   false,
 		},
 		Rotation: RotationOptions{
-			MaxSizeMB:  100,
-			MaxBackups: 10,
+			MaxSizeMB:  10,
+			MaxBackups: 3,
 			MaxAgeDays: 7,
 			Compress:   true,
 			LocalTime:  true,

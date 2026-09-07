@@ -16,6 +16,11 @@ services:
   # Watchtower (For Auto-Updates)
   # ===========================================================================
   watchtower:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: containrrr/watchtower:latest
     container_name: xiass-api-watchtower
     restart: unless-stopped
@@ -36,6 +41,11 @@ services:
   # XIASS API Application
   # ===========================================================================
   xiass-api:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: ghcr.io/xyf0104/xiass-api:latest
     container_name: xiass-api
     restart: unless-stopped
@@ -71,6 +81,24 @@ services:
       # Auto Setup (REQUIRED for Docker deployment)
       # =======================================================================
       - AUTO_SETUP=true
+      # Empty values preserve config.yaml settings and application defaults.
+      - LOG_LEVEL=${LOG_LEVEL:-}
+      - LOG_FORMAT=${LOG_FORMAT:-}
+      - LOG_SERVICE_NAME=${LOG_SERVICE_NAME:-}
+      - LOG_ENV=${LOG_ENV:-}
+      - LOG_CALLER=${LOG_CALLER:-}
+      - LOG_STACKTRACE_LEVEL=${LOG_STACKTRACE_LEVEL:-}
+      - LOG_OUTPUT_TO_STDOUT=${LOG_OUTPUT_TO_STDOUT:-}
+      - LOG_OUTPUT_TO_FILE=${LOG_OUTPUT_TO_FILE:-}
+      - LOG_OUTPUT_FILE_PATH=${LOG_OUTPUT_FILE_PATH:-}
+      - LOG_ROTATION_MAX_SIZE_MB=${LOG_ROTATION_MAX_SIZE_MB:-}
+      - LOG_ROTATION_MAX_BACKUPS=${LOG_ROTATION_MAX_BACKUPS:-}
+      - LOG_ROTATION_MAX_AGE_DAYS=${LOG_ROTATION_MAX_AGE_DAYS:-}
+      - LOG_ROTATION_COMPRESS=${LOG_ROTATION_COMPRESS:-}
+      - LOG_ROTATION_LOCAL_TIME=${LOG_ROTATION_LOCAL_TIME:-}
+      - LOG_SAMPLING_ENABLED=${LOG_SAMPLING_ENABLED:-}
+      - LOG_SAMPLING_INITIAL=${LOG_SAMPLING_INITIAL:-}
+      - LOG_SAMPLING_THEREAFTER=${LOG_SAMPLING_THEREAFTER:-}
       - CONFIG_FILE=${CONFIG_FILE:-}
 
       # =======================================================================
@@ -301,6 +329,11 @@ services:
   # It is reachable only from xiass-api through the same-origin browser proxy.
   # Start explicitly: docker compose --profile team-browser up -d
   team-child-browser:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: lscr.io/linuxserver/chromium:latest
     container_name: xiass-api-team-child-browser
     restart: unless-stopped
@@ -328,6 +361,11 @@ services:
   # Same-origin module operations for the persistent Chromium profile.
   # This service has no published host port and is only reachable by XIASS.
   team-child-automation:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: ${TEAM_CHILD_AUTOMATION_IMAGE:-ghcr.io/xyf0104/xiass-team-child-automation:latest}
     build:
       context: ./team-child-automation
@@ -357,6 +395,11 @@ services:
   # PostgreSQL Database
   # ===========================================================================
   postgres:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: postgres:18-alpine
     container_name: xiass-api-postgres
     restart: unless-stopped
@@ -403,6 +446,11 @@ services:
   # Redis Cache
   # ===========================================================================
   redis:
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     image: redis:8-alpine
     container_name: xiass-api-redis
     restart: unless-stopped

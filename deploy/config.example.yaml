@@ -606,12 +606,15 @@ log:
     # - 否则：/app/data/logs/xiass-api.log
     file_path: ""
   rotation:
-    # Max file size before rotation (MB)
-    # 单文件滚动阈值（MB）
-    max_size_mb: 100
+    # Application file rotation is separate from Docker's 10m / 3-file cap.
+    # Nonempty LOG_ROTATION_* environment values override these settings.
+    # Unset/empty values preserve this file; existing explicit limits are retained.
+    # Max file size before rotation (MiB)
+    # 单文件滚动阈值（MiB）
+    max_size_mb: 10
     # Number of rotated files to keep (0 means unlimited)
     # 保留历史文件数量（0 表示不限制）
-    max_backups: 10
+    max_backups: 3
     # Number of days to keep old log files (0 means unlimited)
     # 历史日志保留天数（0 表示不限制）
     max_age_days: 7

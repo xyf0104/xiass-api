@@ -849,6 +849,22 @@ func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 	postCtx, cancelPost := openAIQuotaResetPostProcessContext(c.Request.Context())
 	defer cancelPost()
 
+	if result.PostResetQuota != nil {
+		// Recovery and the identity-bound refresh already completed under the
+		// shared manual/automatic lock. Do not mutate the account a second time.
+		resetResponse.AccountStateRecovered = true
+		resetResponse.CacheRefreshed = true
+		resetResponse.Quota = result.PostResetQuota
+		account, err := h.adminService.GetAccount(postCtx, accountID)
+		if err != nil {
+			resetResponse.WarningCode = openAIQuotaResetWarningAccountRefreshFailed
+		} else {
+			resetResponse.Account = dto.AccountFromService(account)
+		}
+		response.Success(c, resetResponse)
+		return
+	}
+
 	// Step 1 — unblocking the account is the whole point of consuming a credit
 	// (#3672 / #3740), so it runs FIRST and is never gated on the display cache.
 	// Recovery is DB-only and leaves the manual `schedulable` switch untouched.

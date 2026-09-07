@@ -331,13 +331,22 @@ func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *s
 	return mu
 }
 
-func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, _ string) (uint64, bool) {
+func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, reason string) (uint64, bool) {
 	generation := s.openaiAccountRuntimeBlockSequence.Add(1)
 	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, generation)
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
 		blockUntil = now.Add(openAIStopSchedulingBridgeCooldown)
+	}
+	// A reset on another node clears the shared rate limit, not this process's
+	// memory. Keep only a bounded bridge here; the shared account still enforces
+	// the full upstream deadline after that bridge expires.
+	if account.Platform == PlatformOpenAI && s.cfg != nil && s.cfg.Gateway.ExecutionNode.Enabled &&
+		(reason == "429" || reason == "429_fallback") {
+		if bridgeUntil := now.Add(openAIStopSchedulingBridgeCooldown); blockUntil.After(bridgeUntil) {
+			blockUntil = bridgeUntil
+		}
 	}
 
 	for {

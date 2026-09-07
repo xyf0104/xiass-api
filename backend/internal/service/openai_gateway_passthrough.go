@@ -163,7 +163,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
 		if isOpenAICodexModel(reqModel) && !gjson.GetBytes(body, "instructions").Exists() {
-			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(reqModel))
+			instructionsModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+			if instructionsModel == "" {
+				instructionsModel = reqModel
+			}
+			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(instructionsModel))
 			if setErr != nil {
 				return nil, fmt.Errorf("set passthrough codex instructions: %w", setErr)
 			}
@@ -177,6 +181,13 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
+		aliasedBody, reverse, _, aliasErr := aliasOpenAIOAuthReservedToolNamesBody(body)
+		if aliasErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": aliasErr.Error(), "param": "tools"}})
+			return nil, aliasErr
+		}
+		body = aliasedBody
+		setCodexToolNameReverse(c, reverse)
 		// The Codex upstream always streams normal Responses requests, but the
 		// downstream contract must still follow the client's original stream flag.
 		// Compact is unary by definition and keeps its existing non-stream result.

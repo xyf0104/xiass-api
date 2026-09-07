@@ -8,6 +8,9 @@ import (
 )
 
 type openAIRateLimitResetCreditDetailPayload struct {
+	ID             string `json:"id,omitempty"`
+	CreditID       string `json:"credit_id,omitempty"`
+	CreditIDCamel  string `json:"creditId,omitempty"`
 	ExpiresAt      string `json:"expires_at,omitempty"`
 	ExpiresAtCamel string `json:"expiresAt,omitempty"`
 	ResetType      string `json:"reset_type,omitempty"`
@@ -29,7 +32,11 @@ type openAIRateLimitResetCreditDetails struct {
 	AvailableCreditCount int
 	CreditListPresent    bool
 	Credits              []OpenAIRateLimitResetCreditDetail
+	Candidates           []openAIResetCreditCandidate
 }
+
+// Official credit identifiers never enter public DTOs, account Extra or logs.
+type openAIResetCreditCandidate struct{ ID, ExpiresAt string }
 
 func parseOpenAIRateLimitResetCreditDetails(body []byte) (openAIRateLimitResetCreditDetails, error) {
 	trimmed := bytes.TrimSpace(body)
@@ -64,6 +71,7 @@ func parseOpenAIRateLimitResetCreditDetails(body []byte) (openAIRateLimitResetCr
 	}
 
 	credits := make([]OpenAIRateLimitResetCreditDetail, 0, len(rawCredits))
+	candidates := make([]openAIResetCreditCandidate, 0, len(rawCredits))
 	availableCreditCount := 0
 	for _, raw := range rawCredits {
 		if raw == nil {
@@ -88,12 +96,21 @@ func parseOpenAIRateLimitResetCreditDetails(body []byte) (openAIRateLimitResetCr
 			continue
 		}
 		credits = append(credits, OpenAIRateLimitResetCreditDetail{ExpiresAt: expiresAt})
+		id := strings.TrimSpace(raw.ID)
+		if id == "" {
+			id = strings.TrimSpace(raw.CreditID)
+		}
+		if id == "" {
+			id = strings.TrimSpace(raw.CreditIDCamel)
+		}
+		candidates = append(candidates, openAIResetCreditCandidate{ID: id, ExpiresAt: expiresAt})
 	}
 	return openAIRateLimitResetCreditDetails{
 		AvailableCount:       availableCount,
 		AvailableCreditCount: availableCreditCount,
 		CreditListPresent:    creditListPresent,
 		Credits:              credits,
+		Candidates:           candidates,
 	}, nil
 }
 
