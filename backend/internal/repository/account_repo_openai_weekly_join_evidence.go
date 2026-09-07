@@ -190,7 +190,18 @@ func weeklyJoinCandidate(w weeklyJoinWindow, auditID int64, auditAt time.Time, b
 	if baseline["identity"] != w.identity {
 		return nil
 	}
-	percent, ok := weeklyJoinNumber(baseline["snapshot_percent"])
+	percentValue := baseline["snapshot_percent"]
+	percent, ok := weeklyJoinNumber(percentValue)
+	if !ok {
+		// v13 stored the same aligned endpoint as an integer percent_bucket and
+		// did not yet emit snapshot_percent. Accept only that exact historical
+		// schema; missing percentages in every other version remain unproven.
+		version, versionOK := weeklyJoinNumber(baseline["version"])
+		bucket, bucketOK := weeklyJoinNumber(baseline["percent_bucket"])
+		if versionOK && version == 13 && bucketOK && math.Trunc(bucket) == bucket {
+			percentValue, percent, ok = baseline["percent_bucket"], bucket, true
+		}
+	}
 	if !ok {
 		return nil
 	}
@@ -221,7 +232,7 @@ func weeklyJoinCandidate(w weeklyJoinWindow, auditID int64, auditAt time.Time, b
 	// corroborate it. Never borrow another audit's cost or changed raw percent.
 	rawPercent, ok := weeklyJoinNumber(extra["codex_7d_used_percent"])
 	if !ok || rawPercent != percent || credentials["chatgpt_account_id"] != w.identity ||
-		!weeklyJoinNumbersEqual(extra["codex_7d_used_percent"], baseline["snapshot_percent"]) {
+		!weeklyJoinNumbersEqual(extra["codex_7d_used_percent"], percentValue) {
 		return nil
 	}
 	rawAt := weeklyJoinTime(extra["codex_usage_updated_at"])

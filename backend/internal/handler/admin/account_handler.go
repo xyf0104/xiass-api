@@ -557,8 +557,8 @@ func (h *AccountHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, executionNodeErr)
 		return
 	}
-	// Keep newly added accounts and accounts changed, tested, or used most recently
-	// at the top. Explicit table sorting still takes precedence per request.
+	// Keep OpenAI OAuth plans at the top in the preferred Pro, Team, Plus order,
+	// then use recent activity. Explicit table sorting still takes precedence.
 	sortBy := c.DefaultQuery("sort_by", service.AccountSortRecentActivity)
 	sortOrder := c.DefaultQuery("sort_order", "desc")
 	// 标准化和验证 search 参数

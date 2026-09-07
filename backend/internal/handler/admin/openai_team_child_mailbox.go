@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/redisclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -50,7 +51,9 @@ const (
 	// The mailbox Worker blocks non-browser client signatures with Cloudflare
 	// error 1010. Keep this on the server-side provider client only; it is not
 	// exposed to the browser or copied into user-facing request metadata.
-	teamMailboxProviderUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	teamMailboxProviderUserAgent  = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	teamMailboxSharedConfigPrefix = "v1:"
+	teamMailboxSharedBootstrapTTL = 2 * time.Second
 )
 
 type openAITeamMailboxStore struct {
@@ -155,7 +158,7 @@ func (h *OpenAIOAuthHandler) TeamChildMailboxStatus(c *gin.Context) {
 	if !requireTeamChildAdminSession(c) {
 		return
 	}
-	_, mailboxErr := loadTeamMailboxProviderConfig(c)
+	_, mailboxErr := h.loadTeamMailboxProviderConfig(c)
 	_, browserErr := loadTeamChildBrowserConfig()
 	response.Success(c, gin.H{
 		"configured":         mailboxErr == nil,
@@ -194,7 +197,13 @@ func (h *OpenAIOAuthHandler) ImportTeamChildMailboxConfig(c *gin.Context) {
 		response.BadRequest(c, "邮箱配置无效："+err.Error())
 		return
 	}
-	if err := writeTeamMailboxConfigFile(values); err != nil {
+	shared, err := h.persistTeamMailboxSharedConfig(c.Request.Context(), values)
+	if err != nil {
+		response.InternalError(c, "无法保存集群共享邮箱配置")
+		return
+	}
+	localErr := writeTeamMailboxConfigFile(values)
+	if localErr != nil && !shared {
 		response.InternalError(c, "无法保存邮箱配置，请检查服务器数据目录权限")
 		return
 	}
@@ -203,10 +212,12 @@ func (h *OpenAIOAuthHandler) ImportTeamChildMailboxConfig(c *gin.Context) {
 	// provider configuration without touching an administrator's active session.
 	h.ensureTeamMailboxShareStore().reset()
 	response.Success(c, gin.H{
-		"configured":       true,
-		"auth_mode":        config.authMode,
-		"domain":           config.domain,
-		"restart_required": false,
+		"configured":        true,
+		"cluster_shared":    shared,
+		"auth_mode":         config.authMode,
+		"domain":            config.domain,
+		"local_cache_saved": localErr == nil,
+		"restart_required":  false,
 	})
 }
 
@@ -221,7 +232,7 @@ func (h *OpenAIOAuthHandler) CreateTeamChildMailbox(c *gin.Context) {
 		response.InternalError(c, "team child mailbox service is unavailable")
 		return
 	}
-	provider, err := loadTeamMailboxProviderConfig(c)
+	provider, err := h.loadTeamMailboxProviderConfig(c)
 	if err != nil {
 		response.BadRequest(c, "Team child mailbox is not configured")
 		return
@@ -277,7 +288,7 @@ func (h *OpenAIOAuthHandler) SelectTeamChildMailbox(c *gin.Context) {
 		response.BadRequest(c, "请输入要重新打开的 Team 邮箱")
 		return
 	}
-	provider, err := loadTeamMailboxProviderConfig(c)
+	provider, err := h.loadTeamMailboxProviderConfig(c)
 	if err != nil {
 		response.BadRequest(c, "Team child mailbox is not configured")
 		return
@@ -472,7 +483,141 @@ type teamMailboxConfigValues struct {
 	messagesPath string
 }
 
+type teamMailboxSharedConfigPayload struct {
+	Version      int    `json:"version"`
+	BaseURL      string `json:"base_url"`
+	AuthMode     string `json:"auth_mode"`
+	APIKey       string `json:"api_key"`
+	CustomAuth   string `json:"custom_auth"`
+	Domain       string `json:"domain"`
+	CreatePath   string `json:"create_path"`
+	MessagesPath string `json:"messages_path"`
+}
+
+func (h *OpenAIOAuthHandler) loadTeamMailboxProviderConfig(c *gin.Context) (teamMailboxProviderConfig, error) {
+	return loadTeamMailboxProviderConfigShared(c, h.settingRepo, h.secretEncryptor)
+}
+
+func loadTeamMailboxProviderConfigShared(c *gin.Context, settingRepo service.SettingRepository, encryptor service.SecretEncryptor) (teamMailboxProviderConfig, error) {
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	shared, found, sharedErr := loadTeamMailboxSharedConfig(ctx, settingRepo, encryptor)
+	if sharedErr == nil && found {
+		return validateTeamMailboxProviderConfig(shared)
+	}
+
+	values, err := loadLocalTeamMailboxConfigValues()
+	if err != nil {
+		if sharedErr != nil {
+			return teamMailboxProviderConfig{}, sharedErr
+		}
+		return teamMailboxProviderConfig{}, err
+	}
+	config, err := validateTeamMailboxProviderConfig(values)
+	if err != nil {
+		if sharedErr != nil {
+			return teamMailboxProviderConfig{}, sharedErr
+		}
+		return teamMailboxProviderConfig{}, err
+	}
+	// Existing single-node installations already have a persistent local file.
+	// Publish it lazily after upgrade so the paired node can use the same rules
+	// without asking the administrator to upload the secret a second time.
+	if sharedErr == nil {
+		_, _ = persistTeamMailboxSharedConfig(ctx, settingRepo, encryptor, values)
+	}
+	return config, nil
+}
+
+func loadTeamMailboxSharedConfig(ctx context.Context, settingRepo service.SettingRepository, encryptor service.SecretEncryptor) (teamMailboxConfigValues, bool, error) {
+	if settingRepo == nil || encryptor == nil {
+		return teamMailboxConfigValues{}, false, nil
+	}
+	stored, err := settingRepo.GetValue(ctx, service.SettingKeyTeamChildMailboxConfig)
+	if err != nil {
+		if errors.Is(err, service.ErrSettingNotFound) {
+			return teamMailboxConfigValues{}, false, nil
+		}
+		return teamMailboxConfigValues{}, false, err
+	}
+	ciphertext, ok := strings.CutPrefix(strings.TrimSpace(stored), teamMailboxSharedConfigPrefix)
+	if !ok || ciphertext == "" {
+		return teamMailboxConfigValues{}, false, fmt.Errorf("shared Team mailbox configuration is invalid")
+	}
+	plaintext, err := encryptor.Decrypt(ciphertext)
+	if err != nil {
+		return teamMailboxConfigValues{}, false, fmt.Errorf("decrypt shared Team mailbox configuration: %w", err)
+	}
+	var payload teamMailboxSharedConfigPayload
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil || payload.Version != 1 {
+		return teamMailboxConfigValues{}, false, fmt.Errorf("shared Team mailbox configuration payload is invalid")
+	}
+	return teamMailboxConfigValues{
+		baseURL: payload.BaseURL, authMode: payload.AuthMode, apiKey: payload.APIKey,
+		customAuth: payload.CustomAuth, domain: payload.Domain,
+		createPath: payload.CreatePath, messagesPath: payload.MessagesPath,
+	}, true, nil
+}
+
+func (h *OpenAIOAuthHandler) persistTeamMailboxSharedConfig(ctx context.Context, values teamMailboxConfigValues) (bool, error) {
+	if h == nil {
+		return false, nil
+	}
+	return persistTeamMailboxSharedConfig(ctx, h.settingRepo, h.secretEncryptor, values)
+}
+
+func persistTeamMailboxSharedConfig(ctx context.Context, settingRepo service.SettingRepository, encryptor service.SecretEncryptor, values teamMailboxConfigValues) (bool, error) {
+	if settingRepo == nil || encryptor == nil {
+		return false, nil
+	}
+	payload, err := json.Marshal(teamMailboxSharedConfigPayload{
+		Version: 1, BaseURL: values.baseURL, AuthMode: values.authMode, APIKey: values.apiKey,
+		CustomAuth: values.customAuth, Domain: values.domain,
+		CreatePath: values.createPath, MessagesPath: values.messagesPath,
+	})
+	if err != nil {
+		return false, err
+	}
+	ciphertext, err := encryptor.Encrypt(string(payload))
+	if err != nil {
+		return false, err
+	}
+	if err := settingRepo.Set(ctx, service.SettingKeyTeamChildMailboxConfig, teamMailboxSharedConfigPrefix+ciphertext); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (h *OpenAIOAuthHandler) bootstrapTeamMailboxSharedConfig(parent context.Context) {
+	if h == nil || h.settingRepo == nil || h.secretEncryptor == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, teamMailboxSharedBootstrapTTL)
+	defer cancel()
+	if _, found, err := loadTeamMailboxSharedConfig(ctx, h.settingRepo, h.secretEncryptor); err != nil || found {
+		return
+	}
+	values, err := loadLocalTeamMailboxConfigValues()
+	if err != nil {
+		return
+	}
+	if _, err := validateTeamMailboxProviderConfig(values); err != nil {
+		return
+	}
+	_, _ = persistTeamMailboxSharedConfig(ctx, h.settingRepo, h.secretEncryptor, values)
+}
+
 func loadTeamMailboxProviderConfig(_ *gin.Context) (teamMailboxProviderConfig, error) {
+	values, err := loadLocalTeamMailboxConfigValues()
+	if err != nil {
+		return teamMailboxProviderConfig{}, err
+	}
+	return validateTeamMailboxProviderConfig(values)
+}
+
+func loadLocalTeamMailboxConfigValues() (teamMailboxConfigValues, error) {
 	// Environment variables remain the baseline for existing deployments. A
 	// normalized file written by the admin upload endpoint overrides them and is
 	// stored under the persistent application data directory.
@@ -491,9 +636,9 @@ func loadTeamMailboxProviderConfig(_ *gin.Context) (teamMailboxProviderConfig, e
 		// environment setting.
 		values = persisted
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return teamMailboxProviderConfig{}, err
+		return teamMailboxConfigValues{}, err
 	}
-	return validateTeamMailboxProviderConfig(values)
+	return values, nil
 }
 
 func validateTeamMailboxProviderConfig(values teamMailboxConfigValues) (teamMailboxProviderConfig, error) {

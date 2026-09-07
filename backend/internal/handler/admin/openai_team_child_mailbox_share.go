@@ -680,7 +680,7 @@ func (h *OpenAIOAuthHandler) teamMailboxShareRequestIdentity(c *gin.Context, req
 		return "", 0, false
 	}
 	if requireProvider {
-		provider, providerErr := loadTeamMailboxProviderConfig(c)
+		provider, providerErr := h.loadTeamMailboxProviderConfig(c)
 		if providerErr != nil {
 			response.BadRequest(c, "Team 子号邮箱服务尚未配置")
 			return "", 0, false
@@ -717,7 +717,7 @@ func (h *OpenAIOAuthHandler) teamMailboxShareJSONRequestIdentity(c *gin.Context,
 		return "", 0, false, false
 	}
 	if requireProvider {
-		provider, providerErr := loadTeamMailboxProviderConfig(c)
+		provider, providerErr := h.loadTeamMailboxProviderConfig(c)
 		if providerErr != nil {
 			response.BadRequest(c, "Team 子号邮箱服务尚未配置")
 			return "", 0, false, false
@@ -928,7 +928,7 @@ func (h *OpenAIOAuthHandler) resolvePublicTeamMailboxShare(c *gin.Context) (stri
 			return "", "", teamMailboxProviderConfig{}, false
 		}
 	}
-	provider, err := loadTeamMailboxProviderConfig(c)
+	provider, err := h.loadTeamMailboxProviderConfig(c)
 	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, "邮箱服务暂不可用，请稍后重试")
 		return "", "", teamMailboxProviderConfig{}, false

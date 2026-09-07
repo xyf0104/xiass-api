@@ -533,7 +533,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		teamChildCreationEnabled = *req.TeamChildCreationEnabled
 	}
 	if teamChildCreationEnabled {
-		if _, configErr := loadTeamMailboxProviderConfig(c); configErr != nil {
+		if _, configErr := loadTeamMailboxProviderConfigShared(c, h.teamChildSettingRepo, h.teamChildSecretEncryptor); configErr != nil {
 			response.BadRequest(c, "启用 Team 子号创建前必须先导入有效的 Cloudflare 邮箱配置: "+configErr.Error())
 			return
 		}

@@ -105,6 +105,48 @@ func TestOpenAIWeeklyJoinEvidenceSyntheticOrigins(t *testing.T) {
 	}
 }
 
+func TestOpenAIWeeklyJoinEvidenceAcceptsExplicitV13ImportedEndpoint(t *testing.T) {
+	w := weeklyJoinTestWindow()
+	body := weeklyJoinTestBody(w, 11, true)
+	baseline := weeklyJoinTestBaseline(body)
+	delete(baseline, "snapshot_percent")
+	baseline["version"] = 13
+	baseline["percent_bucket"] = 11
+
+	result := weeklyJoinCandidate(w, 123, w.now, weeklyJoinTestEncode(t, body))
+	require.NotNil(t, result)
+	require.Equal(t, 11.0, result.Percent)
+	require.Equal(t, service.OpenAIWeeklyJoinEvidenceImportedCorroboration, result.Kind)
+}
+
+func TestOpenAIWeeklyJoinEvidenceRejectsUnversionedOrMalformedLegacyPercent(t *testing.T) {
+	w := weeklyJoinTestWindow()
+	for _, tc := range []struct {
+		name    string
+		version any
+		bucket  any
+	}{
+		{name: "missing version", bucket: 11},
+		{name: "wrong version", version: 14, bucket: 11},
+		{name: "missing bucket", version: 13},
+		{name: "fractional bucket", version: 13, bucket: 11.5},
+		{name: "string bucket", version: 13, bucket: "11"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := weeklyJoinTestBody(w, 11, true)
+			baseline := weeklyJoinTestBaseline(body)
+			delete(baseline, "snapshot_percent")
+			if tc.version != nil {
+				baseline["version"] = tc.version
+			}
+			if tc.bucket != nil {
+				baseline["percent_bucket"] = tc.bucket
+			}
+			require.Nil(t, weeklyJoinCandidate(w, 123, w.now, weeklyJoinTestEncode(t, body)))
+		})
+	}
+}
+
 func TestOpenAIWeeklyJoinEvidenceRejectsUnprovenCandidates(t *testing.T) {
 	w := weeklyJoinTestWindow()
 	for _, tc := range []struct {

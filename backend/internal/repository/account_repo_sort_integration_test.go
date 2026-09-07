@@ -67,6 +67,37 @@ func (s *AccountRepoSuite) TestListWithFilters_DefaultRecentActivitySortsBeforeP
 	}
 }
 
+func (s *AccountRepoSuite) TestListWithFilters_DefaultRecentActivityPrioritizesOpenAIOAuthPlans() {
+	base := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	create := func(name, platform, accountType, planType string, activity time.Time) {
+		credentials := map[string]any{}
+		if planType != "" {
+			credentials["plan_type"] = planType
+		}
+		mustCreateAccount(s.T(), s.client, &service.Account{
+			Name: name, Platform: platform, Type: accountType,
+			Credentials: credentials, CreatedAt: activity, UpdatedAt: activity,
+		})
+	}
+
+	create("newest-other", service.PlatformAnthropic, service.AccountTypeOAuth, "", base.Add(6*time.Hour))
+	create("openai-free", service.PlatformOpenAI, service.AccountTypeOAuth, "free", base.Add(5*time.Hour))
+	create("openai-plus", service.PlatformOpenAI, service.AccountTypeOAuth, "plus", base.Add(4*time.Hour))
+	create("openai-team", service.PlatformOpenAI, service.AccountTypeOAuth, "team", base.Add(3*time.Hour))
+	create("openai-pro", service.PlatformOpenAI, service.AccountTypeOAuth, "pro", base.Add(2*time.Hour))
+	create("openai-api-key", service.PlatformOpenAI, service.AccountTypeAPIKey, "", base.Add(time.Hour))
+
+	accounts, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{
+		Page: 1, PageSize: 10, SortBy: service.AccountSortRecentActivity, SortOrder: pagination.SortOrderDesc,
+	}, "", "", "", "", 0, "")
+	s.Require().NoError(err)
+	s.Require().Len(accounts, 6)
+	want := []string{"openai-pro", "openai-team", "openai-plus", "openai-free", "newest-other", "openai-api-key"}
+	for index, name := range want {
+		s.Require().Equal(name, accounts[index].Name)
+	}
+}
+
 func (s *AccountRepoSuite) TestListWithFilters_SortByPriorityDesc() {
 	mustCreateAccount(s.T(), s.client, &service.Account{Name: "low-priority", Priority: 10})
 	mustCreateAccount(s.T(), s.client, &service.Account{Name: "high-priority", Priority: 90})

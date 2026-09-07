@@ -866,9 +866,9 @@ type AccountSortState = {
   sort_by: string
   sort_order: AccountSortOrder
 }
-// Every visit starts with newly added or recently changed/used accounts first.
-// Header sorting remains available for the current visit, but is intentionally not
-// persisted so an older local preference cannot hide recent account activity.
+// Every visit starts with the server's account-management order: OpenAI OAuth
+// Pro, Team, Plus first, then recent activity. Header sorting remains available
+// for the current visit and is intentionally not persisted.
 const sortState = reactive<AccountSortState>({ sort_by: 'recent_activity', sort_order: 'desc' })
 
 // Auto refresh settings

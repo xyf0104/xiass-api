@@ -108,8 +108,9 @@ func (a *Account) requestProxyURL() string {
 	return ""
 }
 
-// AccountSortRecentActivity orders account-management rows by the newest
-// created_at, updated_at, or last_used_at value before pagination.
+// AccountSortRecentActivity is the account-management landing order. OpenAI
+// OAuth plans are grouped Pro, Team, Plus first, then recent activity is used
+// before pagination. Explicit column sorting remains independent.
 const AccountSortRecentActivity = "recent_activity"
 
 type OpenAIEndpointCapability string

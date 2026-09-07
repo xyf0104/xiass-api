@@ -121,6 +121,9 @@ func (s *AccountUsageService) applyOpenAIWeeklyEstimateReadOnly(ctx context.Cont
 		if stats == nil || !validOpenAIWeeklyEstimateValue(stats.Cost) {
 			return
 		}
+		// Keep the bounded read briefly so the 5h/7d display and a concurrent
+		// passive request do not repeat the same historical aggregation.
+		s.storeOpenAIWeeklyEstimateStats(account.ID, startAt, snapshotAt, stats)
 	}
 	estimate, _ := calculateOpenAIWeeklyFrozenEstimate(account, progress, stats.Cost, currentCost, true, snapshotAt)
 	progress.WeeklyEstimateUSD = estimate

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -16,10 +17,31 @@ import (
 
 	redis "github.com/Wei-Shaw/sub2api/internal/pkg/redisclient"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type teamMailboxConfigSettingRepo struct {
+	service.SettingRepository
+	values map[string]string
+}
+
+func (r *teamMailboxConfigSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if value, ok := r.values[key]; ok {
+		return value, nil
+	}
+	return "", service.ErrSettingNotFound
+}
+
+func (r *teamMailboxConfigSettingRepo) Set(_ context.Context, key, value string) error {
+	if r.values == nil {
+		r.values = make(map[string]string)
+	}
+	r.values[key] = value
+	return nil
+}
 
 func setupTeamMailboxTestHandler(t *testing.T, provider http.HandlerFunc) (*OpenAIOAuthHandler, *gin.Engine) {
 	t.Helper()
@@ -451,6 +473,9 @@ func TestImportTeamChildMailboxConfigStoresSecretServerSide(t *testing.T) {
 	t.Setenv("TEAM_CHILD_MAIL_CONFIG_FILE", configPath)
 	gin.SetMode(gin.TestMode)
 	handler := &OpenAIOAuthHandler{teamMailboxStore: newOpenAITeamMailboxStore()}
+	settingRepo := &teamMailboxConfigSettingRepo{values: make(map[string]string)}
+	handler.ConfigureTeamChildSecrets(teamMailboxShareTestEncryptor{})
+	handler.ConfigureTeamChildSharedSettings(settingRepo)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
@@ -473,6 +498,7 @@ func TestImportTeamChildMailboxConfigStoresSecretServerSide(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotContains(t, rec.Body.String(), "server-secret")
+	require.Contains(t, rec.Body.String(), `"cluster_shared":true`)
 	stored, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(stored), `TEAM_CHILD_MAIL_API_KEY="server-secret"`)
@@ -482,6 +508,60 @@ func TestImportTeamChildMailboxConfigStoresSecretServerSide(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://mail.example.test", loaded.baseURL.String())
 	require.Equal(t, "server-secret", loaded.apiKey)
+
+	sharedCiphertext := settingRepo.values[service.SettingKeyTeamChildMailboxConfig]
+	require.NotEmpty(t, sharedCiphertext)
+	require.NotContains(t, sharedCiphertext, "server-secret")
+
+	// A paired node with no local mailbox file reads the encrypted provider
+	// configuration from the same database settings row.
+	t.Setenv("TEAM_CHILD_MAIL_CONFIG_FILE", filepath.Join(t.TempDir(), "missing.env"))
+	paired := &OpenAIOAuthHandler{}
+	paired.ConfigureTeamChildSecrets(teamMailboxShareTestEncryptor{})
+	paired.ConfigureTeamChildSharedSettings(settingRepo)
+	shared, err := paired.loadTeamMailboxProviderConfig(nil)
+	require.NoError(t, err)
+	require.Equal(t, "https://mail.example.test", shared.baseURL.String())
+	require.Equal(t, "server-secret", shared.apiKey)
+
+	pairedRouter := gin.New()
+	pairedRouter.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
+		c.Set(string(middleware.ContextKeyUserRole), "admin")
+		c.Next()
+	})
+	pairedRouter.GET("/status", paired.TeamChildMailboxStatus)
+	statusRec := httptest.NewRecorder()
+	pairedRouter.ServeHTTP(statusRec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	require.Equal(t, http.StatusOK, statusRec.Code)
+	require.Contains(t, statusRec.Body.String(), `"configured":true`)
+}
+
+func TestTeamMailboxBootstrapPublishesExistingLocalConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "team-child-mail.env")
+	t.Setenv("TEAM_CHILD_MAIL_CONFIG_FILE", configPath)
+	require.NoError(t, os.WriteFile(configPath, []byte(strings.Join([]string{
+		`TEAM_CHILD_MAIL_API_BASE="https://mail.example.test"`,
+		`TEAM_CHILD_MAIL_AUTH_MODE="x-api-key"`,
+		`TEAM_CHILD_MAIL_API_KEY="bootstrap-secret"`,
+		`TEAM_CHILD_MAIL_CUSTOM_AUTH=""`,
+		`TEAM_CHILD_MAIL_DOMAIN="example.test"`,
+		`TEAM_CHILD_MAIL_CREATE_PATH="/api/new_address"`,
+		`TEAM_CHILD_MAIL_MESSAGES_PATH="/api/mails"`,
+	}, "\n")), 0o600))
+
+	repo := &teamMailboxConfigSettingRepo{values: make(map[string]string)}
+	handler := &OpenAIOAuthHandler{}
+	handler.ConfigureTeamChildSecrets(teamMailboxShareTestEncryptor{})
+	handler.ConfigureTeamChildSharedSettings(repo)
+
+	stored := repo.values[service.SettingKeyTeamChildMailboxConfig]
+	require.NotEmpty(t, stored)
+	require.NotContains(t, stored, "bootstrap-secret")
+	loaded, found, err := loadTeamMailboxSharedConfig(context.Background(), repo, teamMailboxShareTestEncryptor{})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "bootstrap-secret", loaded.apiKey)
 }
 
 func TestTeamChildMailboxRedisStoreEnforcesOwnerAcrossHandlers(t *testing.T) {

@@ -63,6 +63,8 @@ type SettingHandler struct {
 	totpService              *service.TotpService
 	userService              *service.UserService
 	pixlabSMSService         *service.PixlabSMSService
+	teamChildSettingRepo     service.SettingRepository
+	teamChildSecretEncryptor service.SecretEncryptor
 }
 
 // NewSettingHandler 创建系统设置处理器
@@ -103,6 +105,13 @@ func (h *SettingHandler) SetStepUpDeps(totpService *service.TotpService, userSer
 // expanding the long-standing constructor used throughout handler tests.
 func (h *SettingHandler) SetPixlabSMSService(pixlabSMSService *service.PixlabSMSService) {
 	h.pixlabSMSService = pixlabSMSService
+}
+
+// SetTeamChildSharedSettings lets either paired node validate the encrypted
+// shared mailbox provider before enabling the Team child workflow.
+func (h *SettingHandler) SetTeamChildSharedSettings(settingRepo service.SettingRepository, encryptor service.SecretEncryptor) {
+	h.teamChildSettingRepo = settingRepo
+	h.teamChildSecretEncryptor = encryptor
 }
 
 // GetSettings 获取所有系统设置

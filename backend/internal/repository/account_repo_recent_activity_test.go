@@ -19,6 +19,20 @@ func TestAccountRecentActivitySortExpressionIncludesEveryActivityTimestamp(t *te
 	)
 }
 
+func TestAccountManagementPlanRankExpressionPrioritizesOpenAIOAuthPlans(t *testing.T) {
+	expression := accountManagementPlanRankExpression("platform", "type", "credentials")
+
+	require.Contains(t, expression, "LOWER(BTRIM(platform)) = 'openai'")
+	require.Contains(t, expression, "LOWER(BTRIM(type)) = 'oauth'")
+	require.Contains(t, expression, "credentials ->> 'plan_type'")
+	pro := strings.Index(expression, "WHEN 'pro' THEN 0")
+	team := strings.Index(expression, "WHEN 'team' THEN 1")
+	plus := strings.Index(expression, "WHEN 'plus' THEN 2")
+	require.GreaterOrEqual(t, pro, 0)
+	require.Greater(t, team, pro)
+	require.Greater(t, plus, team)
+}
+
 func TestAccountRecentActivityOrderIsAppliedBeforeDatabasePagination(t *testing.T) {
 	table := entsql.Table("accounts")
 	table.SetDialect(dialect.Postgres)
@@ -42,6 +56,8 @@ func TestAccountRecentActivityOrderIsAppliedBeforeDatabasePagination(t *testing.
 	require.Contains(t, query, `"accounts"."created_at"`)
 	require.Contains(t, query, `"accounts"."updated_at"`)
 	require.Contains(t, query, `COALESCE("accounts"."last_used_at", "accounts"."created_at")`)
+	require.Contains(t, query, `"accounts"."credentials" ->> 'plan_type'`)
+	require.Less(t, strings.Index(query, "CASE WHEN"), strings.Index(query, "GREATEST"))
 	require.Contains(t, query, `"accounts"."id" DESC`)
 	require.Less(t, strings.Index(query, "ORDER BY"), strings.Index(query, "LIMIT"))
 	require.Less(t, strings.Index(query, "LIMIT"), strings.Index(query, "OFFSET"))

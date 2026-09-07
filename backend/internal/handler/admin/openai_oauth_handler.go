@@ -26,6 +26,7 @@ type OpenAIOAuthHandler struct {
 	secretEncryptor          service.SecretEncryptor
 	quotaService             openAIQuotaService
 	rateLimitService         openAIAccountStateRecoverer
+	settingRepo              service.SettingRepository
 	teamMailboxStore         *openAITeamMailboxStore
 	teamMailboxShareStore    *openAITeamMailboxShareStore
 	teamMailboxShareRegistry *openAITeamMailboxShareRegistry
@@ -38,6 +39,16 @@ type OpenAIOAuthHandler struct {
 func (h *OpenAIOAuthHandler) ConfigureTeamChildSecrets(encryptor service.SecretEncryptor) {
 	if h != nil {
 		h.secretEncryptor = encryptor
+	}
+}
+
+// ConfigureTeamChildSharedSettings attaches the database-backed configuration
+// store shared by paired execution nodes. Provider credentials remain encrypted
+// and are never returned by an admin status endpoint.
+func (h *OpenAIOAuthHandler) ConfigureTeamChildSharedSettings(settingRepo service.SettingRepository) {
+	if h != nil {
+		h.settingRepo = settingRepo
+		h.bootstrapTeamMailboxSharedConfig(context.Background())
 	}
 }
 

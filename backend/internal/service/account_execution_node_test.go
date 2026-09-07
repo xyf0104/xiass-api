@@ -53,6 +53,28 @@ func TestApplyExecutionNodeForCreateOverridesImportedAccountProxy(t *testing.T) 
 	require.Equal(t, int64(84), *gotProxyID)
 }
 
+func TestTeamChildCreateBelongsToTheNodeThatAcceptsOAuth(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
+		Enabled:        true,
+		ID:             "api2",
+		DefaultProxyID: 83,
+	}
+	foreignProxyID := int64(84)
+
+	extra, proxyID := applyExecutionNodeForCreate(cfg, map[string]any{
+		OpenAITeamChildExtraKey:      true,
+		OpenAITeamChildEmailExtraKey: "team1004@example.test",
+		AccountExecutionNodeExtraKey: "api",
+	}, &foreignProxyID)
+
+	require.Equal(t, true, extra[OpenAITeamChildExtraKey])
+	require.Equal(t, "team1004@example.test", extra[OpenAITeamChildEmailExtraKey])
+	require.Equal(t, "api2", extra[AccountExecutionNodeExtraKey])
+	require.NotNil(t, proxyID)
+	require.Equal(t, int64(83), *proxyID)
+}
+
 func TestPreserveExecutionNodeOnUpdateRejectsReplacementAndClear(t *testing.T) {
 	account := &Account{Extra: map[string]any{
 		AccountExecutionNodeExtraKey: "api",

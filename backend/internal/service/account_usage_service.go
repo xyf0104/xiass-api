@@ -640,8 +640,14 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 		if observedAt, ok := openAICodexSnapshotObservationAt(account, now); ok {
 			info.UpdatedAt = &observedAt
 		}
-		s.addOpenAIWindowStats(ctx, account, info, now)
-		applyPersistedOpenAIWeeklyEstimate(account, info.SevenDay, now)
+		// Passive execution-node views use the same aligned estimator as the
+		// active owner, but keep the calculation in memory so a read-only node
+		// never mutates the account state. This also lets a newer 1% endpoint be
+		// displayed before the owner has persisted its next snapshot.
+		if stats := s.addOpenAIWindowStats(ctx, account, info, now); stats != nil &&
+			openAIWeeklyPassiveObservationIsOrdered(account, info.SevenDay, now) {
+			s.applyOpenAIWeeklyEstimateReadOnly(ctx, account, info.SevenDay, stats, now)
+		}
 		return info, nil
 	}
 	if !supportsAnthropicPassiveUsage(account) {
@@ -894,37 +900,30 @@ func (s *AccountUsageService) addOpenAIWindowStats(ctx context.Context, account 
 	return nil
 }
 
-// Display only a matching persisted estimate. Do not calculate, migrate or
-// advance the estimator state while reading another execution node's account.
-func applyPersistedOpenAIWeeklyEstimate(account *Account, progress *UsageProgress, now time.Time) {
-	if account == nil || progress == nil || progress.WindowStats == nil ||
-		!validOpenAIWeeklyEstimateValue(progress.Utilization) || !validOpenAIWeeklyEstimateValue(progress.WindowStats.Cost) {
-		return
+// Passive recalculation is allowed only for a provider snapshot that is at
+// least as new as the saved state. A stale replica must not turn an old 100%
+// response, or a reused timestamp with a different percentage, into a new
+// displayed result.
+func openAIWeeklyPassiveObservationIsOrdered(account *Account, progress *UsageProgress, now time.Time) bool {
+	if account == nil || progress == nil {
+		return false
+	}
+	observedAt, ok := openAICodexSnapshotObservationAt(account, now)
+	if !ok {
+		return false
 	}
 	resetAt := time.Time{}
 	if progress.ResetsAt != nil {
 		resetAt = progress.ResetsAt.UTC()
 	}
-	observedAt, observedOK := openAICodexSnapshotObservationAt(account, now)
-	if !observedOK {
-		return
+	state, stateOK := readOpenAIWeeklyFrozenEstimateState(account.Extra)
+	if !stateOK || !state.matches(account.GetCredential("chatgpt_account_id"), resetAt, now) {
+		return true
 	}
-	state, ok := readOpenAIWeeklyFrozenEstimateState(account.Extra)
-	if ok && (!state.matches(account.GetCredential("chatgpt_account_id"), resetAt, now) ||
-		(!state.ObservedAt.IsZero() && observedAt.Before(state.ObservedAt))) {
-		return
+	if !state.ObservedAt.IsZero() && observedAt.Before(state.ObservedAt) {
+		return false
 	}
-	if progress.Utilization >= 100 {
-		exact := progress.WindowStats.Cost
-		progress.WeeklyEstimateUSD = &exact
-		return
-	}
-	if !ok ||
-		state.PercentBucket != openAIWeeklyEstimatePercentBucket(progress.Utilization) ||
-		state.SnapshotCost > progress.WindowStats.Cost+openAIWeeklyEstimateEpsilon {
-		return
-	}
-	progress.WeeklyEstimateUSD = state.value()
+	return !observedAt.Equal(state.ObservedAt) || progress.Utilization == state.SnapshotPercent
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {

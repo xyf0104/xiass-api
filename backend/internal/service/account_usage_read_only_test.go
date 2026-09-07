@@ -16,8 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every unimplemented method panics, including all writes, error clearing,
-// snapshot persistence and estimator range reads.
+// Every unimplemented method panics, including all writes, error clearing and
+// snapshot persistence. The bounded estimator read is implemented explicitly
+// because passive views must recalculate from the latest aligned 1% endpoint.
 type readOnlyUsageAccountRepo struct {
 	AccountRepository
 	account *Account
@@ -32,13 +33,23 @@ func (r *readOnlyUsageAccountRepo) GetByID(_ context.Context, id int64) (*Accoun
 
 type readOnlyUsageStatsRepo struct {
 	UsageLogRepository
-	stats  *usagestats.AccountStats
-	err    error
-	starts []time.Time
+	stats      *usagestats.AccountStats
+	rangeStats *usagestats.AccountStats
+	err        error
+	starts     []time.Time
+	rangeCalls int
 }
 
 func (r *readOnlyUsageStatsRepo) GetAccountWindowStats(_ context.Context, _ int64, start time.Time) (*usagestats.AccountStats, error) {
 	r.starts = append(r.starts, start)
+	return r.stats, r.err
+}
+
+func (r *readOnlyUsageStatsRepo) GetAccountWindowStatsRange(_ context.Context, _ int64, _, _ time.Time) (*usagestats.AccountStats, error) {
+	r.rangeCalls++
+	if r.rangeStats != nil {
+		return r.rangeStats, r.err
+	}
 	return r.stats, r.err
 }
 
@@ -58,11 +69,13 @@ func readOnlyUsageFixture() (*AccountUsageService, *Account, *readOnlyUsageStats
 		RateLimitResetAt: &resetAt,
 		Credentials:      map[string]any{"access_token": "test-token", "chatgpt_account_id": state.Identity},
 		Extra: map[string]any{
-			"codex_5h_used_percent":                        12.5,
-			"codex_5h_reset_at":                            now.Add(time.Hour).Format(time.RFC3339Nano),
-			"codex_7d_used_percent":                        25.4,
-			"codex_7d_reset_at":                            resetAt.Format(time.RFC3339Nano),
-			"codex_usage_updated_at":                       state.ObservedAt.Format(time.RFC3339Nano),
+			"codex_5h_used_percent": 12.5,
+			"codex_5h_reset_at":     now.Add(time.Hour).Format(time.RFC3339Nano),
+			"codex_7d_used_percent": 25.4,
+			"codex_7d_reset_at":     resetAt.Format(time.RFC3339Nano),
+			// The current provider observation is newer than the persisted endpoint;
+			// passive rendering must be able to calculate the next completed 1%.
+			"codex_usage_updated_at":                       now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
 			"openai_oauth_responses_websockets_v2_enabled": true,
 			openAIWeeklyEstimateBaselineKey:                openAIWeeklyFrozenEstimateStateUpdate(state)[openAIWeeklyEstimateBaselineKey],
 		},
@@ -124,7 +137,7 @@ func TestOpenAIPassiveUsageReadsSharedSnapshotWithoutUpstreamOrWrites(t *testing
 	}
 }
 
-func TestOpenAIPassiveUsageOnlyDisplaysMatchingPersistedEstimate(t *testing.T) {
+func TestOpenAIPassiveUsageRejectsInvalidOrReorderedEstimateState(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		change func(*Account, *readOnlyUsageStatsRepo)
@@ -132,7 +145,6 @@ func TestOpenAIPassiveUsageOnlyDisplaysMatchingPersistedEstimate(t *testing.T) {
 		{"no state", func(a *Account, _ *readOnlyUsageStatsRepo) { delete(a.Extra, openAIWeeklyEstimateBaselineKey) }},
 		{"identity changed", func(a *Account, _ *readOnlyUsageStatsRepo) { a.Credentials["chatgpt_account_id"] = "another-account" }},
 		{"percentage regressed", func(a *Account, _ *readOnlyUsageStatsRepo) { a.Extra["codex_7d_used_percent"] = 24.9 }},
-		{"owner estimate pending", func(a *Account, _ *readOnlyUsageStatsRepo) { a.Extra["codex_7d_used_percent"] = 26.0 }},
 		{"cost regressed", func(_ *Account, r *readOnlyUsageStatsRepo) { r.stats.Cost = 100 }},
 		{"expired window", func(a *Account, _ *readOnlyUsageStatsRepo) {
 			a.Extra["codex_7d_reset_at"] = time.Now().Add(-time.Hour).Format(time.RFC3339Nano)
@@ -165,6 +177,75 @@ func TestOpenAIPassiveUsageOnlyDisplaysMatchingPersistedEstimate(t *testing.T) {
 			require.JSONEq(t, string(before), string(after))
 		})
 	}
+}
+
+func TestOpenAIPassiveUsageRecalculatesEveryCompletedPercentWithoutWriting(t *testing.T) {
+	tests := []struct {
+		name         string
+		percent      float64
+		cost         float64
+		wantEstimate float64
+	}{
+		// The fixture is a mid-window join at 20%/$0 with a completed 25%/$120
+		// endpoint. Each additional raw percentage point gets a new estimate.
+		{name: "next percent", percent: 26, cost: 140, wantEstimate: 140.0 / 6 * 100},
+		{name: "multiple percents", percent: 43, cost: 1012.8025122, wantEstimate: 1012.8025122 / 23 * 100},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, account, stats := readOnlyUsageFixture()
+			account.Extra["codex_7d_used_percent"] = tc.percent
+			account.Extra["codex_usage_updated_at"] = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano)
+			stats.stats.Cost = tc.cost
+			stats.rangeStats = &usagestats.AccountStats{Cost: tc.cost}
+
+			before, err := json.Marshal(account)
+			require.NoError(t, err)
+			usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.NotNil(t, usage.SevenDay.WeeklyEstimateUSD)
+			require.InDelta(t, tc.wantEstimate, *usage.SevenDay.WeeklyEstimateUSD, 1e-9)
+			require.Equal(t, 1, stats.rangeCalls)
+
+			after, err := json.Marshal(account)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after), "passive recalculation must not persist account state")
+		})
+	}
+}
+
+func TestOpenAIPassiveUsageRecalculatesLegacyRuleBAtNewPercent(t *testing.T) {
+	svc, account, stats := readOnlyUsageFixture()
+	baseline, ok := account.Extra[openAIWeeklyEstimateBaselineKey].(map[string]any)
+	require.True(t, ok)
+	baseline["mode"] = openAIWeeklyEstimateModeLegacy
+	baseline["baseline_source"] = "v14_persisted_zero_start"
+	baseline["baseline_percent"] = 0.0
+	baseline["baseline_cost"] = 0.0
+	baseline["snapshot_percent"] = 29.0
+	baseline["snapshot_cost"] = 690.4410962
+	baseline["percent_bucket"] = 29.0
+	baseline["completed_percent"] = 29.0
+	baseline["completed_cost"] = 690.4410962
+	baseline["estimate_usd"] = 690.4410962 / 0.28
+	baseline["has_weekly_estimate"] = true
+	baseline["awaiting_interval"] = false
+	account.Extra["codex_7d_used_percent"] = 43.0
+	account.Extra["codex_usage_updated_at"] = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	stats.stats.Cost = 1012.8025122
+	stats.rangeStats = &usagestats.AccountStats{Cost: 1012.8025122}
+
+	before, err := json.Marshal(account)
+	require.NoError(t, err)
+	usage, err := svc.GetPassiveUsage(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, usage.SevenDay.WeeklyEstimateUSD)
+	require.InDelta(t, 1012.8025122/0.42, *usage.SevenDay.WeeklyEstimateUSD, 1e-9)
+
+	after, err := json.Marshal(account)
+	require.NoError(t, err)
+	require.JSONEq(t, string(before), string(after), "passive recalculation must not persist account state")
 }
 
 func TestOpenAIPassiveUsageCompleteWindowIsExactIncludingZero(t *testing.T) {

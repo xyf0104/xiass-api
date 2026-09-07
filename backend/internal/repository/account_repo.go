@@ -1468,11 +1468,21 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 			tieOrder = entsql.Asc
 		}
 		return []func(*entsql.Selector){func(s *entsql.Selector) {
+			// The account-management landing order keeps OpenAI OAuth accounts
+			// together before applying recent activity. Within that block, paid
+			// plans follow the administrator's preferred Pro, Team, Plus order.
+			// Explicit table-column sorts use the branches below unchanged.
+			planRank := accountManagementPlanRankExpression(
+				s.C(dbaccount.FieldPlatform),
+				s.C(dbaccount.FieldType),
+				s.C(dbaccount.FieldCredentials),
+			)
 			expression := accountRecentActivitySortExpression(
 				s.C(dbaccount.FieldCreatedAt),
 				s.C(dbaccount.FieldUpdatedAt),
 				s.C(dbaccount.FieldLastUsedAt),
 			)
+			s.OrderExpr(entsql.Expr(planRank + " ASC"))
 			s.OrderExpr(entsql.Expr(expression + " " + direction))
 			s.OrderBy(tieOrder(s.C(dbaccount.FieldID)))
 		}}
@@ -1539,6 +1549,14 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 
 func accountRecentActivitySortExpression(createdAt, updatedAt, lastUsedAt string) string {
 	return "GREATEST(" + createdAt + ", " + updatedAt + ", COALESCE(" + lastUsedAt + ", " + createdAt + "))"
+}
+
+func accountManagementPlanRankExpression(platform, accountType, credentials string) string {
+	openAIOAuth := "LOWER(BTRIM(" + platform + ")) = 'openai' AND LOWER(BTRIM(" + accountType + ")) = 'oauth'"
+	planType := "LOWER(BTRIM(COALESCE(" + credentials + " ->> 'plan_type', '')))"
+	return "CASE WHEN " + openAIOAuth + " THEN CASE " + planType +
+		" WHEN 'pro' THEN 0 WHEN 'chatgptpro' THEN 0 WHEN 'chatgpt_pro' THEN 0" +
+		" WHEN 'team' THEN 1 WHEN 'plus' THEN 2 ELSE 3 END ELSE 4 END"
 }
 
 func upstreamBillingRateSortExpression(extra string) string {

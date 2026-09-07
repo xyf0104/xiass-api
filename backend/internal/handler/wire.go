@@ -164,12 +164,13 @@ func ProvideSettingHandler(settingService *service.SettingService, buildInfo Bui
 }
 
 // ProvideAdminSettingHandler creates admin.SettingHandler with notification template APIs.
-func ProvideAdminSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, aliyunCaptchaService *service.AliyunCaptchaService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, userAttributeService *service.UserAttributeService, notificationEmailService *service.NotificationEmailService, totpService *service.TotpService, userService *service.UserService, pixlabSMSService *service.PixlabSMSService) *admin.SettingHandler {
+func ProvideAdminSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, aliyunCaptchaService *service.AliyunCaptchaService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, userAttributeService *service.UserAttributeService, notificationEmailService *service.NotificationEmailService, totpService *service.TotpService, userService *service.UserService, pixlabSMSService *service.PixlabSMSService, settingRepo service.SettingRepository, secretEncryptor service.SecretEncryptor) *admin.SettingHandler {
 	h := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, userAttributeService)
 	h.SetNotificationEmailService(notificationEmailService)
 	h.SetAliyunCaptchaService(aliyunCaptchaService)
 	h.SetStepUpDeps(totpService, userService)
 	h.SetPixlabSMSService(pixlabSMSService)
+	h.SetTeamChildSharedSettings(settingRepo, secretEncryptor)
 	return h
 }
 
@@ -194,10 +195,12 @@ func ProvideOpenAIOAuthHandler(
 	rateLimitService *service.RateLimitService,
 	redisClient *redisclient.Client,
 	secretEncryptor service.SecretEncryptor,
+	settingRepo service.SettingRepository,
 ) *admin.OpenAIOAuthHandler {
 	h := admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
 	h.ConfigureTeamChildSessionStore(redisClient)
 	h.ConfigureTeamChildSecrets(secretEncryptor)
+	h.ConfigureTeamChildSharedSettings(settingRepo)
 	return h
 }
 
