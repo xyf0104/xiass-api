@@ -317,7 +317,9 @@ func TestOpenAIPassiveUsageLocalCacheCannotRebaseSharedState(t *testing.T) {
 			stats.rangeStats = &usagestats.AccountStats{Cost: 140}
 			observed, ok := openAICodexSnapshotObservationAt(account, time.Now())
 			require.True(t, ok)
-			reset, err := parseTime(account.Extra["codex_7d_reset_at"].(string))
+			resetText, ok := account.Extra["codex_7d_reset_at"].(string)
+			require.True(t, ok)
+			reset, err := parseTime(resetText)
 			require.NoError(t, err)
 			svc.storeOpenAIWeeklyEstimateStats(account.ID, reset.Add(-7*24*time.Hour), observed,
 				&usagestats.AccountStats{Cost: cachedCost})

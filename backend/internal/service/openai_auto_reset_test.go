@@ -371,7 +371,8 @@ func TestOpenAIAutoResetThresholdsUseActualWindowsAndRawPercent(t *testing.T) {
 
 func TestOpenAIAutoResetScanAllOffOnlyReadsSettingsOnce(t *testing.T) {
 	s, q := resetFixture(t, false)
-	settings := s.settings.(*resetTestSettings)
+	settings, ok := s.settings.(*resetTestSettings)
+	require.True(t, ok)
 	settings.values[openAIResetConfigKey(42)] = `{"enabled":false}`
 	settings.values["unrelated"] = `{"enabled":true}`
 	settings.values[openAIResetConfigKey(43)] = `{"enabled":true}`
@@ -388,7 +389,8 @@ func TestOpenAIAutoResetScanOnlyEnabledOwner(t *testing.T) {
 	for _, denied := range []bool{false, true} {
 		t.Run(fmtBool(denied), func(t *testing.T) {
 			s, q := resetFixture(t, true)
-			settings := s.settings.(*resetTestSettings)
+			settings, ok := s.settings.(*resetTestSettings)
+			require.True(t, ok)
 			settings.values[openAIResetConfigKey(43)] = `{"enabled":false}`
 			settings.values[openAIResetConfigPrefix+"042"] = settings.values[openAIResetConfigKey(42)]
 			q.accounts.denied.Store(denied)
