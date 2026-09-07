@@ -28,11 +28,11 @@ const memberPageMinimumDwellMs = 1500
 const memberPageRefreshWindowMs = 5000
 const memberPageMaxRefreshesPerWindow = 2
 const memberRefreshAttempts = memberPageMaxRefreshesPerWindow
-// Version 3 makes existing-account reauthorization page-driven: the runner
-// only fills a saved password after OpenAI actually renders a password field.
-// A protocol bump prevents a newer XIASS backend from starting passwordless
-// flows against an older runner that would reject them before the browser opens.
-const workflowProtocolVersion = 3
+// Version 4 registers the mailbox identity in an isolated browser context
+// before touching Team membership, then reuses that exact private session for
+// OAuth. Older runners must not restore or execute the reordered workflow.
+const workflowProtocolVersion = 4
+const chatGPTHomeURL = 'https://chatgpt.com/'
 const officialOpenAIClientID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 const officialOpenAIRedirectURI = 'http://localhost:1455/auth/callback'
 const officialOpenAIScope = 'openid profile email offline_access'
@@ -53,6 +53,9 @@ const workflows = new Map()
 // verification, consent, and localhost callback pages independently.
 let managedMembersPage
 let managedOAuthPage
+let managedPrivateContext
+let managedPrivatePage
+let managedPrivateWorkflowID = ''
 let memberPageRefreshes = []
 const memberPageRenderStartedAt = new WeakMap()
 
@@ -114,7 +117,11 @@ function restoreWorkflowState() {
     const now = Date.now()
     for (const candidate of decoded.workflows) {
       if (!candidate || typeof candidate.id !== 'string' || candidate.expiresAt <= now) continue
-      if (!Array.isArray(candidate.nodes) || candidate.nodes.length !== workflowNodeDefinitions.length) continue
+      if (
+        !Array.isArray(candidate.nodes)
+        || candidate.nodes.length !== workflowNodeDefinitions.length
+        || candidate.nodes.some((node, index) => node?.key !== workflowNodeDefinitions[index][0])
+      ) continue
       const workflow = candidate
       const inviteNode = workflow.nodes.find((node) => node.key === 'invite')
       const inviteConfirmationNode = workflow.nodes.find((node) => node.key === 'invite_confirm')
@@ -127,6 +134,12 @@ function restoreWorkflowState() {
         )
       }
       workflow.inviteSubmittedAt = Number(workflow.inviteSubmittedAt || 0)
+      workflow.emailCodeGeneration = Math.max(0, Number(workflow.emailCodeGeneration || 0))
+      workflow.emailCodePurpose = ['registration', 'oauth_login', 'reauthorization'].includes(workflow.emailCodePurpose)
+        ? workflow.emailCodePurpose
+        : ''
+      workflow.registrationCompleted = workflow.registrationCompleted === true
+      workflow.oauthEmailSubmitted = workflow.oauthEmailSubmitted === true
       if (workflow.status === 'running') {
         workflow.status = 'failed'
         workflow.failedNodeKey = workflow.currentNodeKey || 'oauth'
@@ -240,6 +253,56 @@ async function browser() {
     return browser()
   }
   return connected
+}
+
+async function createPrivateBrowserSession(connected) {
+  const context = await connected.newContext()
+  try {
+    const page = await context.newPage()
+    return { context, page }
+  } catch (error) {
+    await context.close().catch(() => undefined)
+    throw error
+  }
+}
+
+async function disposePrivateBrowserSession(workflowID = '') {
+  if (workflowID && managedPrivateWorkflowID && managedPrivateWorkflowID !== workflowID) return
+  const context = managedPrivateContext
+  managedPrivateContext = undefined
+  managedPrivatePage = undefined
+  managedPrivateWorkflowID = ''
+  await context?.close().catch(() => undefined)
+}
+
+async function ensurePrivateWorkflowPage(workflow, { create = false } = {}) {
+  if (
+    managedPrivateWorkflowID === workflow.id
+    && managedPrivatePage
+    && !managedPrivatePage.isClosed()
+  ) return managedPrivatePage
+
+  if (!create) throw new Error('本次隐私浏览器会话已失效，请取消后重新开始')
+  await disposePrivateBrowserSession()
+  const connected = await browser()
+  const session = await createPrivateBrowserSession(connected)
+  managedPrivateContext = session.context
+  managedPrivatePage = session.page
+  managedPrivateWorkflowID = workflow.id
+  return session.page
+}
+
+async function navigatePrivateWorkflowPage(workflow, value, { create = false, validateOAuth = false } = {}) {
+  const targetURL = validateOAuth ? validateOpenAIAuthURL(value) : String(value || '').trim()
+  if (!targetURL) throw new Error('隐私浏览器地址无效')
+  const active = await ensurePrivateWorkflowPage(workflow, { create })
+  await activateBrowserPage(active)
+  await active.goto(targetURL, {
+    waitUntil: 'domcontentloaded',
+    timeout: operationTimeout
+  })
+  await activateBrowserPage(active)
+  return active
 }
 
 async function releaseCacheSession(cdpSession) {
@@ -370,9 +433,8 @@ async function pendingInvitesPage({ forceRefresh = false } = {}) {
   return current
 }
 
-// Keep the official OAuth handoff in one persistent server-side OAuth tab.
-// The ChatGPT Members tab is deliberately excluded so every workflow can
-// return to member administration without logging in or reconstructing it.
+// Existing-account reauthorization keeps using the persistent profile's
+// dedicated OAuth tab. New Team identities use an isolated context instead.
 async function navigatePersistentBrowser(value) {
   const targetURL = validateOpenAIAuthURL(value)
   const connected = await browser()
@@ -393,6 +455,9 @@ async function navigatePersistentBrowser(value) {
 }
 
 async function workflowBrowserPage(workflow) {
+  if (workflow.mode !== 'reauthorization') {
+    return ensurePrivateWorkflowPage(workflow)
+  }
   if (managedOAuthPage && !managedOAuthPage.isClosed() && !isTeamMembersPage(managedOAuthPage)) return managedOAuthPage
   const connected = await browser()
   const context = connected.contexts()[0]
@@ -568,6 +633,33 @@ async function pendingInvitesRouteSelected(current) {
   return /pending invitations?|pending invites?|待处理邀请|待接受邀请/i.test(headingText)
 }
 
+// The current ChatGPT Members SPA does not expose aria-selected on its native
+// tab buttons. It marks the active tab with the primary text/bottom-border
+// classes instead. Keep this strict check separate from the broad route/body
+// heuristic above so a visible "Pending invites" label in the shell cannot be
+// mistaken for the selected panel.
+async function pendingInvitesTabSelected(current) {
+  const pattern = /pending invitations?|pending invites?|待处理邀请|待接受邀请/i
+  const controls = current.locator('button:visible, [role="tab"]:visible, a:visible')
+  const count = await controls.count().catch(() => 0)
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index)
+    const text = (await control.innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
+    if (!pattern.test(text)) continue
+    const ariaSelected = await control.getAttribute('aria-selected').catch(() => '')
+    const ariaCurrent = await control.getAttribute('aria-current').catch(() => '')
+    const dataState = await control.getAttribute('data-state').catch(() => '')
+    const className = await control.getAttribute('class').catch(() => '')
+    if (
+      ariaSelected === 'true'
+      || /^(page|true|active|selected)$/i.test(String(ariaCurrent || ''))
+      || /^(open|active|selected)$/i.test(String(dataState || ''))
+      || (className.includes('text-token-text-primary') && /border-token-(?:text|border)-secondary/.test(className))
+    ) return true
+  }
+  return false
+}
+
 async function pendingInvitesControl(current) {
   const pattern = /pending invitations?|pending invites?|待处理邀请|待接受邀请/i
   for (const role of ['tab', 'button', 'link']) {
@@ -578,7 +670,38 @@ async function pendingInvitesControl(current) {
       if (await control.isVisible().catch(() => false)) return control
     }
   }
+
+  // Some hosted builds render the tab as a plain button without an accessible
+  // name. Match its own text only; never use a broad `invite` selector that can
+  // activate the native Send invites action instead.
+  const controls = current.locator('button:visible, [role="tab"]:visible, a:visible')
+  const count = await controls.count().catch(() => 0)
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index)
+    const text = (await control.innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
+    if (pattern.test(text)) return control
+  }
   return null
+}
+
+async function selectPendingInvitesTab(current) {
+  const deadline = Date.now() + Math.min(operationTimeout, Math.max(memberRenderTimeout, pendingInviteRenderTimeout))
+  let lastClickAt = 0
+  while (Date.now() < deadline) {
+    if (await pendingInvitesTabSelected(current)) return true
+    const control = await pendingInvitesControl(current)
+    if (control) {
+      await control.scrollIntoViewIfNeeded().catch(() => undefined)
+      // Avoid repeatedly activating a tab while React is still committing the
+      // first click. A second click during that window can return to Users.
+      if (Date.now() - lastClickAt >= 350) {
+        await control.click().catch(() => undefined)
+        lastClickAt = Date.now()
+      }
+    }
+    await sleep(200)
+  }
+  throw new Error('ChatGPT 成员页面无法切换到 Pending invites')
 }
 
 async function membersControl(current) {
@@ -647,6 +770,24 @@ function pendingInviteEmailsFromTexts(texts) {
     if (email) emails.add(email)
   }
   return emails
+}
+
+async function pendingInviteRecord(current, expectedEmail, required = true) {
+  await selectPendingInvitesTab(current)
+  return pendingInviteRecordInCurrentView(current, expectedEmail, required)
+}
+
+async function pendingInviteRecordInCurrentView(current, expectedEmail, required = true) {
+  const wanted = normalizeEmail(expectedEmail)
+  const rows = current.locator('table:visible tbody tr, [role="row"]:visible, [role="listitem"]:visible, article:visible')
+  const count = await rows.count().catch(() => 0)
+  for (let index = 0; index < count; index += 1) {
+    const row = rows.nth(index)
+    const email = normalizeEmail(extractEmail(await row.innerText().catch(() => '')))
+    if (email === wanted) return { row, email }
+  }
+  if (required) throw new Error('Pending invites 中找不到目标邮箱')
+  return null
 }
 
 async function waitForVisiblePendingInviteEmail(current, wanted) {
@@ -766,27 +907,31 @@ async function waitForMemberPageReady(current) {
 }
 
 async function waitForPendingInvitesPageReady(current, { allowRecoveryNavigation = false } = {}) {
-  const pendingPattern = /pending invitations?|pending invites?|待处理邀请|待接受邀请/i
   const emptyPattern = /no pending|no invitations|暂无.*邀请|没有.*邀请|还没有.*邀请/i
   const deadline = Date.now() + Math.min(
     operationTimeout,
     Math.max(memberRenderTimeout, pendingInviteRenderTimeout)
   )
-  let attemptedTab = false
+  let lastTabClickAt = 0
   let attemptedDirectRoute = false
   let selectedSince = 0
 
   while (Date.now() < deadline) {
     const body = await current.locator('body').innerText().catch(() => '')
     const routeSelected = await pendingInvitesRouteSelected(current)
-    const selectedControls = current.locator('[role="tab"][aria-selected="true"], [aria-current="page"], [aria-pressed="true"]')
-    const selectedText = (await selectedControls.allTextContents().catch(() => [])).join(' ')
-    const selectedControl = pendingPattern.test(selectedText)
-    const visiblePanels = current.locator('[role="tabpanel"]:visible, main:visible, section:visible')
-    const panelText = (await visiblePanels.allTextContents().catch(() => [])).join(' ')
-    const pendingContent = pendingPattern.test(panelText) || emptyPattern.test(panelText)
-    const pendingSelected = selectedControl || (routeSelected && pendingContent)
-    if (pendingSelected && pendingContent) {
+    const selectedControl = await pendingInvitesTabSelected(current)
+    const tableHeaders = (await current.locator('table:visible thead:visible, table:visible th:visible').allTextContents().catch(() => [])).join(' ')
+    const searchMetadata = await current.locator('input:visible').evaluateAll((inputs) => inputs.map((input) => [
+      input.getAttribute('placeholder') || '',
+      input.getAttribute('aria-label') || '',
+      input.getAttribute('name') || ''
+    ].join(' '))).catch(() => [])
+    const pendingContent = (
+      (/email|邮箱/i.test(tableHeaders) && /date invited|invited|邀请日期|邀请时间/i.test(tableHeaders))
+      || searchMetadata.some((value) => /search.*invites?|invites?.*search|搜索.*邀请/i.test(value))
+      || emptyPattern.test(body)
+    )
+    if ((selectedControl || routeSelected) && pendingContent) {
       selectedSince ||= Date.now()
       if (Date.now() - selectedSince < memberPageMinimumDwellMs) {
         await sleep(250)
@@ -800,11 +945,12 @@ async function waitForPendingInvitesPageReady(current, { allowRecoveryNavigation
     }
     selectedSince = 0
 
-    if (!attemptedTab) {
-      attemptedTab = true
+    if (!selectedControl && Date.now() - lastTabClickAt >= 500) {
       const control = await pendingInvitesControl(current)
       if (control) {
+        await control.scrollIntoViewIfNeeded().catch(() => undefined)
         await control.click().catch(() => undefined)
+        lastTabClickAt = Date.now()
         markMemberPageRenderStarted(current)
         await sleep(300)
         continue
@@ -1263,24 +1409,6 @@ function validateOAuthSessionID(value) {
   return sessionID
 }
 
-function generateWorkflowPassword() {
-  const groups = [
-    'ABCDEFGHJKLMNPQRSTUVWXYZ',
-    'abcdefghijkmnopqrstuvwxyz',
-    '23456789',
-    '!@#$%&*?'
-  ]
-  const pick = (source) => source[crypto.randomInt(0, source.length)]
-  const password = groups.map(pick)
-  const alphabet = groups.join('')
-  while (password.length < 13) password.push(pick(alphabet))
-  for (let index = password.length - 1; index > 0; index -= 1) {
-    const swapIndex = crypto.randomInt(0, index + 1)
-    ;[password[index], password[swapIndex]] = [password[swapIndex], password[index]]
-  }
-  return password.join('')
-}
-
 async function waitForOAuthPage(description, predicate, timeout = oauthPageTimeout) {
   const deadline = Date.now() + timeout
   let lastError
@@ -1443,29 +1571,65 @@ async function reauthorizationNextState(current, workflow) {
   return { kind: 'unknown' }
 }
 
-async function selectSignUp(current) {
-  await refreshOpenAIErrorPage(current)
-  const currentPath = (() => {
-    try {
-      return new URL(current.url()).pathname.toLowerCase()
-    } catch {
-      return ''
-    }
-  })()
-  const body = await oauthBody(current)
-  const emailInput = await firstVisibleInput(current, (metadata) => /email/.test(metadata))
-  const alreadyOnSignUpPage = Boolean(emailInput) && (
-    /create[-_]?account|sign[-_]?up|register/.test(currentPath)
-      || (/(?:create an account|create your account|sign up|注册账号)/i.test(body)
-        && !/(?:welcome back|log in|登录)/i.test(body))
-  )
-  if (alreadyOnSignUpPage) return
+async function registeredOAuthNextState(current, workflow) {
+  const callbackURL = await workflowCallbackURLFromPage(current, workflow)
+  if (callbackURL) return { kind: 'callback', callbackURL }
 
-  const signUp = await waitForOAuthPage('OpenAI 页面中找不到 Sign up', async () => (
-    await firstVisibleRole(current, 'button', [/^sign up$/i, /^create account$/i, /^注册$/i])
-      || await firstVisibleRole(current, 'link', [/^sign up$/i, /^create account$/i, /^注册$/i])
-  ))
-  await signUp.click()
+  const provider = thirdPartyIdentityProviderPage(current)
+  if (provider) return { kind: 'external_provider', provider }
+
+  const body = await oauthBody(current)
+  const phoneInput = await firstVisibleInput(current, isPhoneInputMetadata)
+  if (phoneInput && /phone number|required.*phone|手机号|电话号码/i.test(body)) return { kind: 'phone' }
+
+  const verification = await verificationInputs(current)
+  if (isReauthorizationEmailCodePage(body, verification)) return { kind: 'email_code' }
+  if (verification.length > 0 && /phone|text message|sms|mobile|短信|手机/i.test(body)) return { kind: 'sms_code' }
+
+  const passwordInput = await firstVisibleInput(current, (metadata) => /password/.test(metadata))
+  if (passwordInput) return { kind: 'password', input: passwordInput }
+  if (isReauthorizationAccountChooserPage(body)) return { kind: 'account_chooser' }
+
+  const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
+  if (emailInput) return { kind: 'email', input: emailInput }
+  if (isReauthorizationWorkspacePage(body)) return { kind: 'workspace' }
+  return { kind: 'unknown' }
+}
+
+async function waitForRegisteredOAuthNextState(current, workflow) {
+  return waitForOAuthPage('OpenAI OAuth 登录后未进入邮箱验证、手机号或工作空间页面', async () => {
+    const state = await registeredOAuthNextState(current, workflow)
+    return state.kind === 'unknown' ? null : state
+  })
+}
+
+async function selectPrivateRegistrationEntry(current) {
+  await refreshOpenAIErrorPage(current)
+  let actionClicks = 0
+  let lastActionKey = ''
+  return waitForOAuthPage('ChatGPT 隐私页中找不到登录入口或邮箱输入框', async () => {
+    const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
+    if (emailInput) return emailInput
+
+    const provider = thirdPartyIdentityProviderPage(current)
+    if (provider) throw new Error(`ChatGPT 注册页已转至${provider}登录，无法继续临时邮箱注册`)
+    if (actionClicks >= 3) return null
+
+    // The current ChatGPT landing page exposes both Log in and Sign up for
+    // free. Prefer Log in as requested; unknown mailboxes are then offered the
+    // normal email-code account creation path by OpenAI.
+    const action = await firstVisibleRole(current, 'button', normalLoginPatterns)
+      || await firstVisibleRole(current, 'link', normalLoginPatterns)
+      || await firstVisibleRole(current, 'button', [/^sign up for free$/i, /^sign up$/i, /^注册(?:账号)?$/i])
+      || await firstVisibleRole(current, 'link', [/^sign up for free$/i, /^sign up$/i, /^注册(?:账号)?$/i])
+    if (!action) return null
+    const actionKey = `${current.url()}|${await action.innerText().catch(() => '')}`
+    if (actionKey === lastActionKey) return null
+    lastActionKey = actionKey
+    actionClicks += 1
+    await action.click()
+    return null
+  })
 }
 
 async function selectLoginForAnotherAccount(current, workflow) {
@@ -1507,24 +1671,68 @@ async function selectLoginForAnotherAccount(current, workflow) {
 }
 
 async function fillWorkflowEmail(current, email) {
-  const input = await waitForOAuthPage('OpenAI 注册页中找不到邮箱输入框', () => (
+  const input = await waitForOAuthPage('OpenAI 页面中找不到邮箱输入框', () => (
     firstVisibleInput(current, (metadata) => /email/.test(metadata))
   ))
   await input.fill(email)
   await clickOAuthContinue(current)
 }
 
-async function fillWorkflowPassword(current, password) {
-  const input = await waitForOAuthPage('OpenAI 注册页中找不到密码输入框', () => (
-    firstVisibleInput(current, (metadata) => /password/.test(metadata))
-  ))
-  await input.fill(password)
-  await clickOAuthContinue(current)
-  await waitForOAuthPage('OpenAI 未进入邮箱验证页面', async () => {
+function isSignupAccountCreationRejectionText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  return /(?:we\s+(?:could not|couldn't|were unable to|weren't able to)|unable to|could not|couldn't|cannot|can't)\s+(?:create|set up)\s+(?:your\s+)?account|(?:there was|we encountered|something went wrong)\s+(?:a\s+)?(?:problem|error)?.*?(?:creating|create).*?(?:account)|account\s+(?:could not be|was not)\s+created|无法(?:为您)?创建(?:您的|此|该|当前)?(?:账号|账户)|(?:账号|账户)创建失败|无法完成(?:账号|账户)创建/i.test(text)
+}
+
+async function signupAccountCreationRejection(current) {
+  const candidates = current.locator('[role="alert"]:visible, [role="alertdialog"]:visible, h1:visible, h2:visible, p:visible')
+  const texts = await candidates.allTextContents().catch(() => [])
+  const matched = texts.find((text) => isSignupAccountCreationRejectionText(text))
+  if (matched) return matched.replace(/\s+/g, ' ').trim()
+
+  // A few OpenAI builds render the failure inside an unannotated form block.
+  // The wording match remains deliberately narrow so a slow transition or a
+  // generic "Create account" heading can never revoke a valid invitation.
+  const body = await oauthBody(current)
+  return isSignupAccountCreationRejectionText(body) ? body : ''
+}
+
+async function waitForEmailVerificationChallenge(current, description) {
+  let codeOptionClicked = false
+  const result = await waitForOAuthPage(description, async () => {
     const body = await oauthBody(current)
-    return /check your inbox|verify your email|verification code|检查.*邮箱|验证.*邮箱|验证码/i.test(body)
-      || (await verificationInputs(current)).length > 0
+    const verification = await verificationInputs(current)
+    if (isReauthorizationEmailCodePage(body, verification)) return { kind: 'email_code' }
+
+    const rejection = await signupAccountCreationRejection(current)
+    if (rejection) return { kind: 'rejected', message: rejection }
+
+    const passwordInput = await firstVisibleInput(current, (metadata) => /password/.test(metadata))
+    if (!passwordInput) return null
+    if (!codeOptionClicked) {
+      const codeOption = await firstVisibleRole(current, 'button', [
+        /continue with (?:an? )?(?:email )?code/i,
+        /use (?:an? )?(?:email )?(?:verification )?code/i,
+        /email me (?:an? )?code/i,
+        /send (?:an? )?(?:login )?code/i,
+        /使用.*验证码|发送.*验证码/i
+      ]) || await firstVisibleRole(current, 'link', [
+        /continue with (?:an? )?(?:email )?code/i,
+        /use (?:an? )?(?:email )?(?:verification )?code/i,
+        /email me (?:an? )?code/i,
+        /send (?:an? )?(?:login )?code/i,
+        /使用.*验证码|发送.*验证码/i
+      ])
+      if (codeOption) {
+        codeOptionClicked = true
+        await codeOption.click()
+        return null
+      }
+    }
+    return { kind: 'password' }
   })
+  if (result.kind === 'rejected') throw new Error(`OpenAI 无法创建当前临时邮箱账号：${result.message}`)
+  if (result.kind === 'password') throw new Error('OpenAI 当前只显示密码登录，未提供邮箱验证码入口')
 }
 
 async function fillLoginPassword(current, password) {
@@ -1608,7 +1816,7 @@ async function openAIPhoneRecoveryState(current) {
 }
 
 async function recoverOpenAIPhoneEntry(current, workflow) {
-  const password = String(workflow.generatedPassword || workflow.loginPassword || '')
+  const password = String(workflow.loginPassword || '')
   const email = normalizeWorkflowEmail(workflow.inviteEmail)
   let backAttempts = 0
   let restartedOAuth = false
@@ -1631,10 +1839,13 @@ async function recoverOpenAIPhoneEntry(current, workflow) {
       continue
     }
     if (state === 'password') {
-      if (!password) throw new Error('重新进入手机号步骤需要登录密码，但本次工作流未保存密码')
-      await fillLoginPassword(current, password)
-      await sleep(500)
-      continue
+      if (password) {
+        await fillLoginPassword(current, password)
+        await sleep(500)
+        continue
+      }
+      await waitForEmailVerificationChallenge(current, '重新进入 OAuth 后未提供邮箱验证码登录')
+      return 'email_code'
     }
     if (state === 'email') {
       if (!email) throw new Error('重新进入手机号步骤时找不到本次注册邮箱')
@@ -1797,31 +2008,210 @@ async function captureWorkflowCallback(current, workflow) {
   return validateWorkflowCallbackURL(raw, workflow)
 }
 
-async function runOAuthRegistrationUntilMailbox(workflow) {
-  setWorkflowNode(workflow, 'oauth', 'running', '正在独立 OAuth 标签页打开官方 PKCE URL')
-  await navigatePersistentBrowser(workflow.authURL)
-  const current = managedOAuthPage
-  if (!current || current.isClosed()) throw new Error('服务器浏览器授权标签页不可用')
-  completeWorkflowNode(workflow, 'oauth', 'XIASS 官方 OAuth 页面已打开')
-
-  setWorkflowNode(workflow, 'signup', 'running', '正在选择 Sign up')
-  await selectSignUp(current)
-  completeWorkflowNode(workflow, 'signup', '已进入 OpenAI 注册路径')
-
-  setWorkflowNode(workflow, 'email', 'running', '正在填入本次临时邮箱')
-  await fillWorkflowEmail(current, workflow.inviteEmail)
-  completeWorkflowNode(workflow, 'email', '临时邮箱已提交')
-
-  setWorkflowNode(workflow, 'password', 'running', '正在生成并填入 13 位随机密码')
-  workflow.generatedPassword = generateWorkflowPassword()
-  persistWorkflowState()
-  await fillWorkflowPassword(current, workflow.generatedPassword)
-  completeWorkflowNode(workflow, 'password', '13 位随机密码已生成并填入')
-  completeWorkflowNode(workflow, 'mail', 'OpenAI 验证邮件已发送')
-  setWorkflowNode(workflow, 'mailbox', 'waiting', '正在轮询本次临时邮箱')
+function beginWorkflowEmailChallenge(workflow, purpose, nodeKey, message) {
+  workflow.emailCodePurpose = purpose
+  workflow.emailCodeGeneration = Math.max(0, Number(workflow.emailCodeGeneration || 0)) + 1
+  setWorkflowNode(workflow, nodeKey, 'waiting', message)
   workflow.status = 'manual_required'
   activeWorkflowID = workflow.id
   persistWorkflowState()
+}
+
+async function waitForPrivateRegistrationComplete(current) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await waitForOAuthPage('ChatGPT 邮箱验证码已提交，但账号注册尚未完成', async () => {
+      const body = await oauthBody(current)
+      const rejection = await signupAccountCreationRejection(current)
+      if (rejection) return { kind: 'rejected', message: rejection }
+      const provider = thirdPartyIdentityProviderPage(current)
+      if (provider) return { kind: 'external_provider', provider }
+
+      const verification = await verificationInputs(current)
+      const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
+      const visibleInputs = await current.locator('input:visible').count().catch(() => 0)
+      if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body) && visibleInputs > 0) {
+        return { kind: 'profile' }
+      }
+      const hostname = oauthPageHostname(current)
+      if (
+        hostname === 'chatgpt.com'
+        && verification.length === 0
+        && !emailInput
+        && !/welcome back|log in|sign in|登录/i.test(body)
+      ) return { kind: 'registered' }
+      return null
+    })
+    if (result.kind === 'registered') return
+    if (result.kind === 'rejected') throw new Error(`OpenAI 无法创建当前临时邮箱账号：${result.message}`)
+    if (result.kind === 'external_provider') throw new Error(`ChatGPT 注册已转至${result.provider}登录，无法继续临时邮箱流程`)
+    if (result.kind === 'profile') {
+      await fillProfile(current)
+      continue
+    }
+  }
+  throw new Error('ChatGPT 注册资料已提交，但没有返回可用的登录会话')
+}
+
+async function runPrivateRegistrationUntilMailbox(workflow) {
+  setWorkflowNode(workflow, 'signup', 'running', '正在新建隐私浏览器并打开 ChatGPT')
+  const current = await navigatePrivateWorkflowPage(workflow, chatGPTHomeURL, { create: true })
+  const emailInput = await selectPrivateRegistrationEntry(current)
+  completeWorkflowNode(workflow, 'signup', '已在独立隐私会话进入 ChatGPT 邮箱登录/注册')
+
+  setWorkflowNode(workflow, 'email', 'running', '正在填入本次新邮箱')
+  await emailInput.fill(workflow.inviteEmail)
+  await clickOAuthContinue(current)
+  completeWorkflowNode(workflow, 'email', '新邮箱已提交给 ChatGPT')
+
+  setWorkflowNode(workflow, 'mail', 'running', '正在等待 ChatGPT 发送注册验证码')
+  await waitForEmailVerificationChallenge(current, 'ChatGPT 未进入邮箱验证码页面')
+  completeWorkflowNode(workflow, 'mail', 'ChatGPT 已发送注册邮箱验证码')
+  beginWorkflowEmailChallenge(workflow, 'registration', 'mailbox', '正在轮询新邮箱中的注册验证码')
+}
+
+async function executeMemberInvitation(workflow) {
+  if (!workflow.registrationCompleted) throw new Error('新邮箱账号尚未注册成功，禁止提前修改 Team 成员')
+
+  setWorkflowNode(workflow, 'members', 'running', '正在刷新并读取实时成员页面')
+  const initial = await listMembers({ forceRefresh: true, requireEmails: true })
+  const selected = initial.members.find((member) => normalizeEmail(member.email) === workflow.seatEmail)
+
+  if (workflow.seatAlreadyRemoved) {
+    const replaceable = initial.members.find((member) => displayRole(member.role) === 'member' && !isProtectedTeamMember(member))
+    if (replaceable) throw new Error('实时成员列表中仍有可替换的普通成员，请选择该成员后按常规流程操作')
+    const unverified = initial.members.find((member) => !isProtectedTeamMember(member))
+    if (unverified) throw new Error('成员角色无法确认受保护状态，请在浏览器中核对后重新刷新成员列表')
+    completeWorkflowNode(workflow, 'members', '已确认当前成员席位状态')
+    completeWorkflowNode(workflow, 'remove', '普通成员席位已由人工腾出，未执行移除')
+  } else if (selected) {
+    assertRemovableMember(selected)
+    completeWorkflowNode(workflow, 'members', '已读取并确认可替换的普通成员席位')
+    setWorkflowNode(workflow, 'remove', 'running', '正在通过成员行菜单移除已选普通成员')
+    await removeMember(workflow.seatEmail)
+    completeWorkflowNode(workflow, 'remove', '已从实时成员页面确认成员移除')
+  } else {
+    const unexpectedReplaceable = initial.members.find((member) => displayRole(member.role) === 'member' && !isProtectedTeamMember(member))
+    if (unexpectedReplaceable) throw new Error('已选成员不在实时成员列表中，但仍存在其他普通成员，请刷新后重新选择')
+    completeWorkflowNode(workflow, 'members', '已确认原成员不再位于实时成员列表')
+    completeWorkflowNode(workflow, 'remove', '已确认所选成员此前已成功移除')
+  }
+
+  setWorkflowNode(workflow, 'invite', 'running', '正在原生 Invite member 弹窗提交已注册邮箱')
+  const currentMembers = await listMembers({ forceRefresh: false })
+  const invitationAccepted = currentMembers.members.some((member) => normalizeEmail(member.email) === workflow.inviteEmail)
+  if (invitationAccepted) {
+    completeInviteStep(workflow)
+    completeInviteNodes(workflow, '无需重复提交邀请', '新邮箱已出现在成员列表中')
+  } else if (workflow.inviteSubmitted) {
+    await confirmInviteNode(workflow)
+  } else {
+    await inviteMember(workflow.inviteEmail, { workflow, confirm: false })
+    completeWorkflowNode(workflow, 'invite', '已在原生页面提交邀请')
+    await confirmInviteNode(workflow)
+  }
+}
+
+function completeRegisteredOAuthLoginNode(workflow, message) {
+  if (workflowNodeState(workflow, 'password')?.status !== 'completed') {
+    completeWorkflowNode(workflow, 'password', message)
+  }
+}
+
+function completeRegistrationOnlyNodes(workflow, message) {
+  for (const key of ['phone', 'sms_confirm', 'phone_submit', 'sms_poll', 'sms_code', 'profile_wait', 'profile']) {
+    if (workflowNodeState(workflow, key)?.status !== 'completed') completeWorkflowNode(workflow, key, message)
+  }
+}
+
+async function finishRegisteredOAuth(workflow, current, state) {
+  completeRegistrationOnlyNodes(workflow, '本次 OAuth 未要求手机号或资料验证')
+  if (state.kind === 'callback') {
+    completeWorkflowNode(workflow, 'workspace_wait', 'OpenAI 已直接返回 OAuth 回调')
+    completeWorkflowNode(workflow, 'workspace', '本次授权无需选择工作空间')
+  } else {
+    setWorkflowNode(workflow, 'workspace_wait', 'running', '正在等待默认工作空间页面')
+    await chooseDefaultWorkspace(current)
+    completeWorkflowNode(workflow, 'workspace_wait', '默认工作空间页面已出现')
+    completeWorkflowNode(workflow, 'workspace', '已选择默认工作空间并继续')
+  }
+  setWorkflowNode(workflow, 'callback', 'running', '正在读取浏览器地址栏中的 OAuth 回调')
+  workflow.callbackURL = state.callbackURL || await captureWorkflowCallback(current, workflow)
+  completeWorkflowNode(workflow, 'callback', 'OAuth 回调 code/state 已捕获并校验')
+  setWorkflowNode(workflow, 'import', 'waiting', '等待按已勾选配置导入 XIASS')
+  workflow.currentNodeKey = 'import'
+  workflow.status = 'callback_ready'
+  persistWorkflowState()
+}
+
+async function advanceRegisteredOAuth(workflow, current, state) {
+  if (state.kind === 'external_provider') {
+    throw new Error(`OAuth 已转至${state.provider}登录，临时邮箱流程不会点击第三方登录`)
+  }
+  if (state.kind === 'sms_code') throw new Error('OAuth 页面仍停留在旧短信验证码步骤，请重新开始本次授权')
+
+  if (state.kind === 'account_chooser') {
+    const otherAccount = await firstVisibleRole(current, 'button', loginForAnotherAccountPatterns)
+      || await firstVisibleRole(current, 'link', loginForAnotherAccountPatterns)
+    if (!otherAccount) throw new Error('OAuth 账号选择页中找不到“使用其他账号登录”')
+    await otherAccount.click()
+    return advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
+  }
+
+  if (state.kind === 'email') {
+    setWorkflowNode(workflow, 'password', 'running', 'OAuth 登录页已出现，正在填入新邮箱')
+    await state.input.fill(workflow.inviteEmail)
+    await clickOAuthContinue(current)
+    workflow.oauthEmailSubmitted = true
+    persistWorkflowState()
+    return advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
+  }
+
+  if (state.kind === 'password') {
+    setWorkflowNode(workflow, 'password', 'running', 'OAuth 正在切换为邮箱验证码登录')
+    await waitForEmailVerificationChallenge(current, 'OAuth 登录页未提供邮箱验证码入口')
+    beginWorkflowEmailChallenge(workflow, 'oauth_login', 'password', '正在轮询 OAuth 登录邮箱验证码')
+    return
+  }
+
+  if (state.kind === 'email_code') {
+    beginWorkflowEmailChallenge(workflow, 'oauth_login', 'password', '正在轮询 OAuth 登录邮箱验证码')
+    return
+  }
+
+  if (state.kind === 'phone') {
+    completeRegisteredOAuthLoginNode(workflow, workflow.oauthEmailSubmitted
+      ? '新邮箱与登录验证码已通过，正在进入手机号验证'
+      : '已复用隐私页中的新邮箱登录状态')
+    workflow.emailCodePurpose = ''
+    completeWorkflowNode(workflow, 'phone', '已进入 OpenAI 手机号验证页面')
+    setWorkflowNode(workflow, 'sms_confirm', 'waiting', '等待 XIASS Team 自动化领取手机号')
+    workflow.status = 'manual_required'
+    activeWorkflowID = workflow.id
+    persistWorkflowState()
+    return
+  }
+
+  if (state.kind === 'workspace' || state.kind === 'callback') {
+    completeRegisteredOAuthLoginNode(workflow, workflow.oauthEmailSubmitted
+      ? '新邮箱登录验证已完成'
+      : '已复用隐私页中的新邮箱登录状态')
+    workflow.emailCodePurpose = ''
+    await finishRegisteredOAuth(workflow, current, state)
+    return
+  }
+
+  const login = await firstVisibleRole(current, 'button', normalLoginPatterns)
+    || await firstVisibleRole(current, 'link', normalLoginPatterns)
+  if (!login) throw new Error('OAuth 页面中找不到登录入口、邮箱输入框或已登录状态')
+  await login.click()
+  await advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
+}
+
+async function runRegisteredAccountOAuth(workflow) {
+  setWorkflowNode(workflow, 'oauth', 'running', '正在同一隐私会话打开 XIASS 官方 OAuth')
+  const current = await navigatePrivateWorkflowPage(workflow, workflow.authURL, { validateOAuth: true })
+  completeWorkflowNode(workflow, 'oauth', 'XIASS 官方 OAuth 已在注册账号的隐私会话中打开')
+  await advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
 }
 
 function completeReauthorizationOnlyNodes(workflow) {
@@ -1978,7 +2368,8 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
       ? '管理员已在内嵌浏览器提交登录密码'
       : 'OpenAI 本次未要求登录密码')
     completeWorkflowNode(workflow, 'mail', 'OpenAI 已发送重新登录邮箱验证码')
-    markReauthorizationManualRequirement(workflow, 'mailbox', 'email_code', '正在轮询该历史邮箱中的 OpenAI 验证码')
+    workflow.reauthorizationManualReason = 'email_code'
+    beginWorkflowEmailChallenge(workflow, 'reauthorization', 'mailbox', '正在轮询该历史邮箱中的 OpenAI 验证码')
     return
   }
 
@@ -2013,10 +2404,22 @@ async function runOAuthReauthorization(workflow, { resumeCurrentPage = false, op
 
 async function continueWorkflowWithEmailCode(workflow, code) {
   const current = await workflowBrowserPage(workflow)
+  const purpose = workflow.emailCodePurpose || (workflow.mode === 'reauthorization' ? 'reauthorization' : 'registration')
+
+  if (purpose === 'oauth_login') {
+    setWorkflowNode(workflow, 'password', 'running', '正在将 OAuth 登录邮箱验证码填入 OpenAI')
+    await fillVerificationCode(current, code)
+    completeRegisteredOAuthLoginNode(workflow, 'OAuth 登录邮箱验证码已自动填入并提交')
+    workflow.emailCodePurpose = ''
+    await advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
+    return
+  }
+
   completeWorkflowNode(workflow, 'mailbox', 'Cloudflare 已读取 OpenAI 验证邮件')
   setWorkflowNode(workflow, 'email_code', 'running', '正在将邮箱验证码填入 OpenAI')
   await fillVerificationCode(current, code)
   completeWorkflowNode(workflow, 'email_code', '邮箱验证码已自动填入并提交')
+  workflow.emailCodePurpose = ''
 
   if (workflow.mode === 'reauthorization') {
     await advanceOAuthReauthorization(
@@ -2027,12 +2430,12 @@ async function continueWorkflowWithEmailCode(workflow, code) {
     )
     return
   }
-  await waitForPhonePage(current)
-  completeWorkflowNode(workflow, 'phone', '已进入 OpenAI 手机号验证页面')
-  setWorkflowNode(workflow, 'sms_confirm', 'waiting', '等待 XIASS Team 自动化领取手机号')
-  workflow.status = 'manual_required'
-  activeWorkflowID = workflow.id
+
+  await waitForPrivateRegistrationComplete(current)
+  workflow.registrationCompleted = true
   persistWorkflowState()
+  await executeMemberInvitation(workflow)
+  await runRegisteredAccountOAuth(workflow)
 }
 
 function resetPhoneReplacementNodes(workflow) {
@@ -2055,11 +2458,7 @@ async function continueWorkflowWithPhone(workflow, phone, replacing = false) {
     const recoveryState = await recoverOpenAIPhoneEntry(current, workflow)
     completeWorkflowNode(workflow, 'sms_confirm', 'XIASS Team 自动化已更换手机号')
     if (recoveryState === 'email_code') {
-      completeWorkflowNode(workflow, 'mail', '重新登录已发送新的邮箱验证码')
-      setWorkflowNode(workflow, 'mailbox', 'waiting', '正在轮询新的 OpenAI 邮箱验证码')
-      workflow.status = 'manual_required'
-      activeWorkflowID = workflow.id
-      persistWorkflowState()
+      beginWorkflowEmailChallenge(workflow, 'oauth_login', 'password', '重新登录已发送邮箱验证码，正在轮询')
       return
     }
     setWorkflowNode(workflow, 'phone_submit', 'running', '已返回手机号页，正在填入新号码并选择 Text message')
@@ -2069,11 +2468,7 @@ async function continueWorkflowWithPhone(workflow, phone, replacing = false) {
   }
   const submissionState = await submitPhoneWithOAuthRecovery(current, workflow, phone)
   if (submissionState === 'email_code') {
-    completeWorkflowNode(workflow, 'mail', '重新进入官方 OAuth 后已发送新的邮箱验证码')
-    setWorkflowNode(workflow, 'mailbox', 'waiting', '正在轮询新的 OpenAI 邮箱验证码')
-    workflow.status = 'manual_required'
-    activeWorkflowID = workflow.id
-    persistWorkflowState()
+    beginWorkflowEmailChallenge(workflow, 'oauth_login', 'password', '重新进入 OAuth 后已发送邮箱验证码，正在轮询')
     return
   }
   workflow.lastSubmittedPhone = phone
@@ -2086,6 +2481,16 @@ async function continueWorkflowWithPhone(workflow, phone, replacing = false) {
   persistWorkflowState()
 }
 
+async function postSMSNextState(current, workflow) {
+  const callbackURL = await workflowCallbackURLFromPage(current, workflow)
+  if (callbackURL) return { kind: 'callback', callbackURL }
+  const body = await oauthBody(current)
+  const visibleInputs = await current.locator('input:visible').count().catch(() => 0)
+  if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body) && visibleInputs > 0) return { kind: 'profile' }
+  if (isReauthorizationWorkspacePage(body)) return { kind: 'workspace' }
+  return { kind: 'unknown' }
+}
+
 async function continueWorkflowWithSMSCode(workflow, code) {
   const current = await workflowBrowserPage(workflow)
   completeWorkflowNode(workflow, 'sms_poll', 'XIASS SMS 服务已读取验证码')
@@ -2093,18 +2498,36 @@ async function continueWorkflowWithSMSCode(workflow, code) {
   await fillVerificationCode(current, code)
   completeWorkflowNode(workflow, 'sms_code', '短信验证码已自动填入并提交')
 
-  setWorkflowNode(workflow, 'profile_wait', 'running', '等待 5 秒进入资料页面')
-  await fillProfile(current)
-  completeWorkflowNode(workflow, 'profile_wait', '资料页面已出现')
-  completeWorkflowNode(workflow, 'profile', '已填写姓名 black 和年龄 26 并继续')
+  let state = await waitForOAuthPage('短信验证码已提交，但 OpenAI 未进入资料、工作空间或回调页面', async () => {
+    const next = await postSMSNextState(current, workflow)
+    return next.kind === 'unknown' ? null : next
+  })
+  if (state.kind === 'profile') {
+    setWorkflowNode(workflow, 'profile_wait', 'running', '正在等待并填写资料页面')
+    await fillProfile(current)
+    completeWorkflowNode(workflow, 'profile_wait', '资料页面已出现')
+    completeWorkflowNode(workflow, 'profile', '已填写姓名 black 和年龄 26 并继续')
+    state = await waitForOAuthPage('资料已提交，但 OpenAI 未进入工作空间或回调页面', async () => {
+      const next = await postSMSNextState(current, workflow)
+      return ['workspace', 'callback'].includes(next.kind) ? next : null
+    })
+  } else {
+    completeWorkflowNode(workflow, 'profile_wait', '本次流程未出现资料页面')
+    completeWorkflowNode(workflow, 'profile', '无需填写姓名和年龄')
+  }
 
-  setWorkflowNode(workflow, 'workspace_wait', 'running', '等待 10 秒进入默认工作空间')
-  await chooseDefaultWorkspace(current)
-  completeWorkflowNode(workflow, 'workspace_wait', '默认工作空间页面已出现')
-  completeWorkflowNode(workflow, 'workspace', '已选择默认工作空间并继续')
+  if (state.kind === 'callback') {
+    completeWorkflowNode(workflow, 'workspace_wait', 'OpenAI 已直接返回 OAuth 回调')
+    completeWorkflowNode(workflow, 'workspace', '本次授权无需选择工作空间')
+  } else {
+    setWorkflowNode(workflow, 'workspace_wait', 'running', '正在等待默认工作空间页面')
+    await chooseDefaultWorkspace(current)
+    completeWorkflowNode(workflow, 'workspace_wait', '默认工作空间页面已出现')
+    completeWorkflowNode(workflow, 'workspace', '已选择默认工作空间并继续')
+  }
 
   setWorkflowNode(workflow, 'callback', 'running', '正在读取浏览器地址栏中的 OAuth 回调')
-  workflow.callbackURL = await captureWorkflowCallback(current, workflow)
+  workflow.callbackURL = state.callbackURL || await captureWorkflowCallback(current, workflow)
   completeWorkflowNode(workflow, 'callback', 'OAuth 回调 code/state 已捕获并校验')
   workflow.status = 'callback_ready'
   workflow.currentNodeKey = 'import'
@@ -2116,17 +2539,17 @@ function workflowNode(key, number, label) {
 }
 
 const workflowNodeDefinitions = [
+  ['signup', '隐私页注册新邮箱'],
+  ['email', '填入注册邮箱'],
+  ['mail', '发送注册邮箱验证码'],
+  ['mailbox', '读取注册邮箱验证码'],
+  ['email_code', '提交注册邮箱验证码'],
   ['members', '读取成员席位'],
   ['remove', '移除已选成员'],
   ['invite', '提交成员邀请'],
   ['invite_confirm', '确认 Pending invites'],
-  ['oauth', '打开 XIASS 官方 OAuth'],
-  ['signup', '选择 Sign up'],
-  ['email', '填入临时邮箱'],
-  ['password', '创建 13 位随机密码'],
-  ['mail', '提交并发送邮箱验证码'],
-  ['mailbox', 'Cloudflare 读取验证邮件'],
-  ['email_code', '自动填入邮箱验证码'],
+  ['oauth', '同一隐私页打开 OAuth'],
+  ['password', '完成 OAuth 邮箱登录验证'],
   ['phone', '进入手机号页面'],
   ['sms_confirm', '自动领取手机号'],
   ['phone_submit', '填入号码并选择 Text message'],
@@ -2159,8 +2582,11 @@ function createWorkflow(seatEmail, inviteEmail, authURL, oauthSessionID, seatAlr
     inviteSubmittedAt: 0,
     inviteConfirmed: false,
     inviteConfirmedAt: 0,
+    registrationCompleted: false,
+    oauthEmailSubmitted: false,
+    emailCodePurpose: '',
+    emailCodeGeneration: 0,
     callbackURL: '',
-    generatedPassword: '',
     lastSubmittedPhone: '',
     pauseRequested: false,
     pausedFromStatus: '',
@@ -2199,7 +2625,9 @@ function workflowSummary(workflow) {
     oauth_session_id: workflow.oauthSessionID,
     oauth_state: oauthState,
     current_node: workflow.currentNodeKey || '',
-    password_available: Boolean(workflow.generatedPassword),
+    email_code_generation: Math.max(0, Number(workflow.emailCodeGeneration || 0)),
+    email_code_purpose: workflow.emailCodePurpose || '',
+    password_available: false,
     mode: workflow.mode === 'reauthorization' ? 'reauthorization' : 'registration',
     nodes: workflow.nodes.map(({ key, number, label, status, message }) => ({ key, number, label, status, ...(message ? { message } : {}) }))
   }
@@ -2273,102 +2701,45 @@ async function confirmInviteNode(workflow) {
 }
 
 async function resumeFineWorkflowFromNextNode(workflow, requestedNextKey = '') {
-  let nextKey = requestedNextKey
-  if (nextKey) {
-    const requestedNode = workflowNodeState(workflow, nextKey)
-    if (!requestedNode) throw new Error('暂停节点已失效，请重新开始')
-    requestedNode.status = 'pending'
-    requestedNode.message = ''
-    workflow.failedNodeKey = ''
-    workflow.error = ''
-    workflow.status = 'running'
-  } else {
-    const failedKey = workflow.failedNodeKey
-    const failedIndex = workflow.nodes.findIndex((node) => node.key === failedKey && node.status === 'failed')
-    if (failedIndex < 0) throw new Error('当前工作流没有可继续的失败节点')
-    const failedNode = workflow.nodes[failedIndex]
-    failedNode.status = 'completed'
-    failedNode.message = '该节点已由人工处理，自动化从下一节点继续'
-    workflow.failedNodeKey = ''
-    workflow.error = ''
-    workflow.status = 'running'
-    nextKey = workflow.nodes[failedIndex + 1]?.key || 'import'
-  }
+  const nextKey = requestedNextKey || workflow.failedNodeKey
+  const requestedNode = workflowNodeState(workflow, nextKey)
+  if (!requestedNode) throw new Error('当前工作流没有可继续的节点')
+  requestedNode.status = 'pending'
+  requestedNode.message = ''
+  workflow.failedNodeKey = ''
+  workflow.error = ''
+  workflow.status = 'running'
 
   try {
-    // Fine-node recovery must preserve the complete 1-3 prefix. If reading,
-    // removing, or inviting failed and the operator fixed that page manually,
-    // continue with the next real member action instead of falling through to
-    // OAuth callback capture.
-    if (nextKey === 'remove') {
-      if (workflow.seatAlreadyRemoved) {
-        completeWorkflowNode(workflow, 'remove', '成员席位已由人工腾出，继续邀请')
-      } else {
-        setWorkflowNode(workflow, 'remove', 'running', '正在提交成员移除')
-        await removeMember(workflow.seatEmail)
-        completeWorkflowNode(workflow, 'remove', '成员已从工作区移除')
+    if (['signup', 'email', 'mail', 'mailbox', 'email_code'].includes(nextKey) && !workflow.registrationCompleted) {
+      for (const key of ['signup', 'email', 'mail', 'mailbox', 'email_code']) {
+        const node = workflowNodeState(workflow, key)
+        if (node) {
+          node.status = 'pending'
+          node.message = ''
+        }
       }
-      nextKey = 'invite'
-    }
-    if (nextKey === 'invite') {
-      setWorkflowNode(workflow, 'invite', 'running', '正在原生邀请弹窗提交临时邮箱')
-      await inviteMember(workflow.inviteEmail, { workflow, confirm: false })
-      completeWorkflowNode(workflow, 'invite', '已在原生页面提交邀请')
-      await confirmInviteNode(workflow)
-      nextKey = 'oauth'
-    }
-    if (nextKey === 'invite_confirm') {
-      await confirmInviteNode(workflow)
-      nextKey = 'oauth'
-    }
-    if (nextKey === 'oauth') {
-      await runOAuthRegistrationUntilMailbox(workflow)
+      workflow.emailCodePurpose = ''
+      await disposePrivateBrowserSession(workflow.id)
+      await runPrivateRegistrationUntilMailbox(workflow)
       return
     }
+
+    if (['members', 'remove', 'invite', 'invite_confirm'].includes(nextKey)) {
+      await executeMemberInvitation(workflow)
+      await runRegisteredAccountOAuth(workflow)
+      return
+    }
+
+    if (['oauth', 'password'].includes(nextKey)) {
+      resetOAuthWorkflowSteps(workflow)
+      await runRegisteredAccountOAuth(workflow)
+      return
+    }
+
     const current = await workflowBrowserPage(workflow)
-    if (nextKey === 'signup') {
-      setWorkflowNode(workflow, 'signup', 'running', '正在选择 Sign up')
-      await selectSignUp(current)
-      completeWorkflowNode(workflow, 'signup', '已进入 OpenAI 注册路径')
-    }
-    if (['signup', 'email'].includes(nextKey)) {
-      setWorkflowNode(workflow, 'email', 'running', '正在填入本次临时邮箱')
-      await fillWorkflowEmail(current, workflow.inviteEmail)
-      completeWorkflowNode(workflow, 'email', '临时邮箱已提交')
-    }
-    if (['signup', 'email', 'password'].includes(nextKey)) {
-      setWorkflowNode(workflow, 'password', 'running', '正在生成并填入 13 位随机密码')
-      workflow.generatedPassword = generateWorkflowPassword()
-      persistWorkflowState()
-      await fillWorkflowPassword(current, workflow.generatedPassword)
-      completeWorkflowNode(workflow, 'password', '13 位随机密码已生成并填入')
-      completeWorkflowNode(workflow, 'mail', 'OpenAI 验证邮件已发送')
-      setWorkflowNode(workflow, 'mailbox', 'waiting', '正在轮询本次临时邮箱')
-      workflow.status = 'manual_required'
-      persistWorkflowState()
-      return
-    }
-    if (['mail', 'mailbox'].includes(nextKey)) {
-      await waitForOAuthPage('OpenAI 未停留在邮箱验证页面', async () => {
-        const body = await oauthBody(current)
-        return /check your inbox|verify your email|verification code|检查.*邮箱|验证.*邮箱|验证码/i.test(body)
-          || (await verificationInputs(current)).length > 0
-      })
-      completeWorkflowNode(workflow, 'mail', '已确认 OpenAI 验证邮件页面')
-      setWorkflowNode(workflow, 'mailbox', 'waiting', '正在轮询本次临时邮箱')
-      workflow.status = 'manual_required'
-      persistWorkflowState()
-      return
-    }
-    if (nextKey === 'email_code') {
-      setWorkflowNode(workflow, 'email_code', 'waiting', '等待 XIASS 将当前邮箱验证码填入 OpenAI')
-      workflow.status = 'manual_required'
-      persistWorkflowState()
-      return
-    }
     if (nextKey === 'phone') {
       await waitForPhonePage(current)
-      completeWorkflowNode(workflow, 'email_code', '已确认邮箱验证码由人工提交')
       completeWorkflowNode(workflow, 'phone', '已进入 OpenAI 手机号验证页面')
       setWorkflowNode(workflow, 'sms_confirm', 'waiting', '等待 XIASS Team 自动化领取手机号')
       workflow.status = 'manual_required'
@@ -2387,38 +2758,15 @@ async function resumeFineWorkflowFromNextNode(workflow, requestedNextKey = '') {
       persistWorkflowState()
       return
     }
-    if (nextKey === 'sms_poll') {
+    if (['sms_poll', 'sms_code'].includes(nextKey)) {
       await waitForOAuthPage('OpenAI 未停留在短信验证码页面', async () => (await verificationInputs(current)).length > 0)
-      completeWorkflowNode(workflow, 'phone_submit', '已确认号码由人工提交')
       setWorkflowNode(workflow, 'sms_poll', 'waiting', '正在通过 XIASS SMS 服务轮询验证码')
       workflow.status = 'manual_required'
       persistWorkflowState()
       return
     }
-    if (['sms_code', 'profile_wait', 'profile'].includes(nextKey)) {
-      if (nextKey === 'sms_code') {
-        setWorkflowNode(workflow, 'sms_code', 'waiting', '等待 XIASS 将当前短信验证码填入 OpenAI')
-        workflow.status = 'manual_required'
-        persistWorkflowState()
-        return
-      }
-      setWorkflowNode(workflow, 'profile_wait', 'running', '等待 5 秒进入资料页面')
-      await fillProfile(current)
-      completeWorkflowNode(workflow, 'profile_wait', '资料页面已出现')
-      completeWorkflowNode(workflow, 'profile', '已填写姓名 black 和年龄 26 并继续')
-    }
-    if (['profile_wait', 'profile', 'workspace_wait', 'workspace'].includes(nextKey)) {
-      setWorkflowNode(workflow, 'workspace_wait', 'running', '等待 10 秒进入默认工作空间')
-      await chooseDefaultWorkspace(current)
-      completeWorkflowNode(workflow, 'workspace_wait', '默认工作空间页面已出现')
-      completeWorkflowNode(workflow, 'workspace', '已选择默认工作空间并继续')
-    }
-    setWorkflowNode(workflow, 'callback', 'running', '正在读取浏览器地址栏中的 OAuth 回调')
-    workflow.callbackURL = await captureWorkflowCallback(current, workflow)
-    completeWorkflowNode(workflow, 'callback', 'OAuth 回调 code/state 已捕获并校验')
-    setWorkflowNode(workflow, 'import', 'waiting', '等待按已勾选配置导入 XIASS')
-    workflow.currentNodeKey = 'import'
-    workflow.status = 'callback_ready'
+    if (await recoverWorkflowCallback(workflow)) return
+    throw new Error('当前页面状态无法自动恢复，请取消后重新开始')
   } catch (error) {
     const active = workflow.nodes.find((node) => node.status === 'running')
     markWorkflowNodeFailed(workflow, active?.key || nextKey, error)
@@ -2442,6 +2790,7 @@ function pruneWorkflows() {
     if (workflow.expiresAt > now) continue
     if (activeWorkflowID === id) activeWorkflowID = ''
     workflows.delete(id)
+    void disposePrivateBrowserSession(id)
     changed = true
   }
   if (changed) persistWorkflowState()
@@ -2515,14 +2864,19 @@ function restartableOAuthWorkflow(id) {
 
 function resetOAuthWorkflowSteps(workflow) {
   const startIndex = workflow.nodes.findIndex((node) => node.key === 'oauth')
-  for (let index = Math.max(0, startIndex); index < workflow.nodes.length; index += 1) {
+  const reauthorizationLoginNodes = new Set(['signup', 'email', 'mail', 'mailbox', 'email_code'])
+  for (let index = 0; index < workflow.nodes.length; index += 1) {
+    if (index < Math.max(0, startIndex) && !(workflow.mode === 'reauthorization' && reauthorizationLoginNodes.has(workflow.nodes[index].key))) {
+      continue
+    }
     workflow.nodes[index].status = 'pending'
     workflow.nodes[index].message = ''
   }
   workflow.callbackURL = ''
-  workflow.generatedPassword = ''
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
+  workflow.oauthEmailSubmitted = false
+  workflow.emailCodePurpose = ''
   workflow.currentNodeKey = 'oauth'
   workflow.error = ''
   persistWorkflowState()
@@ -2537,59 +2891,18 @@ async function restartOAuthWorkflow(id, value, oauthSessionIDValue) {
   workflow.oauthSessionID = oauthSessionID
   const action = workflow.mode === 'reauthorization'
     ? () => runOAuthReauthorization(workflow)
-    : () => runOAuthRegistrationUntilMailbox(workflow)
+    : workflow.registrationCompleted
+      ? () => runRegisteredAccountOAuth(workflow)
+      : () => runPrivateRegistrationUntilMailbox(workflow)
   return scheduleWorkflowNodeAction(workflow, 'oauth', action)
 }
 
 async function executeWorkflow(workflow) {
   try {
-    setWorkflowNode(workflow, 'members', 'running', '正在刷新并读取实时成员页面')
-    // Every new one-click workflow starts from a hard refresh of the dedicated
-    // Members tab. This re-establishes the native member/invite UI without
-    // touching the separate OAuth tab.
-    const initial = await listMembers({ forceRefresh: true, requireEmails: true })
-    const selected = initial.members.find((member) => normalizeEmail(member.email) === workflow.seatEmail)
-
-    if (workflow.seatAlreadyRemoved) {
-      const replaceable = initial.members.find((member) => displayRole(member.role) === 'member' && !isProtectedTeamMember(member))
-      if (replaceable) {
-        throw new Error('实时成员列表中仍有可替换的普通成员，请选择该成员后按常规流程操作')
-      }
-      const unverified = initial.members.find((member) => !isProtectedTeamMember(member))
-      if (unverified) {
-        throw new Error('成员角色无法确认受保护状态，请在浏览器中核对后重新刷新成员列表')
-      }
-      completeWorkflowNode(workflow, 'members', '已确认当前成员席位状态')
-      completeWorkflowNode(workflow, 'remove', '普通成员席位已由人工腾出，未执行移除')
-    } else if (selected) {
-      assertRemovableMember(selected)
-      completeWorkflowNode(workflow, 'members', '已读取并确认可替换的普通成员席位')
-      setWorkflowNode(workflow, 'remove', 'running', '正在通过成员行菜单移除已选普通成员')
-      await removeMember(workflow.seatEmail)
-      completeWorkflowNode(workflow, 'remove', '已从实时成员页面确认成员移除')
-    } else {
-      throw new Error('已选成员不在实时成员列表中，请刷新成员页确认后点击继续')
-    }
-
-    setWorkflowNode(workflow, 'invite', 'running', '正在原生 Invite member 弹窗提交临时邮箱')
-    const currentMembers = await listMembers({ forceRefresh: false })
-    const invitationAccepted = currentMembers.members.some((member) => normalizeEmail(member.email) === workflow.inviteEmail)
-    if (invitationAccepted) {
-      completeInviteStep(workflow)
-      completeInviteNodes(workflow, '无需重复提交邀请', '临时邮箱已出现在成员列表中')
-    } else {
-      // The first attempt must submit the native invitation before reading
-      // Pending invites. Preloading the pending tab here used to fail on an
-      // empty workspace and prevented Send invites from ever being clicked.
-      await inviteMember(workflow.inviteEmail, { workflow, confirm: false })
-      completeWorkflowNode(workflow, 'invite', '已在原生页面提交邀请')
-      await confirmInviteNode(workflow)
-    }
-
-    await runOAuthRegistrationUntilMailbox(workflow)
+    await runPrivateRegistrationUntilMailbox(workflow)
   } catch (error) {
     const activeNode = workflow.nodes.find((node) => node.status === 'running')
-    markWorkflowNodeFailed(workflow, activeNode?.key || workflow.currentNodeKey || 'members', error)
+    markWorkflowNodeFailed(workflow, activeNode?.key || workflow.currentNodeKey || 'signup', error)
   }
 }
 
@@ -2646,9 +2959,10 @@ function scheduleWorkflowNodeAction(workflow, nodeKey, action) {
 
 function submitWorkflowEmailCode(id, value) {
   const workflow = workflowForAutomationInput(id)
-  if (!['mailbox', 'email_code'].includes(workflow.currentNodeKey)) throw new Error('当前页面尚未等待邮箱验证码')
+  if (!['mailbox', 'email_code', 'password'].includes(workflow.currentNodeKey)) throw new Error('当前页面尚未等待邮箱验证码')
   const code = validateWorkflowCode(value)
-  return scheduleWorkflowNodeAction(workflow, 'email_code', () => continueWorkflowWithEmailCode(workflow, code))
+  const nodeKey = workflow.emailCodePurpose === 'oauth_login' ? 'password' : 'email_code'
+  return scheduleWorkflowNodeAction(workflow, nodeKey, () => continueWorkflowWithEmailCode(workflow, code))
 }
 
 function submitWorkflowPhone(id, value) {
@@ -2684,11 +2998,12 @@ function completeWorkflowImport(id) {
     : '已按勾选的分组、优先级和并发导入 XIASS')
   workflow.status = 'completed'
   workflow.currentNodeKey = 'import'
-  workflow.generatedPassword = ''
   workflow.loginPassword = ''
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
+  workflow.emailCodePurpose = ''
   if (activeWorkflowID === workflow.id) activeWorkflowID = ''
+  void disposePrivateBrowserSession(workflow.id)
   persistWorkflowState()
   return workflowSummary(workflow)
 }
@@ -2820,8 +3135,13 @@ function workflowSecret(id) {
   pruneWorkflows()
   const workflow = workflows.get(String(id || '').trim())
   if (!workflow) throw new Error('工作流不存在或已过期')
-  if (!workflow.generatedPassword) throw new Error('当前工作流尚未生成登录密码')
-  return { email: workflow.inviteEmail, password: workflow.generatedPassword }
+  if (workflow.mode === 'reauthorization' || !workflow.registrationCompleted || !workflow.inviteConfirmed) {
+    throw new Error('当前 Team 子号工作流尚未完成注册和邀请确认')
+  }
+  if (!['callback_ready', 'completed'].includes(workflow.status) || !workflow.callbackURL) {
+    throw new Error('当前 Team 子号 OAuth 回调尚未就绪')
+  }
+  return { email: workflow.inviteEmail, password: '' }
 }
 
 function cancelWorkflowState(workflow) {
@@ -2836,10 +3156,10 @@ function cancelWorkflowState(workflow) {
   workflow.status = 'cancelled'
   workflow.error = ''
   workflow.failedNodeKey = ''
-  workflow.generatedPassword = ''
   workflow.loginPassword = ''
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
+  workflow.emailCodePurpose = ''
   workflow.pauseRequested = false
   workflow.pausedFromStatus = ''
   workflow.pausedNodeKey = ''
@@ -2907,6 +3227,7 @@ function cancelWorkflow(id) {
   if (!workflow) throw new Error('工作流不存在或已过期')
   cancelWorkflowState(workflow)
   if (activeWorkflowID === workflow.id) activeWorkflowID = ''
+  void disposePrivateBrowserSession(workflow.id)
   persistWorkflowState()
   return workflowSummary(workflow)
 }
@@ -3075,18 +3396,25 @@ export {
   confirmOfficialMemberRemoval,
   completeReauthorizationOnlyNodes,
   completeWorkflowNode,
+  createPrivateBrowserSession,
   createReauthorizationWorkflow,
   createWorkflow,
   decryptWorkflowState,
   encryptWorkflowState,
   fillVerificationCode,
-  generateWorkflowPassword,
+  advanceRegisteredOAuth,
+  beginWorkflowEmailChallenge,
   markWorkflowInviteSubmitted,
   pauseWorkflowState,
   pendingInviteEmailsFromTexts,
+  pendingInviteRecord,
+  pendingInvitesTabSelected,
+  isSignupAccountCreationRejectionText,
+  registeredOAuthNextState,
   reauthorizationNextState,
   advanceOAuthReauthorization,
   recoverOpenAIPhoneEntry,
+  resetOAuthWorkflowSteps,
   reusableOAuthPage,
   resumePausedWorkflow,
   selectLoginForAnotherAccount,

@@ -105,10 +105,10 @@ import TeamChildCreationView from '../TeamChildCreationView.vue'
 
 const testAuthURL = 'https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&code_challenge=test-challenge&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+profile+email+offline_access&state=team-state'
 const workflowNodeDefinitions = [
-  ['members', '读取成员席位'], ['remove', '移除已选成员'], ['invite', '提交成员邀请'],
-  ['invite_confirm', '确认 Pending invites'], ['oauth', '打开 XIASS 官方 OAuth'], ['signup', '选择 Sign up'],
-  ['email', '填入临时邮箱'], ['password', '创建 13 位随机密码'], ['mail', '提交并发送邮箱验证码'],
-  ['mailbox', 'Cloudflare 读取验证邮件'], ['email_code', '自动填入邮箱验证码'], ['phone', '进入手机号页面'],
+  ['signup', '隐私页注册新邮箱'], ['email', '填入注册邮箱'], ['mail', '发送注册邮箱验证码'],
+  ['mailbox', '读取注册邮箱验证码'], ['email_code', '提交注册邮箱验证码'], ['members', '读取成员席位'],
+  ['remove', '移除已选成员'], ['invite', '提交成员邀请'], ['invite_confirm', '确认 Pending invites'],
+  ['oauth', '同一隐私页打开 OAuth'], ['password', '完成 OAuth 邮箱登录验证'], ['phone', '进入手机号页面'],
   ['sms_confirm', '确认领取手机号'], ['phone_submit', '填入号码并选择 Text message'], ['sms_poll', '轮询短信验证码'],
   ['sms_code', '自动填入短信验证码'], ['profile_wait', '等待资料页 5 秒'], ['profile', '填写 black / 26'],
   ['workspace_wait', '等待工作空间 10 秒'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
@@ -120,7 +120,7 @@ function currentWorkflow(overrides: Record<string, unknown> = {}) {
   const currentIndex = workflowNodeDefinitions.findIndex(([key]) => key === currentNode)
   const workflowStatus = String(overrides.status || 'manual_required')
   return {
-    schema_version:  3,
+    schema_version: 4,
     id: 'workflow-token-abcdefghijklmnop',
     status: workflowStatus,
     manual_required: workflowStatus === 'manual_required',
@@ -255,6 +255,7 @@ describe('TeamChildCreationView', () => {
     })
     teamChildAPI.startTeamChildWorkflow.mockResolvedValue(currentWorkflow())
     teamChildAPI.getTeamChildWorkflow.mockResolvedValue(currentWorkflow())
+    teamChildAPI.continueTeamChildWorkflow.mockResolvedValue(currentWorkflow({ status: 'running', manual_required: false, current_node: 'signup' }))
     teamChildAPI.submitTeamChildWorkflowCallback.mockResolvedValue(currentWorkflow({
       status: 'callback_ready',
       manual_required: false,
@@ -369,6 +370,33 @@ describe('TeamChildCreationView', () => {
     await flushPromises()
     expect(teamChildAPI.continueTeamChildWorkflow).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="team-sms-receiver"]').attributes('data-active')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('retries a failed registration with the same mailbox and workflow', async () => {
+    const failedWorkflow = currentWorkflow({
+      status: 'failed',
+      manual_required: false,
+      current_node: 'signup',
+      error: 'ChatGPT 注册页面暂时未完成加载'
+    })
+    teamChildAPI.getActiveMailbox.mockResolvedValue({
+      session_id: 'rejected-mailbox-session',
+      email: 'rejected@example.test',
+      expires_at: '2026-09-07T18:00:00.000Z'
+    })
+    teamChildAPI.getActiveTeamChildWorkflow.mockResolvedValue(failedWorkflow)
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(teamChildAPI.createMailbox).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="team-continue-after-failure"]').trigger('click')
+    await flushPromises()
+
+    expect(teamChildAPI.continueTeamChildWorkflow).toHaveBeenCalledWith(failedWorkflow.id)
+    expect(teamChildAPI.createMailbox).not.toHaveBeenCalled()
+    expect(teamChildAPI.deleteMailboxSession).not.toHaveBeenCalledWith('rejected-mailbox-session')
     wrapper.unmount()
   })
 
@@ -1087,7 +1115,11 @@ describe('TeamChildCreationView', () => {
   })
 
   it('forwards a Cloudflare mailbox code only while the mailbox node is waiting', async () => {
-    teamChildAPI.startTeamChildWorkflow.mockResolvedValueOnce(currentWorkflow({ current_node: 'mailbox' }))
+    teamChildAPI.startTeamChildWorkflow.mockResolvedValueOnce(currentWorkflow({
+      current_node: 'mailbox',
+      email_code_generation: 1,
+      email_code_purpose: 'registration'
+    }))
     teamChildAPI.pollMailboxCode.mockResolvedValue({ status: 'received', code: '123456' })
     const wrapper = mountView()
     await flushPromises()
@@ -1103,6 +1135,72 @@ describe('TeamChildCreationView', () => {
       '123456'
     )
     expect(teamChildAPI.submitTeamChildWorkflowSMSCode).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('waits for a new mailbox code when OAuth starts a second verification round', async () => {
+    vi.useFakeTimers()
+    const registrationWaiting = currentWorkflow({
+      current_node: 'mailbox',
+      email_code_generation: 1,
+      email_code_purpose: 'registration'
+    })
+    const registrationSubmitted = currentWorkflow({
+      status: 'running',
+      manual_required: false,
+      current_node: 'email_code',
+      email_code_generation: 1,
+      email_code_purpose: 'registration'
+    })
+    const oauthWaiting = currentWorkflow({
+      current_node: 'password',
+      email_code_generation: 2,
+      email_code_purpose: 'oauth_login'
+    })
+    teamChildAPI.startTeamChildWorkflow.mockResolvedValueOnce(registrationWaiting)
+    teamChildAPI.getTeamChildWorkflow.mockResolvedValue(oauthWaiting)
+    teamChildAPI.pollMailboxCode
+      .mockResolvedValueOnce({ status: 'received', code: '111111' })
+      .mockResolvedValueOnce({ status: 'received', code: '111111' })
+      .mockResolvedValueOnce({ status: 'received', code: '222222' })
+    teamChildAPI.submitTeamChildWorkflowEmailCode
+      .mockResolvedValueOnce(registrationSubmitted)
+      .mockResolvedValueOnce(currentWorkflow({
+        status: 'running',
+        manual_required: false,
+        current_node: 'password',
+        email_code_generation: 2,
+        email_code_purpose: 'oauth_login'
+      }))
+
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="team-one-click-authorize"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="confirm-dialog"]').trigger('click')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(teamChildAPI.submitTeamChildWorkflowEmailCode).toHaveBeenCalledTimes(1)
+    expect(teamChildAPI.submitTeamChildWorkflowEmailCode).toHaveBeenLastCalledWith(
+      'workflow-token-abcdefghijklmnop',
+      '111111'
+    )
+
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(50)
+    await flushPromises()
+    expect(teamChildAPI.submitTeamChildWorkflowEmailCode).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(teamChildAPI.submitTeamChildWorkflowEmailCode).toHaveBeenCalledTimes(2)
+    expect(teamChildAPI.submitTeamChildWorkflowEmailCode).toHaveBeenLastCalledWith(
+      'workflow-token-abcdefghijklmnop',
+      '222222'
+    )
     wrapper.unmount()
   })
 

@@ -135,9 +135,9 @@ wait_for_automation_health() {
         health=$(container_health "$container")
         if [ "$health" = "healthy" ]; then
             protocol=$(docker exec "$container" node -e \
-                "fetch('http://127.0.0.1:8090/healthz').then(async (response) => { const body = await response.json(); process.stdout.write(response.headers.get('x-xiass-team-child-protocol') === '3' && body.workflow_schema_version === 3 ? '3' : '') }).catch(() => process.exit(1))" \
+                "fetch('http://127.0.0.1:8090/healthz').then(async (response) => { const body = await response.json(); process.stdout.write(response.headers.get('x-xiass-team-child-protocol') === '4' && body.workflow_schema_version === 4 ? '4' : '') }).catch(() => process.exit(1))" \
                 2>/dev/null || true)
-            if [ "$protocol" != "3" ]; then
+            if [ "$protocol" != "4" ]; then
                 warn "Team 自动化服务协议不是当前版本，拒绝将旧工作流标记为就绪。"
                 return 1
             fi

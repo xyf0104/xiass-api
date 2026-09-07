@@ -140,12 +140,12 @@ func TestReauthorizeTeamChildAccountDecryptsPasswordOnlyForPrivateAutomation(t *
 		w.Header().Set(teamChildWorkflowProtocolHeader, teamChildWorkflowProtocolVersion)
 		switch r.URL.Path {
 		case "/healthz":
-			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 3}`))
+			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 4}`))
 		case "/workflows/reauthorize":
 			require.Equal(t, http.MethodPost, r.Method)
 			require.Equal(t, "service-token", r.Header.Get("X-XIASS-Team-Child-Token"))
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&automationPayload))
-			_, _ = w.Write([]byte(`{"schema_version": 3,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":91,"nodes":[]}`))
+			_, _ = w.Write([]byte(`{"schema_version": 4,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":91,"nodes":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -246,11 +246,11 @@ func TestReauthorizeOpenAIAccountUsesOnlyDedicatedEncryptedCredentials(t *testin
 		w.Header().Set(teamChildWorkflowProtocolHeader, teamChildWorkflowProtocolVersion)
 		switch r.URL.Path {
 		case "/healthz":
-			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 3}`))
+			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 4}`))
 		case "/workflows/reauthorize":
 			require.Equal(t, http.MethodPost, r.Method)
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&automationPayload))
-			_, _ = w.Write([]byte(`{"schema_version": 3,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":92,"nodes":[]}`))
+			_, _ = w.Write([]byte(`{"schema_version": 4,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":92,"nodes":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -292,11 +292,11 @@ func TestReauthorizeOpenAIAccountAllowsPasswordlessLogin(t *testing.T) {
 		w.Header().Set(teamChildWorkflowProtocolHeader, teamChildWorkflowProtocolVersion)
 		switch r.URL.Path {
 		case "/healthz":
-			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version":3}`))
+			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version":4}`))
 		case "/workflows/reauthorize":
 			require.Equal(t, http.MethodPost, r.Method)
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&automationPayload))
-			_, _ = w.Write([]byte(`{"schema_version":3,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":93,"nodes":[]}`))
+			_, _ = w.Write([]byte(`{"schema_version":4,"id":"workflow_1234567890","status":"running","mode":"reauthorization","target_account_id":93,"nodes":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -375,6 +375,48 @@ func TestCreateAccountFromOAuthEncryptsAndBindsTeamWorkflowPassword(t *testing.T
 	require.NotNil(t, created.Schedulable)
 	require.True(t, *created.Schedulable)
 	require.NotContains(t, rec.Body.String(), password)
+}
+
+func TestCreateAccountFromOAuthAllowsPasswordlessTeamWorkflow(t *testing.T) {
+	const (
+		workflowID = "workflow_1234567890"
+		email      = "team1004@example.test"
+	)
+	automation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/workflows/"+workflowID+"/secret", r.URL.Path)
+		w.Header().Set(teamChildWorkflowProtocolHeader, teamChildWorkflowProtocolVersion)
+		_, _ = w.Write([]byte(`{"email":"` + email + `","password":""}`))
+	}))
+	t.Cleanup(automation.Close)
+	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)
+	t.Setenv("TEAM_CHILD_AUTOMATION_TOKEN", "service-token")
+
+	oauthService := service.NewOpenAIOAuthService(nil, teamChildOAuthClientStub{email: email})
+	t.Cleanup(oauthService.Stop)
+	auth, err := oauthService.GenerateAuthURL(context.Background(), nil, "", service.PlatformOpenAI)
+	require.NoError(t, err)
+	parsedAuth, err := url.Parse(auth.AuthURL)
+	require.NoError(t, err)
+
+	adminService := newStubAdminService()
+	handler := NewOpenAIOAuthHandler(oauthService, adminService, nil, nil)
+	router := gin.New()
+	router.POST("/create", handler.CreateAccountFromOAuth)
+	body := `{"session_id":"` + auth.SessionID + `","code":"oauth-code","state":"` + parsedAuth.Query().Get("state") + `","team_child":true,"workflow_id":"` + workflowID + `"}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/create", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Len(t, adminService.createdAccounts, 1)
+	created := adminService.createdAccounts[0]
+	require.Equal(t, email, created.Name)
+	require.Equal(t, email, created.Credentials["email"])
+	_, hasPassword := created.Credentials[service.OpenAITeamChildPasswordCredentialKey]
+	require.False(t, hasPassword)
+	require.Equal(t, true, created.Extra[service.OpenAITeamChildExtraKey])
+	require.Equal(t, email, created.Extra[service.OpenAITeamChildEmailExtraKey])
 }
 
 func TestCreateAccountFromOAuthRejectsWorkflowEmailMismatch(t *testing.T) {

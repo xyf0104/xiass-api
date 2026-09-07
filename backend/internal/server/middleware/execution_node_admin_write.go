@@ -16,12 +16,50 @@ import (
 // guard because weight changes must be possible from either connected node.
 func ExecutionNodeSharedWriteGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if settingService == nil || isReadOnlyHTTPMethod(c.Request.Method) || settingService.CanWriteSharedAdminState(c.Request.Context()) {
+		if settingService == nil || isReadOnlyHTTPMethod(c.Request.Method) || isSharedRuntimeOperation(c) || settingService.CanWriteSharedAdminState(c.Request.Context()) {
 			c.Next()
 			return
 		}
 		AbortWithError(c, http.StatusForbidden, "EXECUTION_NODE_ADMIN_READ_ONLY", "This machine is read-only for shared groups, prices, and customer configuration while the primary machine is online")
 	}
+}
+
+// SMS claims are short-lived, transactionally owned runtime operations. They
+// must work from either paired XIASS node while card-key administration and all
+// other shared settings remain protected by the secondary read-only boundary.
+func isSharedRuntimeOperation(c *gin.Context) bool {
+	if c == nil || !strings.EqualFold(c.Request.Method, http.MethodPost) {
+		return false
+	}
+	route := c.FullPath()
+	switch route {
+	case "/api/v1/admin/settings/sms-receiver/redeem",
+		"/api/v1/admin/settings/sms-receiver/sessions/:session_id/resume",
+		"/api/v1/admin/settings/sms-receiver/sessions/:session_id/check",
+		"/api/v1/admin/settings/sms-receiver/sessions/:session_id/change",
+		"/api/v1/admin/settings/sms-receiver/sessions/:session_id/cancel":
+		return true
+	}
+
+	// FullPath is populated for normal Gin routes. Keep a strict raw-path
+	// fallback for focused middleware tests and compatible embedded routers.
+	route = strings.TrimSuffix(c.Request.URL.Path, "/")
+	const prefix = "/api/v1/admin/settings/sms-receiver"
+	if route == prefix+"/redeem" {
+		return true
+	}
+	if !strings.HasPrefix(route, prefix+"/sessions/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(route, prefix+"/sessions/"), "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return false
+	}
+	switch parts[1] {
+	case "resume", "check", "change", "cancel":
+		return true
+	}
+	return false
 }
 
 func isReadOnlyHTTPMethod(method string) bool {

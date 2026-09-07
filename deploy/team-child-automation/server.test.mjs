@@ -9,23 +9,30 @@ process.env.TEAM_CHILD_AUTOMATION_TOKEN = 'unit-test-team-child-token'
 
 const {
   activateBrowserPage,
+  advanceRegisteredOAuth,
   advanceOAuthReauthorization,
+  beginWorkflowEmailChallenge,
   callbackURLFromNavigationEntries,
   cancelWorkflowState,
   confirmOfficialMemberRemoval,
   completeReauthorizationOnlyNodes,
   completeWorkflowNode,
+  createPrivateBrowserSession,
   createReauthorizationWorkflow,
   createWorkflow,
   decryptWorkflowState,
   encryptWorkflowState,
   fillVerificationCode,
-  generateWorkflowPassword,
   markWorkflowInviteSubmitted,
   pauseWorkflowState,
   pendingInviteEmailsFromTexts,
+  pendingInviteRecord,
+  pendingInvitesTabSelected,
+  isSignupAccountCreationRejectionText,
+  registeredOAuthNextState,
   reauthorizationNextState,
   recoverOpenAIPhoneEntry,
+  resetOAuthWorkflowSteps,
   reusableOAuthPage,
   resumePausedWorkflow,
   selectLoginForAnotherAccount,
@@ -67,11 +74,34 @@ describe('Team child OAuth automation state', () => {
     assert.equal(detached, 1)
   })
 
+  it('creates a genuinely isolated browser context for a new Team identity', async () => {
+    const page = { id: 'private-page' }
+    let contextCreated = 0
+    let pageCreated = 0
+    const context = {
+      newPage: async () => {
+        pageCreated += 1
+        return page
+      },
+      close: async () => undefined
+    }
+    const connected = {
+      newContext: async () => {
+        contextCreated += 1
+        return context
+      }
+    }
+
+    assert.deepEqual(await createPrivateBrowserSession(connected), { context, page })
+    assert.equal(contextCreated, 1)
+    assert.equal(pageCreated, 1)
+  })
+
   it('publishes only the current 22-node workflow protocol', () => {
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
     const summary = workflowSummary(workflow)
-    assert.equal(workflowProtocolVersion, 3)
-    assert.equal(summary.schema_version, 3)
+    assert.equal(workflowProtocolVersion, 4)
+    assert.equal(summary.schema_version, 4)
     assert.equal(summary.nodes.length, 22)
     assert.equal('startStep' in workflow, false)
     assert.equal('runOnlyStep' in workflow, false)
@@ -81,15 +111,15 @@ describe('Team child OAuth automation state', () => {
   it('keeps every deployment health check pinned to the current workflow protocol', () => {
     for (const filename of ['docker-compose.yml', 'docker-compose.local.yml', 'docker-compose.standalone.yml', 'docker-compose.dev.yml']) {
       const compose = fs.readFileSync(path.join(deployDirectory, filename), 'utf8')
-      assert.match(compose, /x-xiass-team-child-protocol'\) === '3'/)
-      assert.match(compose, /workflow_schema_version === 3/)
-      assert.doesNotMatch(compose, /x-xiass-team-child-protocol'\) === '2'/)
+      assert.match(compose, /x-xiass-team-child-protocol'\) === '4'/)
+      assert.match(compose, /workflow_schema_version === 4/)
+      assert.doesNotMatch(compose, /x-xiass-team-child-protocol'\) === '3'/)
     }
 
     const runtimeStart = fs.readFileSync(path.join(deployDirectory, 'xiass-runtime-start.sh'), 'utf8')
-    assert.match(runtimeStart, /x-xiass-team-child-protocol'\) === '3'/)
-    assert.match(runtimeStart, /body\.workflow_schema_version === 3/)
-    assert.match(runtimeStart, /\[ "\$protocol" != "3" \]/)
+    assert.match(runtimeStart, /x-xiass-team-child-protocol'\) === '4'/)
+    assert.match(runtimeStart, /body\.workflow_schema_version === 4/)
+    assert.match(runtimeStart, /\[ "\$protocol" != "4" \]/)
   })
 
   it('extracts invitations only from supplied pending-record text', () => {
@@ -98,6 +128,40 @@ describe('Team child OAuth automation state', () => {
       [...pendingInviteEmailsFromTexts(['child@example.test\nInvited today\nMember'])],
       ['child@example.test']
     )
+  })
+
+  it('recognizes the native Pending invites button and matches only the exact invitation row', async () => {
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const selectedTab = {
+      innerText: async () => 'Pending invites',
+      getAttribute: async (name) => name === 'class'
+        ? 'text-token-text-primary border-token-text-secondary border-b'
+        : null
+    }
+    const rows = [
+      { innerText: async () => 'other@example.test\nSep 7, 2026\nMember' },
+      { innerText: async () => 'failed@example.test\nSep 7, 2026\nMember' }
+    ]
+    const page = {
+      locator: (selector) => selector.startsWith('button:visible')
+        ? collection([selectedTab])
+        : selector.startsWith('table:visible tbody tr') ? collection(rows) : collection([])
+    }
+
+    assert.equal(await pendingInvitesTabSelected(page), true)
+    const record = await pendingInviteRecord(page, 'FAILED@example.test')
+    assert.equal(record.row, rows[1])
+    assert.equal(record.email, 'failed@example.test')
+  })
+
+  it('detects confirmed account-creation rejection without treating ordinary signup text as failure', () => {
+    assert.equal(isSignupAccountCreationRejectionText("We couldn't create your account. Please try again later."), true)
+    assert.equal(isSignupAccountCreationRejectionText('无法创建您的账户，请稍后重试'), true)
+    assert.equal(isSignupAccountCreationRejectionText('Create your account to continue'), false)
+    assert.equal(isSignupAccountCreationRejectionText('Loading your account'), false)
   })
 
   it('never selects the ChatGPT Members tab as the OAuth workflow tab', () => {
@@ -155,6 +219,121 @@ describe('Team child OAuth automation state', () => {
     assert.equal((await reauthorizationNextState(page({
       url: 'https://accounts.google.com/signin'
     }), workflow)).kind, 'external_provider')
+  })
+
+  it('recognizes the OAuth login and phone pages used by a newly registered private session', async () => {
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const input = (attributes = {}) => ({
+      isVisible: async () => true,
+      getAttribute: async (name) => attributes[name] || null
+    })
+    const page = ({ url, body, inputs = [] }) => ({
+      url: () => url,
+      locator: (selector) => {
+        if (selector === 'body') return { innerText: async () => body }
+        if (selector === 'input') return collection(inputs)
+        return collection([])
+      },
+      getByRole: () => collection([])
+    })
+    const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
+
+    assert.equal((await registeredOAuthNextState(page({
+      url: 'https://auth.openai.com/log-in',
+      body: 'Welcome back Email address Continue',
+      inputs: [input({ type: 'email', autocomplete: 'username' })]
+    }), workflow)).kind, 'email')
+    assert.equal((await registeredOAuthNextState(page({
+      url: 'https://auth.openai.com/add-phone',
+      body: 'Phone number required Add your phone number to continue',
+      inputs: [input({ type: 'tel', autocomplete: 'tel' })]
+    }), workflow)).kind, 'phone')
+  })
+
+  it('submits the same mailbox on OAuth login, verifies the second code, and reaches phone entry', async () => {
+    let screen = 'email'
+    let submittedEmail = ''
+    let submittedCode = ''
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const emailInput = {
+      isVisible: async () => true,
+      getAttribute: async (name) => ({ type: 'email', autocomplete: 'username' })[name] || null,
+      fill: async (value) => { submittedEmail = value }
+    }
+    const codeInput = {
+      isVisible: async () => true,
+      getAttribute: async (name) => ({ type: 'text', autocomplete: 'one-time-code' })[name] || null,
+      fill: async (value) => { submittedCode = value }
+    }
+    const phoneInput = {
+      isVisible: async () => true,
+      getAttribute: async (name) => ({ type: 'tel', autocomplete: 'tel' })[name] || null
+    }
+    const continueButton = {
+      isVisible: async () => true,
+      click: async () => { screen = screen === 'email' ? 'email_code' : 'phone' }
+    }
+    const page = {
+      url: () => screen === 'email'
+        ? 'https://auth.openai.com/log-in'
+        : screen === 'email_code'
+          ? 'https://auth.openai.com/email-verification'
+          : 'https://auth.openai.com/add-phone',
+      locator: (selector) => {
+        if (selector === 'body') return { innerText: async () => screen === 'email'
+          ? 'Welcome back Email address'
+          : screen === 'email_code'
+            ? 'Check your inbox for a verification code'
+            : 'Phone number required Add your phone number to continue' }
+        if (selector === 'input') {
+          if (screen === 'email') return collection([emailInput])
+          if (screen === 'email_code') return collection([codeInput])
+          return collection([phoneInput])
+        }
+        if (selector.includes('one-time-code')) return collection(screen === 'email_code' ? [codeInput] : [])
+        return collection([])
+      },
+      getByRole: (role, options) => collection(
+        role === 'button' && ['email', 'email_code'].includes(screen) && options.name.test('Continue') ? [continueButton] : []
+      )
+    }
+    const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
+
+    await advanceRegisteredOAuth(workflow, page, { kind: 'email', input: emailInput })
+
+    assert.equal(submittedEmail, 'child@example.test')
+    assert.equal(workflow.oauthEmailSubmitted, true)
+    assert.equal(workflow.emailCodePurpose, 'oauth_login')
+    assert.equal(workflow.emailCodeGeneration, 1)
+    assert.equal(workflow.currentNodeKey, 'password')
+    assert.equal(workflow.status, 'manual_required')
+
+    await fillVerificationCode(page, '123456')
+    await advanceRegisteredOAuth(workflow, page, await registeredOAuthNextState(page, workflow))
+
+    assert.equal(submittedCode, '123456')
+    assert.equal(workflow.nodes.find((node) => node.key === 'password').status, 'completed')
+    assert.equal(workflow.nodes.find((node) => node.key === 'phone').status, 'completed')
+    assert.equal(workflow.currentNodeKey, 'sms_confirm')
+    assert.equal(workflow.status, 'manual_required')
+  })
+
+  it('numbers registration and OAuth mailbox challenges as separate generations', () => {
+    const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
+
+    beginWorkflowEmailChallenge(workflow, 'registration', 'mailbox', '等待注册验证码')
+    assert.equal(workflowSummary(workflow).email_code_generation, 1)
+    assert.equal(workflowSummary(workflow).email_code_purpose, 'registration')
+
+    beginWorkflowEmailChallenge(workflow, 'oauth_login', 'password', '等待 OAuth 登录验证码')
+    assert.equal(workflowSummary(workflow).email_code_generation, 2)
+    assert.equal(workflowSummary(workflow).email_code_purpose, 'oauth_login')
   })
 
   it('uses another-account login for a trusted browser session without clicking the saved account', async () => {
@@ -389,6 +568,28 @@ describe('Team child OAuth automation state', () => {
     assert.equal(workflow.nodes.find((node) => node.key === 'workspace')?.status, 'pending')
   })
 
+  it('resets all reauthorization login nodes after the registration-first reorder', () => {
+    const workflow = createReauthorizationWorkflow(
+      317,
+      'child@example.test',
+      'SavedPassword!',
+      authURL,
+      'oauth-session-abcdefghijklmnop'
+    )
+    for (const key of ['signup', 'email', 'mail', 'mailbox', 'email_code', 'oauth', 'password']) {
+      completeWorkflowNode(workflow, key, '完成')
+    }
+
+    resetOAuthWorkflowSteps(workflow)
+
+    for (const key of ['signup', 'email', 'mail', 'mailbox', 'email_code', 'oauth', 'password']) {
+      assert.equal(workflow.nodes.find((node) => node.key === key)?.status, 'pending')
+    }
+    for (const key of ['members', 'remove', 'invite', 'invite_confirm']) {
+      assert.equal(workflow.nodes.find((node) => node.key === key)?.status, 'completed')
+    }
+  })
+
   it('prefers Send invites when an older Continue action is also present', async () => {
     const clicked = []
     const input = {
@@ -443,34 +644,37 @@ describe('Team child OAuth automation state', () => {
     assert.equal(observed.clicked, 1)
   })
 
-  it('returns from an old SMS code page and reuses the saved password before replacing the phone', async () => {
+  it('returns from an old SMS page and switches a password prompt to email-code login', async () => {
     let state = 'sms_code'
-    let password = ''
     let backClicks = 0
+    let codeOptionClicks = 0
     const collection = (items) => ({
       count: async () => items.length,
-      nth: (index) => items[index]
+      nth: (index) => items[index],
+      allTextContents: async () => []
     })
     const input = (type, autocomplete = '') => ({
       isVisible: async () => true,
       getAttribute: async (name) => ({ type, autocomplete }[name] || null),
-      fill: async (value) => { if (type === 'password') password = value }
+      fill: async () => undefined
     })
     const page = {
       locator: (selector) => {
         if (selector === 'body') {
-          return { innerText: async () => state === 'sms_code' ? 'Check your phone SMS code' : state === 'password' ? 'Enter your password' : 'Phone number' }
+          return { innerText: async () => state === 'sms_code'
+            ? 'Check your phone SMS code'
+            : state === 'password' ? 'Enter your password' : 'Check your inbox for a verification code' }
         }
         const currentInput = state === 'sms_code'
           ? input('text', 'one-time-code')
-          : state === 'password' ? input('password') : input('tel')
+          : state === 'password' ? input('password') : input('text', 'one-time-code')
         if (selector === 'input') return collection([currentInput])
-        if (selector.includes('one-time-code')) return collection(state === 'sms_code' ? [currentInput] : [])
+        if (selector.includes('one-time-code')) return collection(['sms_code', 'email_code'].includes(state) ? [currentInput] : [])
         return collection([])
       },
       getByRole: (role, options) => collection(
-        role === 'button' && state === 'password' && options.name.test('Continue')
-          ? [{ isVisible: async () => true, click: async () => { state = 'phone' } }]
+        role === 'button' && state === 'password' && options.name.test('Continue with email code')
+          ? [{ isVisible: async () => true, click: async () => { codeOptionClicks += 1; state = 'email_code' } }]
           : []
       ),
       goBack: async () => { backClicks += 1; state = 'password' },
@@ -478,30 +682,30 @@ describe('Team child OAuth automation state', () => {
       url: () => 'https://auth.openai.com/phone-verification'
     }
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
-    workflow.generatedPassword = 'SavedPassword!'
 
-    assert.equal(await recoverOpenAIPhoneEntry(page, workflow), 'phone')
+    assert.equal(await recoverOpenAIPhoneEntry(page, workflow), 'email_code')
     assert.equal(backClicks, 1)
-    assert.equal(password, 'SavedPassword!')
+    assert.equal(codeOptionClicks, 1)
   })
 
-  it('restarts the XIASS official PKCE URL when OpenAI reports an invalid authorization step', async () => {
+  it('restarts the XIASS official PKCE URL and submits the mailbox when the authorization step expires', async () => {
     let state = 'invalid_auth_step'
-    let password = ''
+    let submittedEmail = ''
     let backClicks = 0
     const visited = []
     const collection = (items) => ({
       count: async () => items.length,
-      nth: (index) => items[index]
+      nth: (index) => items[index],
+      allTextContents: async () => []
     })
-    const passwordInput = {
+    const emailInput = {
       isVisible: async () => true,
-      getAttribute: async (name) => ({ type: 'password', autocomplete: 'current-password' }[name] || null),
-      fill: async (value) => { password = value }
+      getAttribute: async (name) => ({ type: 'email', autocomplete: 'username' }[name] || null),
+      fill: async (value) => { submittedEmail = value }
     }
-    const phoneInput = {
+    const codeInput = {
       isVisible: async () => true,
-      getAttribute: async (name) => ({ type: 'tel', autocomplete: 'tel' }[name] || null),
+      getAttribute: async (name) => ({ type: 'text', autocomplete: 'one-time-code' }[name] || null),
       fill: async () => undefined
     }
     const page = {
@@ -509,30 +713,30 @@ describe('Team child OAuth automation state', () => {
         if (selector === 'body') {
           return { innerText: async () => state === 'invalid_auth_step'
             ? 'Invalid authorization step. error_code: invalid_auth_step'
-            : state === 'password' ? 'Enter your password' : 'Phone number' }
+            : state === 'email' ? 'Welcome back Email address' : 'Check your inbox for a verification code' }
         }
         if (selector === 'input') {
-          if (state === 'password') return collection([passwordInput])
-          if (state === 'phone') return collection([phoneInput])
+          if (state === 'email') return collection([emailInput])
+          if (state === 'email_code') return collection([codeInput])
         }
+        if (selector.includes('one-time-code')) return collection(state === 'email_code' ? [codeInput] : [])
         return collection([])
       },
       getByRole: (role, options) => collection(
-        role === 'button' && state === 'password' && options.name.test('Continue')
-          ? [{ isVisible: async () => true, click: async () => { state = 'phone' } }]
+        role === 'button' && state === 'email' && options.name.test('Continue')
+          ? [{ isVisible: async () => true, click: async () => { state = 'email_code' } }]
           : []
       ),
       goBack: async () => { backClicks += 1 },
-      goto: async (url) => { visited.push(url); state = 'password' },
+      goto: async (url) => { visited.push(url); state = 'email' },
       url: () => 'https://auth.openai.com/add-phone'
     }
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
-    workflow.generatedPassword = 'SavedPassword!'
 
-    assert.equal(await recoverOpenAIPhoneEntry(page, workflow), 'phone')
+    assert.equal(await recoverOpenAIPhoneEntry(page, workflow), 'email_code')
     assert.deepEqual(visited, [authURL])
     assert.equal(backClicks, 0)
-    assert.equal(password, 'SavedPassword!')
+    assert.equal(submittedEmail, 'child@example.test')
   })
 
   it('recovers the matching localhost callback from Chromium navigation history', () => {
@@ -555,7 +759,6 @@ describe('Team child OAuth automation state', () => {
 
   it('cancels a running workflow and clears its short-lived login secrets', () => {
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
-    workflow.generatedPassword = 'Generated123!'
     workflow.loginPassword = 'SavedPassword!'
     setWorkflowNode(workflow, 'invite', 'running', '正在提交邀请')
 
@@ -563,14 +766,14 @@ describe('Team child OAuth automation state', () => {
 
     assert.equal(workflow.status, 'cancelled')
     assert.equal(workflow.cancelRequested, true)
-    assert.equal(workflow.generatedPassword, '')
     assert.equal(workflow.loginPassword, '')
     assert.equal(workflow.nodes.find((node) => node.key === 'invite').status, 'cancelled')
   })
 
-  it('persists a manual SMS pause and resumes without clearing workflow secrets', () => {
+  it('persists a manual SMS pause and resumes without clearing email-code state', () => {
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
-    workflow.generatedPassword = 'SavedPassword!'
+    workflow.emailCodeGeneration = 2
+    workflow.emailCodePurpose = 'oauth_login'
     completeWorkflowNode(workflow, 'phone_submit', '手机号已提交')
     setWorkflowNode(workflow, 'sms_poll', 'waiting', '等待短信')
     workflow.status = 'manual_required'
@@ -578,12 +781,14 @@ describe('Team child OAuth automation state', () => {
     pauseWorkflowState(workflow)
     assert.equal(workflow.status, 'paused')
     assert.equal(workflowSummary(workflow).pause_requested, true)
-    assert.equal(workflow.generatedPassword, 'SavedPassword!')
+    assert.equal(workflow.emailCodeGeneration, 2)
+    assert.equal(workflow.emailCodePurpose, 'oauth_login')
 
     const resumed = resumePausedWorkflow(workflow)
     assert.equal(resumed.status, 'manual_required')
     assert.equal(resumed.pause_requested, false)
-    assert.equal(workflow.generatedPassword, 'SavedPassword!')
+    assert.equal(workflow.emailCodeGeneration, 2)
+    assert.equal(workflow.emailCodePurpose, 'oauth_login')
   })
 
   it('marks a running browser node paused immediately and blocks its next node', () => {
@@ -600,37 +805,23 @@ describe('Team child OAuth automation state', () => {
 
   it('keeps the complete node order stable', () => {
     assert.deepEqual(workflowNodeDefinitions.map(([key]) => key), [
-      'members', 'remove', 'invite', 'invite_confirm', 'oauth', 'signup', 'email', 'password',
-      'mail', 'mailbox', 'email_code', 'phone', 'sms_confirm', 'phone_submit',
+      'signup', 'email', 'mail', 'mailbox', 'email_code', 'members', 'remove', 'invite', 'invite_confirm',
+      'oauth', 'password', 'phone', 'sms_confirm', 'phone_submit',
       'sms_poll', 'sms_code', 'profile_wait', 'profile', 'workspace_wait',
       'workspace', 'callback', 'import'
     ])
   })
 
-  it('generates a fresh 13-character mixed password without exposing it in summaries', () => {
-    const observed = new Set()
-    for (let index = 0; index < 64; index += 1) {
-      const password = generateWorkflowPassword()
-      assert.equal(password.length, 13)
-      assert.match(password, /[A-Z]/)
-      assert.match(password, /[a-z]/)
-      assert.match(password, /[0-9]/)
-      assert.match(password, /[!@#$%&*?]/)
-      observed.add(password)
-    }
-    assert.ok(observed.size > 60)
-
+  it('does not fabricate a password for an email-code registration', () => {
     const workflow = createWorkflow('member@example.test', 'child@example.test', authURL, 'oauth-session-abcdefghijklmnop', false)
-    workflow.generatedPassword = generateWorkflowPassword()
-    const encoded = JSON.stringify(workflowSummary(workflow))
-    assert.equal(encoded.includes(workflow.generatedPassword), false)
-    assert.equal(workflowSummary(workflow).password_available, true)
+    assert.equal('generatedPassword' in workflow, false)
+    assert.equal(workflowSummary(workflow).password_available, false)
     assert.equal(workflowSummary(workflow).nodes.length, 22)
   })
 
-  it('encrypts persisted workflow passwords with authenticated ciphertext', () => {
-    const password = generateWorkflowPassword()
-    const plaintext = JSON.stringify({ schema_version: 3, workflows: [{ generatedPassword: password }] })
+  it('encrypts persisted reauthorization secrets with authenticated ciphertext', () => {
+    const password = 'SavedPassword!'
+    const plaintext = JSON.stringify({ schema_version: 4, workflows: [{ loginPassword: password }] })
     const encrypted = encryptWorkflowState(plaintext)
     assert.equal(encrypted.includes(password), false)
     assert.equal(decryptWorkflowState(encrypted), plaintext)

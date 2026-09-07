@@ -16,7 +16,7 @@ import (
 
 // Team child workflow requests are deliberately narrow. The backend accepts
 // only an OpenAI authorization URL/session produced by its existing OAuth
-// endpoint. Browser cookies and generated passwords never cross this proxy;
+// endpoint. Browser cookies and login secrets never cross this proxy;
 // mailbox/SMS values are forwarded only to the active short-lived workflow and
 // are never persisted by this handler.
 type teamChildWorkflowStartRequest struct {

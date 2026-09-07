@@ -347,7 +347,7 @@ services:
         condition: service_started
     network_mode: "service:team-child-browser"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/readyz').then(async (response) => process.exit(response.ok && response.headers.get('x-xiass-team-child-protocol') === '3' && (await response.json()).workflow_schema_version === 3 ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/readyz').then(async (response) => process.exit(response.ok && response.headers.get('x-xiass-team-child-protocol') === '4' && (await response.json()).workflow_schema_version === 4 ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 4s
       retries: 24

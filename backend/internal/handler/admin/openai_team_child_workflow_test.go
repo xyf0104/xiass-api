@@ -60,14 +60,14 @@ func TestTeamChildWorkflowProxyPreservesOnlyConfirmedWorkflowRequest(t *testing.
 	automation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setCurrentTeamChildWorkflowProtocol(w)
 		if r.URL.Path == "/healthz" {
-			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 3}`))
+			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 4}`))
 			return
 		}
 		receivedToken = r.Header.Get("X-XIASS-Team-Child-Token")
 		receivedMethod = r.Method
 		receivedPath = r.URL.Path
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&receivedBody))
-		_, _ = w.Write([]byte(`{"schema_version": 3,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
+		_, _ = w.Write([]byte(`{"schema_version": 4,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
 	}))
 	t.Cleanup(automation.Close)
 	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)
@@ -135,11 +135,11 @@ func TestTeamChildWorkflowAllowsConfirmedManualSeatRelease(t *testing.T) {
 	automation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setCurrentTeamChildWorkflowProtocol(w)
 		if r.URL.Path == "/healthz" {
-			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 3}`))
+			_, _ = w.Write([]byte(`{"ok":true,"workflow_schema_version": 4}`))
 			return
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&receivedBody))
-		_, _ = w.Write([]byte(`{"schema_version": 3,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
+		_, _ = w.Write([]byte(`{"schema_version": 4,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
 	}))
 	t.Cleanup(automation.Close)
 	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)
@@ -225,7 +225,7 @@ func TestTeamChildWorkflowStatusAndCancelValidateIDAndForward(t *testing.T) {
 	automation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		setCurrentTeamChildWorkflowProtocol(w)
-		_, _ = w.Write([]byte(`{"schema_version": 3,"id":"abcdefghijklmnoP","status":"manual_required","nodes":[]}`))
+		_, _ = w.Write([]byte(`{"schema_version": 4,"id":"abcdefghijklmnoP","status":"manual_required","nodes":[]}`))
 	}))
 	t.Cleanup(automation.Close)
 	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)
@@ -270,7 +270,7 @@ func TestTeamChildWorkflowCallbackAndRestartForward(t *testing.T) {
 		}
 		requests = append(requests, request)
 		setCurrentTeamChildWorkflowProtocol(w)
-		_, _ = w.Write([]byte(`{"schema_version": 3,"id":"abcdefghijklmnoP","status":"manual_required","nodes":[]}`))
+		_, _ = w.Write([]byte(`{"schema_version": 4,"id":"abcdefghijklmnoP","status":"manual_required","nodes":[]}`))
 	}))
 	t.Cleanup(automation.Close)
 	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)
@@ -302,7 +302,6 @@ func TestTeamChildWorkflowCallbackAndRestartForward(t *testing.T) {
 	require.Equal(t, "/workflows/abcdefghijklmnoP/restart-oauth", requests[1].path)
 	require.Equal(t, testTeamChildAuthURL, requests[1].body["auth_url"])
 	require.Equal(t, testTeamChildOAuthSessionID, requests[1].body["oauth_session_id"])
-
 	for _, test := range []struct {
 		path    string
 		payload string
@@ -333,7 +332,7 @@ func TestTeamChildWorkflowAutomationInputsUseDistinctValidatedRoutes(t *testing.
 		}
 		received = append(received, entry)
 		setCurrentTeamChildWorkflowProtocol(w)
-		_, _ = w.Write([]byte(`{"schema_version": 3,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
+		_, _ = w.Write([]byte(`{"schema_version": 4,"id":"abcdefghijklmnoP","status":"running","nodes":[]}`))
 	}))
 	t.Cleanup(automation.Close)
 	t.Setenv("TEAM_CHILD_AUTOMATION_URL", automation.URL)

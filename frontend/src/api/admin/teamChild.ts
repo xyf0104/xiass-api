@@ -89,7 +89,7 @@ export interface TeamChildCreateAccountRequest {
   schedulable: true
   /** Marks the imported account for the Team-child 401 reminder. */
   team_child?: boolean
-  /** Binds the encrypted generated password to this exact protocol-3 import. */
+  /** Binds the optional Team-child login secret to this exact protocol-4 import. */
   workflow_id: string
 }
 
@@ -141,7 +141,7 @@ export interface TeamChildWorkflowNode {
 }
 
 export interface TeamChildWorkflow {
-  schema_version: 3
+  schema_version: 4
   id: string
   status: TeamChildWorkflowStatus
   mode?: 'registration' | 'reauthorization'
@@ -154,12 +154,14 @@ export interface TeamChildWorkflow {
   current_node?: TeamChildWorkflowNodeKey | ''
   callback_url?: string
   error?: string
+  email_code_generation?: number
+  email_code_purpose?: 'registration' | 'oauth_login' | 'reauthorization' | ''
   password_available?: boolean
   nodes: TeamChildWorkflowNode[]
 }
 
 export interface ActiveTeamChildWorkflowResult {
-  schema_version: 3
+  schema_version: 4
   active: boolean
   workflow?: TeamChildWorkflow
 }
@@ -176,15 +178,15 @@ export interface StartTeamChildWorkflowRequest {
 }
 
 const currentWorkflowNodeOrder: TeamChildWorkflowNodeKey[] = [
-  'members', 'remove', 'invite', 'invite_confirm', 'oauth', 'signup', 'email', 'password',
-  'mail', 'mailbox', 'email_code', 'phone', 'sms_confirm', 'phone_submit',
+  'signup', 'email', 'mail', 'mailbox', 'email_code', 'members', 'remove', 'invite', 'invite_confirm',
+  'oauth', 'password', 'phone', 'sms_confirm', 'phone_submit',
   'sms_poll', 'sms_code', 'profile_wait', 'profile', 'workspace_wait',
   'workspace', 'callback', 'import'
 ]
 
 function requireCurrentTeamChildWorkflow(workflow: TeamChildWorkflow): TeamChildWorkflow {
   const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : []
-  const current = workflow?.schema_version === 3
+  const current = workflow?.schema_version === 4
     && nodes.length === currentWorkflowNodeOrder.length
     && nodes.every((node, index) => node?.key === currentWorkflowNodeOrder[index])
   if (!current) {
@@ -293,7 +295,7 @@ export async function getTeamChildWorkflow(workflowID: string): Promise<TeamChil
 
 export async function getActiveTeamChildWorkflow(): Promise<TeamChildWorkflow | null> {
   const { data } = await apiClient.get<ActiveTeamChildWorkflowResult>('/admin/openai/team-child/workflows/active')
-  if (data.schema_version !== 3) {
+  if (data.schema_version !== 4) {
     throw new Error('Team 自动化运行组件版本不匹配，请完成运行组件更新后重试')
   }
   return data.active && data.workflow ? requireCurrentTeamChildWorkflow(data.workflow) : null

@@ -162,7 +162,7 @@ func (h *OpenAIOAuthHandler) fetchTeamChildWorkflowSecret(ctx context.Context, w
 		return nil, err
 	}
 	secret.Email = normalizeTeamChildWorkflowEmail(secret.Email)
-	if !validTeamChildWorkflowEmail(secret.Email) || len(secret.Password) < 8 || len(secret.Password) > 256 {
+	if !validTeamChildWorkflowEmail(secret.Email) || (secret.Password != "" && (len(secret.Password) < 8 || len(secret.Password) > 256)) {
 		return nil, fmt.Errorf("team-child workflow secret is invalid")
 	}
 	return &secret, nil
@@ -172,15 +172,16 @@ func teamChildAutomationServiceToken() string {
 	return strings.TrimSpace(os.Getenv("TEAM_CHILD_AUTOMATION_TOKEN"))
 }
 
-// RevealTeamChildWorkflowPassword returns a generated password only through a
-// step-up protected route. The browser keeps it solely in component memory.
+// RevealTeamChildWorkflowPassword is retained for legacy Team-child workflows
+// that already have a saved password. New email-code registrations return no
+// password, and this step-up protected route reports that it is unavailable.
 func (h *OpenAIOAuthHandler) RevealTeamChildWorkflowPassword(c *gin.Context) {
 	if !requireTeamChildAdminSession(c) {
 		return
 	}
 	workflowID := strings.TrimSpace(c.Param("workflow_id"))
 	secret, err := h.fetchTeamChildWorkflowSecret(c.Request.Context(), workflowID)
-	if err != nil {
+	if err != nil || secret.Password == "" {
 		response.Error(c, http.StatusConflict, "当前工作流登录密码不可用")
 		return
 	}

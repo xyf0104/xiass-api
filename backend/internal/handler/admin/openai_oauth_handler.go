@@ -489,20 +489,22 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 			response.BadRequest(c, "Team 子号工作流 ID 无效")
 			return
 		}
-		if h.secretEncryptor == nil {
-			response.InternalError(c, "Team 子号密码加密服务不可用")
-			return
-		}
 		var err error
 		teamSecret, err = h.fetchTeamChildWorkflowSecret(c.Request.Context(), req.WorkflowID)
 		if err != nil {
-			response.Error(c, http.StatusConflict, "无法读取当前 Team 子号工作流密码，请确认自动化工作流仍有效")
+			response.Error(c, http.StatusConflict, "无法读取当前 Team 子号工作流登录信息，请确认自动化工作流仍有效")
 			return
 		}
-		encryptedTeamPassword, err = h.secretEncryptor.Encrypt(teamSecret.Password)
-		if err != nil {
-			response.InternalError(c, "Team 子号密码加密失败")
-			return
+		if teamSecret.Password != "" {
+			if h.secretEncryptor == nil {
+				response.InternalError(c, "Team 子号密码加密服务不可用")
+				return
+			}
+			encryptedTeamPassword, err = h.secretEncryptor.Encrypt(teamSecret.Password)
+			if err != nil {
+				response.InternalError(c, "Team 子号密码加密失败")
+				return
+			}
 		}
 	}
 
@@ -530,7 +532,9 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		}
 		teamSecret.Email = workflowEmail
 		credentials["email"] = workflowEmail
-		credentials[service.OpenAITeamChildPasswordCredentialKey] = encryptedTeamPassword
+		if encryptedTeamPassword != "" {
+			credentials[service.OpenAITeamChildPasswordCredentialKey] = encryptedTeamPassword
+		}
 	}
 
 	platform := oauthPlatformFromPath(c)

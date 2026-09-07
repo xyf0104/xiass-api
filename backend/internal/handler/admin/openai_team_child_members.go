@@ -21,7 +21,7 @@ import (
 const (
 	teamChildMembersDefaultTimeout   = 30 * time.Second
 	teamChildWorkflowProtocolHeader  = "X-XIASS-Team-Child-Protocol"
-	teamChildWorkflowProtocolVersion = "3"
+	teamChildWorkflowProtocolVersion = "4"
 )
 
 type teamChildMemberAutomationConfig struct {

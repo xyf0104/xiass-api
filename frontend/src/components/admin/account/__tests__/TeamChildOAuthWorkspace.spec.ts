@@ -15,10 +15,10 @@ const BrowserWorkspaceRefreshStub = {
 }
 
 const nodeDefinitions = [
-  ['members', '读取成员席位'], ['remove', '移除已选成员'], ['invite', '提交成员邀请'],
-  ['invite_confirm', '确认 Pending invites'], ['oauth', '打开 XIASS 官方 OAuth'], ['signup', '选择 Sign up'],
-  ['email', '填入临时邮箱'], ['password', '创建 13 位随机密码'], ['mail', '提交并发送邮箱验证码'],
-  ['mailbox', 'Cloudflare 读取验证邮件'], ['email_code', '自动填入邮箱验证码'], ['phone', '进入手机号页面'],
+  ['signup', '隐私页注册新邮箱'], ['email', '填入注册邮箱'], ['mail', '发送注册邮箱验证码'],
+  ['mailbox', '读取注册邮箱验证码'], ['email_code', '提交注册邮箱验证码'], ['members', '读取成员席位'],
+  ['remove', '移除已选成员'], ['invite', '提交成员邀请'], ['invite_confirm', '确认 Pending invites'],
+  ['oauth', '同一隐私页打开 OAuth'], ['password', '完成 OAuth 邮箱登录验证'], ['phone', '进入手机号页面'],
   ['sms_confirm', '确认领取手机号'], ['phone_submit', '填入号码并选择 Text message'], ['sms_poll', '轮询短信验证码'],
   ['sms_code', '自动填入短信验证码'], ['profile_wait', '等待资料页 5 秒'], ['profile', '填写 black / 26'],
   ['workspace_wait', '等待工作空间 10 秒'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
@@ -30,7 +30,7 @@ function workflow(overrides: Record<string, unknown> = {}) {
   const currentIndex = nodeDefinitions.findIndex(([key]) => key === currentNode)
   const workflowStatus = String(overrides.status || 'manual_required')
   return {
-    schema_version:  3,
+    schema_version: 4,
     id: 'workflow-token-abcdefghijklmnop',
     status: workflowStatus,
     manual_required: workflowStatus === 'manual_required',
@@ -109,7 +109,7 @@ describe('TeamChildOAuthWorkspace', () => {
     expect(wrapper.text()).toContain('已完成')
     expect(wrapper.get('[data-testid="team-sms-receiver"]').attributes('data-active')).toBe('true')
     expect(wrapper.find('[data-testid="team-oauth-manual-code"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('生成的登录密码会加密保存')
+    expect(wrapper.text()).toContain('如果仍出现登录页，会再次输入该邮箱并读取新一轮验证码')
     expect(wrapper.text()).toContain('上方只显示当前节点')
     expect(wrapper.get('[data-testid="team-oauth-progress-card"]').classes()).toContain('relative')
     expect(wrapper.get('[data-testid="team-oauth-progress-card"]').classes()).not.toContain('sticky')

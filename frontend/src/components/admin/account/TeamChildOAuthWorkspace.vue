@@ -125,7 +125,7 @@
         <template v-else>
         <div class="mt-4 flex items-start gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-600 dark:border-dark-600 dark:bg-dark-900/40 dark:text-gray-300">
           <Icon name="shield" size="sm" class="mt-0.5 shrink-0 text-gray-500 dark:text-gray-400" :stroke-width="2" />
-          <p>成员移除、邀请和 Pending invites 会先在当前服务器页面确认；后续 OAuth、邮箱验证码、手机号、短信和回调继续使用同一工作流。验证码和浏览器凭据不会写入工作流记录；生成的登录密码会加密保存，并仅在管理员二次验证后显示。</p>
+          <p>系统会先在独立隐私页注册新邮箱，注册成功后才移除成员、发送邀请并确认 Pending invites。随后在同一隐私页打开 OAuth；如果仍出现登录页，会再次输入该邮箱并读取新一轮验证码。验证码和浏览器登录态不会写入工作流记录。</p>
         </div>
 
         <div v-if="authUrl" class="mt-3 rounded-md border border-primary-200 bg-primary-50/40 p-3 dark:border-primary-900/60 dark:bg-primary-950/15">
@@ -136,7 +136,7 @@
             </button>
           </div>
           <code class="mt-2 block max-h-16 overflow-auto break-all rounded-md border border-primary-100 bg-white px-2.5 py-2 text-[11px] leading-4 text-gray-700 dark:border-primary-900/50 dark:bg-dark-900 dark:text-gray-300">{{ authUrl }}</code>
-          <p class="mt-2 text-xs leading-5 text-primary-700 dark:text-primary-300">XIASS 服务器浏览器会在独立 OAuth 标签页打开官方 PKCE 链接，并保留成员管理标签页；上方只显示当前节点，节点完成后自动切换到下一项。</p>
+          <p class="mt-2 text-xs leading-5 text-primary-700 dark:text-primary-300">XIASS 会在注册新邮箱的同一隐私页打开官方 PKCE 链接，同时保留普通成员管理标签页；上方只显示当前节点，完成后自动进入下一项。</p>
         </div>
 
         <div v-if="workflow.error" class="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">
@@ -163,7 +163,7 @@
         </div>
 
         <div v-if="receiverActive" class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
-          已进入手机号验证阶段。号码被拒或等待两分钟仍未收到验证码时，系统会释放旧号码，返回授权页的手机号步骤后填入新号码；页面如果重新要求密码，会使用本次已保存的登录密码继续。
+          已进入手机号验证阶段。号码被拒或等待两分钟仍未收到验证码时，系统会释放旧号码并返回手机号步骤；如果 OAuth 再次出现登录页，会重新输入本次邮箱并轮询新的邮箱验证码后继续。
         </div>
         </template>
 
