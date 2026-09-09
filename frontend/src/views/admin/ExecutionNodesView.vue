@@ -35,7 +35,7 @@
           </div>
           <div v-if="status.runtime.enabled" class="mx-5 mb-5 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm leading-6 sm:mx-6" :class="status.admin_write_mode === 'emergency_takeover' ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300' : status.admin_write_allowed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300' : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-300'" data-testid="execution-node-admin-access">
             <Icon :name="status.admin_write_allowed ? 'check' : 'lock'" size="sm" class="mt-1 shrink-0" />
-            <span>{{ status.admin_write_mode === 'emergency_takeover' ? t('admin.executionNodes.adminWriteTakeover') : status.admin_write_allowed ? t('admin.executionNodes.adminWritePrimary') : t('admin.executionNodes.adminWriteSecondary') }}</span>
+            <span>{{ status.admin_write_mode === 'paired_full_access' ? t('admin.executionNodes.adminWritePaired') : status.admin_write_mode === 'pairing_unavailable' ? t('admin.executionNodes.adminWritePairingUnavailable') : status.admin_write_mode === 'emergency_takeover' ? t('admin.executionNodes.adminWriteTakeover') : status.admin_write_allowed ? t('admin.executionNodes.adminWritePrimary') : t('admin.executionNodes.adminWriteSecondary') }}</span>
           </div>
         </section>
 

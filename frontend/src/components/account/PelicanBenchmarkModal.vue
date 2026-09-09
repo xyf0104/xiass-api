@@ -1,0 +1,442 @@
+<template>
+  <BaseDialog :show="show" :title="t(`${prefix}.title`)" width="extra-wide" @close="close">
+    <div class="pelican-benchmark min-w-0 space-y-4">
+      <div class="flex border-b border-gray-200 dark:border-dark-600" role="tablist" :aria-label="t(`${prefix}.title`)">
+        <button
+          v-for="item in tabs" :id="`pelican-tab-${item}`" :key="item" type="button" role="tab"
+          :aria-selected="tab === item" :aria-controls="`pelican-panel-${item}`" :tabindex="tab === item ? 0 : -1"
+          class="min-h-11 min-w-0 flex-1 border-b-2 px-2 py-2 text-sm font-medium sm:flex-none sm:px-5"
+          :class="tab === item ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 dark:text-gray-400'"
+          :data-testid="`tab-${item}`" @click="tab = item" @keydown="navigateTabs($event, item)"
+        >{{ t(`${prefix}.tabs.${item}`) }}</button>
+      </div>
+
+      <div v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{{ error }}</div>
+      <div v-if="notice" role="status" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">{{ notice }}</div>
+
+      <section :id="`pelican-panel-${tab}`" role="tabpanel" :aria-labelledby="`pelican-tab-${tab}`" :aria-busy="loading">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : current.length }) }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || !startable.length" @click="start(startable)">
+              <Icon name="play" size="sm" />{{ t(`${prefix}.startAll`) }}
+            </button>
+            <button v-if="tab === 'current'" type="button" class="btn btn-secondary" data-testid="stop-all" :disabled="busy || !stoppable.length" @click="stop(stoppable, true)">
+              <Icon name="xCircle" size="sm" />{{ t(`${prefix}.stopAll`) }}
+            </button>
+            <button type="button" class="btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.refresh`)" :aria-label="t(`${prefix}.refresh`)" :disabled="loading || busy" data-testid="refresh" @click="refresh">
+              <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
+            </button>
+          </div>
+        </div>
+
+        <div class="benchmark-row hidden gap-2 border-b border-gray-200 py-2 text-xs font-medium text-gray-500 dark:border-dark-600 dark:text-gray-400 lg:grid" aria-hidden="true">
+          <span>{{ t(`${prefix}.name`) }}</span><span>{{ t(`${prefix}.plan`) }}</span><span>{{ t(`${prefix}.statusLabel`) }}</span><span>{{ t(`${prefix}.model`) }}</span><span>{{ t(`${prefix}.date`) }}</span><span>{{ t(`${prefix}.duration`) }}</span><span>{{ t(`${prefix}.result`) }}</span>
+        </div>
+        <p v-if="loading && !(tab === 'new' ? accounts.length : rows.length)" role="status" class="py-10 text-center text-sm text-gray-500">{{ t('common.loading') }}</p>
+        <p v-else-if="!(tab === 'new' ? accounts.length : rows.length)" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.empty.${tab}`) }}</p>
+
+        <template v-if="tab === 'new'">
+          <div v-for="account in accounts" :key="account.id" class="benchmark-row grid items-center gap-2 border-b border-gray-100 py-2 text-sm dark:border-dark-700" :data-testid="`account-${account.id}`">
+            <span class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ account.name }}</span>
+            <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
+            <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
+            <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || isAccountRunning(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
+            <span class="hidden text-gray-400 lg:block">--</span><span class="hidden text-gray-400 lg:block">--</span>
+            <button type="button" class="row-action btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${canStart(account) ? 'start' : 'unavailable'}`)" :aria-label="`${account.name}: ${t(`${prefix}.start`)}`" :disabled="!ready || busy || loading || !canStart(account)" :data-testid="`start-${account.id}`" @click="start([account])"><Icon name="play" size="sm" /></button>
+          </div>
+        </template>
+        <template v-else>
+          <div v-for="run in rows" :key="run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
+            <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
+              <span class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}</span>
+              <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
+              <span class="run-status min-w-0 text-xs" :class="statusClass(run.status)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
+              <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ run.model }}</span>
+              <time class="run-date min-w-0 break-words text-xs text-gray-500 dark:text-gray-400" :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
+              <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
+              <div class="row-action flex items-center justify-end">
+                <button v-if="run.status === 'queued' || run.status === 'running'" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
+                <button v-else-if="run.status === 'succeeded' && run.html_bytes > 0" type="button" class="btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${expandedId === run.id ? 'collapse' : 'details'}`)" :aria-label="`${run.account_name}: ${t(`${prefix}.details`)}`" :aria-expanded="expandedId === run.id" :aria-controls="`pelican-result-${run.id}`" :data-testid="`details-${run.id}`" @click="toggleDetails(run)"><Icon :name="expandedId === run.id ? 'chevronUp' : 'eye'" size="sm" /></button>
+                <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
+              </div>
+            </div>
+            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}</p>
+            <div v-if="run.status === 'succeeded' && expandedId === run.id" :id="`pelican-result-${run.id}`" class="pb-3">
+              <p v-if="detailLoading" role="status" class="py-4 text-center text-sm text-gray-500">{{ t('common.loading') }}</p>
+              <p v-else-if="detailError" role="alert" class="py-3 text-sm text-red-600 dark:text-red-400">{{ detailError }}</p>
+              <iframe v-else-if="preview" :srcdoc="preview" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" class="h-80 w-full rounded-lg border border-gray-200 bg-white sm:h-96 dark:border-dark-600" data-testid="result-preview" />
+            </div>
+          </div>
+        </template>
+
+        <div v-if="tab === 'history' && historyPages > 1" class="mt-4 flex items-center justify-center gap-3">
+          <button type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="loading || historyPage <= 1" :title="t(`${prefix}.previous`)" :aria-label="t(`${prefix}.previous`)" data-testid="history-previous" @click="loadHistory(historyPage - 1)"><Icon name="chevronLeft" size="sm" /></button>
+          <span class="text-sm tabular-nums text-gray-500">{{ historyPage }} / {{ historyPages }}</span>
+          <button type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="loading || historyPage >= historyPages" :title="t(`${prefix}.next`)" :aria-label="t(`${prefix}.next`)" data-testid="history-next" @click="loadHistory(historyPage + 1)"><Icon name="chevronRight" size="sm" /></button>
+        </div>
+      </section>
+    </div>
+  </BaseDialog>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import Select from '@/components/common/Select.vue'
+import Icon from '@/components/icons/Icon.vue'
+import {
+  DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
+  getPelicanResult, getPelicanModels, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
+  type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkStatus, type PelicanBenchmarkSkipped
+} from '@/api/admin/pelicanBenchmark'
+
+const props = defineProps<{ show: boolean }>()
+const emit = defineEmits<{ (event: 'close'): void }>()
+const { t, locale } = useI18n()
+const prefix = 'admin.accounts.pelicanBenchmark'
+const tabs = ['new', 'current', 'history'] as const
+type Tab = typeof tabs[number]
+const tab = ref<Tab>('new')
+const accounts = ref<PelicanBenchmarkAccount[]>([])
+const models = ref<Record<number, string>>({})
+const current = ref<PelicanBenchmarkRun[]>([])
+const history = ref<PelicanBenchmarkRun[]>([])
+const historyPage = ref(1)
+const historyPages = ref(0)
+const historyTotal = ref(0)
+const ready = ref(false)
+const loading = ref(false)
+const busy = ref(false)
+const error = ref('')
+const notice = ref('')
+const expandedId = ref<string | null>(null)
+const preview = ref('')
+const detailError = ref('')
+const detailLoading = ref(false)
+let session = 0
+let controller = new AbortController()
+let currentRequest: AbortController | undefined
+let detailRequest: AbortController | undefined
+let readVersion = 0
+let currentVersion = 0
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+const loadedModels = new Set<number>()
+const loadingModels = new Set<number>()
+
+const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].includes(run.status)
+const isAccountRunning = (id: number) => current.value.some(run => run.account_id === id && active(run))
+const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
+const startable = computed(() => accounts.value.filter(canStart))
+const stoppable = computed(() => current.value.filter(run => run.status === 'queued' || run.status === 'running'))
+const rows = computed(() => tab.value === 'history' ? history.value : current.value)
+const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
+
+function errorLabel(code: string) {
+  const known = ['account_unavailable', 'ineligible', 'free_plan', 'unknown_plan', 'unsupported_auth_mode', 'model_not_supported', 'fixed_egress_unavailable', 'upstream_failed', 'html_too_large', 'invalid_html', 'timeout', 'runner_interrupted', 'runner_panic', 'account_access_denied', 'account_not_found']
+  return t(`${prefix}.errors.${known.includes(code) ? code : 'unknown'}`)
+}
+
+async function loadModels(account: PelicanBenchmarkAccount) {
+  if (busy.value || !account.can_test || loadedModels.has(account.id) || loadingModels.has(account.id)) return
+  const signal = controller.signal
+  loadingModels.add(account.id)
+  try {
+    const ids = await getPelicanModels(account.id, signal)
+    if (signal.aborted) return
+    const currentAccount = accounts.value.find(item => item.id === account.id)
+    if (currentAccount) {
+      currentAccount.model_ids = [...new Set([DEFAULT_PELICAN_MODEL, ...ids])]
+      loadedModels.add(account.id)
+    }
+  } catch (cause) {
+    if (!signal.aborted) error.value = message(cause, 'modelsFailed')
+  } finally {
+    if (!signal.aborted) loadingModels.delete(account.id)
+  }
+}
+
+function mergeCurrent(items: PelicanBenchmarkRun[]) {
+  const merged = new Map(current.value.map(run => [run.id, run]))
+  for (const run of items) merged.set(run.id, run)
+  current.value = [...merged.values()]
+}
+
+function statusClass(status: PelicanBenchmarkStatus) {
+  if (status === 'succeeded') return 'text-emerald-700 dark:text-emerald-400'
+  if (status === 'failed') return 'text-red-600 dark:text-red-400'
+  if (status === 'running') return 'text-primary-600 dark:text-primary-400'
+  if (status === 'queued' || status === 'canceling') return 'text-amber-700 dark:text-amber-400'
+  return 'text-gray-500 dark:text-gray-400'
+}
+
+function modelOptions(account: PelicanBenchmarkAccount) {
+  return [...new Set([DEFAULT_PELICAN_MODEL, ...account.model_ids])].map(value => ({
+    value, label: value, disabled: !account.model_ids.includes(value)
+  }))
+}
+
+function formatDate(value: string) {
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(locale.value, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--'
+}
+
+function formatDuration(run: PelicanBenchmarkRun) {
+  const ms = run.duration_ms ?? (run.status === 'running' && run.started_at ? Date.now() - Date.parse(run.started_at) : null)
+  return ms !== null && Number.isFinite(ms) && ms >= 0 ? t(`${prefix}.seconds`, { seconds: (ms / 1000).toFixed(1) }) : '--'
+}
+
+function message(cause: unknown, key = 'loadFailed') {
+  const status = (cause as { status?: number; response?: { status?: number } })?.status ?? (cause as { response?: { status?: number } })?.response?.status
+  return t(`${prefix}.${status === 404 || status === 501 ? 'notConnected' : key}`)
+}
+
+function cancelPoll() {
+  clearTimeout(pollTimer)
+  pollTimer = undefined
+}
+
+function schedulePoll() {
+  cancelPoll()
+  if (!props.show || controller.signal.aborted || tab.value !== 'current' || document.hidden || busy.value || !current.value.some(run => run.status === 'running')) return
+  pollTimer = setTimeout(() => void loadCurrent(), 3_000)
+}
+
+async function loadCurrent(discover = false) {
+  cancelPoll()
+  currentRequest?.abort()
+  const request = new AbortController()
+  currentRequest = request
+  const version = ++currentVersion
+  const ownSession = session
+  try {
+    const result = await getPelicanCurrent(request.signal, [...new Set(current.value.map(run => run.batch_id))], discover)
+    if (session !== ownSession || request.signal.aborted || version !== currentVersion) return false
+    current.value = result.items
+    schedulePoll()
+    return true
+  } catch (cause) {
+    if (session === ownSession && !request.signal.aborted && version === currentVersion) error.value = message(cause)
+    return false
+  }
+}
+
+async function refresh() {
+  if (busy.value) return
+  if (tab.value === 'history') return loadHistory(historyPage.value)
+  const version = ++readVersion
+  const ownSession = session
+  const signal = controller.signal
+  loading.value = true
+  error.value = ''
+  try {
+    if (tab.value === 'new') {
+      ready.value = false
+      const result = await getPelicanAccounts(signal)
+      if (ownSession !== session || version !== readVersion || signal.aborted) return
+      const previous = new Map(accounts.value.map(account => [account.id, account]))
+      accounts.value = result.items.map(account => ({ ...account, model_ids: previous.get(account.id)?.model_ids ?? account.model_ids }))
+      for (const account of accounts.value) models.value[account.id] ??= DEFAULT_PELICAN_MODEL
+    }
+    const success = await loadCurrent(true)
+    if (ownSession === session && version === readVersion && !signal.aborted) ready.value = success === true
+  } catch (cause) {
+    if (ownSession === session && version === readVersion && !signal.aborted) error.value = message(cause)
+  } finally {
+    if (ownSession === session && version === readVersion) loading.value = false
+  }
+}
+
+async function loadHistory(page: number) {
+  clearDetails()
+  const version = ++readVersion
+  const ownSession = session
+  const signal = controller.signal
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await getPelicanHistory(page, signal)
+    if (ownSession !== session || version !== readVersion || signal.aborted) return
+    history.value = result.items
+    historyPage.value = result.page
+    historyPages.value = result.pages
+    historyTotal.value = result.total
+  } catch (cause) {
+    if (ownSession === session && version === readVersion && !signal.aborted) error.value = message(cause)
+  } finally {
+    if (ownSession === session && version === readVersion) loading.value = false
+  }
+}
+
+async function mutate(operation: (signal: AbortSignal) => Promise<{ items: PelicanBenchmarkRun[]; skipped?: PelicanBenchmarkSkipped[] }>, failureKey: string) {
+  if (busy.value || controller.signal.aborted) return
+  const ownSession = session
+  const signal = controller.signal
+  busy.value = true
+  error.value = ''
+  cancelPoll()
+  currentRequest?.abort()
+  ++currentVersion
+  try {
+    const result = await operation(signal)
+    if (ownSession !== session || signal.aborted) return
+    mergeCurrent(result.items)
+    notice.value = result.skipped?.length ? t(`${prefix}.skipped`, { count: result.skipped.length }) : ''
+    if (result.items.length) tab.value = 'current'
+  } catch (cause) {
+    if (ownSession === session && !signal.aborted) {
+      if (cause instanceof PelicanPartialStartError) {
+        mergeCurrent(cause.items)
+        if (cause.items.length) tab.value = 'current'
+        error.value = message(cause.cause, cause.items.length ? 'partialStart' : failureKey)
+      } else error.value = message(cause, failureKey)
+      ready.value = false
+    }
+  } finally {
+    if (ownSession === session && !signal.aborted) {
+      busy.value = false
+      schedulePoll()
+    }
+  }
+}
+
+async function start(selected: PelicanBenchmarkAccount[]) {
+  if (!ready.value || busy.value || loading.value) return
+  const tests = selected.filter(canStart).map(account => ({ account_id: account.id, model: models.value[account.id] }))
+  if (!tests.length) return
+  await mutate(signal => startPelicanTests(tests, signal), 'startFailed')
+}
+
+async function stop(selected: PelicanBenchmarkRun[], all = false) {
+  const ids = selected.filter(run => run.status === 'queued' || run.status === 'running').map(run => run.id)
+  if (!ids.length) return
+  await mutate(async signal => {
+    if (!all) return stopPelicanTests(ids, signal)
+    await stopAllPelicanTests(signal)
+    return getPelicanCurrent(signal, [...new Set(current.value.map(run => run.batch_id))])
+  }, 'stopFailed')
+}
+
+function clearDetails() {
+  detailRequest?.abort()
+  expandedId.value = null
+  preview.value = ''
+  detailError.value = ''
+  detailLoading.value = false
+}
+
+async function toggleDetails(run: PelicanBenchmarkRun) {
+  const collapse = expandedId.value === run.id
+  clearDetails()
+  if (collapse || run.status !== 'succeeded' || run.html_bytes <= 0) return
+  expandedId.value = run.id
+  const request = new AbortController()
+  detailRequest = request
+  detailLoading.value = true
+  try {
+    const result = await getPelicanResult(run.id, request.signal)
+    if (request.signal.aborted || expandedId.value !== run.id) return
+    if (result.id !== run.id || result.status !== 'succeeded' || !result.html?.trim()) throw new Error('Missing result')
+    // The first policy applies before ANY generated bytes. Animation scripts run only
+    // inside the opaque-origin sandbox, never via v-html or in the administrator DOM.
+    const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';"
+    preview.value = `<meta http-equiv="Content-Security-Policy" content="${policy}">${result.html}`
+  } catch (cause) {
+    if (!request.signal.aborted && expandedId.value === run.id) detailError.value = message(cause, 'resultFailed')
+  } finally {
+    if (!request.signal.aborted && expandedId.value === run.id) detailLoading.value = false
+  }
+}
+
+function dispose() {
+  ++session
+  ++readVersion
+  ++currentVersion
+  controller.abort()
+  currentRequest?.abort()
+  cancelPoll()
+  clearDetails()
+}
+
+function close() {
+  dispose()
+  emit('close')
+}
+
+function navigateTabs(event: KeyboardEvent, item: Tab) {
+  const index = tabs.indexOf(item)
+  const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1
+  if (next < 0) return
+  event.preventDefault()
+  tab.value = tabs[next]
+  ;(event.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+}
+
+watch(tab, () => {
+  cancelPoll()
+  currentRequest?.abort()
+  ++currentVersion
+  ++readVersion
+  loading.value = false
+  clearDetails()
+  if (props.show && !controller.signal.aborted && !busy.value) void refresh()
+}, { flush: 'sync' })
+
+watch(() => props.show, show => {
+  dispose()
+  if (!show) return
+  controller = new AbortController()
+  accounts.value = []
+  current.value = []
+  history.value = []
+  models.value = {}
+  loadedModels.clear()
+  loadingModels.clear()
+  notice.value = ''
+  ready.value = false
+  busy.value = false
+  historyPage.value = 1
+  historyPages.value = 0
+  historyTotal.value = 0
+  error.value = ''
+  if (tab.value === 'new') void refresh()
+  else tab.value = 'new'
+}, { immediate: true })
+
+function onVisibilityChange() {
+  cancelPoll()
+  if (document.hidden) {
+    currentRequest?.abort()
+  } else if (props.show && !controller.signal.aborted && tab.value === 'current' && !busy.value && current.value.some(run => run.status === 'running')) {
+    void refresh()
+  }
+}
+
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
+onUnmounted(() => {
+  dispose()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
+</script>
+
+<style scoped>
+.benchmark-row {
+  grid-template-columns: minmax(0, 1fr) 64px 44px;
+  grid-template-areas: 'name name plan' 'model model action' 'status duration action' 'date date date';
+}
+.account-name { grid-area: name; overflow-wrap: anywhere; }
+.plan-label { grid-area: plan; text-align: right; }
+.model-select { grid-area: model; }
+.run-status { grid-area: status; }
+.run-date { grid-area: date; }
+.run-duration { grid-area: duration; }
+.row-action { grid-area: action; }
+.pelican-benchmark :deep(.select-trigger) { min-height: 44px; border-radius: 8px; }
+.pelican-benchmark button:focus-visible { outline: 2px solid var(--color-primary-500, #0ea5e9); outline-offset: 2px; }
+@media (min-width: 1024px) {
+  .benchmark-row { grid-template-columns: minmax(0, 1.5fr) 52px 72px minmax(0, 1.25fr) minmax(0, 1fr) 64px 44px; grid-template-areas: none; }
+  .account-name, .plan-label, .model-select, .row-action, .run-status, .run-date, .run-duration { grid-area: auto; }
+  .plan-label { text-align: left; }
+}
+</style>

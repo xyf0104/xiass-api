@@ -348,6 +348,33 @@ describe('ExecutionNodesView', () => {
     }))
   })
 
+  it.each([true, false])('shows paired full access independently of peer online=%s', async (online) => {
+    getStatus.mockResolvedValue(statusFixture({
+      admin_write_allowed: true,
+      admin_write_mode: 'paired_full_access',
+      runtime: { ...statusFixture().runtime, node_id: 'api2', emergency_local_egress: false },
+      nodes: statusFixture().nodes.map((node) => ({ ...node, online }))
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const notice = wrapper.get('[data-testid="execution-node-admin-access"]').text()
+    expect(notice).toContain('admin.executionNodes.adminWritePaired')
+    expect(notice).not.toContain('admin.executionNodes.adminWriteTakeover')
+    expect(notice).not.toContain('admin.executionNodes.adminWriteSecondary')
+  })
+
+  it('shows pairing verification failure instead of legacy secondary or takeover permission', async () => {
+    getStatus.mockResolvedValue(statusFixture({
+      admin_write_allowed: false,
+      admin_write_mode: 'pairing_unavailable',
+      runtime: { ...statusFixture().runtime, emergency_local_egress: true }
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="execution-node-admin-access"]').text()).toContain('admin.executionNodes.adminWritePairingUnavailable')
+  })
+
   it('explains that the secondary machine is read-only while keeping shared weights editable', async () => {
     getStatus.mockResolvedValue(statusFixture({
       balancing_enabled: true,

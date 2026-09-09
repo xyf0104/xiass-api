@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -133,12 +134,116 @@ func (r executionNodeAdminAccessSettingsError) GetValue(context.Context, string)
 	return "", r.err
 }
 
+func (r executionNodeAdminAccessSettingsError) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return nil, r.err
+}
+
 func TestExecutionNodeAdminWriteAccessDoesNotTreatPolicyReadErrorAsPermission(t *testing.T) {
 	svc := executionNodeAdminAccessService("api2", false, "false")
 	svc.settingRepo = executionNodeAdminAccessSettingsError{SettingRepository: svc.settingRepo, err: errors.New("database read unavailable")}
 	allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
 	require.False(t, allowed, "the local deployment default true cannot override an unreadable shared choice")
+	require.Equal(t, "pairing_unavailable", mode)
+}
+
+func verifiedPairedAdminService(t *testing.T, nodeID string) (*SettingService, *executionNodePairingRepo) {
+	t.Helper()
+	svc, repo := newExecutionNodePairingService(nodeID, "shared-db", "shared-redis")
+	db, redis, auth, state, err := svc.localPairingMaterial(context.Background())
+	require.NoError(t, err)
+	peerID := "api"
+	if nodeID == peerID {
+		peerID = "api2"
+	}
+	peer := ExecutionNodePairingPeer{NodeID: peerID, ProtocolVersion: executionNodePairingProtocolVersion,
+		DatabaseFingerprint: db, RedisFingerprint: redis, AuthFingerprint: auth, StateFingerprint: state, Ready: true}
+	raw, err := json.Marshal(peer)
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(context.Background(), executionNodePairingPeerKey(nodeID), string(raw)))
+	return svc, repo
+}
+
+func TestExecutionNodeAdminPairedAccessIndependentOfRuntimeAuthority(t *testing.T) {
+	for _, nodeID := range []string{"api", "api2"} {
+		for _, health := range []executionNodeAdminAccessHealth{
+			{values: map[string]bool{"api": true, "api2": true}},
+			{values: map[string]bool{"api": false, "api2": false}},
+			{err: errors.New("heartbeat unavailable")},
+		} {
+			svc, _ := verifiedPairedAdminService(t, nodeID)
+			svc.cfg.Gateway.ExecutionNode.Witness.Enabled = true // No witness service or local authority.
+			svc.cfg.Gateway.ExecutionNode.EmergencyLocalEgress = false
+			svc.SetExecutionNodeHealthReader(health)
+			allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
+			require.True(t, allowed)
+			require.Equal(t, "paired_full_access", mode)
+			require.True(t, svc.CanWriteSharedAdminState(context.Background()))
+		}
+	}
+}
+
+func TestExecutionNodeAdminPairedMismatchCannotFallBackToLegacyPermission(t *testing.T) {
+	for _, nodeID := range []string{"api", "api2"} {
+		for _, field := range []string{"protocol_version", "database_fingerprint", "redis_fingerprint", "auth_fingerprint", "state_fingerprint", "node_id", "malformed", "pending"} {
+			t.Run(nodeID+"/"+field, func(t *testing.T) {
+				svc, repo := verifiedPairedAdminService(t, nodeID)
+				svc.cfg.Gateway.ExecutionNode.EmergencyLocalEgress = true
+				svc.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{values: map[string]bool{"api": false}})
+				key := executionNodePairingPeerKey(nodeID)
+				var peer map[string]any
+				require.NoError(t, json.Unmarshal([]byte(repo.values[key]), &peer))
+				peer[field] = "mismatch"
+				if field == "protocol_version" {
+					peer[field] = -1
+				}
+				if field == "node_id" {
+					peer[field] = nodeID
+				}
+				if field == "pending" {
+					peer["ready"] = false
+					peer["tunnel_proof_hash"] = "pending-proof"
+				}
+				raw, err := json.Marshal(peer)
+				require.NoError(t, err)
+				if field == "malformed" {
+					raw = []byte("{")
+				}
+				repo.values[key] = string(raw)
+				allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
+				require.False(t, allowed)
+				require.Equal(t, "pairing_unavailable", mode)
+			})
+		}
+	}
+}
+
+func TestExecutionNodeAdminPairedAccessRevalidatesSharedState(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := verifiedPairedAdminService(t, "api2")
+	allowed, _ := svc.ExecutionNodeAdminWriteAccess(ctx)
+	require.True(t, allowed)
+	svc.SetExecutionNodePairingStateReader(executionNodePairingState("different-redis"))
+	allowed, mode := svc.ExecutionNodeAdminWriteAccess(ctx)
+	require.False(t, allowed)
+	require.Equal(t, "pairing_unavailable", mode)
+	svc.SetExecutionNodePairingStateReader(nil)
+	allowed, mode = svc.ExecutionNodeAdminWriteAccess(ctx)
+	require.False(t, allowed)
+	require.Equal(t, "pairing_unavailable", mode)
+	svc.SetExecutionNodePairingStateReader(executionNodePairingState("shared-redis"))
+	allowed, _ = svc.ExecutionNodeAdminWriteAccess(ctx)
+	require.True(t, allowed)
+	require.NoError(t, svc.UnpairExecutionNode(ctx))
+	allowed, mode = svc.ExecutionNodeAdminWriteAccess(ctx)
+	require.False(t, allowed)
 	require.Equal(t, "secondary_read_only", mode)
+}
+
+func TestExecutionNodeAdminSingleNodeRetainsAccess(t *testing.T) {
+	svc := NewSettingService(nil, &config.Config{})
+	allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
+	require.True(t, allowed)
+	require.Equal(t, "single_node", mode)
 }
 
 func TestExecutionNodeAdminWriteAccessRetainsExplicitLegacyConfigFallback(t *testing.T) {

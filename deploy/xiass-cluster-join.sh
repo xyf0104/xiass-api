@@ -23,6 +23,7 @@ COMPOSE_FILES=()
 COMPOSE_PROJECT_NAME=""
 OLD_ENV_FILE=""
 APPLIED=false
+READYZ_URL=""
 
 log() { printf '[XIASS cluster] %s\n' "$*"; }
 warn() { printf '[XIASS cluster] 警告：%s\n' "$*" >&2; }
@@ -103,6 +104,26 @@ compose() {
     "${COMPOSE[@]}" "${args[@]}" --project-directory "$DEPLOY_DIR" "$@"
 }
 
+resolve_readyz_url() {
+    local mapping host host_port
+    mapping=$(compose port xiass-api 8080 2>/dev/null | awk 'NF && !seen++ { print $0 }') || return 1
+    [[ "$mapping" == *:* ]] || return 1
+    host="${mapping%:*}"
+    host_port="${mapping##*:}"
+    [[ "$host_port" =~ ^[0-9]{1,5}$ ]] || return 1
+    host_port=$((10#$host_port))
+    [ "$host_port" -ge 1 ] && [ "$host_port" -le 65535 ] || return 1
+    host="${host#[}"
+    host="${host%]}"
+    [[ "$host" =~ ^[0-9a-fA-F.:]+$ ]] || return 1
+    case "$host" in
+        0.0.0.0) host=127.0.0.1 ;;
+        ::) host='[::1]' ;;
+        *:*) host="[$host]" ;;
+    esac
+    READYZ_URL="http://${host}:${host_port}/readyz"
+}
+
 json_value() {
     local key="$1"
     jq -r --arg key "$key" '.[$key] // empty' /tmp/xiass-cluster-join-bundle.json
@@ -128,27 +149,39 @@ set_env_value() {
     mv -f "$temp" "$ENV_FILE"
 }
 
-wait_for_health() {
-    local port attempt
-    port=$(read_env_value SERVER_PORT)
-    port="${port:-8080}"
-    for attempt in $(seq 1 120); do
-		if curl -fsS --max-time 3 "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then return 0; fi
-        sleep 2
+readyz_is_valid() {
+    local expected_node="$1" response http_status body
+    [ -n "$READYZ_URL" ] || resolve_readyz_url || return 1
+    response=$(curl -q -sS --noproxy '*' --max-time 3 -w $'\n%{http_code}' "$READYZ_URL" 2>/dev/null) || return 1
+    [ -n "$response" ] || return 1
+    http_status="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    [ "$http_status" = 200 ] || return 1
+    [ -n "$body" ] || return 1
+    # The existing /readyz contract names the node identity execution_node.
+    jq -es --arg expected "$expected_node" '
+        length == 1 and (.[0] | type == "object"
+        and .status == "ok"
+        and (.checks | type == "object")
+        and .checks.postgres == "ok"
+        and .checks.redis == "ok"
+        and .checks.execution_node == "ok"
+        and (all(.checks[]; . == "ok"))
+        and .execution_node == $expected)
+    ' <<<"$body" >/dev/null 2>&1
+}
+
+wait_for_readyz() {
+    local expected_node="$1" max_attempts="${2:-120}" interval="${3:-2}" attempt
+    for attempt in $(seq 1 "$max_attempts"); do
+        if readyz_is_valid "$expected_node"; then return 0; fi
+        sleep "$interval"
     done
     return 1
 }
 
 verify_local_state() {
-    local port attempt body
-    port=$(read_env_value SERVER_PORT)
-    port="${port:-8080}"
-    for attempt in $(seq 1 30); do
-		body=$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/readyz" 2>/dev/null || true)
-        if [ -n "$body" ]; then return 0; fi
-        sleep 1
-    done
-    return 1
+    wait_for_readyz "$JOIN_TARGET_NODE_ID" 30 1
 }
 
 finalize_source() {
@@ -220,6 +253,8 @@ main() {
     database_user=$(json_value database_user)
     database_pass=$(json_value database_pass)
     database_name=$(json_value database_name)
+    # State listeners live inside this app process, not on the Docker host.
+    # Source bundle addresses must never replace these local tunnel endpoints.
     set_env_value DATABASE_HOST 127.0.0.1
     set_env_value DATABASE_PORT 15432
     set_env_value DATABASE_USER "$database_user"
@@ -266,7 +301,7 @@ main() {
 
     log "已写入来源 PostgreSQL/Redis 和认证配置，开始仅重建目标应用容器。"
     compose up -d --no-deps --no-build --force-recreate xiass-api >/dev/null
-    wait_for_health || die "目标 XIASS 未通过健康检查，开始自动回滚"
+    wait_for_readyz "$JOIN_TARGET_NODE_ID" 120 || die "目标 XIASS 未通过 readyz 验证，开始自动回滚"
     verify_local_state || die "目标 XIASS 状态未稳定，开始自动回滚"
     finalize_source || die "目标已启动，但来源节点未确认配对完成；已自动回滚"
     APPLIED=true

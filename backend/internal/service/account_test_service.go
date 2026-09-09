@@ -664,6 +664,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	if pelicanProbe(c) != nil {
+		payload["input"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": prompt}}}}
+		payload["instructions"] = "Return only the requested HTML document."
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
@@ -724,13 +728,19 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		proxyURL = account.requestProxyURL()
 	}
 
+	if probe := pelicanProbe(c); probe != nil {
+		if err := probe.beforeSend(upstreamTestModelID); err != nil {
+			return err
+		}
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	boundPelicanResponse(c, resp)
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil {
+	if pelicanProbe(c) == nil && isOAuth && s.accountRepo != nil {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -738,6 +748,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.sendErrorAndEnd(c, "benchmark upstream rejected request")
+		}
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
@@ -923,13 +936,22 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		proxyURL = account.requestProxyURL()
 	}
 
+	if probe := pelicanProbe(c); probe != nil {
+		if err := probe.beforeSend(testModelID); err != nil {
+			return err
+		}
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
+	boundPelicanResponse(c, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.sendErrorAndEnd(c, "benchmark upstream rejected request")
+		}
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
@@ -1705,6 +1727,9 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
+				if pelicanProbe(c) != nil && finishReason != "stop" {
+					return s.sendErrorAndEnd(c, "benchmark response was incomplete")
+				}
 				seenFinish = true
 			}
 		}
@@ -1757,6 +1782,13 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
 			}
 		case "response.completed", "response.done":
+			if pelicanProbe(c) != nil {
+				if result, ok := data["response"].(map[string]any); ok {
+					if status, _ := result["status"].(string); status != "" && status != "completed" {
+						return s.sendErrorAndEnd(c, "benchmark response was incomplete")
+					}
+				}
+			}
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		case "response.failed":
@@ -2023,6 +2055,11 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
+	if pelicanProbe(c) != nil {
+		// Upstream error bodies may contain credentials or generated HTML.
+		s.sendEvent(c, TestEvent{Type: "error", Error: "benchmark upstream failed"})
+		return errors.New("benchmark upstream failed")
+	}
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)

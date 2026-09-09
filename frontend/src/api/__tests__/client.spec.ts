@@ -12,6 +12,7 @@ describe('API Client', () => {
 
   beforeEach(async () => {
     localStorage.clear()
+    sessionStorage.clear()
     window.history.replaceState({}, '', '/')
     // 每次测试重新导入以获取干净的模块状态
     vi.resetModules()
@@ -20,6 +21,7 @@ describe('API Client', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
   })
@@ -310,6 +312,64 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
+    function seedExpiredSession(): Record<string, string> {
+      const stored = {
+        auth_token: 'expired-token',
+        refresh_token: 'refresh-token',
+        auth_user: JSON.stringify({ id: 7 }),
+        token_expires_at: String(Date.now() - 1),
+      }
+      Object.entries(stored).forEach(([key, value]) => localStorage.setItem(key, value))
+      apiClient.defaults.adapter = vi.fn().mockRejectedValue({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config: { url: '/test', headers: { Authorization: 'Bearer expired-token' } },
+      })
+      return stored
+    }
+
+    it.each([
+      ['503', { response: { status: 503, data: { code: 503, reason: 'SERVICE_UNAVAILABLE' } } }],
+      ['502 HTML', { response: { status: 502, data: '<html>Bad Gateway</html>' } }],
+      ['network', { code: 'ERR_NETWORK', message: 'Network Error' }],
+      ['timeout', { code: 'ECONNABORTED', message: 'timeout exceeded' }],
+      ['429', { response: { status: 429, data: { code: 429 } } }],
+      ['unconfirmed 401', { response: { status: 401, data: '<html>Unauthorized</html>' } }],
+      ['unconfirmed 400', { response: { status: 400, data: { code: 400 } } }],
+      ['unconfirmed 403', { response: { status: 403, data: { code: 403 } } }],
+      ['unknown failure', new Error('unexpected refresh failure')],
+    ])('preserves the saved session after refresh %s without retrying', async (_label, error) => {
+      vi.useFakeTimers()
+      const stored = seedExpiredSession()
+      const post = vi.spyOn(axios, 'post').mockRejectedValueOnce(error)
+      const rejection = expect(apiClient.get('/test')).rejects.toMatchObject({
+        status: 503, code: 'TOKEN_REFRESH_UNAVAILABLE', retryable: true,
+      })
+      await vi.advanceTimersByTimeAsync(32_000)
+      await rejection
+      Object.entries(stored).forEach(([key, value]) => expect(localStorage.getItem(key)).toBe(value))
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+      expect(window.location.pathname).toBe('/')
+      expect(post).toHaveBeenCalledTimes(1)
+      expect(apiClient.defaults.adapter).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['REFRESH_TOKEN_INVALID', 'REFRESH_TOKEN_EXPIRED', 'TOKEN_REVOKED', 'SESSION_BINDING_MISMATCH'])(
+      'invalidates the unchanged session after definite 401 %s', async (reason) => {
+        vi.useFakeTimers()
+        seedExpiredSession()
+        window.history.replaceState({}, '', '/login')
+        vi.spyOn(axios, 'post').mockRejectedValueOnce({ response: { status: 401, data: { code: 401, reason } } })
+        const rejection = expect(apiClient.get('/test')).rejects.toMatchObject({ status: 401, code: 'TOKEN_REFRESH_FAILED' })
+        await vi.advanceTimersByTimeAsync(32_000)
+        await rejection
+        for (const key of ['auth_token', 'refresh_token', 'auth_user', 'token_expires_at']) {
+          expect(localStorage.getItem(key)).toBeNull()
+        }
+        expect(sessionStorage.getItem('auth_expired')).toBe('1')
+        expect(axios.post).toHaveBeenCalledTimes(1)
+      }
+    )
+
     it('无 refresh_token 时 401 清除 localStorage', async () => {
       localStorage.setItem('auth_token', 'expired-token')
       // 不设置 refresh_token
@@ -392,7 +452,12 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer new-token')
     })
 
-    it('刷新期间换号时旧请求不会清除新会话', async () => {
+    it.each([
+      new Error('stale refresh failed'),
+      { response: { status: 503, data: { code: 503 } } },
+      { response: { status: 401, data: { code: 401, reason: 'REFRESH_TOKEN_INVALID' } } },
+    ])('刷新期间换号时旧请求不会清除新会话 (%j)', async (refreshError) => {
+      vi.useFakeTimers()
       localStorage.setItem('auth_token', 'user-a-access')
       localStorage.setItem('refresh_token', 'user-a-refresh')
       localStorage.setItem('token_expires_at', String(Date.now() - 1))
@@ -410,7 +475,7 @@ describe('API Client', () => {
         code: 'ERR_BAD_REQUEST',
       })
 
-      let rejectRefresh!: (reason: Error) => void
+      let rejectRefresh!: (reason: unknown) => void
       vi.spyOn(axios, 'post').mockImplementationOnce(
         () => new Promise((_resolve, reject) => {
           rejectRefresh = reject
@@ -418,19 +483,23 @@ describe('API Client', () => {
       )
 
       const staleRequest = apiClient.get('/test')
-      await vi.waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1))
+      const rejection = expect(staleRequest).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(axios.post).toHaveBeenCalledTimes(1)
 
       localStorage.setItem('auth_token', 'user-b-access')
       localStorage.setItem('refresh_token', 'user-b-refresh')
       localStorage.setItem('token_expires_at', String(Date.now() + 3600_000))
       localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
-      rejectRefresh(new Error('stale refresh failed'))
+      rejectRefresh(refreshError)
 
-      await expect(staleRequest).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      await vi.advanceTimersByTimeAsync(32_000)
+      await rejection
       expect(localStorage.getItem('auth_token')).toBe('user-b-access')
       expect(localStorage.getItem('refresh_token')).toBe('user-b-refresh')
       expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 8 }))
       expect(window.location.pathname).toBe('/')
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
     })
   })
 

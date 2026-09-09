@@ -167,12 +167,12 @@ async function requestTokenPair(
     return payload.data
   } catch (error) {
     // A peer tab may have rotated the one-time refresh token while this request was in flight.
-    // A 4xx response can arrive quickly while the winning peer's response is still in flight, so
+    // A credential rejection can arrive while the winning peer's response is still in flight, so
     // wait through the shared request deadline before treating the session as expired. Transient
-    // non-4xx failures retain the short reconciliation window.
+    // failures (including rate limiting) retain the short reconciliation window.
     const responseStatus = (error as { response?: { status?: unknown } }).response?.status
     const isTokenRejection =
-      typeof responseStatus === 'number' && responseStatus >= 400 && responseStatus < 500
+      responseStatus === 400 || responseStatus === 401 || responseStatus === 403
     const peerResult = await waitForPeerRefresh(
       snapshot,
       failedAccessToken,

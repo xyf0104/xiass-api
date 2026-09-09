@@ -83,7 +83,7 @@ export default {
       controlPlane: 'Background control',
       emergencyEgress: 'Take over if the other machine disconnects',
       offlineTakeover: 'Let this machine temporarily continue accounts if the other disconnects',
-      offlineTakeoverHint: 'Normally, accounts use their own machine. When enabled, this machine may keep requests running during a short peer outage; account ownership, balances, and records do not change.',
+      offlineTakeoverHint: 'Normally, accounts use their own machine. When enabled, this machine may keep requests running during a short peer outage; account ownership, balances, and records do not change. This switch does not affect administrator permissions on shared-state-verified paired nodes.',
       offlineTakeoverEnabled: 'Temporary takeover is enabled',
       offlineTakeoverDisabled: 'Temporary takeover is disabled',
       offlineTakeoverFailed: 'Failed to save temporary takeover',
@@ -123,6 +123,8 @@ export default {
       issueTitle: 'Issues to resolve',
       statusTitle: 'Current status',
       adminWritePrimary: 'This is the primary machine. It can manage groups, prices, and its local accounts; both machines can change the shared usage ratio.',
+      adminWritePaired: 'Shared pairing state verified: authenticated administrators have equal full management access on all paired nodes, independent of peer availability, emergency egress, or witness ownership. Account ownership and fixed egress remain unchanged.',
+      adminWritePairingUnavailable: 'Shared pairing state could not be verified. Writes are unavailable until the pairing protocol and shared state are verified; emergency egress does not override this restriction.',
       adminWriteSecondary: 'This is the standby machine. Groups, prices, and primary-machine accounts are read-only while the primary is online; both machines can still change the shared usage ratio. Management takeover is available only after the primary disconnects and takeover is enabled.',
       adminWriteTakeover: 'The primary machine is temporarily offline. Emergency takeover is enabled, so shared configuration and peer accounts can be managed here.',
       sharedAccess: {

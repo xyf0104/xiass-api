@@ -13,12 +13,16 @@
             @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
-            v-if="teamChildSettingsReady"
+            v-if="teamChildSettingsReady && !pairingUnavailable"
             :loading="loading"
             @refresh="handleManualRefresh"
-            @create="showCreate = true"
+            @create="allowAccountWrite() && (showCreate = true)"
           >
             <template #beforeCreate>
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="pelican-benchmark" @click="showPelicanBenchmark = true">
+                <Icon name="lightbulb" size="sm" />
+                <span>{{ t('admin.accounts.pelicanBenchmark.title') }}</span>
+              </button>
               <button
                 v-if="teamChildCreationEnabled"
                 type="button"
@@ -176,6 +180,10 @@
               </div>
             </template>
           </AccountTableActions>
+          <div v-else-if="pairingUnavailable" class="flex flex-wrap items-center gap-2 text-sm text-amber-700 dark:text-amber-300" data-testid="account-pairing-unavailable">
+            <span>{{ t('admin.accounts.executionNodePairingUnavailable') }}</span>
+            <button type="button" class="btn btn-secondary" :disabled="loading" :title="t('common.refresh')" @click="handleManualRefresh"><Icon name="refresh" size="sm" /></button>
+          </div>
           <div
             v-else
             data-testid="account-toolbar-loading"
@@ -332,7 +340,7 @@
                 <Icon :name="isAccountReadOnly(row) ? 'lock' : 'server'" size="xs" :stroke-width="2" />
                 <span>{{ executionNodeLabel(row) }}</span>
                 <span v-if="isAccountRemote(row)" class="border-l border-current/25 pl-1">
-                  {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeTakeoverBadge') }}
+                  {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : pairedFullAccess ? t('admin.accounts.executionNodeManageableBadge') : t('admin.accounts.executionNodeTakeoverBadge') }}
                 </span>
               </span>
             </div>
@@ -540,6 +548,7 @@
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <OAuthBillingBreakdownDialog
       :show="showOAuthBillingDetails"
@@ -638,6 +647,7 @@ import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
+import PelicanBenchmarkModal from '@/components/account/PelicanBenchmarkModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import OAuthBillingBreakdownDialog, { type OAuthBillingInitialRange } from '@/components/admin/account/OAuthBillingBreakdownDialog.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
@@ -673,6 +683,7 @@ const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const router = useRouter() as ReturnType<typeof useRouter> | undefined
 
 function openTeamChildCreation() {
+  if (!allowAccountWrite()) return
   const account = latestTeamChildAccount.value
   void router?.push({
     name: 'AdminTeamChildCreation',
@@ -745,6 +756,8 @@ const showCreate = ref(false)
 const teamChildCreationEnabled = ref(false)
 const teamChildSettingsReady = ref(false)
 const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
+const pairedFullAccess = computed(() => executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && executionNodeStatus.value.admin_write_allowed === true)
+const pairingUnavailable = computed(() => executionNodeStatus.value?.admin_write_mode === 'pairing_unavailable' || (executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && !pairedFullAccess.value))
 const executionNodeOptions = computed<SelectOption[]>(() => {
   const status = executionNodeStatus.value
   if (!status?.runtime.enabled || status.nodes.length === 0) return []
@@ -774,13 +787,13 @@ const executionNodeLabel = (account: Account): string => {
 }
 const isExecutionNodeOwnerReadOnly = (owner: string): boolean => {
   const status = executionNodeStatus.value
+  if (pairingUnavailable.value) return true
   if (!status?.runtime.enabled) return false
   const localNodeID = status.runtime.node_id || 'api'
   if (owner === localNodeID) return false
+  if (pairedFullAccess.value) return false
   const ownerStatus = status.nodes.find(node => node.node_id === owner)
-  // A missing or online remote node is never writable here. Only an
-  // explicitly reported offline node plus the local takeover switch permits
-  // temporary management.
+  // Outside explicitly authorized pairing, retain the legacy takeover boundary.
   return !ownerStatus || ownerStatus.online || !status.runtime.emergency_local_egress
 }
 const isAccountRemote = (account: Account): boolean => {
@@ -792,11 +805,19 @@ const isAccountReadOnly = (account: Account): boolean => {
   return isExecutionNodeOwnerReadOnly(accountExecutionNodeID(account))
 }
 const accountManagementBlockReason = (account: Account): string => {
+  if (pairingUnavailable.value) return t('admin.accounts.executionNodePairingUnavailable')
   const owner = accountExecutionNodeID(account)
   const node = executionNodeStatus.value?.nodes.find(item => item.node_id === owner)
   if (node?.online) return t('admin.accounts.executionNodeRemoteReadOnly', { node: owner })
   if (!executionNodeStatus.value?.runtime.emergency_local_egress) return t('admin.accounts.executionNodeTakeoverRequired', { node: owner })
   return t('admin.accounts.executionNodeRemoteUnavailable')
+}
+function allowAccountWrite(account?: Account): boolean {
+  if (pairingUnavailable.value || (account && isAccountReadOnly(account))) {
+    appStore.showError(account ? accountManagementBlockReason(account) : t('admin.accounts.executionNodePairingUnavailable'))
+    return false
+  }
+  return true
 }
 const showEdit = ref(false)
 const showSync = ref(false)
@@ -812,6 +833,7 @@ const showAccountAllowlistGroupPicker = ref(false)
 const accountAllowlistAccount = ref<Account | null>(null)
 const showReAuth = ref(false)
 const showTest = ref(false)
+const showPelicanBenchmark = ref(false)
 const showStats = ref(false)
 const showOAuthBillingDetails = ref(false)
 const showErrorPassthrough = ref(false)
@@ -1627,11 +1649,13 @@ const toggleAccountToolsDropdown = () => {
 }
 
 const openSyncFromCrs = () => {
+  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showSync.value = true
 }
 
 const openImportData = () => {
+  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showImportData.value = true
 }
@@ -1642,11 +1666,13 @@ const openExportDataDialogFromMenu = () => {
 }
 
 const openErrorPassthrough = () => {
+  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showErrorPassthrough.value = true
 }
 
 const openTLSFingerprintProfiles = () => {
+  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
 }
@@ -1849,7 +1875,7 @@ const cols = computed(() =>
   )
 )
 
-const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
+const handleEdit = (a: Account) => { if (!allowAccountWrite(a)) return; edAcc.value = a; showEdit.value = true }
 const accountAllowlistGroups = computed<AdminGroup[]>(() => {
   const account = accountAllowlistAccount.value
   if (!account) return []
@@ -1872,6 +1898,7 @@ const openGroupUserAllowlist = async (group: AdminGroup) => {
 }
 
 const openAccountUserAllowlist = (account: Account) => {
+  if (!allowAccountWrite(account)) return
   accountAllowlistAccount.value = account
   if (accountAllowlistGroups.value.length === 1) {
     void openGroupUserAllowlist(accountAllowlistGroups.value[0])
@@ -1940,6 +1967,7 @@ const toggleSelectAllVisible = (event: Event) => {
   toggleVisible(target.checked)
 }
 const handleBulkDelete = async () => {
+  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   if (!confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length }))) return
   try {
@@ -1961,6 +1989,7 @@ const handleBulkDelete = async () => {
   }
 }
 const handleBulkResetStatus = async () => {
+  if (!allowAccountWrite()) return
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
@@ -1977,6 +2006,7 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
+  if (!allowAccountWrite()) return
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchRefresh(selIds.value)
@@ -1993,6 +2023,7 @@ const handleBulkRefreshToken = async () => {
   }
 }
 const handleBulkProbeUpstreamBilling = async () => {
+  if (!allowAccountWrite()) return
   const accountIDs = [...selIds.value]
   if (accountIDs.length === 0) {
     appStore.showError(t('admin.accounts.upstreamBilling.noEligibleAccounts'))
@@ -2092,6 +2123,7 @@ const normalizeBulkSchedulableResult = (
   }
 }
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
+  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
@@ -2195,6 +2227,7 @@ const collectSelectionMetadata = (rows: Array<Pick<Account, 'platform' | 'type'>
 }
 
 const openBulkEditSelected = async () => {
+  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   const selectedIDSet = new Set(accountIds)
 
@@ -2240,10 +2273,11 @@ const openBulkEditSelected = async () => {
 }
 
 const openBulkEditFiltered = async () => {
+  if (!allowAccountWrite()) return
   try {
     const filters = buildBulkEditFilterSnapshot()
     const status = executionNodeStatus.value
-    if (status?.runtime.enabled) {
+    if (status?.runtime.enabled && !pairedFullAccess.value) {
       const localNodeID = status.runtime.node_id || 'api'
       if (filters.execution_node_id && isExecutionNodeOwnerReadOnly(filters.execution_node_id)) {
         appStore.showError(t('admin.accounts.executionNodeBulkRemoteReadOnly'))
@@ -2398,6 +2432,7 @@ const refreshAccountsAfterUpstreamBillingProbe = async () => {
   }
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
+  if (!allowAccountWrite(account)) return
   if (probingUpstreamBilling.has(account.id)) return
   probingUpstreamBilling.add(account.id)
   try {
@@ -2476,7 +2511,7 @@ const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeOAuthBillingDetails = () => { showOAuthBillingDetails.value = false; oauthBillingAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
+const handleTest = (a: Account) => { if (!allowAccountWrite(a)) return; testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const handleOpenBillingDetails = (payload: { account: Account; windowLabel: string; startTime: string; endTime: string }) => {
   oauthBillingAcc.value = payload.account
@@ -2488,6 +2523,7 @@ const handleOpenBillingDetails = (payload: { account: Account; windowLabel: stri
   showOAuthBillingDetails.value = true
 }
 const handleSchedule = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   scheduleAcc.value = a
   scheduleModelOptions.value = []
   showSchedulePanel.value = true
@@ -2499,9 +2535,10 @@ const handleSchedule = async (a: Account) => {
   }
 }
 const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.value = null; scheduleModelOptions.value = [] }
-const handleReAuth = (a: Account) => { reAuthAcc.value = a; showReAuth.value = true }
+const handleReAuth = (a: Account) => { if (!allowAccountWrite(a)) return; reAuthAcc.value = a; showReAuth.value = true }
 const duplicatingAccountIDs = new Set<number>()
 const handleDuplicateAccount = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   if (duplicatingAccountIDs.has(a.id)) return
   duplicatingAccountIDs.add(a.id)
   try {
@@ -2516,6 +2553,7 @@ const handleDuplicateAccount = async (a: Account) => {
   }
 }
 const handleRefresh = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(updated)
@@ -2525,6 +2563,7 @@ const handleRefresh = async (a: Account) => {
   }
 }
 const handleRecoverState = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.recoverState(a.id)
     patchAccountInList(updated)
@@ -2536,6 +2575,7 @@ const handleRecoverState = async (a: Account) => {
   }
 }
 const handleResetQuota = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.resetAccountQuota(a.id)
     patchAccountInList(updated)
@@ -2568,6 +2608,7 @@ const privacyResultMessageKey = (account: Account): { type: 'success' | 'error';
 }
 
 const handleSetPrivacy = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.setPrivacy(a.id)
     patchAccountInList(updated)
@@ -2584,6 +2625,7 @@ const handleSetPrivacy = async (a: Account) => {
   }
 }
 const onRevertFallback = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   try {
     await adminAPI.accounts.revertProxyFallback(a.id)
     appStore.showSuccess(t('admin.accounts.revertProxySuccess'))
@@ -2594,10 +2636,12 @@ const onRevertFallback = async (a: Account) => {
   }
 }
 const handleCreateSparkShadow = (a: Account) => {
+  if (!allowAccountWrite(a)) return
   creatingShadowAcc.value = a
   showCreateShadowDialog.value = true
 }
 const confirmCreateSparkShadow = async () => {
+  if (!allowAccountWrite(creatingShadowAcc.value ?? undefined)) return
   const a = creatingShadowAcc.value
   if (!a) return
   try {
@@ -2611,9 +2655,10 @@ const confirmCreateSparkShadow = async () => {
     appStore.showError(error?.response?.data?.message || t('admin.accounts.createSparkShadowFailed'))
   }
 }
-const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
-const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
+const handleDelete = (a: Account) => { if (!allowAccountWrite(a)) return; deletingAcc.value = a; showDeleteDialog.value = true }
+const confirmDelete = async () => { if(!deletingAcc.value || !allowAccountWrite(deletingAcc.value)) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
+  if (!allowAccountWrite(a)) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {
@@ -2627,7 +2672,7 @@ const handleToggleSchedulable = async (a: Account) => {
     togglingSchedulable.value = null
   }
 }
-const handleShowTempUnsched = (a: Account) => { tempUnschedAcc.value = a; showTempUnsched.value = true }
+const handleShowTempUnsched = (a: Account) => { if (!allowAccountWrite(a)) return; tempUnschedAcc.value = a; showTempUnsched.value = true }
 const handleTempUnschedReset = async (updated: Account) => {
   showTempUnsched.value = false
   tempUnschedAcc.value = null

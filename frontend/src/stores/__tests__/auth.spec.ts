@@ -65,6 +65,30 @@ describe('useAuthStore', () => {
 
   // --- login ---
 
+  it.each([
+    { response: { status: 503 } },
+    { response: { status: 502, data: '<html>Bad Gateway</html>' } },
+    { response: { status: 429 } },
+    { code: 'ECONNABORTED' },
+  ])('preserves the session when proactive refresh fails transiently (%j)', async (error) => {
+    const stored = {
+      auth_token: 'saved-access',
+      refresh_token: 'saved-refresh',
+      auth_user: JSON.stringify(fakeUser),
+      token_expires_at: String(Date.now() - 1),
+    }
+    Object.entries(stored).forEach(([key, value]) => localStorage.setItem(key, value))
+    mockRefreshToken.mockRejectedValueOnce(error)
+    const store = useAuthStore()
+
+    await store.checkAuth()
+
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.token).toBe('saved-access')
+    Object.entries(stored).forEach(([key, value]) => expect(localStorage.getItem(key)).toBe(value))
+    expect(mockRefreshToken).toHaveBeenCalledTimes(1)
+  })
+
   describe('login', () => {
     it('成功登录后设置 token 和 user', async () => {
       mockLogin.mockResolvedValue(fakeAuthResponse)

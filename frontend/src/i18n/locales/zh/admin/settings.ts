@@ -83,7 +83,7 @@ export default {
       controlPlane: '后台控制',
       emergencyEgress: '对方断开时接管',
       offlineTakeover: '对方断开时允许本机临时继续使用账号',
-      offlineTakeoverHint: '正常时账号从自己的机器访问。打开后，对方机器暂时断开时，本机可以临时继续处理；账号归属、余额和记录不会改变。',
+      offlineTakeoverHint: '正常时账号从自己的机器访问。打开后，对方机器暂时断开时，本机可以临时继续处理；账号归属、余额和记录不会改变。此开关不影响共享状态验证通过的已配对节点管理员权限。',
       offlineTakeoverEnabled: '已允许本机临时接管',
       offlineTakeoverDisabled: '已关闭临时接管',
       offlineTakeoverFailed: '临时接管设置保存失败',
@@ -123,6 +123,8 @@ export default {
       issueTitle: '需要处理的问题',
       statusTitle: '当前状态',
       adminWritePrimary: '当前是主机器，可以管理分组、定价和本机账号；两台机器都可以修改共同使用比例。',
+      adminWritePaired: '共享配对状态验证通过：所有已配对节点上的认证管理员拥有相同完整管理权限，不依赖对方在线、临时出口接管或仲裁持有权；账号归属与固定出口保持不变。',
+      adminWritePairingUnavailable: '共享配对状态未能通过验证，暂不可写入。请检查配对协议与共享状态；开启临时出口接管不会解除此限制。',
       adminWriteSecondary: '当前是备用机器：主机器在线时，分组、定价和主机器账号只读；共同使用比例仍可在两台机器调整。主机器断联并开启临时接管后才允许接管管理。',
       adminWriteTakeover: '主机器暂时离线，当前已开启临时接管，可以处理共享配置和对方账号。',
       sharedAccess: {

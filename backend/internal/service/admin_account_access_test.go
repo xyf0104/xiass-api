@@ -24,7 +24,7 @@ func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *test
 		{"unknown", map[string]bool{}, "true", nil, "ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE"},
 		{"disabled", map[string]bool{"api": false}, "false", nil, "ACCOUNT_REMOTE_NODE_TAKEOVER_DISABLED"},
 		{"explicitly enabled", map[string]bool{"api": false}, "true", nil, ""},
-		{"policy unavailable", map[string]bool{"api": false}, "true", errors.New("database unavailable"), "ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE"},
+		{"policy unavailable", map[string]bool{"api": false}, "true", errors.New("database unavailable"), "EXECUTION_NODE_PAIRING_UNAVAILABLE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings := executionNodeAdminAccessService("api2", false, tc.choice)
@@ -46,5 +46,27 @@ func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *test
 				require.Equal(t, tc.want, infraerrors.Reason(err))
 			}
 		})
+	}
+}
+
+func TestPairedAccountManagementPreservesOwnershipAndRejectsMismatch(t *testing.T) {
+	for _, nodeID := range []string{"api", "api2"} {
+		settings, repo := verifiedPairedAdminService(t, nodeID)
+		settings.cfg.Gateway.ExecutionNode.Witness.Enabled = true
+		settings.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{err: errors.New("offline")})
+		svc := &adminServiceImpl{settingService: settings}
+		for _, ownerID := range []string{"api", "api2"} {
+			proxyID := int64(42)
+			account := &Account{ID: 7, ProxyID: &proxyID, Extra: map[string]any{"xiass_execution_node_id": ownerID}}
+			require.NoError(t, svc.ensureAccountManagementAccess(context.Background(), account))
+			require.Equal(t, ownerID, account.ExecutionNodeID("api"))
+			require.Equal(t, int64(42), *account.ProxyID)
+		}
+		repo.values[executionNodePairingPeerKey(nodeID)] = `{"node_id":"other-node","protocol_version":-1}`
+		for _, ownerID := range []string{"api", "api2"} {
+			account := &Account{ID: 7, Extra: map[string]any{"xiass_execution_node_id": ownerID}}
+			err := svc.ensureAccountManagementAccess(context.Background(), account)
+			require.Equal(t, "EXECUTION_NODE_PAIRING_UNAVAILABLE", infraerrors.Reason(err))
+		}
 	}
 }

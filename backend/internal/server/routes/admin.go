@@ -42,6 +42,7 @@ func RegisterAdminRoutes(
 
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
+		registerPelicanBenchmarkRoutes(admin, h)
 
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
@@ -121,6 +122,16 @@ func RegisterAdminRoutes(
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 	}
+}
+
+func registerPelicanBenchmarkRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	benchmarks := admin.Group("/pelican-benchmarks")
+	benchmarks.POST("", h.Admin.PelicanBenchmark.Create)
+	benchmarks.GET("", h.Admin.PelicanBenchmark.List)
+	benchmarks.POST("/stop", h.Admin.PelicanBenchmark.StopAll)
+	benchmarks.GET("/:id", h.Admin.PelicanBenchmark.Detail)
+	benchmarks.POST("/:id/stop", h.Admin.PelicanBenchmark.Stop)
+	admin.POST("/accounts/:id/pelican-benchmark", h.Admin.PelicanBenchmark.Create)
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

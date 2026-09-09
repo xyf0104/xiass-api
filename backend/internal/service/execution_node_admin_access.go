@@ -4,19 +4,48 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+// pairedAdminAccess validates shared state, not peer liveness or egress authority.
+// Missing pairing records retain legacy behavior, including initial pairing.
+func (s *SettingService) pairedAdminAccess(ctx context.Context) (bool, error) {
+	if s == nil || s.cfg == nil || s.settingRepo == nil {
+		return false, nil
+	}
+	key := executionNodePairingPeerKey(s.localExecutionNodeID())
+	if key == "" {
+		return false, nil
+	}
+	_, err := s.readExecutionNodeSetting(ctx, key)
+	if errors.Is(err, ErrSettingNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, infraerrors.ServiceUnavailable("EXECUTION_NODE_PAIRING_UNAVAILABLE", "shared pairing state is unavailable")
+	}
+	status, err := s.GetExecutionNodePairingStatus(ctx)
+	if err != nil || status == nil || !status.ProductionReady {
+		return false, infraerrors.ServiceUnavailable("EXECUTION_NODE_PAIRING_UNAVAILABLE", "shared pairing state could not be verified")
+	}
+	return true, nil
+}
+
 // ExecutionNodeAdminWriteAccess reports whether this instance may change
-// shared administrative data. The original node (the legacy account owner)
-// remains the normal write node. A secondary node becomes writable only when
-// the primary heartbeat is definitively offline and its local emergency
-// takeover switch is enabled.
+// shared administrative data. Verified paired nodes have equal admin access;
+// unpaired deployments retain the legacy primary/takeover policy.
 //
 // Routing weights are intentionally not covered by this decision: they are a
 // shared cluster control and are allowed from either node.
 func (s *SettingService) ExecutionNodeAdminWriteAccess(ctx context.Context) (bool, string) {
 	if s == nil || s.cfg == nil || !s.cfg.Gateway.ExecutionNode.Enabled {
 		return true, "single_node"
+	}
+	if allowed, err := s.pairedAdminAccess(ctx); err != nil {
+		return false, "pairing_unavailable"
+	} else if allowed {
+		return true, "paired_full_access"
 	}
 
 	localNodeID := strings.TrimSpace(s.cfg.Gateway.ExecutionNode.ID)
@@ -74,11 +103,29 @@ func (s *SettingService) executionNodeTakeoverPermission(ctx context.Context) (b
 	if key == "" {
 		return false, errors.New("execution-node identity is unavailable")
 	}
-	raw, err := s.settingRepo.GetValue(ctx, key)
+	raw, err := s.readExecutionNodeSetting(ctx, key)
 	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return false, err
 	}
 	return decodeExecutionNodeEmergencyEgress(raw, s.cfg.Gateway.ExecutionNode.EmergencyLocalEgress)
+}
+
+// Use the multi-key read for these policy checks. Besides batching naturally,
+// this keeps partially initialized setting repositories from invoking a
+// promoted nil interface method during startup and test construction.
+func (s *SettingService) readExecutionNodeSetting(ctx context.Context, key string) (string, error) {
+	if s == nil || s.settingRepo == nil || key == "" {
+		return "", ErrSettingNotFound
+	}
+	values, err := s.settingRepo.GetMultiple(ctx, []string{key})
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(values[key])
+	if value == "" {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
 }
 
 func (s *SettingService) CanWriteSharedAdminState(ctx context.Context) bool {

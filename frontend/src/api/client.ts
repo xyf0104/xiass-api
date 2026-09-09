@@ -78,6 +78,25 @@ apiClient.interceptors.request.use(
 
 // ==================== Response Interceptor ====================
 
+function isDefiniteRefreshRejection(error: unknown): boolean {
+  const response = (error as AxiosError<unknown> | null)?.response
+  if (!response || response.status !== 401) return false
+  const data = response.data
+  if (!data || typeof data !== 'object') return false
+  const { reason, code } = data as { reason?: unknown; code?: unknown }
+  switch (reason || code) {
+    case 'REFRESH_TOKEN_INVALID':
+    case 'REFRESH_TOKEN_EXPIRED':
+    case 'TOKEN_REVOKED':
+    case 'TOKEN_EXPIRED':
+    case 'INVALID_TOKEN':
+    case 'SESSION_BINDING_MISMATCH':
+      return true
+    default:
+      return false
+  }
+}
+
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
     // Unwrap standard API response format { code, message, data }
@@ -187,7 +206,7 @@ apiClient.interceptors.response.use(
               originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`
             }
             return apiClient(originalRequest)
-          } catch {
+          } catch (refreshError) {
             // A stale request must never destroy a session that was logged out or replaced while
             // its refresh was in flight (for example, when another tab signs in as another user).
             const sessionChanged =
@@ -198,6 +217,17 @@ apiClient.interceptors.response.use(
                 status: 401,
                 code: 'AUTH_SESSION_CHANGED',
                 message: 'Authentication session changed while refreshing.'
+              })
+            }
+
+            // A failed reconnect is not proof that the saved refresh token is invalid.
+            // Leave retries to the caller; never replay this request in a loop.
+            if (!isDefiniteRefreshRejection(refreshError)) {
+              return Promise.reject({
+                status: 503,
+                code: 'TOKEN_REFRESH_UNAVAILABLE',
+                retryable: true,
+                message: 'Session refresh is temporarily unavailable. Please try again.'
               })
             }
 

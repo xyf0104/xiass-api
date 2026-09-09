@@ -163,6 +163,7 @@ var ProviderSet = wire.NewSet(
 	NewClaudeUsageFetcher,
 	NewClaudeOAuthClient,
 	NewHTTPUpstream,
+	NewPelicanBenchmarkRepository,
 	NewOpenAIOAuthClient,
 	NewGrokOAuthClient,
 	NewGeminiOAuthClient,

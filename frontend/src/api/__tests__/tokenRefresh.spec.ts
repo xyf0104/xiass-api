@@ -67,6 +67,22 @@ describe('refreshAuthTokens', () => {
     expect(localStorage.getItem('refresh_token')).toBe('new-refresh')
   })
 
+  it.each([503, 502, 429])('keeps the short peer-reconciliation window for %s without retrying', async (status) => {
+    vi.useFakeTimers()
+    seedSession()
+    const error = { response: { status } }
+    mockedPost.mockRejectedValueOnce(error)
+    const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+    const rejected = vi.fn()
+    const pending = refreshAuthTokens().catch(rejected)
+
+    await vi.advanceTimersByTimeAsync(1_100)
+    expect(rejected).toHaveBeenCalledWith(error)
+    await pending
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('refresh_token')).toBe('old-refresh')
+  })
+
   it('adopts tokens refreshed by another tab after acquiring the Web Lock', async () => {
     seedSession()
     const request = vi.fn(async (_name: string, callback: () => Promise<unknown>) => {

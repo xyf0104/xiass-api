@@ -88,7 +88,7 @@ const makeAccounts = (count: number) => Array.from({ length: count }, (_, index)
 
 const AccountBulkActionsBarStub = {
   props: ['selectedIds', 'totalResults', 'selectingAll', 'allResultsSelected'],
-  emits: ['select-all-results', 'select-page', 'clear', 'edit-selected'],
+  emits: ['select-all-results', 'select-page', 'clear', 'edit-selected', 'edit-filtered'],
   template: `
     <div>
       <span data-test="selected-count">{{ selectedIds.length }}</span>
@@ -97,6 +97,7 @@ const AccountBulkActionsBarStub = {
       <button data-test="select-page" @click="$emit('select-page')">select page</button>
       <button data-test="select-all-results" @click="$emit('select-all-results')">select all</button>
       <button data-test="edit-selected" @click="$emit('edit-selected')">edit selected</button>
+      <button data-test="edit-filtered" @click="$emit('edit-filtered')">edit filtered</button>
       <button data-test="clear" @click="$emit('clear')">clear</button>
     </div>
   `
@@ -108,6 +109,7 @@ const BulkEditAccountModalStub = {
     <div v-if="show" data-test="bulk-edit-modal">
       <span data-test="bulk-edit-platforms">{{ target?.selectedPlatforms?.join(',') }}</span>
       <span data-test="bulk-edit-types">{{ target?.selectedTypes?.join(',') }}</span>
+      <span data-test="bulk-edit-owner">{{ target?.filters?.execution_node_id || 'all' }}</span>
     </div>
   `
 }
@@ -145,6 +147,7 @@ const mountView = () => mount(AccountsView, {
       ImportDataModal: true,
       ReAuthAccountModal: true,
       AccountTestModal: true,
+      PelicanBenchmarkModal: { props: ['show'], emits: ['close'], template: '<div v-if="show" data-test="pelican-modal"><button data-test="close-pelican" @click="$emit(\'close\')">close</button></div>' },
       AccountStatsModal: true,
       ScheduledTestsPanel: true,
       SyncFromCrsModal: true,
@@ -421,6 +424,108 @@ describe('admin AccountsView select all filtered results', () => {
     await flushPromises()
     expect(wrapper.get('[data-test="selected-count"]').text()).toBe('1')
     expect(showWarning).toHaveBeenCalledWith('admin.accounts.executionNodeBulkExcluded')
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['api', 'api2'],
+    ['api2', 'api']
+  ])('allows paired management from %s of %s without changing owner styling or filtered selection', async (local, remote) => {
+    const accounts = [
+      { ...makeAccounts(1)[0], id: 1, execution_node_id: local },
+      { ...makeAccounts(1)[0], id: 2, execution_node_id: remote }
+    ]
+    listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
+    getExecutionNodeStatus.mockResolvedValue({
+      admin_write_mode: 'paired_full_access', admin_write_allowed: true,
+      runtime: { enabled: true, node_id: local, emergency_local_egress: false, legacy_unassigned_node_id: 'api' },
+      nodes: [{ node_id: local, online: true, is_local: true }, { node_id: remote, online: true, is_local: false }]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const row = wrapper.get('[data-test="account-row-2"]')
+    expect(row.get('input[type="checkbox"]').attributes('disabled')).toBeUndefined()
+    const badge = row.get('span[title="admin.accounts.columns.executionNodeHint"]')
+    expect(badge.classes()).toEqual(expect.arrayContaining(['bg-amber-50', 'text-amber-700']))
+    expect(badge.get('[data-icon="server"]').exists()).toBe(true)
+    expect(badge.text()).toContain(remote)
+    expect(badge.text()).toContain('admin.accounts.executionNodeManageableBadge')
+    expect(badge.text()).not.toContain('executionNodeTakeoverBadge')
+    expect(badge.text()).not.toContain('executionNodeReadOnlyBadge')
+    await wrapper.get('[data-test="select-page"]').trigger('click')
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('2')
+    await wrapper.get('[data-test="clear"]').trigger('click')
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('2')
+    expect(showWarning).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="edit-selected"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="bulk-edit-modal"]').exists()).toBe(true)
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="bulk-edit-owner"]').text()).toBe('all')
+    wrapper.unmount()
+  })
+
+  it.each([false, undefined])('does not grant paired access without explicit write permission (%s)', async allowed => {
+    const account = { ...makeAccounts(1)[0], execution_node_id: 'api2' }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getExecutionNodeStatus.mockResolvedValue({
+      admin_write_mode: 'paired_full_access', admin_write_allowed: allowed,
+      runtime: { enabled: true, node_id: 'api', emergency_local_egress: false },
+      nodes: [{ node_id: 'api2', online: true, is_local: false }]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const row = wrapper.get('[data-test="account-row-1"]')
+    expect(row.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
+    expect(row.text()).toContain('executionNodeReadOnlyBadge')
+    expect(row.text()).not.toContain('executionNodeManageableBadge')
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
+    wrapper.unmount()
+  })
+
+  it('denies local, legacy-unassigned and remote writes when pairing is unavailable', async () => {
+    const accounts = ['api', '', 'api2'].map((owner, i) => ({ ...makeAccounts(1)[0], id: i + 1, execution_node_id: owner }))
+    listAccounts.mockResolvedValue({ items: accounts, total: 3, page: 1, page_size: 20, pages: 1 })
+    getExecutionNodeStatus.mockResolvedValue({
+      admin_write_mode: 'pairing_unavailable', admin_write_allowed: false,
+      runtime: { enabled: true, node_id: 'api', legacy_unassigned_node_id: 'api', emergency_local_egress: true },
+      nodes: [{ node_id: 'api', online: true, is_local: true }, { node_id: 'api2', online: false, is_local: false }]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    for (let i = 1; i <= 3; i++) expect(wrapper.get(`[data-test="account-row-${i}"] input[type="checkbox"]`).attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="account-pairing-unavailable"]').text()).toContain('executionNodePairingUnavailable')
+    expect(wrapper.find('[data-testid="pelican-benchmark"]').exists()).toBe(false)
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="bulk-edit-modal"]').exists()).toBe(false)
+    expect(showError).toHaveBeenCalledWith('admin.accounts.executionNodePairingUnavailable')
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
+    wrapper.unmount()
+  })
+
+  it('opens and closes the benchmark without changing list requests, selection or pagination', async () => {
+    const accounts = makeAccounts(45)
+    listAccounts.mockResolvedValue({ items: accounts.slice(0, 20), total: 45, page: 1, page_size: 20, pages: 3 })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="select-page"]').trigger('click')
+    const calls = listAccounts.mock.calls.length
+    await wrapper.get('[data-testid="pelican-benchmark"]').trigger('click')
+    expect(wrapper.find('[data-test="pelican-modal"]').exists()).toBe(true)
+    await wrapper.get('[data-test="close-pelican"]').trigger('click')
+    expect(wrapper.find('[data-test="pelican-modal"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('20')
+    expect(wrapper.get('[data-test="total-results"]').text()).toBe('45')
+    expect(listAccounts).toHaveBeenCalledTimes(calls)
+    expect(listWithEtag).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

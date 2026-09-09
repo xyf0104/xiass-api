@@ -23,6 +23,7 @@ COMPOSE_BUILD_FILE=""
 COMPOSE_FILES=()
 COMPOSE_PROJECT_NAME=""
 OLD_ENV_FILE=""
+READYZ_URL=""
 
 log() { printf '[XIASS cluster] %s\n' "$*"; }
 warn() { printf '[XIASS cluster] 警告：%s\n' "$*" >&2; }
@@ -102,6 +103,26 @@ compose() {
     "${COMPOSE[@]}" "${args[@]}" --project-directory "$DEPLOY_DIR" "$@"
 }
 
+resolve_readyz_url() {
+    local mapping host host_port
+    mapping=$(compose port xiass-api 8080 2>/dev/null | awk 'NF && !seen++ { print $0 }') || return 1
+    [[ "$mapping" == *:* ]] || return 1
+    host="${mapping%:*}"
+    host_port="${mapping##*:}"
+    [[ "$host_port" =~ ^[0-9]{1,5}$ ]] || return 1
+    host_port=$((10#$host_port))
+    [ "$host_port" -ge 1 ] && [ "$host_port" -le 65535 ] || return 1
+    host="${host#[}"
+    host="${host%]}"
+    [[ "$host" =~ ^[0-9a-fA-F.:]+$ ]] || return 1
+    case "$host" in
+        0.0.0.0) host=127.0.0.1 ;;
+        ::) host='[::1]' ;;
+        *:*) host="[$host]" ;;
+    esac
+    READYZ_URL="http://${host}:${host_port}/readyz"
+}
+
 set_env_value() {
     local key="$1" value="$2" temp escaped
     case "$key$value" in *$'\n'*|*$'\r'*) die "配置值包含非法换行：$key" ;; esac
@@ -119,18 +140,39 @@ set_env_value() {
     mv -f "$temp" "$ENV_FILE"
 }
 
-wait_for_health() {
-    local port attempt
-    port=$(read_env_value SERVER_PORT)
-    port="${port:-8080}"
-    for attempt in $(seq 1 120); do
-		if curl -fsS --max-time 3 "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then return 0; fi
+readyz_is_valid() {
+    local expected_node="$1" response http_status body
+    [ -n "$READYZ_URL" ] || resolve_readyz_url || return 1
+    response=$(curl -q -sS --noproxy '*' --max-time 3 -w $'\n%{http_code}' "$READYZ_URL" 2>/dev/null) || return 1
+    [ -n "$response" ] || return 1
+    http_status="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    [ "$http_status" = 200 ] || return 1
+    [ -n "$body" ] || return 1
+    # The existing /readyz contract names the node identity execution_node.
+    jq -es --arg expected "$expected_node" '
+        length == 1 and (.[0] | type == "object"
+        and .status == "ok"
+        and (.checks | type == "object")
+        and .checks.postgres == "ok"
+        and .checks.redis == "ok"
+        and .checks.execution_node == "ok"
+        and (all(.checks[]; . == "ok"))
+        and .execution_node == $expected)
+    ' <<<"$body" >/dev/null 2>&1
+}
+
+wait_for_readyz() {
+    local expected_node="$1" max_attempts="${2:-120}" attempt
+    for attempt in $(seq 1 "$max_attempts"); do
+        if readyz_is_valid "$expected_node"; then return 0; fi
         sleep 2
     done
     return 1
 }
 
 main() {
+    command -v jq >/dev/null 2>&1 || die "缺少 jq"
     command -v curl >/dev/null 2>&1 || die "缺少 curl"
     resolve_compose
     local emergency_egress
@@ -159,7 +201,7 @@ main() {
 
     log "已备份 .env，开始仅重建 XIASS 应用容器。"
     compose up -d --no-deps --no-build --force-recreate xiass-api >/dev/null
-    wait_for_health || die "本机 XIASS 未通过健康检查，开始自动回滚"
+    wait_for_readyz "$RUNTIME_NODE_ID" 120 || die "本机 XIASS 未通过 readyz 验证，开始自动回滚"
     log "本机节点运行时已初始化，负载均衡仍保持关闭，请在面板中确认后再启用。"
 }
 

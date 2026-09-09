@@ -28,9 +28,8 @@ func (s *SettingService) LegacyExecutionNodeID() string {
 	return "api"
 }
 
-// CheckAccountManagementAccess enforces the shared-pool ownership boundary for
-// every admin endpoint that has a side effect. Read-only account and usage
-// queries deliberately do not call this method.
+// CheckAccountManagementAccess allows verified paired administrators to manage
+// the shared pool, retaining ownership restrictions for legacy deployments.
 func (s *adminServiceImpl) CheckAccountManagementAccess(ctx context.Context, accountID int64) error {
 	if !s.executionNodeManagementAccessEnforced() {
 		return nil
@@ -68,6 +67,11 @@ func (s *adminServiceImpl) ensureAccountManagementAccess(ctx context.Context, ac
 	}
 	cfg := s.settingService.cfg.Gateway.ExecutionNode
 	if !cfg.Enabled {
+		return nil
+	}
+	if allowed, err := s.settingService.pairedAdminAccess(ctx); err != nil {
+		return err
+	} else if allowed {
 		return nil
 	}
 	localNodeID := strings.TrimSpace(cfg.ID)

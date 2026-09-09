@@ -9,9 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ExecutionNodeSharedWriteGuard protects shared business configuration on a
-// secondary node. Read requests remain available, while the primary node (or
-// an explicitly enabled emergency takeover) is allowed to mutate it.
+// ExecutionNodeSharedWriteGuard allows shared-state-verified paired nodes to
+// write and retains the primary/takeover policy for unpaired deployments.
+// Administrator authentication remains the responsibility of the parent group.
 // Execution-node pairing and routing controls are deliberately outside this
 // guard because weight changes must be possible from either connected node.
 func ExecutionNodeSharedWriteGuard(settingService *service.SettingService) gin.HandlerFunc {
@@ -20,13 +20,13 @@ func ExecutionNodeSharedWriteGuard(settingService *service.SettingService) gin.H
 			c.Next()
 			return
 		}
-		AbortWithError(c, http.StatusForbidden, "EXECUTION_NODE_ADMIN_READ_ONLY", "This machine is read-only for shared groups, prices, and customer configuration while the primary machine is online")
+		AbortWithError(c, http.StatusForbidden, "EXECUTION_NODE_ADMIN_READ_ONLY", "Shared administrative writes are unavailable: pairing verification or legacy node permission is required")
 	}
 }
 
 // SMS claims are short-lived, transactionally owned runtime operations. They
 // must work from either paired XIASS node while card-key administration and all
-// other shared settings remain protected by the secondary read-only boundary.
+// other shared settings remain protected by the shared-write permission check.
 func isSharedRuntimeOperation(c *gin.Context) bool {
 	if c == nil || !strings.EqualFold(c.Request.Method, http.MethodPost) {
 		return false
