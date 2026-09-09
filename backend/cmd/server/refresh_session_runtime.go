@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -37,6 +37,44 @@ type refreshRuntimePlan struct {
 	backupPassword, backupFile   string
 	rules                        []string
 	file                         string
+	db                           *sql.DB
+	disableMigrationReadiness    bool
+}
+
+func (r *refreshRuntimeManifest) aclParameters() repository.RefreshSessionRuntimeACLParameters {
+	return repository.RefreshSessionRuntimeACLParameters{
+		DashboardPrefix: r.DashboardPrefix, QueueReadyKey: r.QueueReadyKey, QueueDelayedKey: r.QueueDelayedKey,
+		QueueActiveKey: r.QueueActiveKey, InflightPrefix: r.InflightPrefix, LockPrefix: r.LockPrefix, AlertLockKey: r.AlertLockKey,
+	}
+}
+
+func (m *refreshMigrationManifest) runtimeAccess() (*repository.LegacyRefreshRuntimeAccess, error) {
+	if m.SessionFence == nil {
+		return nil, nil
+	}
+	if err := m.validateSessionFence(); err != nil {
+		return nil, err
+	}
+	r := m.Runtime
+	access := &repository.LegacyRefreshRuntimeAccess{AuthEndpointsBlockedAndDrained: true, ACL: r.aclParameters()}
+	if _, err := access.ACL.Rules(0); err != nil {
+		return nil, err
+	}
+	paths := []string{r.AppPasswordFile}
+	if len(m.Replicas) > 0 {
+		paths = append(paths, r.ReplicaPasswordFile)
+	}
+	if r.BackupPasswordFile != "" {
+		paths = append(paths, r.BackupPasswordFile)
+	}
+	for _, path := range paths {
+		password, err := refreshRuntimePassword(path)
+		if err != nil {
+			return nil, err
+		}
+		access.ReservedPasswordSHA256 = append(access.ReservedPasswordSHA256, refreshRuntimeHash(password))
+	}
+	return access, nil
 }
 
 func refreshRuntimePassword(path string) (string, error) {
@@ -66,7 +104,7 @@ func prepareRefreshRuntime(ctx context.Context, db *sql.DB, m *refreshMigrationM
 	if err != nil {
 		return nil, err
 	}
-	plan := &refreshRuntimePlan{appPassword: app, file: r.EnvironmentFile}
+	plan := &refreshRuntimePlan{appPassword: app, file: r.EnvironmentFile, db: db, disableMigrationReadiness: m.Version == 2}
 	if len(m.Replicas) > 0 {
 		plan.replicaPassword, err = refreshRuntimePassword(r.ReplicaPasswordFile)
 		if err != nil {
@@ -101,14 +139,7 @@ func prepareRefreshRuntime(ctx context.Context, db *sql.DB, m *refreshMigrationM
 		}
 		plan.backupFile = r.BackupCredentialsFile
 	}
-	cfg := &config.Config{}
-	cfg.Dashboard.KeyPrefix = "sub2api:"
-	if r.DashboardPrefix != nil {
-		cfg.Dashboard.KeyPrefix = *r.DashboardPrefix
-	}
-	cfg.BatchImage.QueueReadyKey, cfg.BatchImage.QueueDelayedKey, cfg.BatchImage.QueueActiveKey = r.QueueReadyKey, r.QueueDelayedKey, r.QueueActiveKey
-	cfg.BatchImage.InflightKeyPrefix, cfg.BatchImage.LockKeyPrefix = r.InflightPrefix, r.LockPrefix
-	plan.rules, err = refreshSessionRuntimeACL(cfg, r.AlertLockKey)
+	plan.rules, err = r.aclParameters().Rules(0)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +229,10 @@ func refreshRuntimeClient(node refreshMigrationNode, username, password string) 
 func (p *refreshRuntimePlan) restore(ctx context.Context, m *refreshMigrationManifest, recovery []byte, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	access, err := m.runtimeAccess()
+	if err != nil {
+		return err
+	}
 	appUser, replUser := "xiass-app-"+id, "xiass-replica-"+id
 	backupUser := "xiass-backup-" + id
 	var nodes []*redis.Client
@@ -231,7 +266,18 @@ func (p *refreshRuntimePlan) restore(ctx context.Context, m *refreshMigrationMan
 				return errors.New("unexpected Redis principal appeared after adoption")
 			}
 		}
+		if access != nil {
+			if p.db == nil {
+				return errors.New("runtime fence database witness missing")
+			}
+			if err := repository.VerifyLegacyRefreshRuntimeFence(ctx, p.db, client, id, entry.RunID, *access); err != nil {
+				return err
+			}
+		}
 		for _, oldUser := range entry.ACLUsers {
+			if access != nil {
+				continue
+			}
 			command := redis.NewMapStringInterfaceCmd(ctx, "ACL", "GETUSER", oldUser)
 			_ = client.Process(ctx, command)
 			state, err := command.Result()
@@ -315,7 +361,11 @@ func (p *refreshRuntimePlan) backupCredentials(id string) []byte {
 }
 
 func (p *refreshRuntimePlan) environment(id string) []byte {
-	return []byte("JWT_REFRESH_TOKEN_STORE=postgres\nREDIS_USERNAME=xiass-app-" + id + "\nREDIS_PASSWORD=" + p.appPassword + "\n")
+	data := "JWT_REFRESH_TOKEN_STORE=postgres\n"
+	if p.disableMigrationReadiness {
+		data += "JWT_REFRESH_TOKEN_MIGRATION_READINESS=false\n"
+	}
+	return []byte(data + "REDIS_USERNAME=xiass-app-" + id + "\nREDIS_PASSWORD=" + p.appPassword + "\n")
 }
 
 func refreshRuntimeHash(password string) string {

@@ -62,7 +62,7 @@ func main() {
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
 	refreshMigration := flag.String("migrate-refresh-sessions", "", "Offline: adopt existing refresh sessions using a protected manifest file")
-	offlineMaintenance := flag.Bool("offline-maintenance", false, "Confirm all participating applications have been drained and stopped")
+	offlineMaintenance := flag.Bool("offline-maintenance", false, "Confirm manifest maintenance: v1 stops apps; v2 blocks and drains auth endpoints")
 	flag.Parse()
 	if *refreshMigration != "" || *offlineMaintenance {
 		if *refreshMigration == "" || !*offlineMaintenance || *setupMode || *showVersion || flag.NArg() != 0 {

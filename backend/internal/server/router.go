@@ -37,6 +37,7 @@ func SetupRouter(
 	cfg *config.Config,
 	db *sql.DB,
 	redisClient *redis.Client,
+	refreshTokenStore service.RefreshTokenCache,
 ) *gin.Engine {
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -91,7 +92,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, db, redisClient)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, db, redisClient, refreshTokenStore)
 
 	return r
 }
@@ -113,9 +114,10 @@ func registerRoutes(
 	cfg *config.Config,
 	db *sql.DB,
 	redisClient *redis.Client,
+	refreshTokenStore service.RefreshTokenCache,
 ) {
 	// 通用路由（健康检查、状态等）
-	routes.RegisterCommonRoutes(r, db, redisClient, cfg)
+	routes.RegisterCommonRoutes(r, db, redisClient, cfg, refreshTokenStore)
 
 	// API v1
 	v1 := r.Group("/api/v1")

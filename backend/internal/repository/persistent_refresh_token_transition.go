@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,10 +45,11 @@ const (
 // provenance and maintenance admission remain external operator obligations.
 // The operation disables ALL other Redis ACL users, across ALL Redis databases.
 type LegacyRefreshTransitionOptions struct {
-	Source         *redis.Client
-	ExpectedRunID  string
-	RecoverySecret []byte
-	Group          *LegacyRefreshTransitionGroup
+	Source                *redis.Client
+	ExpectedRunID         string
+	RecoverySecret        []byte
+	Group                 *LegacyRefreshTransitionGroup
+	PreserveRuntimeAccess *LegacyRefreshRuntimeAccess
 }
 
 // LegacyRefreshTransitionGroup pins the ORIGINAL primary's replication identity
@@ -82,18 +84,21 @@ type refreshTransitionNodeManifest struct {
 	DB                             int
 	ACLUsers                       []string
 	Modules                        []LegacyRefreshTransitionModule
+	RuntimeACLProof                []refreshRuntimeUserProof `json:",omitempty"`
 }
 
 type refreshTransitionGroupManifest struct {
 	ReplicationID, PrimaryAddress string
 	Nodes                         []refreshTransitionNodeManifest // primary first
+	RuntimeFence                  *refreshRuntimeFencePolicy      `json:",omitempty"`
 }
 
 type refreshTransitionGroupNode struct {
-	pin       refreshTransitionNodeManifest
-	bootstrap *redis.Client
-	fenced    *redis.Client
-	aclHash   string
+	pin          refreshTransitionNodeManifest
+	bootstrap    *redis.Client
+	fenced       *redis.Client
+	aclHash      string
+	runtimeRules []string
 }
 
 type refreshTransitionGroupRuntime struct {
@@ -152,6 +157,9 @@ func refreshTransitionSameJSON(a, b []byte) bool {
 
 func refreshTransitionBuildGroup(o LegacyRefreshTransitionOptions) (*refreshTransitionGroupRuntime, []byte, error) {
 	if o.Group == nil {
+		if o.PreserveRuntimeAccess != nil {
+			return nil, nil, refreshTransitionReject("preserving runtime access requires an explicit group inventory")
+		}
 		return nil, nil, nil
 	}
 	p := o.Group
@@ -159,6 +167,18 @@ func refreshTransitionBuildGroup(o LegacyRefreshTransitionOptions) (*refreshTran
 		return nil, nil, refreshTransitionReject("invalid bounded primary/replica inventory")
 	}
 	g := &refreshTransitionGroupRuntime{manifest: refreshTransitionGroupManifest{ReplicationID: p.PrimaryReplicationID, PrimaryAddress: p.PrimaryAddress}}
+	if access := o.PreserveRuntimeAccess; access != nil {
+		policy, err := refreshRuntimePolicy(*access)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, hash := range policy.Access.ReservedPasswordSHA256 {
+			if hash == refreshTransitionDigest(hex.EncodeToString(o.RecoverySecret)) {
+				return nil, nil, refreshTransitionReject("runtime and recovery credentials must be independent")
+			}
+		}
+		g.manifest.RuntimeFence = policy
+	}
 	clients := []*redis.Client{o.Source}
 	pins := []refreshTransitionNodeManifest{{RunID: o.ExpectedRunID, ACLUsers: p.PrimaryACLUsers, Modules: p.PrimaryModules}}
 	for _, replica := range p.Replicas {
@@ -214,6 +234,14 @@ func refreshTransitionBuildGroup(o LegacyRefreshTransitionOptions) (*refreshTran
 		opts.Dialer, opts.MaxRetries, opts.ContextTimeoutEnabled = nil, -1, true
 		opts.OnConnect = refreshTransitionPinConnection(pin.RunID)
 		g.nodes = append(g.nodes, &refreshTransitionGroupNode{pin: pin, bootstrap: redis.NewClient(&opts)})
+		if g.manifest.RuntimeFence != nil {
+			rules, err := g.manifest.RuntimeFence.Access.ACL.Rules(pin.DB)
+			if err != nil {
+				g.close()
+				return nil, nil, refreshTransitionReject("unsafe runtime ACL parameters")
+			}
+			g.nodes[len(g.nodes)-1].runtimeRules = rules
+		}
 	}
 	sort.Slice(g.nodes[1:], func(i, j int) bool { return g.nodes[i+1].pin.RunID < g.nodes[j+1].pin.RunID })
 	for _, node := range g.nodes {
@@ -274,50 +302,104 @@ func refreshTransitionInfo(ctx context.Context, client *redis.Client) (map[strin
 
 // Initial admission requires the entire direct star topology online. Once the
 // witness exists, fenced replication credentials may cause links to go down;
-// every process must still be reachable and retain its role and upstream.
+// an in-progress full sync may settle within the caller's existing migration
+// deadline. Every sample must retain the pinned roles, identities and upstreams.
 func (g *refreshTransitionGroupRuntime) topology(ctx context.Context, clients []*redis.Client, initial bool) error {
 	peers := map[string]bool{}
 	for _, node := range g.nodes[1:] {
 		peers[node.pin.ReplicaAddress] = true
 	}
-	for i, node := range g.nodes {
-		info, err := refreshTransitionInfo(ctx, clients[i])
-		if err != nil {
-			return err
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%w: topology observation canceled: %w", ErrRefreshTransitionUnsafe, err)
 		}
-		if info["run_id"] != node.pin.RunID || info["redis_mode"] != "standalone" || info["cluster_enabled"] != "0" || info["loading"] != "0" || info["master_replid"] != g.manifest.ReplicationID {
-			return refreshTransitionReject("inventoried process or replication identity changed")
-		}
-		acl, err := clients[i].ConfigGet(ctx, "aclfile").Result()
-		if err != nil || acl["aclfile"] == "" {
-			return refreshTransitionReject("every node requires a persistent ACL file")
-		}
-		if i == 0 {
-			if info["role"] != "master" || info["master_replid2"] != strings.Repeat("0", 40) {
-				return refreshTransitionReject("source is not the pinned original primary")
+		var pending error
+		for i, node := range g.nodes {
+			info, err := refreshTransitionInfo(ctx, clients[i])
+			if err != nil {
+				return err
 			}
-			n, err := strconv.Atoi(info["connected_slaves"])
-			if err != nil || n < 0 || n > len(peers) || (initial && n != len(peers)) {
-				return refreshTransitionReject("primary replica inventory is incomplete")
+			if info["run_id"] != node.pin.RunID || info["redis_mode"] != "standalone" || info["cluster_enabled"] != "0" || info["master_replid"] != g.manifest.ReplicationID {
+				return refreshTransitionReject("inventoried process or replication identity changed")
 			}
-			seen := map[string]bool{}
-			for j := 0; j < n; j++ {
-				fields := map[string]string{}
-				for _, field := range strings.Split(info[fmt.Sprintf("slave%d", j)], ",") {
-					k, v, _ := strings.Cut(field, "=")
-					fields[k] = v
+			acl, err := clients[i].ConfigGet(ctx, "aclfile").Result()
+			if err != nil || acl["aclfile"] == "" {
+				return refreshTransitionReject("every node requires a persistent ACL file")
+			}
+			if i == 0 {
+				if info["role"] != "master" || info["master_replid2"] != strings.Repeat("0", 40) || info["loading"] != "0" {
+					return refreshTransitionReject("source is not the pinned original primary")
 				}
-				peer := net.JoinHostPort(fields["ip"], fields["port"])
-				if !peers[peer] || seen[peer] || fields["state"] != "online" {
-					return refreshTransitionReject("unknown or unsynchronized replica on primary")
+				n, err := strconv.Atoi(info["connected_slaves"])
+				if err != nil || n < 0 || n > len(peers) || (initial && n != len(peers)) {
+					return refreshTransitionReject("primary replica inventory is incomplete")
 				}
-				seen[peer] = true
+				seen := map[string]bool{}
+				for j := 0; j < n; j++ {
+					fields := map[string]string{}
+					for _, field := range strings.Split(info[fmt.Sprintf("slave%d", j)], ",") {
+						k, v, _ := strings.Cut(field, "=")
+						fields[k] = v
+					}
+					peer := net.JoinHostPort(fields["ip"], fields["port"])
+					if !peers[peer] || seen[peer] {
+						return refreshTransitionReject("unknown or unsynchronized replica on primary")
+					}
+					if fields["state"] != "online" {
+						if initial || (fields["state"] != "wait_bgsave" && fields["state"] != "send_bulk") {
+							return refreshTransitionReject("unknown or unsynchronized replica on primary")
+						}
+						pending = refreshTransitionReject("inventoried replica full sync has not settled")
+					}
+					seen[peer] = true
+				}
+			} else {
+				if info["role"] != "slave" || net.JoinHostPort(info["master_host"], info["master_port"]) != g.manifest.PrimaryAddress || info["connected_slaves"] != "0" ||
+					(info["master_link_status"] != "up" && info["master_link_status"] != "down") || (initial && info["master_link_status"] != "up") {
+					return g.replicaTopologyError(node, info, initial)
+				}
+				if info["master_sync_in_progress"] == "1" && !initial && (info["loading"] == "0" || info["loading"] == "1") {
+					pending = g.replicaTopologyError(node, info, initial)
+				} else if info["master_sync_in_progress"] != "0" || info["loading"] != "0" {
+					return g.replicaTopologyError(node, info, initial)
+				}
 			}
-		} else if info["role"] != "slave" || net.JoinHostPort(info["master_host"], info["master_port"]) != g.manifest.PrimaryAddress || info["master_sync_in_progress"] != "0" || info["connected_slaves"] != "0" || (initial && info["master_link_status"] != "up") {
-			return refreshTransitionReject("replica role, direct upstream or synchronization does not match inventory")
+		}
+		if pending == nil {
+			return nil
+		}
+		// Inspect the whole group on every pass, including nodes after a syncing
+		// replica. A concurrent promotion or new downstream must reject immediately.
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%w: convergence deadline reached: %w", pending, ctx.Err())
+		case <-timer.C:
 		}
 	}
-	return nil
+}
+
+func (g *refreshTransitionGroupRuntime) replicaTopologyError(node *refreshTransitionGroupNode, info map[string]string, initial bool) error {
+	phase := "pre-fence"
+	if node.aclHash != "" {
+		phase = "post-fence"
+	}
+	state := func(key string, values ...string) string {
+		for _, value := range values {
+			if info[key] == value {
+				return value
+			}
+		}
+		return "unrecognized"
+	}
+	downstream := "unrecognized"
+	if count, err := strconv.Atoi(info["connected_slaves"]); err == nil && count >= 0 {
+		downstream = strconv.Itoa(count)
+	}
+	upstream := net.JoinHostPort(info["master_host"], info["master_port"])
+	return refreshTransitionReject(fmt.Sprintf("replica role, direct upstream or synchronization does not match inventory (phase=%s initial=%t role=%s upstream_match=%t upstream_sha256=%s sync_in_progress=%s loading=%s link=%s connected_slaves=%s run_id_match=%t)",
+		phase, initial, state("role", "master", "slave"), upstream == g.manifest.PrimaryAddress, refreshTransitionDigest(upstream)[:16], state("master_sync_in_progress", "0", "1"), state("loading", "0", "1"), state("master_link_status", "up", "down"), downstream, info["run_id"] == node.pin.RunID))
 }
 
 func refreshTransitionModules(ctx context.Context, client *redis.Client) ([]LegacyRefreshTransitionModule, error) {
@@ -400,7 +482,15 @@ func refreshTransitionNodeInventory(ctx context.Context, node *refreshTransition
 // Scan names only: preserve every non-auth value/type/TTL and reject auth data in
 // an unselected DB. DBSIZE, returned keys, cursor pages and DB count all have
 // independent limits; MATCH alone would not bound a mostly unrelated keyspace.
-func refreshTransitionMixedBoundary(ctx context.Context, source *redis.Client) error {
+func refreshTransitionMixedBoundary(ctx context.Context, source *redis.Client, runtimeRules ...[]string) error {
+	var runtimeKeys *regexp.Regexp
+	if len(runtimeRules) > 0 && runtimeRules[0] != nil {
+		var err error
+		runtimeKeys, err = refreshRuntimeKeyMatcher(runtimeRules[0])
+		if err != nil {
+			return err
+		}
+	}
 	info, err := source.Info(ctx, "keyspace").Result()
 	if err != nil {
 		return refreshTransitionReject("cannot inventory mixed databases")
@@ -454,6 +544,9 @@ func refreshTransitionMixedBoundary(ctx context.Context, source *redis.Client) e
 					if db != source.Options().DB && (strings.HasPrefix(key, refreshTokenKeyPrefix) || strings.HasPrefix(key, tokenFamilyPrefix) || strings.HasPrefix(key, userRefreshTokensPrefix)) {
 						return refreshTransitionReject("auth namespace found outside selected session database")
 					}
+					if runtimeKeys != nil && !strings.HasPrefix(key, refreshTokenKeyPrefix) && !strings.HasPrefix(key, tokenFamilyPrefix) && !strings.HasPrefix(key, userRefreshTokensPrefix) && !runtimeKeys.MatchString(key) {
+						return refreshTransitionReject(fmt.Sprintf("unknown runtime namespace in DB %d (key SHA256 %s); inspect the fixed runtime ACL inventory", db, refreshTransitionDigest(key)))
+					}
 				}
 				cursor = next
 				if cursor == 0 {
@@ -486,7 +579,17 @@ func (s *PersistentRefreshTokenStore) refreshTransitionAdoptGroup(ctx context.Co
 				return nil, refreshTransitionReject("original ACL persistence preflight failed on group node")
 			}
 		}
-		if err := refreshTransitionMixedBoundary(ctx, clients[0]); err != nil {
+		if err := g.prepareRuntimeProof(ctx); err != nil {
+			return nil, err
+		}
+		if g.manifest.RuntimeFence != nil {
+			var err error
+			manifest, err = json.Marshal(g.manifest)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := refreshTransitionMixedBoundary(ctx, clients[0], g.nodes[0].runtimeRules); err != nil {
 			return nil, err
 		}
 		if _, err := refreshTransitionSnapshot(ctx, clients[0]); err != nil {
@@ -564,9 +667,21 @@ func (s *PersistentRefreshTokenStore) refreshTransitionAdoptGroup(ctx context.Co
 			}
 			// EXEC serializes all per-node permission resets with old clients. No
 			// error path re-enables a user, including an ambiguous EXEC/SAVE/commit.
+			var runtimeRules map[string][]string
+			if node.runtimeRules != nil {
+				var err error
+				runtimeRules, err = node.runtimeFenceRules(ctx, false)
+				if err != nil {
+					return nil, err
+				}
+			}
 			if _, err := node.fenced.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 				for _, user := range node.pin.ACLUsers {
-					pipe.ACLSetUser(ctx, user, "reset", "off")
+					if runtimeRules != nil {
+						pipe.ACLSetUser(ctx, user, runtimeRules[user]...)
+					} else {
+						pipe.ACLSetUser(ctx, user, "reset", "off")
+					}
 				}
 				return nil
 			}); err != nil {
@@ -575,7 +690,7 @@ func (s *PersistentRefreshTokenStore) refreshTransitionAdoptGroup(ctx context.Co
 			if err := node.fenced.Do(ctx, "ACL", "SAVE").Err(); err != nil {
 				return nil, refreshTransitionReject("group node fence persistence failed; no permissions restored")
 			}
-			hash, err := refreshTransitionVerifyACL(ctx, node.fenced, username, passwordHash, "")
+			hash, err := node.verifyACL(ctx, username, passwordHash, "")
 			if err != nil {
 				return nil, err
 			}
@@ -596,7 +711,7 @@ func (s *PersistentRefreshTokenStore) refreshTransitionAdoptGroup(ctx context.Co
 			if err := refreshTransitionNodeInventory(ctx, node, node.fenced, username, passwordHash); err != nil {
 				return err
 			}
-			if _, err := refreshTransitionVerifyACL(ctx, node.fenced, username, passwordHash, node.aclHash); err != nil {
+			if _, err := node.verifyACL(ctx, username, passwordHash, node.aclHash); err != nil {
 				return err
 			}
 		}
@@ -619,7 +734,7 @@ func (s *PersistentRefreshTokenStore) refreshTransitionAdoptGroup(ctx context.Co
 		}
 		record.state, record.aclHash = "fenced", hash
 	}
-	if err := refreshTransitionMixedBoundary(ctx, clients[0]); err != nil {
+	if err := refreshTransitionMixedBoundary(ctx, clients[0], g.nodes[0].runtimeRules); err != nil {
 		return nil, err
 	}
 	return s.refreshTransitionActivate(ctx, record, clients[0], verify)
@@ -687,6 +802,20 @@ func (s *PersistentRefreshTokenStore) AdoptLegacyRefreshTokens(ctx context.Conte
 	if record != nil {
 		if record.runID != options.ExpectedRunID || record.address != opts.Addr || record.db != opts.DB || record.passwordHash != passwordHash {
 			return nil, refreshTransitionReject("transition witness does not match this capability")
+		}
+		if group != nil && group.manifest.RuntimeFence != nil {
+			var saved refreshTransitionGroupManifest
+			if json.Unmarshal(record.groupManifest, &saved) != nil || len(saved.Nodes) != len(group.nodes) {
+				return nil, refreshTransitionReject("runtime fence inventory does not match its witness")
+			}
+			for i, node := range group.nodes {
+				node.pin.RuntimeACLProof = saved.Nodes[i].RuntimeACLProof
+				group.manifest.Nodes[i] = node.pin
+			}
+			manifest, err = json.Marshal(group.manifest)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !refreshTransitionSameJSON(manifest, record.groupManifest) {
 			return nil, refreshTransitionReject("transition topology inventory does not match its witness")
@@ -843,7 +972,8 @@ func (s *PersistentRefreshTokenStore) refreshTransitionActivate(ctx context.Cont
 			return err
 		}
 		// This check is inside the PG transaction. All old Redis users have
-		// no data/admin commands. Only the new operator-held credential can
+		// no session/admin commands (opt-in runtime retains only fixed non-session
+		// grants). Only the new operator-held credential can
 		// authenticate as the sole remaining privileged principal. The new
 		// principal is held only by this explicit administrative operation.
 		if err := verify(); err != nil {

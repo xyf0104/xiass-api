@@ -357,6 +357,9 @@ func (s *SettingService) createExecutionNodeJoinBundle(ctx context.Context, targ
 	if !s.authoritativeJoinAvailable() {
 		return executionNodeJoinBundle{}, "", errors.New("source node does not have a complete runtime configuration")
 	}
+	if s.cfg.JWT.RefreshTokenMigrationReadiness {
+		return executionNodeJoinBundle{}, "", errors.New("finish the refresh-session migration and select its final store before pairing another node")
+	}
 	store, err := executionNodeJoinRefreshStore(s.cfg.JWT.RefreshTokenStore)
 	if err != nil {
 		return executionNodeJoinBundle{}, "", err

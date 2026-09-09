@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
@@ -40,7 +41,7 @@ type readinessProbeResult struct {
 }
 
 // RegisterCommonRoutes 注册通用路由（健康检查、状态等）
-func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, cfg *config.Config) {
+func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, cfg *config.Config, stores ...service.RefreshTokenCache) {
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -51,6 +52,13 @@ func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, 
 		nodeID = strings.TrimSpace(cfg.Gateway.ExecutionNode.ID)
 	}
 	checkPrimary := cfg != nil && cfg.Gateway.ExecutionNode.Enabled
+	migrationReadiness := cfg != nil && cfg.JWT.RefreshTokenMigrationReadiness
+	// Match the fixed startup selection in NewRefreshTokenStore, not later config
+	// or environment changes: readiness must not pretend the running store switched.
+	refreshTokenStore := "redis"
+	if cfg != nil && cfg.JWT.RefreshTokenStore != "" {
+		refreshTokenStore = cfg.JWT.RefreshTokenStore
+	}
 	registerReadinessRoute(r, []readinessProbe{
 		{
 			name: "postgres",
@@ -58,10 +66,16 @@ func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, 
 				if db == nil {
 					return errors.New("database is not configured")
 				}
-				if !checkPrimary {
+				if !checkPrimary && !migrationReadiness {
 					return db.PingContext(ctx)
 				}
-				return checkWritablePostgres(ctx, db)
+				if len(stores) == 1 {
+					return repository.CheckRefreshTokenStoreReadiness(ctx, stores[0])
+				}
+				if migrationReadiness || len(stores) > 1 {
+					return errors.New("running refresh token provider is unavailable")
+				}
+				return checkWritablePostgres(ctx, db, refreshTokenStore)
 			},
 		},
 		{
@@ -102,16 +116,35 @@ func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, 
 
 // A reachable replica cannot serve billing or session writes. These probes
 // reject standby connections; they do not replace external primary fencing.
-func checkWritablePostgres(ctx context.Context, db *sql.DB) error {
-	var writable bool
+func checkWritablePostgres(ctx context.Context, db *sql.DB, refreshTokenStore string) error {
+	if refreshTokenStore != "redis" && refreshTokenStore != "postgres" {
+		return errors.New("refresh token store is invalid")
+	}
+	// Keep the provider's persistent-store prerequisites in the same round trip
+	// as the writable-role and authority checks. Redis mode needs no PG session tables.
+	schemaCheck := "TRUE"
+	if refreshTokenStore == "postgres" {
+		schemaCheck = `EXISTS (SELECT 1 FROM refresh_token_revocation_state WHERE singleton = TRUE)
+			AND to_regclass('refresh_tokens') IS NOT NULL
+			AND to_regclass('refresh_token_families') IS NOT NULL
+			AND to_regclass('refresh_token_users') IS NOT NULL
+			AND to_regclass('refresh_token_issuances') IS NOT NULL`
+	}
+	var writable, schemaReady bool
+	var authority string
 	err := db.QueryRowContext(ctx, `
-		SELECT NOT pg_is_in_recovery() AND current_setting('transaction_read_only') = 'off'
-	`).Scan(&writable)
+		SELECT NOT pg_is_in_recovery() AND current_setting('transaction_read_only') = 'off',
+			backend, `+schemaCheck+`
+		FROM refresh_token_authority WHERE singleton = TRUE
+	`).Scan(&writable, &authority, &schemaReady)
 	if err != nil {
 		return err
 	}
 	if !writable {
 		return errors.New("database is read-only")
+	}
+	if authority != refreshTokenStore || !schemaReady {
+		return errors.New("refresh token authority or schema is unavailable")
 	}
 	return nil
 }

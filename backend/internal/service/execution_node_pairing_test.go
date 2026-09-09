@@ -450,6 +450,27 @@ func TestAuthoritativePairingRejectsOldTargetBeforeConsumingInvite(t *testing.T)
 	require.Empty(t, proxies.proxies)
 }
 
+func TestAuthoritativePairingRejectsSessionMigrationBeforeConsumingInvite(t *testing.T) {
+	source, repo := newExecutionNodePairingService("api", "source-db", "source-redis")
+	source.cfg.Database = config.DatabaseConfig{Host: "postgres", Port: 5432}
+	source.cfg.Redis = config.RedisConfig{Host: "redis", Port: 6379}
+	source.cfg.Totp.EncryptionKeyConfigured = true
+	source.cfg.JWT.RefreshTokenMigrationReadiness = true
+	proxies := &executionNodePairingProxyRepo{proxies: map[int64]Proxy{}, nextID: 10}
+	source.SetProxyRepository(proxies)
+	invite, err := source.GenerateExecutionNodePairingInvite(context.Background())
+	require.NoError(t, err)
+	before := repo.values[SettingKeyExecutionNodePairingInvite]
+	_, err = source.AcceptExecutionNodePairingHandshake(context.Background(), invite.Token, &ExecutionNodePairingHandshakeRequest{
+		NodeID: "api2", ProtocolVersion: executionNodePairingProtocolVersion, PeerURL: "http://127.0.0.1:18082",
+	})
+	require.Equal(t, "EXECUTION_NODE_PAIRING_BUNDLE_UNAVAILABLE", infraerrors.Reason(err))
+	require.ErrorContains(t, err, "finish the refresh-session migration")
+	require.Equal(t, before, repo.values[SettingKeyExecutionNodePairingInvite])
+	require.NotContains(t, repo.values, executionNodePairingPeerKey("api"))
+	require.Empty(t, proxies.proxies)
+}
+
 func TestExecutionNodeJoinBundleRefreshAuthorityCompatibility(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

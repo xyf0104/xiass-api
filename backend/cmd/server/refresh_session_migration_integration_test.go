@@ -16,7 +16,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
+	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/gin-gonic/gin"
@@ -43,13 +47,19 @@ func (migrationFailedOutput) Write([]byte) (int, error) {
 
 func TestRefreshMigrationRealOfflineCommand(t *testing.T) {
 	for _, replicas := range []bool{false, true} {
-		t.Run(fmt.Sprintf("replica-%t", replicas), func(t *testing.T) { testRefreshMigrationRealOfflineCommand(t, replicas, false) })
+		t.Run(fmt.Sprintf("replica-%t", replicas), func(t *testing.T) { testRefreshMigrationRealOfflineCommand(t, replicas, false, false) })
 	}
 }
 
 func TestRefreshRuntimeRealBackup(t *testing.T) {
 	for _, replicas := range []bool{false, true} {
-		t.Run(fmt.Sprintf("replica-%t", replicas), func(t *testing.T) { testRefreshMigrationRealOfflineCommand(t, replicas, true) })
+		t.Run(fmt.Sprintf("replica-%t", replicas), func(t *testing.T) { testRefreshMigrationRealOfflineCommand(t, replicas, true, false) })
+	}
+}
+
+func TestRefreshMigrationRealRuntimeFenceCommand(t *testing.T) {
+	for _, replicas := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replica-%t", replicas), func(t *testing.T) { testRefreshMigrationRealOfflineCommand(t, replicas, false, true) })
 	}
 }
 
@@ -150,7 +160,7 @@ func TestRefreshRuntimeRealPreflightPersistentConfig(t *testing.T) {
 	}
 }
 
-func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBackup bool) {
+func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBackup, preserve bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.4-alpine", tcpostgres.WithDatabase("migration"),
@@ -240,8 +250,12 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		require.NoError(t, legacy.AddToFamilyTokenSet(ctx, data.FamilyID, hash, 2*time.Hour))
 	}
 	require.NoError(t, legacy.DeleteRefreshToken(ctx, revokedHash))
-	require.NoError(t, rdb.Set(ctx, "cache:unchanged", "kept", time.Hour).Err())
-	originalExpiry, err := rdb.Do(ctx, "PEXPIRETIME", "cache:unchanged").Int64()
+	cacheKey := "cache:unchanged"
+	if preserve {
+		cacheKey = "billing:balance:unchanged"
+	}
+	require.NoError(t, rdb.Set(ctx, cacheKey, "kept", time.Hour).Err())
+	originalExpiry, err := rdb.Do(ctx, "PEXPIRETIME", cacheKey).Int64()
 	require.NoError(t, err)
 	info, err := rdb.Info(ctx, "server", "replication").Result()
 	require.NoError(t, err)
@@ -260,6 +274,10 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 	appSecretFile := filepath.Join(filepath.Dir(path), "application.secret")
 	require.NoError(t, os.WriteFile(appSecretFile, []byte(strings.Repeat("cd", 32)), 0600))
 	manifest.Runtime = &refreshRuntimeManifest{AppPasswordFile: appSecretFile, EnvironmentFile: filepath.Join(filepath.Dir(path), "runtime.env")}
+	if preserve {
+		manifest.Version = 2
+		manifest.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true, AuthEndpointsBlockedAndDrained: true}
+	}
 	if withBackup {
 		manifest.Runtime.BackupPasswordFile = filepath.Join(filepath.Dir(path), "backup.secret")
 		manifest.Runtime.BackupCredentialsFile = filepath.Join(filepath.Dir(path), "backup.json")
@@ -278,7 +296,139 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 	}
 	migrationWriteManifest(t, path, manifest)
 	var output bytes.Buffer
-	err = migrateRefreshSessions(ctx, path, &output)
+	if preserve {
+		_, err = db.ExecContext(ctx, `CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT)`)
+		require.NoError(t, err)
+		var servers []*httptest.Server
+		var stores []service.RefreshTokenCache
+		for _, nodeID := range []string{"main", "api2"} {
+			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenMigrationReadiness: true}}
+			cfg.Gateway.ExecutionNode.Enabled, cfg.Gateway.ExecutionNode.ID = true, nodeID
+			store, err := repository.NewRefreshTokenStore(db, rdb, cfg)
+			require.NoError(t, err)
+			stores = append(stores, store)
+			router := gin.New()
+			routes.RegisterCommonRoutes(router, db, rdb, cfg, store)
+			server := httptest.NewServer(router)
+			defer server.Close()
+			server.Client().Timeout = time.Second
+			servers = append(servers, server)
+		}
+		probeRounds := 0
+		checkReadiness := func(want int) {
+			t.Helper()
+			results := make([]struct {
+				status int
+				body   []byte
+				err    error
+			}, len(servers))
+			var probes sync.WaitGroup
+			for i, server := range servers {
+				probes.Add(1)
+				go func() {
+					defer probes.Done()
+					resp, err := server.Client().Get(server.URL + "/readyz")
+					results[i].err = err
+					if err == nil {
+						defer resp.Body.Close()
+						results[i].status = resp.StatusCode
+						results[i].body, results[i].err = io.ReadAll(io.LimitReader(resp.Body, 4096))
+					}
+				}()
+			}
+			probes.Wait()
+			for _, result := range results {
+				require.NoError(t, result.err)
+				require.Equal(t, want, result.status, string(result.body))
+			}
+			probeRounds++
+		}
+		checkReadiness(http.StatusOK)
+		conn := rdb.Conn()
+		require.NoError(t, conn.Ping(ctx).Err())
+		stop, trafficDone := make(chan struct{}), make(chan error, 1)
+		var cycles atomic.Int64
+		go func() {
+			defer conn.Close()
+			for {
+				select {
+				case <-stop:
+					trafficDone <- nil
+					return
+				default:
+				}
+				if err := conn.Incr(ctx, "billing:balance:slow-import").Err(); err != nil {
+					trafficDone <- err
+					return
+				}
+				if err := conn.Eval(ctx, `redis.call('SET',KEYS[1],'held','PX',10000); return redis.call('GET',KEYS[1])`, []string{"concurrency:account:slow-import"}).Err(); err != nil {
+					trafficDone <- err
+					return
+				}
+				cycles.Add(1)
+				time.Sleep(time.Millisecond)
+			}
+		}()
+		stopTraffic := sync.OnceFunc(func() { close(stop); require.NoError(t, <-trafficDone) })
+		defer stopTraffic()
+		gate, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		defer gate.Rollback()
+		_, err = gate.ExecContext(ctx, `SELECT pg_advisory_xact_lock(943721)`)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `CREATE FUNCTION pause_readiness_import() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+			PERFORM pg_advisory_xact_lock(943721); RETURN NEW; END; $$;
+			CREATE TRIGGER pause_readiness_import BEFORE INSERT ON refresh_tokens FOR EACH ROW EXECUTE FUNCTION pause_readiness_import()`)
+		require.NoError(t, err)
+		migrationDone := make(chan struct{})
+		var migrationErr error
+		go func() { migrationErr = migrateRefreshSessions(ctx, path, &output); close(migrationDone) }()
+		defer func() { cancel(); <-migrationDone }()
+		require.Eventually(t, func() bool {
+			var waiting bool
+			err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=943721 AND NOT granted)`).Scan(&waiting)
+			return err == nil && waiting
+		}, 20*time.Second, 20*time.Millisecond)
+		// The real import holds authority FOR UPDATE for longer than two ingress
+		// health intervals. HTTP readiness must observe the committed Redis marker.
+		for until := time.Now().Add(11 * time.Second); time.Now().Before(until); {
+			checkReadiness(http.StatusOK)
+			time.Sleep(200 * time.Millisecond)
+		}
+		for _, store := range stores {
+			probe, stopProbe := context.WithTimeout(ctx, 80*time.Millisecond)
+			value, err := store.ConsumeRefreshToken(probe, liveHash)
+			stopProbe()
+			require.Nil(t, value)
+			require.ErrorIs(t, err, repository.ErrRefreshTokenAuthority, "actual Redis session IO still waits for the authority lock")
+		}
+		require.ErrorContains(t, rdb.Get(ctx, "refresh_token:"+liveHash).Err(), "NOPERM")
+		require.NoError(t, gate.Commit())
+		<-migrationDone
+		require.NoError(t, migrationErr)
+		checkReadiness(http.StatusOK)
+		for _, store := range stores {
+			got, err := store.GetRefreshToken(ctx, liveHash)
+			require.NoError(t, err)
+			require.Equal(t, data, got, "same provider reads the imported session after committed PG selection")
+		}
+		for _, mutation := range []struct{ corrupt, restore string }{
+			{`ALTER TABLE refresh_token_issuances RENAME TO unavailable_issuances`, `ALTER TABLE unavailable_issuances RENAME TO refresh_token_issuances`},
+			{`ALTER TABLE refresh_token_authority DISABLE TRIGGER USER; UPDATE refresh_token_authority SET backend='redis',activated_at=NULL`, `UPDATE refresh_token_authority SET backend='postgres',activated_at=(SELECT completed_at FROM refresh_token_legacy_transition); ALTER TABLE refresh_token_authority ENABLE TRIGGER USER`},
+		} {
+			_, err := db.ExecContext(ctx, mutation.corrupt)
+			require.NoError(t, err)
+			checkReadiness(http.StatusServiceUnavailable)
+			_, err = db.ExecContext(ctx, mutation.restore)
+			require.NoError(t, err)
+			checkReadiness(http.StatusOK)
+		}
+		stopTraffic()
+		require.Positive(t, cycles.Load())
+		t.Logf("slow real import >11s: %d dual HTTP readiness rounds; normal observations all 200, missing schema/reverse authority both 503; old authenticated billing/concurrency cycles=%d, zero errors", probeRounds, cycles.Load())
+	} else {
+		err = migrateRefreshSessions(ctx, path, &output)
+	}
 	if err != nil {
 		var id string
 		if db.QueryRowContext(ctx, `SELECT transition_id::text FROM refresh_token_legacy_transition`).Scan(&id) == nil {
@@ -300,7 +450,13 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 	require.NotContains(t, output.String(), "test-legacy-password")
 	require.NotContains(t, output.String(), "test-only-password")
 	require.NotContains(t, output.String(), liveHash)
-	require.Error(t, rdb.Ping(ctx).Err(), "old Redis credentials must remain fenced")
+	if preserve {
+		require.NoError(t, rdb.Ping(ctx).Err())
+		require.NoError(t, rdb.Incr(ctx, "billing:balance:old-runtime").Err())
+		require.ErrorContains(t, rdb.Get(ctx, "refresh_token:"+liveHash).Err(), "NOPERM")
+	} else {
+		require.Error(t, rdb.Ping(ctx).Err(), "old Redis credentials must remain fenced")
+	}
 	runtimeEnv, err := readRefreshMigrationFile(manifest.Runtime.EnvironmentFile, 4096)
 	require.NoError(t, err)
 	env := map[string]string{}
@@ -310,7 +466,12 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		}
 	}
 	require.Equal(t, "postgres", env["JWT_REFRESH_TOKEN_STORE"])
-	require.Len(t, env, 3, "backup credentials must not be injected into the app environment")
+	if preserve {
+		require.Equal(t, "false", env["JWT_REFRESH_TOKEN_MIGRATION_READINESS"])
+		require.Len(t, env, 4)
+	} else {
+		require.Len(t, env, 3, "v1 output remains unchanged; backup credentials must not be injected into the app environment")
+	}
 	backupUser, backupPassword := "xiass-backup-"+result.TransitionID, ""
 	if withBackup {
 		contents, err := readRefreshMigrationFile(manifest.Runtime.BackupCredentialsFile, 4096)
@@ -349,7 +510,12 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		}
 		require.Equal(t, want, recorder.Code)
 	}
-	selected, err := repository.NewRefreshTokenStore(db, rdb, &config.Config{JWT: config.JWTConfig{RefreshTokenStore: "postgres"}})
+	runtimeCfg := &config.Config{JWT: config.JWTConfig{RefreshTokenStore: env["JWT_REFRESH_TOKEN_STORE"], RefreshTokenMigrationReadiness: preserve}}
+	if value, ok := env["JWT_REFRESH_TOKEN_MIGRATION_READINESS"]; ok {
+		runtimeCfg.JWT.RefreshTokenMigrationReadiness, err = strconv.ParseBool(value)
+		require.NoError(t, err)
+	}
+	selected, err := repository.NewRefreshTokenStore(db, rdb, runtimeCfg)
 	require.NoError(t, err)
 	got, err := selected.GetRefreshToken(ctx, liveHash)
 	require.NoError(t, err)
@@ -394,8 +560,8 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 			require.NoError(t, operator.ACLSetUser(ctx, backupUser, "+@all", "~*", "&*", "nopass", "(+get ~*)").Err())
 		}
 	}
-	require.Equal(t, "kept", fenced.Get(ctx, "cache:unchanged").Val())
-	require.Equal(t, originalExpiry, fenced.Do(ctx, "PEXPIRETIME", "cache:unchanged").Val())
+	require.Equal(t, "kept", fenced.Get(ctx, cacheKey).Val())
+	require.Equal(t, originalExpiry, fenced.Do(ctx, "PEXPIRETIME", cacheKey).Val())
 	require.NoError(t, selected.DeleteRefreshToken(ctx, liveHash))
 	output.Reset()
 	require.NoError(t, migrateRefreshSessions(ctx, path, &output))
@@ -460,7 +626,12 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		oldOpts.Dialer, oldOpts.Username, oldOpts.Password = nil, "default", "test-legacy-password"
 		old := redis.NewClient(&oldOpts)
 		defer old.Close()
-		require.Error(t, old.Ping(ctx).Err(), "old credentials remain fenced after actual replica restart")
+		if preserve {
+			require.NoError(t, old.Ping(ctx).Err())
+			require.ErrorContains(t, old.Get(ctx, "refresh_token:"+liveHash).Err(), "NOPERM")
+		} else {
+			require.Error(t, old.Ping(ctx).Err(), "old credentials remain fenced after actual replica restart")
+		}
 
 		assertIsolation := func(app, operator *redis.Client) {
 			t.Helper()
@@ -478,10 +649,18 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 			}
 			state := redis.NewMapStringInterfaceCmd(ctx, "ACL", "GETUSER", "default")
 			require.NoError(t, operator.Process(ctx, state))
-			require.True(t, refreshRuntimeOldUserFenced(state.Val()))
+			if !preserve {
+				require.True(t, refreshRuntimeOldUserFenced(state.Val()))
+			}
 			legacy := redis.NewClient(&redis.Options{Addr: operator.Options().Addr, Username: "default", Password: "test-legacy-password", MaxRetries: -1})
 			defer legacy.Close()
-			require.ErrorContains(t, legacy.Ping(ctx).Err(), "WRONGPASS")
+			if preserve {
+				require.NoError(t, legacy.Ping(ctx).Err())
+				require.ErrorContains(t, legacy.Get(ctx, "refresh_token:"+liveHash).Err(), "NOPERM")
+				require.ErrorContains(t, legacy.ACLUsers(ctx).Err(), "NOPERM")
+			} else {
+				require.ErrorContains(t, legacy.Ping(ctx).Err(), "WRONGPASS")
+			}
 			for key, want := range map[string]string{"masteruser": "xiass-replica-" + result.TransitionID, "masterauth": strings.Repeat("ef", 32)} {
 				credentials, err := operator.ConfigGet(ctx, key).Result()
 				require.NoError(t, err)

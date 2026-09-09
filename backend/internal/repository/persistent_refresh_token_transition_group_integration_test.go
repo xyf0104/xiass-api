@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"encoding/hex"
+	"io"
 	"net"
 	"os/exec"
 	"sort"
@@ -436,4 +437,116 @@ func TestPersistentRefreshTransitionGroupPromotionDuringCommitRollsBack(t *testi
 	}
 	_, err = store.AdoptLegacyRefreshTokens(ctx, options)
 	require.ErrorIs(t, err, ErrRefreshTransitionUnsafe, "retry cannot ignore a promoted inventoried replica")
+}
+
+func TestPersistentRefreshTransitionGroupFencedFullSyncConverges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	options, containers, clients := refreshTransitionTestGroup(t, "redis:7.4-alpine", 1)
+	options.PreserveRuntimeAccess = &LegacyRefreshRuntimeAccess{AuthEndpointsBlockedAndDrained: true,
+		ReservedPasswordSHA256: []string{refreshTransitionDigest("test-replacement-app-password")}}
+	db := refreshTransitionPG(t)
+	hash := persistentRefreshTestHash(t.Name())
+	refreshTransitionSeed(t, clients[0], hash, refreshTransitionTestData(), time.Hour)
+	store := NewPersistentRefreshTokenStore(db)
+	result, err := store.AdoptLegacyRefreshTokens(ctx, options)
+	require.NoError(t, err)
+	fenced := refreshTransitionGroupFenceClients(t, options, result.TransitionID)
+	g, _, err := refreshTransitionBuildGroup(options)
+	require.NoError(t, err)
+	defer g.close()
+	for _, node := range g.nodes {
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT acl_sha256 FROM refresh_token_transition_nodes WHERE transition_id=$1 AND run_id=$2`, result.TransitionID, node.pin.RunID).Scan(&node.aclHash))
+	}
+	// Restore replication with a separate narrow fixture credential, like runtime
+	// restore. The old application credential remains denied session/admin access.
+	require.NoError(t, fenced[0].ACLSetUser(ctx, "fixture-replica", "reset", "on", ">fixture-independent-replication-password", "-@all", "+ping", "+replconf", "+psync").Err())
+	require.NoError(t, fenced[1].Do(ctx, "CONFIG", "SET", "masteruser", "fixture-replica", "masterauth", "fixture-independent-replication-password").Err())
+	require.Eventually(t, func() bool {
+		info, err := refreshTransitionInfo(ctx, fenced[1])
+		return err == nil && info["master_link_status"] == "up" && info["master_sync_in_progress"] == "0"
+	}, 15*time.Second, 25*time.Millisecond)
+	require.NoError(t, g.topology(ctx, fenced, false))
+	require.NoError(t, fenced[0].ConfigSet(ctx, "repl-backlog-size", "16384").Err())
+	require.NoError(t, fenced[0].ConfigSet(ctx, "repl-diskless-sync", "yes").Err())
+	require.NoError(t, fenced[0].ConfigSet(ctx, "repl-diskless-sync-delay", "0").Err())
+	// Redis's RDB test hook holds the real transfer open long enough to observe;
+	// delaying snapshot startup alone does not hold master_sync_in_progress=1.
+	require.NoError(t, fenced[0].ConfigSet(ctx, "rdb-key-save-delay", "10000").Err())
+	before, err := refreshTransitionInfo(ctx, fenced[0])
+	require.NoError(t, err)
+	lastOffset, err := strconv.ParseInt(before["master_repl_offset"], 10, 64)
+	require.NoError(t, err)
+	paused := false
+	defer func() {
+		if paused {
+			cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			out, err := exec.CommandContext(cleanup, "docker", "unpause", containers[1].GetContainerID()).CombinedOutput()
+			require.NoError(t, err, "%s", out)
+		}
+	}()
+	out, err := exec.CommandContext(ctx, "docker", "pause", containers[1].GetContainerID()).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	paused = true
+	killed, err := fenced[0].Do(ctx, "CLIENT", "KILL", "TYPE", "replica").Int()
+	require.NoError(t, err)
+	require.Positive(t, killed)
+	// Multiple commands retire replication buffer blocks; one oversized command
+	// can remain in a single retained block despite a smaller configured backlog.
+	payload := strings.Repeat("x", 8192)
+	for i := 0; i < 128; i++ {
+		require.NoError(t, fenced[0].Set(ctx, "billing:balance:full-sync-payload:"+strconv.Itoa(i), payload, time.Minute).Err())
+	}
+	after, err := refreshTransitionInfo(ctx, fenced[0])
+	require.NoError(t, err)
+	firstOffset, err := strconv.ParseInt(after["repl_backlog_first_byte_offset"], 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, firstOffset, lastOffset+1, "fixture must prove PSYNC cannot cover the disconnected replica's offset")
+	out, err = exec.CommandContext(ctx, "docker", "unpause", containers[1].GetContainerID()).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	paused = false
+	var observed map[string]string
+	defer func() {
+		if t.Failed() {
+			t.Logf("last full-sync fixture state: %v", g.replicaTopologyError(g.nodes[1], observed, false))
+			log, err := containers[1].Logs(ctx)
+			if err == nil {
+				defer log.Close()
+				body, _ := io.ReadAll(io.LimitReader(log, 16384))
+				host, _, _ := net.SplitHostPort(options.Group.PrimaryAddress)
+				t.Logf("disposable replica diagnostics: %s", strings.ReplaceAll(string(body), host, "<pinned-primary>"))
+			}
+		}
+	}()
+	require.Eventually(t, func() bool {
+		observed, err = refreshTransitionInfo(ctx, fenced[1])
+		return err == nil && observed["master_sync_in_progress"] == "1"
+	}, 10*time.Second, 10*time.Millisecond)
+	require.Equal(t, "slave", observed["role"])
+	require.Equal(t, options.Group.PrimaryAddress, net.JoinHostPort(observed["master_host"], observed["master_port"]))
+	require.Equal(t, g.nodes[1].pin.RunID, observed["run_id"])
+	require.Equal(t, options.Group.PrimaryReplicationID, observed["master_replid"])
+	require.Equal(t, "0", observed["connected_slaves"])
+	t.Logf("real forced full-sync observation: %v", g.replicaTopologyError(g.nodes[1], observed, false))
+	started := time.Now()
+	require.NoError(t, g.topology(ctx, fenced, false), "one topology call must wait, never replay adoption")
+	require.Greater(t, time.Since(started), 50*time.Millisecond)
+	settled, err := refreshTransitionInfo(ctx, fenced[1])
+	require.NoError(t, err)
+	require.Equal(t, "0", settled["master_sync_in_progress"])
+	require.Equal(t, "0", settled["loading"])
+	require.NoError(t, fenced[0].ConfigSet(ctx, "rdb-key-save-delay", "0").Err())
+	require.Eventually(t, func() bool {
+		info, err := refreshTransitionInfo(ctx, fenced[1])
+		return err == nil && info["master_link_status"] == "up" && info["master_sync_in_progress"] == "0" &&
+			clients[1].Get(ctx, "billing:balance:full-sync-payload:127").Val() == payload
+	}, 15*time.Second, 25*time.Millisecond, "the same replica must actually receive the payload after its backlog gap")
+	require.NoError(t, clients[0].Incr(ctx, "billing:balance:post-full-sync").Err())
+	require.ErrorContains(t, clients[0].Get(ctx, "refresh_token:"+hash).Err(), "NOPERM")
+	require.ErrorContains(t, clients[1].Get(ctx, "refresh_token:"+hash).Err(), "NOPERM")
+	require.NoError(t, store.DeleteRefreshToken(ctx, hash))
+	_, err = store.GetRefreshToken(ctx, hash)
+	require.ErrorIs(t, err, service.ErrRefreshTokenNotFound)
+	t.Logf("same pinned replica converged in %s; old session ACLs remain fenced and PG revocation remains authoritative", time.Since(started))
 }

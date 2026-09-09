@@ -1649,6 +1649,8 @@ type JWTConfig struct {
 	ExpireHour int    `mapstructure:"expire_hour"`
 	// RefreshTokenStore changes only after an explicit, fenced session migration.
 	RefreshTokenStore string `mapstructure:"refresh_token_store"`
+	// Opt-in rolling readiness only; observes a committed migration, never performs one.
+	RefreshTokenMigrationReadiness bool `mapstructure:"refresh_token_migration_readiness"`
 	// AccessTokenExpireMinutes: Access Token有效期（分钟）
 	// - >0: 使用分钟配置（优先级高于 ExpireHour）
 	// - =0: 回退使用 ExpireHour（向后兼容旧配置）
@@ -2307,6 +2309,7 @@ func setDefaults() {
 	viper.SetDefault("jwt.secret", "")
 	viper.SetDefault("jwt.expire_hour", 168)
 	viper.SetDefault("jwt.refresh_token_store", "redis")
+	viper.SetDefault("jwt.refresh_token_migration_readiness", false)
 	viper.SetDefault("jwt.access_token_expire_minutes", 0) // 0 表示回退到 expire_hour
 	viper.SetDefault("jwt.refresh_token_expire_days", 7)   // 7天Refresh Token有效期
 	viper.SetDefault("jwt.refresh_window_minutes", 2)      // 过期前2分钟开始允许刷新
@@ -2884,6 +2887,9 @@ func (c *Config) Validate() error {
 	case "", "redis", "postgres":
 	default:
 		return fmt.Errorf("jwt.refresh_token_store must be redis or postgres")
+	}
+	if c.JWT.RefreshTokenMigrationReadiness && c.JWT.RefreshTokenStore == "postgres" {
+		return fmt.Errorf("jwt.refresh_token_migration_readiness requires redis configuration; disable readiness when selecting postgres explicitly")
 	}
 	if c.JWT.AccessTokenExpireMinutes < 0 {
 		return fmt.Errorf("jwt.access_token_expire_minutes must be non-negative")

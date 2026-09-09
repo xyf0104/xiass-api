@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -184,4 +186,165 @@ func TestPersistentRefreshTransitionSevenDayMicrosecondPrecision(t *testing.T) {
 			require.ErrorIs(t, err, ErrRefreshTransitionUnsafe, "one microsecond beyond seven days is not a tolerated clock skew")
 		})
 	}
+}
+
+type refreshTransitionTopologyHook struct {
+	redis.Hook
+	states []map[string]string
+	reads  int
+}
+
+func (h *refreshTransitionTopologyHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *refreshTransitionTopologyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *refreshTransitionTopologyHook) ProcessHook(_ redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, command redis.Cmder) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		switch command.Name() {
+		case "info":
+			state := h.states[min(h.reads, len(h.states)-1)]
+			h.reads++
+			lines := make([]string, 0, len(state))
+			for key, value := range state {
+				lines = append(lines, key+":"+value)
+			}
+			sort.Strings(lines)
+			command.(*redis.StringCmd).SetVal(strings.Join(lines, "\r\n"))
+			return nil
+		case "config":
+			command.(*redis.MapStringStringCmd).SetVal(map[string]string{"aclfile": "/fixture/acl"})
+			return nil
+		}
+		return errors.New("unexpected topology command")
+	}
+}
+
+func refreshTransitionTopologyFixture(t *testing.T) (*refreshTransitionGroupRuntime, []*redis.Client, []*refreshTransitionTopologyHook) {
+	t.Helper()
+	replID := strings.Repeat("c", 40)
+	primary := map[string]string{"run_id": strings.Repeat("a", 40), "redis_mode": "standalone", "cluster_enabled": "0", "loading": "0",
+		"master_replid": replID, "master_replid2": strings.Repeat("0", 40), "role": "master", "connected_slaves": "1", "slave0": "ip=192.0.2.2,port=6379,state=online,offset=1,lag=0"}
+	replica := map[string]string{"run_id": strings.Repeat("b", 40), "redis_mode": "standalone", "cluster_enabled": "0", "loading": "0",
+		"master_replid": replID, "role": "slave", "master_host": "192.0.2.1", "master_port": "6379", "master_sync_in_progress": "0", "master_link_status": "up", "connected_slaves": "0"}
+	g := &refreshTransitionGroupRuntime{manifest: refreshTransitionGroupManifest{PrimaryAddress: "192.0.2.1:6379", ReplicationID: replID}, nodes: []*refreshTransitionGroupNode{
+		{pin: refreshTransitionNodeManifest{RunID: primary["run_id"]}},
+		{pin: refreshTransitionNodeManifest{RunID: replica["run_id"], ReplicaAddress: "192.0.2.2:6379"}, aclHash: strings.Repeat("d", 64)},
+	}}
+	var clients []*redis.Client
+	var hooks []*refreshTransitionTopologyHook
+	for _, state := range []map[string]string{primary, replica} {
+		client := redis.NewClient(&redis.Options{Addr: "unused.invalid:6379", MaxRetries: -1})
+		hook := &refreshTransitionTopologyHook{states: []map[string]string{state}}
+		client.AddHook(hook)
+		t.Cleanup(func() { require.NoError(t, client.Close()) })
+		clients, hooks = append(clients, client), append(hooks, hook)
+	}
+	return g, clients, hooks
+}
+
+func TestPersistentRefreshTransitionTopologyWaitsForStrictConvergence(t *testing.T) {
+	for _, phase := range []string{"replica-sync", "replica-loading", "primary-wait-bgsave", "primary-send-bulk"} {
+		t.Run(phase, func(t *testing.T) {
+			g, clients, hooks := refreshTransitionTopologyFixture(t)
+			target := 1
+			if strings.HasPrefix(phase, "primary-") {
+				target = 0
+			}
+			ready := hooks[target].states[0]
+			pending := maps.Clone(ready)
+			if target == 1 {
+				pending["master_sync_in_progress"], pending["master_link_status"] = "1", "down"
+				if phase == "replica-loading" {
+					pending["loading"] = "1"
+				}
+			} else {
+				state := "wait_bgsave"
+				if phase == "primary-send-bulk" {
+					state = "send_bulk"
+				}
+				pending["slave0"] = strings.Replace(ready["slave0"], "online", state, 1)
+			}
+			hooks[target].states = []map[string]string{pending, ready}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			require.NoError(t, g.topology(ctx, clients, false))
+			for _, hook := range hooks {
+				require.Equal(t, 2, hook.reads, "the entire group must be revalidated, not just the formerly syncing node")
+			}
+		})
+	}
+}
+
+func TestPersistentRefreshTransitionTopologyDeadlineAndInitialAdmission(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(strconv.FormatBool(initial), func(t *testing.T) {
+			g, clients, hooks := refreshTransitionTopologyFixture(t)
+			hooks[1].states[0]["master_sync_in_progress"] = "1"
+			ctx, cancel := context.WithTimeout(context.Background(), 140*time.Millisecond)
+			defer cancel()
+			err := g.topology(ctx, clients, initial)
+			require.ErrorIs(t, err, ErrRefreshTransitionUnsafe)
+			if initial {
+				require.Equal(t, 1, hooks[1].reads, "preflight must still reject an unsynchronized replica immediately")
+			} else {
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				require.GreaterOrEqual(t, hooks[1].reads, 2)
+				require.Contains(t, err.Error(), "phase=post-fence")
+				require.Contains(t, err.Error(), "sync_in_progress=1")
+				require.Contains(t, err.Error(), "run_id_match=true")
+			}
+			require.NotContains(t, err.Error(), "192.0.2.1")
+		})
+	}
+}
+
+func TestPersistentRefreshTransitionTopologyRejectsStableContradictions(t *testing.T) {
+	for _, tc := range []struct{ field, value string }{
+		{"role", "master"}, {"run_id", strings.Repeat("f", 40)}, {"master_replid", strings.Repeat("f", 40)},
+		{"master_host", "private-upstream.invalid"}, {"master_port", "6380"}, {"connected_slaves", "1"},
+		{"master_link_status", "unknown-private-value"}, {"master_sync_in_progress", "2"}, {"loading", "2"}, {"cluster_enabled", "1"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			g, clients, hooks := refreshTransitionTopologyFixture(t)
+			hooks[1].states[0]["master_sync_in_progress"] = "1"
+			hooks[1].states[0][tc.field] = tc.value
+			err := g.topology(context.Background(), clients, false)
+			require.ErrorIs(t, err, ErrRefreshTransitionUnsafe)
+			require.Equal(t, 1, hooks[0].reads)
+			require.Equal(t, 1, hooks[1].reads, "a contradictory syncing node must not enter the wait loop")
+			for _, secret := range []string{"private-upstream.invalid", "unknown-private-value", "192.0.2.1"} {
+				require.NotContains(t, err.Error(), secret)
+			}
+		})
+	}
+}
+
+func TestPersistentRefreshTransitionTopologyRechecksOtherNodesDuringSync(t *testing.T) {
+	g, clients, hooks := refreshTransitionTopologyFixture(t)
+	hooks[1].states[0]["master_sync_in_progress"] = "1"
+	promoted := maps.Clone(hooks[0].states[0])
+	promoted["run_id"] = strings.Repeat("f", 40)
+	hooks[0].states = append(hooks[0].states, promoted)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.ErrorContains(t, g.topology(ctx, clients, false), "identity changed")
+	require.Equal(t, 2, hooks[0].reads)
+	require.Equal(t, 1, hooks[1].reads)
+
+	g, clients, hooks = refreshTransitionTopologyFixture(t)
+	hooks[1].states[0]["master_sync_in_progress"] = "1"
+	wrong := maps.Clone(hooks[1].states[0])
+	wrong["master_host"] = "wrong.invalid"
+	client := redis.NewClient(&redis.Options{Addr: "unused.invalid:6379", MaxRetries: -1})
+	defer client.Close()
+	last := &refreshTransitionTopologyHook{states: []map[string]string{wrong}}
+	client.AddHook(last)
+	clients = append(clients, client)
+	g.nodes = append(g.nodes, &refreshTransitionGroupNode{pin: refreshTransitionNodeManifest{RunID: wrong["run_id"], ReplicaAddress: "192.0.2.3:6379"}})
+	require.ErrorContains(t, g.topology(ctx, clients, false), "upstream_match=false")
+	require.Equal(t, 1, hooks[0].reads, "a later contradictory node must reject within the same group pass")
+	require.Equal(t, 1, last.reads)
 }

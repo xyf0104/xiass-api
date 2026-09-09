@@ -53,6 +53,64 @@ func TestRefreshMigrationPrivateManifest(t *testing.T) {
 	require.Equal(t, "127.0.0.1:1", options.Source.Options().Addr)
 }
 
+func TestRefreshMigrationManifestVersionCompatibility(t *testing.T) {
+	_, manifest := migrationTestManifest(t)
+	require.NoError(t, manifest.validateSessionFence(), "version 1 without the opt-in fence remains the legacy offline mode")
+
+	manifest.Version = 2
+	for _, tc := range []struct {
+		name   string
+		mutate func(*refreshMigrationManifest)
+	}{
+		{"missing-opt-in", func(m *refreshMigrationManifest) {}},
+		{"not-drained", func(m *refreshMigrationManifest) {
+			m.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true}
+			m.Runtime = &refreshRuntimeManifest{}
+		}},
+		{"missing-runtime", func(m *refreshMigrationManifest) {
+			m.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true, AuthEndpointsBlockedAndDrained: true}
+		}},
+		{"disabled-preservation", func(m *refreshMigrationManifest) {
+			m.SessionFence = &refreshSessionFenceManifest{AuthEndpointsBlockedAndDrained: true}
+			m.Runtime = &refreshRuntimeManifest{}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := manifest
+			candidate.SessionFence, candidate.Runtime = nil, nil
+			tc.mutate(&candidate)
+			require.ErrorContains(t, candidate.validateSessionFence(), "manifest v2")
+		})
+	}
+
+	manifest.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true, AuthEndpointsBlockedAndDrained: true}
+	manifest.Runtime = &refreshRuntimeManifest{}
+	require.NoError(t, manifest.validateSessionFence(), "version 2 requires and accepts the explicit opt-in")
+	manifest.Version = 1
+	require.ErrorContains(t, manifest.validateSessionFence(), "manifest v2")
+}
+
+func TestRefreshMigrationV2OptionsCarryOnlyFixedRuntimeAccess(t *testing.T) {
+	path, manifest := migrationTestManifest(t)
+	appPassword := filepath.Join(filepath.Dir(path), "app.secret")
+	require.NoError(t, os.WriteFile(appPassword, []byte(strings.Repeat("cd", 32)), 0600))
+	manifest.Version = 2
+	manifest.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true, AuthEndpointsBlockedAndDrained: true}
+	manifest.Runtime = &refreshRuntimeManifest{AppPasswordFile: appPassword, EnvironmentFile: filepath.Join(filepath.Dir(path), "runtime.env")}
+
+	options, closeClients, err := manifest.options(make([]byte, 32))
+	require.NoError(t, err)
+	defer closeClients()
+	require.NotNil(t, options.PreserveRuntimeAccess)
+	require.True(t, options.PreserveRuntimeAccess.AuthEndpointsBlockedAndDrained)
+	require.Equal(t, []string{refreshRuntimeHash(strings.Repeat("cd", 32))}, options.PreserveRuntimeAccess.ReservedPasswordSHA256)
+	rules, err := options.PreserveRuntimeAccess.ACL.Rules(0)
+	require.NoError(t, err)
+	require.NotContains(t, rules, "+@all")
+	require.NotContains(t, rules, "~*")
+	require.NotContains(t, rules, "&*")
+}
+
 func TestRefreshMigrationRejectsUnsafeFiles(t *testing.T) {
 	for _, name := range []string{"public-manifest", "public-secret", "symlink", "directory", "oversized"} {
 		t.Run(name, func(t *testing.T) {

@@ -27,14 +27,30 @@ type refreshMigrationNode struct {
 }
 
 type refreshMigrationManifest struct {
-	Version              int                     `json:"version"`
-	DatabaseURL          string                  `json:"database_url"`
-	RecoverySecretFile   string                  `json:"recovery_secret_file"`
-	Primary              refreshMigrationNode    `json:"primary"`
-	PrimaryReplicationID string                  `json:"primary_replication_id"`
-	PrimaryAddress       string                  `json:"primary_address"`
-	Replicas             []refreshMigrationNode  `json:"replicas"`
-	Runtime              *refreshRuntimeManifest `json:"runtime,omitempty"`
+	Version              int                          `json:"version"`
+	DatabaseURL          string                       `json:"database_url"`
+	RecoverySecretFile   string                       `json:"recovery_secret_file"`
+	Primary              refreshMigrationNode         `json:"primary"`
+	PrimaryReplicationID string                       `json:"primary_replication_id"`
+	PrimaryAddress       string                       `json:"primary_address"`
+	Replicas             []refreshMigrationNode       `json:"replicas"`
+	Runtime              *refreshRuntimeManifest      `json:"runtime,omitempty"`
+	SessionFence         *refreshSessionFenceManifest `json:"session_fence,omitempty"`
+}
+
+type refreshSessionFenceManifest struct {
+	PreserveRuntimeAccess          bool `json:"preserve_runtime_access"`
+	AuthEndpointsBlockedAndDrained bool `json:"auth_endpoints_blocked_and_drained"`
+}
+
+func (m *refreshMigrationManifest) validateSessionFence() error {
+	if m.Version == 1 && m.SessionFence == nil {
+		return nil
+	}
+	if m.Version != 2 || m.SessionFence == nil || !m.SessionFence.PreserveRuntimeAccess || !m.SessionFence.AuthEndpointsBlockedAndDrained || m.Runtime == nil {
+		return errors.New("manifest v2 requires explicit runtime ACL parameters and independently blocked/drained login, refresh and revocation endpoints; v1 remains offline-only")
+	}
+	return nil
 }
 
 func readRefreshMigrationFile(path string, limit int64) ([]byte, error) {
@@ -66,8 +82,11 @@ func readRefreshMigrationManifest(path string) (*refreshMigrationManifest, []byt
 	var manifest refreshMigrationManifest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&manifest) != nil || decoder.Decode(new(any)) != io.EOF || manifest.Version != 1 || len(manifest.Replicas) > 8 {
+	if decoder.Decode(&manifest) != nil || decoder.Decode(new(any)) != io.EOF || len(manifest.Replicas) > 8 {
 		return nil, nil, errors.New("invalid migration manifest version, fields or node count")
+	}
+	if err := manifest.validateSessionFence(); err != nil {
+		return nil, nil, err
 	}
 	dbURL, err := url.Parse(manifest.DatabaseURL)
 	if err != nil || (dbURL.Scheme != "postgres" && dbURL.Scheme != "postgresql") || dbURL.Hostname() == "" || dbURL.Path == "" || dbURL.Fragment != "" {
@@ -85,6 +104,13 @@ func readRefreshMigrationManifest(path string) (*refreshMigrationManifest, []byt
 }
 
 func (m *refreshMigrationManifest) options(secret []byte) (repository.LegacyRefreshTransitionOptions, func(), error) {
+	if err := m.validateSessionFence(); err != nil {
+		return repository.LegacyRefreshTransitionOptions{}, nil, err
+	}
+	access, err := m.runtimeAccess()
+	if err != nil {
+		return repository.LegacyRefreshTransitionOptions{}, nil, err
+	}
 	var clients []*redis.Client
 	closeClients := func() {
 		for _, client := range clients {
@@ -122,7 +148,7 @@ func (m *refreshMigrationManifest) options(secret []byte) (repository.LegacyRefr
 		})
 	}
 	return repository.LegacyRefreshTransitionOptions{
-		Source: clients[0], ExpectedRunID: m.Primary.RunID, RecoverySecret: secret, Group: group,
+		Source: clients[0], ExpectedRunID: m.Primary.RunID, RecoverySecret: secret, Group: group, PreserveRuntimeAccess: access,
 	}, closeClients, nil
 }
 
@@ -151,6 +177,12 @@ func migrateRefreshSessions(ctx context.Context, path string, output io.Writer) 
 	}
 	result, err := repository.NewPersistentRefreshTokenStore(db).AdoptLegacyRefreshTokens(ctx, options)
 	if err != nil {
+		if manifest.SessionFence != nil {
+			if errors.Is(err, repository.ErrRefreshTransitionUnsafe) {
+				return fmt.Errorf("%w; keep auth endpoints blocked and drained, preserve inference traffic, retry with identical private inputs", err)
+			}
+			return errors.New("session migration not confirmed; keep login/refresh/revocation blocked and drained, preserve inference traffic, and retry with the same private manifest/recovery secret (connection details withheld)")
+		}
 		if errors.Is(err, repository.ErrRefreshTransitionUnsafe) {
 			return fmt.Errorf("%w; keep applications stopped and retain the same manifest/recovery secret for retry", err)
 		}
@@ -158,6 +190,9 @@ func migrateRefreshSessions(ctx context.Context, path string, output io.Writer) 
 	}
 	if runtime != nil {
 		if err := runtime.restore(ctx, manifest, secret, result.TransitionID); err != nil {
+			if manifest.SessionFence != nil {
+				return fmt.Errorf("sessions migrated, runtime not confirmed: %w; keep auth endpoints blocked, preserve inference traffic, retry with identical private inputs", err)
+			}
 			return fmt.Errorf("sessions migrated, runtime not confirmed: %w; keep applications stopped and retry with the same protected inputs", err)
 		}
 	}

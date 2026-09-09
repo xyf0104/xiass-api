@@ -29,36 +29,61 @@ func NewRefreshTokenStore(db *sql.DB, rdb *redis.Client, cfg *config.Config) (se
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var actual string
-	var recovery, readOnly bool
-	err := db.QueryRowContext(ctx, `SELECT backend, pg_is_in_recovery(),
-		current_setting('transaction_read_only')::boolean
-		FROM refresh_token_authority WHERE singleton = TRUE`).Scan(&actual, &recovery, &readOnly)
-	if err != nil {
-		return nil, fmt.Errorf("%w: cannot read migration state", ErrRefreshTokenAuthority)
+	if cfg != nil && cfg.JWT.RefreshTokenMigrationReadiness {
+		if backend != "redis" {
+			return nil, fmt.Errorf("%w: migration readiness requires redis configuration", ErrRefreshTokenAuthority)
+		}
+		s := &migrationReadyRefreshStore{db: db, postgres: NewPersistentRefreshTokenStore(db)}
+		if rdb != nil {
+			s.redis = &authorityCheckedRedisRefreshStore{db: db, legacy: NewRefreshTokenCache(rdb)}
+		}
+		if _, err := s.activeStore(ctx); err != nil {
+			return nil, err
+		}
+		return s, nil
 	}
-	if actual != backend || recovery || readOnly {
-		return nil, ErrRefreshTokenAuthority
+	if err := checkFixedRefreshStoreReadiness(ctx, db, backend); err != nil {
+		return nil, err
 	}
 	if backend == "postgres" {
-		var ready bool
-		err = db.QueryRowContext(ctx, `SELECT
-			EXISTS (SELECT 1 FROM refresh_token_revocation_state WHERE singleton = TRUE)
-			AND to_regclass('refresh_tokens') IS NOT NULL
-			AND to_regclass('refresh_token_families') IS NOT NULL
-			AND to_regclass('refresh_token_users') IS NOT NULL
-			AND to_regclass('refresh_token_issuances') IS NOT NULL`).Scan(&ready)
-		if err != nil || !ready {
-			return nil, fmt.Errorf("%w: persistent schema is not ready", ErrRefreshTokenAuthority)
-		}
-		// Return the concrete store: embedding it behind the legacy interface
-		// would hide its required pre-generation issuance admission method.
+		// Keep the concrete store and its pre-generation issuance interface.
 		return NewPersistentRefreshTokenStore(db), nil
 	}
 	if rdb == nil {
 		return nil, ErrRefreshTokenAuthority
 	}
 	return &authorityCheckedRedisRefreshStore{db: db, legacy: NewRefreshTokenCache(rdb)}, nil
+}
+
+const refreshTokenPersistentSchemaCondition = `EXISTS (SELECT 1 FROM refresh_token_revocation_state WHERE singleton = TRUE)
+	AND to_regclass('refresh_tokens') IS NOT NULL
+	AND to_regclass('refresh_token_families') IS NOT NULL
+	AND to_regclass('refresh_token_users') IS NOT NULL
+	AND to_regclass('refresh_token_issuances') IS NOT NULL`
+
+func checkFixedRefreshStoreReadiness(ctx context.Context, db *sql.DB, backend string) error {
+	if db == nil || (backend != "redis" && backend != "postgres") {
+		return ErrRefreshTokenAuthority
+	}
+	var actual string
+	var recovery, readOnly bool
+	err := db.QueryRowContext(ctx, `SELECT backend, pg_is_in_recovery(),
+		current_setting('transaction_read_only')::boolean
+		FROM refresh_token_authority WHERE singleton = TRUE`).Scan(&actual, &recovery, &readOnly)
+	if err != nil {
+		return fmt.Errorf("%w: cannot read migration state", ErrRefreshTokenAuthority)
+	}
+	if actual != backend || recovery || readOnly {
+		return ErrRefreshTokenAuthority
+	}
+	if backend == "postgres" {
+		var ready bool
+		err = db.QueryRowContext(ctx, "SELECT "+refreshTokenPersistentSchemaCondition).Scan(&ready)
+		if err != nil || !ready {
+			return fmt.Errorf("%w: persistent schema is not ready", ErrRefreshTokenAuthority)
+		}
+	}
+	return nil
 }
 
 // This guard covers upgraded Redis-mode nodes. Pre-upgrade binaries still need

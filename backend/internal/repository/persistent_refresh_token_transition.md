@@ -2,11 +2,13 @@
 
 ## Status and Scope
 
-This is an explicit OFFLINE repository operation. The existing server executable
+This is an explicit operator-only repository operation. The existing server executable
 now exposes it through `-migrate-refresh-sessions <private-manifest>` together with
 `-offline-maintenance`, before normal setup/tunnel/server startup. It never runs
 as an installation or online-update side effect, and is not a zero-downtime
-rolling upgrade. An explicit invocation DOES mutate the selected Redis ACLs/ACL
+rolling upgrade. Version 1 requires stopped applications; opt-in version 2
+requires independently blocked and drained auth endpoints while retaining only
+fixed non-session runtime grants. An explicit invocation DOES mutate the selected Redis ACLs/ACL
 files and PostgreSQL transition state. Optional runtime preparation installs new
 restricted application/replication credentials, persists replication credentials
 on every inventoried node that may later become a replica,
@@ -47,6 +49,17 @@ from an arbitrary fresh run ID. A supplied replica, mismatched replication ID,
 promoted primary with a secondary replication ID, missing connected replica,
 cascaded replica, wrong upstream, unreachable node or changed process rejects.
 All replicas must initially be online and out of full synchronization.
+After the immutable inventory exists, a pinned replica can briefly enter full
+sync when a fenced connection drops or replication reconnects. Only recognized
+full-sync states wait for convergence, sampled every 50 ms within the existing
+five-minute operation deadline (or a shorter caller deadline). Every pass checks
+the entire group: changed run/replication IDs, role, direct upstream, downstream
+inventory, or unknown states still reject immediately. Success still requires
+no loading/full sync and online primary-side peers; a fenced disconnected link
+is allowed only under the pre-existing non-initial rule. No import, ACL change,
+or complete migration is replayed by this observation loop. Replica rejection
+diagnostics include the phase, normalized state and identity-match booleans;
+upstream addresses are represented only by a digest prefix.
 
 Redis cannot reveal a disconnected, omitted machine, an old copied ACL file,
 an earlier acknowledged DEL already lost before inventory, or a privileged
@@ -93,6 +106,42 @@ The result contains `TransitionID`, `Imported`, `Expired`, `ActivatedAt`, and
 `SnapshotSHA256`. Raw tokens, source JSON and Redis plaintext credentials are not
 returned or persisted in the transition witness. Errors do not print Redis bodies.
 
+### Opt-in Runtime Access Fence
+
+The original `Group == nil` mode and version-1 manifest remain the dedicated
+offline fence: every legacy ACL principal is reset `off`, including already
+authenticated clients. Runtime continuity is a separate version-2 manifest
+opt-in. It is accepted only with an explicit group inventory, `Runtime`,
+`session_fence.preserve_runtime_access=true`, and the operator attestation that
+login, refresh-token and revocation endpoints have been independently blocked
+and drained. This flag is an admission assertion, not a claim that this
+repository drained HTTP requests; no missing-auth-request queue is treated as
+proof of zero downtime.
+
+For the opt-in fence, each inventoried old principal must have a known,
+password-protected, selector-free ACL state. Its password hashes are preserved,
+but its permissions are replaced atomically with the single shared fixed
+non-auth command/key/channel whitelist from `RefreshSessionRuntimeACL`.
+That whitelist includes only the established cache, billing, concurrency,
+queue, scheduler, monitoring, Team mailbox, and invalidation-channel names;
+the complete range is the literal rule set returned by that builder, including
+configured dashboard/batch/alert literals after protected-prefix checks. It
+never includes `+@all`, `~*`, `&*`, ACL/config/flush/replication commands, or any
+of `refresh_token:`, `user_refresh_tokens:`, or `token_family:`. Unknown key
+names in any nonempty inventoried DB reject the transition with the key digest;
+they are never silently admitted. Lua is retained only for the fixed command
+set, and Redis still enforces key ACLs for declared and script-discovered keys.
+
+The manifest records a versioned runtime policy, the builder digest, and a
+before/after ACL proof for every old principal. The proof and every node's final
+ACL digest are append-only and are checked on retries and by runtime restore.
+Restore may create the new application/replication/backup roles only after the
+same restricted state is re-proven; it never restores old session permissions.
+Replacement credential hashes are required, sorted canonically, and rejected if
+they match any old password or the recovery credential. The opt-in therefore
+keeps existing authenticated non-auth inference work alive while session reads,
+writes and all old admin operations remain denied.
+
 ## Mechanism and Operational Impact
 
 1. Take an exclusive PG advisory lock. Verify the marker is Redis and the target
@@ -109,7 +158,8 @@ returned or persisted in the transition witness. Errors do not print Redis bodie
    In group mode, ALL nodes must successfully save their original rules before
    ANY legacy principal is disabled. Initial topology and exact ACL/module
    inventories are verified before committing the immutable group manifest.
-3. Create a new exclusive principal using the recovery secret on every node;
+3. In the dedicated mode, create a new exclusive principal using the recovery
+   secret on every node;
    save those ACLs before disabling any old user. In group mode, fence replicas
    first, then the original primary. Each node uses one `MULTI/EXEC` containing
    `ACL SETUSER <old-user> reset off` for every inventoried old user.
@@ -139,26 +189,27 @@ returned or persisted in the transition witness. Errors do not print Redis bodie
    immutable families and spent admission tickets, complete the audit witness,
    and change the marker to PostgreSQL. No success is returned before COMMIT.
 
-**All old Redis access is disabled across ALL databases on EVERY inventoried
-node, including previously authenticated application and failover-controller
-connections.** Mixed mode keeps non-auth keys, values, types and absolute expiry
-unchanged; it does not keep old credentials usable. Redis ACLs do not safely
-express "all keys except these auth prefixes", so preserving old `~*` writers is
-not an option. Any business
-that previously used those credentials will need separately provisioned Redis
-credentials and an audited application/config rollout before its Redis work can
-resume. Provision explicit non-auth namespace grants separately, never `~*` to
-an old writer. Replication credentials and failover/rejoin administration also
-need separately reviewed recovery. The repository adoption method does not change
-`masteruser`, `masterauth`, `REPLICAOF`, `redis.conf`/startup configuration,
-services, or traffic. The server command's optional runtime phase provisions new
-app/replication users and persists `masteruser`/`masterauth` on every replicated
-node after adoption; it does not change roles, rewrite installation `.env`,
-restart apps or provision failover controllers/backup identities. Do not grant
-old binaries the new transition credential or restore their refresh permissions.
-Drain traffic/old application work under an external maintenance procedure first;
-in-flight legacy rotations may otherwise fail after their old token was consumed.
-This method does not promise transparent continuity for such interrupted requests.
+**In the original dedicated mode, all old Redis access is disabled across ALL
+databases on EVERY inventoried node, including previously authenticated
+application and failover-controller connections.** Mixed mode keeps non-auth
+keys, values, types and absolute expiry unchanged; it does not keep old
+credentials usable. In the explicit runtime-access mode, old passwords remain
+valid only for the fixed non-auth whitelist described above; session namespaces,
+ACL/config/flush/replication operations, and unknown namespaces remain denied.
+Redis ACLs do not safely express "all keys except these auth prefixes", so the
+runtime mode never preserves old `~*` writers. Any business outside the listed
+range needs separately provisioned Redis credentials and an audited
+application/config rollout before its Redis work can resume. The repository
+adoption method does not change `masteruser`, `masterauth`, `REPLICAOF`,
+`redis.conf`/startup configuration, services, or traffic. The server command's
+optional runtime phase provisions new app/replication users and persists
+`masteruser`/`masterauth` on every replicated node after adoption; it does not
+change roles, rewrite installation `.env`, restart apps or provision failover
+controllers/backup identities. Do not grant old binaries the new transition
+credential or restore their refresh permissions. External admission must block
+and drain login/refresh/revocation endpoints before the runtime mode; the
+method does not promise transparent continuity for already-consumed auth
+rotations or for missing HTTP requests.
 
 Once a fence has been applied, errors NEVER automatically restore old permissions.
 Before activation the marker remains Redis. During a partial group fence, nodes

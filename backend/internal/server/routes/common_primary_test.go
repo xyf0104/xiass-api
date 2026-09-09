@@ -39,7 +39,7 @@ func TestClusterReadinessRejectsReachableReadOnlyStores(t *testing.T) {
 			mock.MatchExpectationsInOrder(false)
 			if tc.cluster {
 				mock.ExpectQuery("SELECT NOT pg_is_in_recovery").
-					WillReturnRows(sqlmock.NewRows([]string{"writable"}).AddRow(tc.pgWritable))
+					WillReturnRows(sqlmock.NewRows([]string{"writable", "backend", "schema_ready"}).AddRow(tc.pgWritable, "redis", true))
 			} else {
 				mock.ExpectPing()
 			}

@@ -937,6 +937,9 @@ jwt:
   # Keep redis for existing installations. postgres requires a completed
   # session migration and matching authority record; it never falls back.
   refresh_token_store: redis
+  # Explicit rolling migration preparation only; never migrates sessions itself.
+  # Leave false normally and when selecting postgres explicitly.
+  refresh_token_migration_readiness: false
   # Access Token 过期时间（分钟）
   # 优先级说明：
   # - >0: 按分钟生效（优先于 expire_hour）

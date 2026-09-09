@@ -7,10 +7,13 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,6 +34,59 @@ func TestRefreshRuntimeEnvironmentPreservesExistingFiles(t *testing.T) {
 	require.Error(t, writeRefreshRuntimeEnvironment(link, data))
 	require.NoError(t, os.Chmod(path, 0644))
 	require.Error(t, writeRefreshRuntimeEnvironment(path, data))
+}
+
+func TestRefreshRuntimeEnvironmentVersionCompatibility(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			path, manifest := migrationTestManifest(t)
+			manifest.Version = version
+			manifest.Runtime = &refreshRuntimeManifest{AppPasswordFile: filepath.Join(filepath.Dir(path), "app.secret"), EnvironmentFile: filepath.Join(filepath.Dir(path), "runtime.env")}
+			if version == 2 {
+				manifest.SessionFence = &refreshSessionFenceManifest{PreserveRuntimeAccess: true, AuthEndpointsBlockedAndDrained: true}
+			}
+			password := strings.Repeat("cd", 32)
+			require.NoError(t, os.WriteFile(manifest.Runtime.AppPasswordFile, []byte(password), 0600))
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			for _, retry := range []bool{false, true} {
+				rows := sqlmock.NewRows([]string{"transition_id"})
+				if retry {
+					rows.AddRow("review")
+				}
+				mock.ExpectQuery("SELECT transition_id::text FROM refresh_token_legacy_transition").WillReturnRows(rows)
+				plan, err := prepareRefreshRuntime(context.Background(), db, &manifest, make([]byte, 32))
+				require.NoError(t, err)
+				expected := "JWT_REFRESH_TOKEN_STORE=postgres\n"
+				if version == 2 {
+					expected += "JWT_REFRESH_TOKEN_MIGRATION_READINESS=false\n"
+				}
+				expected += "REDIS_USERNAME=xiass-app-review\nREDIS_PASSWORD=" + password + "\n"
+				require.Equal(t, expected, string(plan.environment("review")), "v1 bytes remain unchanged; v2 explicitly clears the startup opt-in")
+				require.NoError(t, writeRefreshRuntimeEnvironment(manifest.Runtime.EnvironmentFile, plan.environment("review")))
+				if version == 2 {
+					cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenStore: "redis", RefreshTokenMigrationReadiness: true}}
+					for _, line := range strings.Split(string(plan.environment("review")), "\n") {
+						key, value, _ := strings.Cut(line, "=")
+						switch key {
+						case "JWT_REFRESH_TOKEN_STORE":
+							cfg.JWT.RefreshTokenStore = value
+						case "JWT_REFRESH_TOKEN_MIGRATION_READINESS":
+							cfg.JWT.RefreshTokenMigrationReadiness, err = strconv.ParseBool(value)
+							require.NoError(t, err)
+						}
+					}
+					mock.ExpectQuery("SELECT backend, pg_is_in_recovery").WillReturnRows(sqlmock.NewRows([]string{"backend", "recovery", "read_only"}).AddRow("postgres", false, false))
+					mock.ExpectQuery("SELECT.*EXISTS").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+					store, err := repository.NewRefreshTokenStore(db, nil, cfg)
+					require.NoError(t, err, "v2 output must replace an existing readiness=true configuration")
+					require.IsType(t, &repository.PersistentRefreshTokenStore{}, store)
+				}
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestRefreshRuntimeOldUserFenceIsComplete(t *testing.T) {

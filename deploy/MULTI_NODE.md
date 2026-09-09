@@ -132,9 +132,9 @@ Redis 自动切换之前，必须先完成现有网页登录会话向 PostgreSQL
 /app/xiass-api -migrate-refresh-sessions /private/manifest.json -offline-maintenance
 ```
 
-`-offline-maintenance` 是操作者对全部参与应用已排空并停止的确认，不是自动维护或仲裁证明。这个入口不是容灾安装器：它不配置数据库升主、防双主、Sentinel 或公网 DNS，也不宣称迁移时零中断。
+`-offline-maintenance` 确认的是清单声明的维护边界：v1 要求参与应用排空并停止；v2 必须显式启用 `session_fence.preserve_runtime_access`，逐台提前开启默认关闭的 `JWT_REFRESH_TOKEN_MIGRATION_READINESS`，并由外部入口阻断、排空所有登录、刷新、撤销操作。v2 不要求同时停止两端应用，固定白名单内的推理缓存与并发操作可以继续；会话入口在迁移期间仍不可用。完成后逐台改为 `JWT_REFRESH_TOKEN_STORE=postgres`、`JWT_REFRESH_TOKEN_MIGRATION_READINESS=false`，验证后再解除入口限制。迁移准备模式下不能新增配对，但既有配对不变。该参数不是自动维护或仲裁证明；此入口不配置数据库升主、旧主隔离、Sentinel 或公网 DNS，不能据此宣称完整容灾。
 
-- 清单必须是 0400/0600 的普通文件，版本字段 `version` 为 1。必须明确给出 `database_url`、`recovery_secret_file`、原始 Redis 主节点的 `primary`、`primary_replication_id`、`primary_address` 与全部 `replicas`。每个 Redis 节点包含固定 `redis/rediss` URL、事先检查的 `run_id`、完整 `acl_users` 和 `modules`；副本另填其通告的 `replica_address`。不得从已提升的落后副本或不可信快照生成这份清单。
+- 清单必须是 0400/0600 的普通文件。`version=1` 使用原离线流程；`version=2` 必须额外声明完整 `session_fence` 和 `runtime`。两种版本都必须明确给出 `database_url`、`recovery_secret_file`、原始 Redis 主节点的 `primary`、`primary_replication_id`、`primary_address` 与全部 `replicas`。每个 Redis 节点包含固定 `redis/rediss` URL、事先检查的 `run_id`、完整 `acl_users` 和 `modules`；副本另填其通告的 `replica_address`。不得从已提升的落后副本或不可信快照生成这份清单。
 - 先正常升级安装所需迁移表，再安排离线操作；命令自身不自动执行数据库 migration、创建管理员或启动隧道。恢复密钥文件存放 32 随机字节的十六进制值，权限同上。失败或返回结果不明时保留原清单和恢复密钥，不能重新生成一套后强行重试。
 - 不指定 `runtime` 时只执行会话迁移，所有旧 Redis 用户均保持禁用，不能因此直接恢复应用。`runtime` 可给出独立的 `app_password_file`、有副本时的 `replica_password_file`，以及新的绝对路径 `environment_file`；两份密码同样是私密的 32 随机字节十六进制文件，不得与恢复密钥或彼此相同。
 - `runtime` 在完成 PostgreSQL 迁移后，为普通应用配置限定缓存/限流/调度权限，为复制配置独立权限，并逐节点保存 ACL；存在副本时，主节点与全部副本须事先具有可写的持久 `redis.conf`，命令会在两种角色上保存新复制凭据，以便原主恢复后可以作为副本接回。独立 Redis 不增加这个要求。为保留 Team 邮箱恢复，应用允许 SCAN 枚举键名，但不能读取或修改旧 refresh-token 的三个命名空间，也不能执行 ACL/CONFIG/FLUSHDB/复制管理命令。

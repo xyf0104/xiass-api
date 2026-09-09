@@ -43,6 +43,7 @@ func ProvideRouter(
 	compositeResolver *service.CompositeRouteResolver,
 	db *sql.DB,
 	redisClient *redis.Client,
+	refreshTokenStore service.RefreshTokenCache,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -88,7 +89,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, db, redisClient)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, db, redisClient, refreshTokenStore)
 }
 
 func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
