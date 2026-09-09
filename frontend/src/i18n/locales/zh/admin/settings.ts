@@ -77,6 +77,9 @@ export default {
       runtimeEnabled: '本机连接状态',
       dataConnection: '数据状态',
       machineConnection: '两台机器通信',
+      failoverProtection: '自动接管保护',
+      failoverReady: '已就绪',
+      failoverNotReady: '未就绪',
       controlPlane: '后台控制',
       emergencyEgress: '对方断开时接管',
       offlineTakeover: '对方断开时允许本机临时继续使用账号',
@@ -178,6 +181,8 @@ export default {
         NODE_PROXY_UNAVAILABLE: '有一台机器还没有准备好，请先完成连接。',
         NODE_OFFLINE: '有一台机器暂时离线。',
         HEARTBEAT_STORE_UNAVAILABLE: '两台机器的连接暂时不可用。',
+        FAILOVER_WITNESS_DISABLED: '尚未配置独立仲裁服务器；普通共同使用可运行，但整机故障时不能安全自动接管。',
+        FAILOVER_WITNESS_NOT_READY: '自动接管保护尚未就绪，请检查仲裁服务器和共享数据库状态。',
         PROXY_STATUS_UNAVAILABLE: '无法读取机器连接状态，请稍后重试。',
         PAIRING_NOT_READY: '两台机器还没有连接完成。',
         ACCOUNT_STATS_UNAVAILABLE: '暂时无法读取账号数量，请稍后重试。'

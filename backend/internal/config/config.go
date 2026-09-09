@@ -1108,6 +1108,23 @@ type GatewayExecutionNodeConfig struct {
 	// LegacyUnassignedProxyID is the durable private egress assigned to legacy
 	// accounts when multi-node routing is activated for the first time.
 	LegacyUnassignedProxyID int64 `mapstructure:"legacy_unassigned_proxy_id"`
+	// Witness protects automatic takeover with an independent, durable lease.
+	// It is opt-in so existing single-node and paired installations keep their
+	// current behavior until every member and the witness are ready.
+	Witness GatewayExecutionNodeWitnessConfig `mapstructure:"witness"`
+}
+
+// GatewayExecutionNodeWitnessConfig configures the independent arbitration
+// service used to fence automatic takeover during network partitions. The
+// shared token is sent only to the configured HTTPS endpoint and is never
+// returned by the admin status API.
+type GatewayExecutionNodeWitnessConfig struct {
+	Enabled               bool   `mapstructure:"enabled"`
+	URL                   string `mapstructure:"url"`
+	Token                 string `mapstructure:"token"`
+	ClusterID             string `mapstructure:"cluster_id"`
+	LeaseTTLSeconds       int    `mapstructure:"lease_ttl_seconds"`
+	RequestTimeoutSeconds int    `mapstructure:"request_timeout_seconds"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.
@@ -2526,6 +2543,12 @@ func setDefaults() {
 	viper.SetDefault("gateway.execution_node.control_plane", true)
 	viper.SetDefault("gateway.execution_node.legacy_unassigned_node_id", "api")
 	viper.SetDefault("gateway.execution_node.legacy_unassigned_proxy_id", int64(0))
+	viper.SetDefault("gateway.execution_node.witness.enabled", false)
+	viper.SetDefault("gateway.execution_node.witness.url", "")
+	viper.SetDefault("gateway.execution_node.witness.token", "")
+	viper.SetDefault("gateway.execution_node.witness.cluster_id", "")
+	viper.SetDefault("gateway.execution_node.witness.lease_ttl_seconds", 15)
+	viper.SetDefault("gateway.execution_node.witness.request_timeout_seconds", 3)
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
@@ -3704,6 +3727,9 @@ func (c *Config) Validate() error {
 		if c.Gateway.ExecutionNode.LegacyUnassignedProxyID <= 0 {
 			return fmt.Errorf("gateway.execution_node.legacy_unassigned_proxy_id must be positive when enabled")
 		}
+		if err := validateExecutionNodeWitnessConfig(c.Gateway.ExecutionNode.Witness); err != nil {
+			return err
+		}
 	}
 	if c.Gateway.Scheduling.OutboxLagWarnSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds > 0 &&
@@ -3751,6 +3777,50 @@ func (c *Config) Validate() error {
 func isValidExecutionNodeID(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateExecutionNodeWitnessConfig(cfg GatewayExecutionNodeWitnessConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	rawURL := strings.TrimSpace(cfg.URL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("gateway.execution_node.witness.url must be an absolute HTTPS URL without credentials, query, or fragment")
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
+		return fmt.Errorf("gateway.execution_node.witness.url must use HTTPS unless it is loopback-only")
+	}
+	if len(strings.TrimSpace(cfg.Token)) < 32 {
+		return fmt.Errorf("gateway.execution_node.witness.token must contain at least 32 characters")
+	}
+	if value := strings.TrimSpace(cfg.ClusterID); value != "" && !isValidExecutionNodeClusterID(value) {
+		return fmt.Errorf("gateway.execution_node.witness.cluster_id must contain only letters, numbers, dots, underscores, or hyphens")
+	}
+	if cfg.LeaseTTLSeconds < 10 || cfg.LeaseTTLSeconds > 60 {
+		return fmt.Errorf("gateway.execution_node.witness.lease_ttl_seconds must be between 10 and 60")
+	}
+	if cfg.RequestTimeoutSeconds < 1 || cfg.RequestTimeoutSeconds > 10 || cfg.RequestTimeoutSeconds >= cfg.LeaseTTLSeconds {
+		return fmt.Errorf("gateway.execution_node.witness.request_timeout_seconds must be between 1 and 10 and shorter than the lease TTL")
+	}
+	return nil
+}
+
+func isValidExecutionNodeClusterID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
 		return false
 	}
 	for _, r := range value {

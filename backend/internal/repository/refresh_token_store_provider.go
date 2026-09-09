@@ -75,6 +75,10 @@ func (*authorityCheckedRedisRefreshStore) RequiresRefreshTokenIssuanceAdmission(
 
 // A shared row lock spans the Redis operation, so activation's exclusive lock
 // waits for in-flight legacy operations. No Redis access follows a failed check.
+// Keep the transaction local to this call and require its commit acknowledgment.
+// A context marker cannot prove a lock is still held, and a rotation-wide SQL
+// transaction can starve the shared user-repository pool. This per-call guard
+// is not a cross-store transaction: migration still requires offline fencing.
 func withRedisRefreshAuthority[T any](ctx context.Context, s *authorityCheckedRedisRefreshStore, fn func(context.Context) (T, error)) (T, error) {
 	var zero T
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

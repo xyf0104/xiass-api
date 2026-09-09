@@ -166,6 +166,20 @@ func (s *DockerUpdateService) launchHostClusterJoin(ctx context.Context, join Ex
 	if strings.TrimSpace(join.SourceURL) == "" || !validExecutionNodeID(join.SourceNodeID) || !validExecutionNodeID(join.TargetNodeID) || len(join.TunnelProof) != 64 {
 		return fmt.Errorf("execution-node join configuration is invalid")
 	}
+	if join.WitnessEnabled {
+		parsed, err := url.Parse(strings.TrimSpace(join.WitnessURL))
+		host := ""
+		if parsed != nil {
+			host = strings.TrimSpace(parsed.Hostname())
+		}
+		loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
+		if err != nil || parsed == nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback)) || len(strings.TrimSpace(join.WitnessToken)) < 32 ||
+			!validExecutionNodeClusterID(join.WitnessClusterID) || join.WitnessLeaseTTL < 10 || join.WitnessLeaseTTL > 60 ||
+			join.WitnessRequestTimeout < 1 || join.WitnessRequestTimeout > 10 || join.WitnessRequestTimeout >= join.WitnessLeaseTTL {
+			return fmt.Errorf("execution-node join witness configuration is invalid")
+		}
+	}
 	installDir, err := client.discoverInstallDir(ctx)
 	if err != nil {
 		return err

@@ -17,6 +17,15 @@ end
 return 0
 `)
 
+var executionNodeHeartbeatTouchScript = redis.NewScript(`
+local current = redis.call("GET", KEYS[1])
+if current == false or current == ARGV[1] then
+  redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+  return 1
+end
+return 0
+`)
+
 type executionNodeHeartbeatStore struct {
 	rdb *redis.Client
 }
@@ -33,7 +42,23 @@ func (s *executionNodeHeartbeatStore) TouchExecutionNode(
 	nodeID, owner string,
 	ttl time.Duration,
 ) error {
-	return s.rdb.Set(ctx, service.ExecutionNodeHeartbeatKey(nodeID), owner, ttl).Err()
+	if ttl <= 0 {
+		return fmt.Errorf("execution node heartbeat TTL must be positive")
+	}
+	result, err := executionNodeHeartbeatTouchScript.Run(
+		ctx,
+		s.rdb,
+		[]string{service.ExecutionNodeHeartbeatKey(nodeID)},
+		owner,
+		ttl.Milliseconds(),
+	).Int()
+	if err != nil {
+		return err
+	}
+	if result != 1 {
+		return fmt.Errorf("execution node heartbeat owner changed")
+	}
+	return nil
 }
 
 func (s *executionNodeHeartbeatStore) ReleaseExecutionNode(ctx context.Context, nodeID, owner string) error {

@@ -124,7 +124,7 @@ wait_for_health() {
     port=$(read_env_value SERVER_PORT)
     port="${port:-8080}"
     for attempt in $(seq 1 120); do
-        if curl -fsS --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then return 0; fi
+		if curl -fsS --max-time 3 "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then return 0; fi
         sleep 2
     done
     return 1

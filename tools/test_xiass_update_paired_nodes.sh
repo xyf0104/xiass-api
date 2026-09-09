@@ -130,7 +130,9 @@ import sys
 before, after = [json.load(open(path)) for path in sys.argv[1:]]
 assert before['name'] == after['name'], 'running Compose project identity changed'
 for key in ('environment', 'volumes', 'networks', 'network_mode', 'extra_hosts'):
-    assert before['services']['xiass-api'].get(key) == after['services']['xiass-api'].get(key), key + ' changed'
+    old = before['services']['xiass-api'].get(key)
+    new = after['services']['xiass-api'].get(key)
+    assert old == new, key + ' changed: ' + repr(old) + ' != ' + repr(new)
 for key in ('volumes', 'networks'):
     assert before.get(key) == after.get(key), key + ' identity changed'
 assert set(before['services']) == set(after['services']), 'unexpected resident service added'
@@ -212,7 +214,8 @@ YAML
     cp "$deploy/.env" "$node/env.before"
     cp "$deploy/node runtime.yml" "$node/node.before"
     cp "$deploy/proxy.yml" "$node/proxy.before"
-    "$REAL_DOCKER" compose -f "$deploy/$base" -f "$deploy/node runtime.yml" -f "$deploy/proxy.yml" \
+    env -i HOME="$TEST_DIR/home" PATH="$PATH" \
+        "$REAL_DOCKER" compose -f "$deploy/$base" -f "$deploy/node runtime.yml" -f "$deploy/proxy.yml" \
         --project-directory "$deploy" --project-name "paired-$role" config --format json > "$node/model-before.json"
 }
 

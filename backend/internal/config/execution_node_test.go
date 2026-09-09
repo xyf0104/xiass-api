@@ -18,6 +18,12 @@ func TestLoadExecutionNodeDefaultsDisabled(t *testing.T) {
 	require.True(t, cfg.Gateway.ExecutionNode.ControlPlane)
 	require.Equal(t, "api", cfg.Gateway.ExecutionNode.LegacyUnassignedNodeID)
 	require.Zero(t, cfg.Gateway.ExecutionNode.LegacyUnassignedProxyID)
+	require.False(t, cfg.Gateway.ExecutionNode.Witness.Enabled)
+	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.URL)
+	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.Token)
+	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.ClusterID)
+	require.Equal(t, 15, cfg.Gateway.ExecutionNode.Witness.LeaseTTLSeconds)
+	require.Equal(t, 3, cfg.Gateway.ExecutionNode.Witness.RequestTimeoutSeconds)
 }
 
 func TestValidateExecutionNodeConfiguration(t *testing.T) {
@@ -87,6 +93,49 @@ func TestValidateExecutionNodeConfiguration(t *testing.T) {
 			err := cfg.Validate()
 			require.Error(t, err)
 			require.True(t, strings.Contains(err.Error(), test.wantErr), err.Error())
+		})
+	}
+
+	t.Run("valid witness", func(t *testing.T) {
+		cfg := buildValid(t)
+		cfg.Gateway.ExecutionNode.Witness = GatewayExecutionNodeWitnessConfig{
+			Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32),
+			ClusterID: "cluster-1", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3,
+		}
+		require.NoError(t, cfg.Validate())
+	})
+
+	for _, test := range []struct {
+		name    string
+		witness GatewayExecutionNodeWitnessConfig
+		wantErr string
+	}{
+		{
+			name:    "non-loopback http witness",
+			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "http://witness.example.com", Token: strings.Repeat("a", 32), LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
+			wantErr: "must use HTTPS",
+		},
+		{
+			name:    "short witness token",
+			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: "short", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
+			wantErr: "at least 32",
+		},
+		{
+			name:    "unsafe witness cluster id",
+			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32), ClusterID: "cluster/1", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
+			wantErr: "cluster_id",
+		},
+		{
+			name:    "unsafe witness ttl",
+			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32), LeaseTTLSeconds: 5, RequestTimeoutSeconds: 3},
+			wantErr: "lease_ttl_seconds",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := buildValid(t)
+			cfg.Gateway.ExecutionNode.Witness = test.witness
+			err := cfg.Validate()
+			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
 }

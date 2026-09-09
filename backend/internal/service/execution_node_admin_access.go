@@ -27,6 +27,17 @@ func (s *SettingService) ExecutionNodeAdminWriteAccess(ctx context.Context) (boo
 	if !validExecutionNodeID(localNodeID) || !validExecutionNodeID(primaryNodeID) {
 		return false, "secondary_read_only"
 	}
+	if s.cfg.Gateway.ExecutionNode.Witness.Enabled {
+		if s.executionNodeFailover == nil || !s.executionNodeFailover.Ready() {
+			return false, "failover_unavailable"
+		}
+		if localNodeID == primaryNodeID {
+			if s.executionNodeFailover.LocalAuthority() {
+				return true, "primary"
+			}
+			return false, "primary_fenced"
+		}
+	}
 	if localNodeID == primaryNodeID {
 		return true, "primary"
 	}
@@ -47,7 +58,7 @@ func (s *SettingService) ExecutionNodeAdminWriteAccess(ctx context.Context) (boo
 	}
 
 	takeover, err := s.executionNodeTakeoverPermission(ctx)
-	if err == nil && takeover {
+	if err == nil && takeover && (!s.cfg.Gateway.ExecutionNode.Witness.Enabled || s.executionNodeFailover.LocalAuthority()) {
 		return true, "emergency_takeover"
 	}
 	return false, "secondary_read_only"

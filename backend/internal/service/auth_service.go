@@ -1863,7 +1863,12 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	// 生成新的Token对，保持同一个家族ID
 	pair, err := s.generateTokenPair(ctx, user, consumed.FamilyID, familyExpiresAt)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrRefreshTokenExpired) {
+			return nil, err
+		}
+		// Consumption may already have committed; never return a partial pair
+		// or expose a storage/authority acknowledgment failure as a raw error.
+		return nil, ErrServiceUnavailable.WithCause(err)
 	}
 	return &TokenPairWithUser{
 		TokenPair: *pair,

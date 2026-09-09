@@ -557,6 +557,16 @@ gateway:
     control_plane: true
     legacy_unassigned_node_id: "api"
     legacy_unassigned_proxy_id: 0
+    # 独立仲裁只保存当前持有节点、租约和递增代次，不保存任何客户或账号数据。
+    # 两个节点全部升级并部署好 Witness 后再启用；远程地址必须使用 HTTPS。
+    witness:
+      enabled: false
+      url: ""
+      token: ""
+      # 留空时使用共享 PostgreSQL 的集群身份。
+      cluster_id: ""
+      lease_ttl_seconds: 15
+      request_timeout_seconds: 3
   # TLS fingerprint simulation / TLS 指纹伪装
   # Default profile "claude_cli_v2" simulates Node.js 20.x
   # 默认模板 "claude_cli_v2" 模拟 Node.js 20.x 指纹

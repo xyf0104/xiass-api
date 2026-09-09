@@ -801,11 +801,17 @@ func ProvideExecutionNodeHeartbeatService(store ExecutionNodeHeartbeatStore, cfg
 	return svc
 }
 
+func ProvideExecutionNodeFailoverService(settingRepo SettingRepository, heartbeat *ExecutionNodeHeartbeatService, witness ExecutionNodeWitnessClient, cfg *config.Config) *ExecutionNodeFailoverService {
+	svc := NewExecutionNodeFailoverService(settingRepo, heartbeat, witness, cfg)
+	svc.Start()
+	return svc
+}
+
 func ProvideDockerUpdateService(updateService *UpdateService) *DockerUpdateService {
 	return NewDockerUpdateService(updateService)
 }
 
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, accountRepo AccountRepository, heartbeat *ExecutionNodeHeartbeatService, dockerUpdateService *DockerUpdateService, cfg *config.Config) *SettingService {
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, accountRepo AccountRepository, heartbeat *ExecutionNodeHeartbeatService, failover *ExecutionNodeFailoverService, dockerUpdateService *DockerUpdateService, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
@@ -819,6 +825,7 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 		svc.SetExecutionNodeAccountStatsReader(statsReader)
 	}
 	svc.SetExecutionNodeHealthReader(heartbeat)
+	svc.SetExecutionNodeFailoverService(failover)
 	svc.SetExecutionNodePairingStateReader(heartbeat)
 	svc.SetExecutionNodeJoinApplier(dockerUpdateService)
 	svc.SetExecutionNodeRuntimeInitializer(dockerUpdateService)
@@ -897,6 +904,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
 	ProvideExecutionNodeHeartbeatService,
+	ProvideExecutionNodeFailoverService,
 	ProvideDockerUpdateService,
 	NewGroupService,
 	NewCompositeRouteResolver,

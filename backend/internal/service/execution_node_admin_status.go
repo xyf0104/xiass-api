@@ -47,15 +47,16 @@ type ExecutionNodeAdminNode struct {
 }
 
 type ExecutionNodeAdminStatus struct {
-	BalancingEnabled        bool                       `json:"balancing_enabled"`
-	CanEnable               bool                       `json:"can_enable"`
-	AdminWriteAllowed       bool                       `json:"admin_write_allowed"`
-	AdminWriteMode          string                     `json:"admin_write_mode"`
-	DatabaseReachable       bool                       `json:"database_reachable"`
-	HeartbeatStoreReachable bool                       `json:"heartbeat_store_reachable"`
-	Runtime                 ExecutionNodeRuntimeStatus `json:"runtime"`
-	Nodes                   []ExecutionNodeAdminNode   `json:"nodes"`
-	Issues                  []ExecutionNodeAdminIssue  `json:"issues"`
+	BalancingEnabled        bool                        `json:"balancing_enabled"`
+	CanEnable               bool                        `json:"can_enable"`
+	AdminWriteAllowed       bool                        `json:"admin_write_allowed"`
+	AdminWriteMode          string                      `json:"admin_write_mode"`
+	DatabaseReachable       bool                        `json:"database_reachable"`
+	HeartbeatStoreReachable bool                        `json:"heartbeat_store_reachable"`
+	Failover                ExecutionNodeFailoverStatus `json:"failover"`
+	Runtime                 ExecutionNodeRuntimeStatus  `json:"runtime"`
+	Nodes                   []ExecutionNodeAdminNode    `json:"nodes"`
+	Issues                  []ExecutionNodeAdminIssue   `json:"issues"`
 }
 
 func (s *SettingService) GetExecutionNodeAdminStatus(ctx context.Context) (*ExecutionNodeAdminStatus, error) {
@@ -78,6 +79,11 @@ func (s *SettingService) GetExecutionNodeAdminStatus(ctx context.Context) (*Exec
 			LegacyUnassignedProxyID: cfg.LegacyUnassignedProxyID,
 		}
 		status.AdminWriteAllowed, status.AdminWriteMode = s.ExecutionNodeAdminWriteAccess(ctx)
+		if s.executionNodeFailover != nil {
+			status.Failover = s.executionNodeFailover.Status()
+		} else {
+			status.Failover.Enabled = cfg.Witness.Enabled
+		}
 	}
 	addIssue := func(code, severity, message string) {
 		status.Issues = append(status.Issues, ExecutionNodeAdminIssue{Code: code, Severity: severity, Message: message})
@@ -275,6 +281,13 @@ func (s *SettingService) GetExecutionNodeAdminStatus(ctx context.Context) (*Exec
 		pairing, pairingErr := s.GetExecutionNodePairingStatus(ctx)
 		if pairingErr != nil || pairing == nil || !pairing.ProductionReady {
 			addError("PAIRING_NOT_READY", "the execution nodes have not completed production-ready pairing")
+		}
+	}
+	if len(nodeIDs) > 1 {
+		if !status.Failover.Enabled {
+			addIssue("FAILOVER_WITNESS_DISABLED", "warning", "automatic disaster takeover is not protected by an independent witness")
+		} else if !status.Failover.Ready {
+			addIssue("FAILOVER_WITNESS_NOT_READY", "warning", "automatic administrative takeover is unavailable; normal routing is unchanged")
 		}
 	}
 	status.CanEnable = true

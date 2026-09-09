@@ -87,6 +87,7 @@ func provideCleanup(
 	authCacheInvalidationWorker *service.AuthCacheInvalidationWorker,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	executionNodeHeartbeat *service.ExecutionNodeHeartbeatService,
+	executionNodeFailover *service.ExecutionNodeFailoverService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
@@ -133,6 +134,12 @@ func provideCleanup(
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
 			{"OpenAIQuotaAutoReset", func() error { openaiQuota.Stop(); return nil }},
+			{"ExecutionNodeFailoverService", func() error {
+				if executionNodeFailover != nil {
+					executionNodeFailover.Stop()
+				}
+				return nil
+			}},
 			{"ExecutionNodeHeartbeatService", func() error {
 				if executionNodeHeartbeat != nil {
 					executionNodeHeartbeat.Stop()

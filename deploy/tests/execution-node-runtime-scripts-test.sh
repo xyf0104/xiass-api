@@ -109,7 +109,7 @@ ENV
     }
     curl() {
         case "$*" in
-            *'http://127.0.0.1:18080/health'*)
+            *'http://127.0.0.1:18080/readyz'*)
                 if [ "$scenario" = health-failure ] && [ "$fixture_switches" = 1 ]; then return 22; fi
                 printf '{"status":"ok"}\n' ;;
             *'https://source.example.invalid/api/v1/internal/execution-nodes/pairing/finalize'*)

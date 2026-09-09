@@ -34,6 +34,18 @@ export interface ExecutionNodeAdminNode {
   account_stats: ExecutionNodeAccountStats
 }
 
+export interface ExecutionNodeFailoverStatus {
+  enabled: boolean
+  ready: boolean
+  witness_reachable: boolean
+  database_fence_ready: boolean
+  local_authority: boolean
+  holder_node_id?: string
+  generation: number
+  expires_at?: string
+  last_error?: string
+}
+
 export interface ExecutionNodeAdminStatus {
   balancing_enabled: boolean
   can_enable: boolean
@@ -41,6 +53,7 @@ export interface ExecutionNodeAdminStatus {
   admin_write_mode: string
   database_reachable: boolean
   heartbeat_store_reachable: boolean
+  failover: ExecutionNodeFailoverStatus
   runtime: ExecutionNodeRuntimeStatus
   nodes: ExecutionNodeAdminNode[]
   issues: ExecutionNodeAdminIssue[]
@@ -100,6 +113,14 @@ export async function getStatus(): Promise<ExecutionNodeAdminStatus> {
     // unknown secondary fails closed until its backend has been upgraded.
     admin_write_allowed: typeof data.admin_write_allowed === 'boolean' ? data.admin_write_allowed : legacyResponseAllowed,
     admin_write_mode: data.admin_write_mode ?? (legacyResponseAllowed ? (runtime?.enabled ? 'primary' : 'single_node') : 'secondary_read_only'),
+    failover: data.failover ?? {
+      enabled: false,
+      ready: false,
+      witness_reachable: false,
+      database_fence_ready: false,
+      local_authority: false,
+      generation: 0
+    },
     nodes: data.nodes ?? [],
     issues: data.issues ?? []
   }

@@ -77,6 +77,9 @@ export default {
       runtimeEnabled: 'Connection status',
       dataConnection: 'Data status',
       machineConnection: 'Machine connection',
+      failoverProtection: 'Automatic takeover protection',
+      failoverReady: 'Ready',
+      failoverNotReady: 'Not ready',
       controlPlane: 'Background control',
       emergencyEgress: 'Take over if the other machine disconnects',
       offlineTakeover: 'Let this machine temporarily continue accounts if the other disconnects',
@@ -178,6 +181,8 @@ export default {
         NODE_PROXY_UNAVAILABLE: 'One machine is not ready. Finish the connection first.',
         NODE_OFFLINE: 'One machine is temporarily offline.',
         HEARTBEAT_STORE_UNAVAILABLE: 'The connection between the machines is temporarily unavailable.',
+        FAILOVER_WITNESS_DISABLED: 'No independent witness is configured. Shared use can run, but a full-machine outage cannot be taken over safely.',
+        FAILOVER_WITNESS_NOT_READY: 'Automatic takeover protection is not ready. Check the witness and shared database state.',
         PROXY_STATUS_UNAVAILABLE: 'Could not read the machine connection status.',
         PAIRING_NOT_READY: 'The two machines have not finished connecting.',
         ACCOUNT_STATS_UNAVAILABLE: 'Account totals are temporarily unavailable.'

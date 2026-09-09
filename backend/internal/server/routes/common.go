@@ -78,9 +78,7 @@ func RegisterCommonRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client, 
 		},
 		{
 			name: "execution_node",
-			run: func(ctx context.Context) error {
-				return checkExecutionNodeReadiness(ctx, db, redisClient, cfg)
-			},
+			run:  func(ctx context.Context) error { return checkExecutionNodeReadiness(ctx, db, redisClient, cfg) },
 		},
 	}, nodeID, readinessProbeTimeout)
 
