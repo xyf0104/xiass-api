@@ -275,17 +275,17 @@ func refreshRuntimeKeyMatcher(rules []string) (*regexp.Regexp, error) {
 		for i := 1; i < len(rule); i++ {
 			switch rule[i] {
 			case '*':
-				p.WriteString(".*")
+				_, _ = p.WriteString(".*")
 			case '\\':
 				i++
 				if i == len(rule) {
 					return nil, refreshTransitionReject("invalid runtime key literal")
 				}
-				p.WriteString(regexp.QuoteMeta(rule[i : i+1]))
+				_, _ = p.WriteString(regexp.QuoteMeta(rule[i : i+1]))
 			case '?', '[', ']':
 				return nil, refreshTransitionReject("unsupported runtime key pattern")
 			default:
-				p.WriteString(regexp.QuoteMeta(rule[i : i+1]))
+				_, _ = p.WriteString(regexp.QuoteMeta(rule[i : i+1]))
 			}
 		}
 		patterns = append(patterns, p.String())

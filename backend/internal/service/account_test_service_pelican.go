@@ -146,7 +146,7 @@ func (w *pelicanCapture) Write(p []byte) (int, error) {
 				w.cancel()
 				return n, nil
 			}
-			w.text.WriteString(event.Text)
+			_, _ = w.text.WriteString(event.Text)
 		case "test_complete":
 			w.complete = event.Success
 		case "error":

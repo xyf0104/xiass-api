@@ -339,7 +339,7 @@ func TestPersistentRefreshTransitionTopologyRechecksOtherNodesDuringSync(t *test
 	wrong := maps.Clone(hooks[1].states[0])
 	wrong["master_host"] = "wrong.invalid"
 	client := redis.NewClient(&redis.Options{Addr: "unused.invalid:6379", MaxRetries: -1})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	last := &refreshTransitionTopologyHook{states: []map[string]string{wrong}}
 	client.AddHook(last)
 	clients = append(clients, client)

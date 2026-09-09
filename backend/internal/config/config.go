@@ -3806,7 +3806,7 @@ func validateExecutionNodeWitnessConfig(cfg GatewayExecutionNodeWitnessConfig) e
 	}
 	host := strings.TrimSpace(parsed.Hostname())
 	loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback) {
 		return fmt.Errorf("gateway.execution_node.witness.url must use HTTPS unless it is loopback-only")
 	}
 	if len(strings.TrimSpace(cfg.Token)) < 32 {

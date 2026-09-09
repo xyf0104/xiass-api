@@ -133,6 +133,13 @@ jobs:
         run: make test-integration
         working-directory: backend
 
+      - name: Lint backend
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.9
+          args: --timeout=30m
+          working-directory: backend
+
   test-helper:
     runs-on: ubuntu-latest
     steps:

@@ -174,7 +174,7 @@ func (s *DockerUpdateService) launchHostClusterJoin(ctx context.Context, join Ex
 		}
 		loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
 		if err != nil || parsed == nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-			(parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback)) || len(strings.TrimSpace(join.WitnessToken)) < 32 ||
+			(parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback)) || len(strings.TrimSpace(join.WitnessToken)) < 32 ||
 			!validExecutionNodeClusterID(join.WitnessClusterID) || join.WitnessLeaseTTL < 10 || join.WitnessLeaseTTL > 60 ||
 			join.WitnessRequestTimeout < 1 || join.WitnessRequestTimeout > 10 || join.WitnessRequestTimeout >= join.WitnessLeaseTTL {
 			return fmt.Errorf("execution-node join witness configuration is invalid")

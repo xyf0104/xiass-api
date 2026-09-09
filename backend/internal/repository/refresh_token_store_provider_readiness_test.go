@@ -36,10 +36,10 @@ func TestRefreshTokenProviderReadinessStartupGates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenMigrationReadiness: true}}
 			rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
-			defer rdb.Close()
+			defer func(client *redis.Client) { _ = client.Close() }(rdb)
 			switch name {
 			case "explicit-PG":
 				cfg.JWT.RefreshTokenStore = "postgres"
@@ -134,7 +134,7 @@ func TestRefreshTokenProviderReadinessFencesEveryOperation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			expectReadinessObservation(mock, "postgres", false, nil)
 			// Nil delegates make any bypass of the witness gate fail loudly.
 			s := &migrationReadyRefreshStore{db: db}
@@ -148,7 +148,7 @@ func TestRefreshTokenProviderReadinessFencesEveryOperation(t *testing.T) {
 func TestRefreshTokenProviderReadinessObservationRetriesWithoutFallback(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s := &migrationReadyRefreshStore{db: db, postgres: NewPersistentRefreshTokenStore(db)}
 	for _, failure := range []string{"begin", "witness", "commit"} {
 		switch failure {
