@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -75,6 +76,20 @@ func TestRefreshTokenProviderReadinessRollingAdoption(t *testing.T) {
 	require.NoError(t, err)
 	expires, err := clients[0].Do(ctx, "PEXPIRETIME", refreshTokenKey(controlHash)).Int64()
 	require.NoError(t, err)
+	// Exercise Redis nanosecond timestamps even on microsecond-resolution clocks.
+	original.CreatedAt = original.CreatedAt.Truncate(time.Microsecond).Add(617 * time.Nanosecond)
+	original.ExpiresAt = original.ExpiresAt.Truncate(time.Microsecond).Add(617 * time.Nanosecond)
+	original.FamilyExpiresAt = original.FamilyExpiresAt.Truncate(time.Microsecond).Add(617 * time.Nanosecond)
+	encoded, err := json.Marshal(original)
+	require.NoError(t, err)
+	require.NoError(t, clients[0].Do(ctx, "SET", refreshTokenKey(controlHash), encoded, "KEEPTTL").Err())
+	retainedExpiry, err := clients[0].Do(ctx, "PEXPIRETIME", refreshTokenKey(controlHash)).Int64()
+	require.NoError(t, err)
+	require.Equal(t, expires, retainedExpiry)
+	expectedPayload := persistentRefreshPayload(original)
+	expectedPayload.CreatedAt = expectedPayload.CreatedAt.UTC().Truncate(time.Microsecond)
+	expectedPayload.ExpiresAt = expectedPayload.ExpiresAt.UTC().Truncate(time.Microsecond)
+	expectedPayload.FamilyExpiresAt = expectedPayload.FamilyExpiresAt.UTC().Truncate(time.Microsecond)
 	for _, table := range []string{"refresh_tokens", "refresh_token_users", "refresh_token_families", "refresh_token_issuances"} {
 		var count int
 		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&count))
@@ -165,7 +180,9 @@ func TestRefreshTokenProviderReadinessRollingAdoption(t *testing.T) {
 		require.NoError(t, CheckRefreshTokenStoreReadiness(ctx, store))
 		got, err := store.GetRefreshToken(ctx, controlHash)
 		require.NoError(t, err)
-		require.Equal(t, persistentRefreshPayload(original), got)
+		require.Equal(t, expectedPayload, got)
+		require.False(t, got.ExpiresAt.After(original.ExpiresAt), "migration cannot extend token expiry")
+		require.False(t, got.FamilyExpiresAt.After(original.FamilyExpiresAt), "migration cannot extend family expiry")
 	}
 	require.ErrorIs(t, CheckRefreshTokenStoreReadiness(ctx, ordinary), ErrRefreshTokenAuthority, "cfg mutation cannot enable an ordinary provider")
 	var until time.Time
