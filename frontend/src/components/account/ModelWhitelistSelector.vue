@@ -39,7 +39,7 @@
           v-if="showDropdown"
           ref="dropdownRef"
           data-testid="model-dropdown"
-          class="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-700"
+          class="model-whitelist-dropdown flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-700"
           :style="dropdownStyle"
         >
           <div class="shrink-0 border-b border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-700">

@@ -140,6 +140,15 @@ describe('ModelWhitelistSelector', () => {
     expect(selector.emitted('update:modelValue')).toBeUndefined()
   })
 
+  it('keeps the teleported model menu opaque instead of using the glass floating surface', async () => {
+    const selector = mountSelector()
+    const dropdown = await openDropdown(selector)
+
+    expect(dropdown?.parentElement).toBe(document.body)
+    expect(dropdown?.classList.contains('console-floating-surface')).toBe(false)
+    expect(dropdown?.classList.contains('model-whitelist-dropdown')).toBe(true)
+  })
+
   it('keeps search and model selection behavior inside the teleported dropdown', async () => {
     const selector = mountSelector()
     const dropdown = await openDropdown(selector)

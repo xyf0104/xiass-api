@@ -1030,14 +1030,14 @@ html:not(.dark) body:has(.app-layout) .user-menu-dropdown {
   background-color: var(--xiass-console-floating-surface) !important;
 }
 
-/* Security dialogs and notifications must remain readable above translucent console layers. */
-html:not(.dark) body:has(.app-layout) :is(.security-dialog-surface, .toast) {
+/* These overlays need solid backgrounds above translucent console layers. */
+html:not(.dark) body:has(.app-layout) :is(.security-dialog-surface, .toast, .model-whitelist-dropdown) {
   background-color: rgb(255 255 255) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-.dark body:has(.app-layout) :is(.security-dialog-surface, .toast) {
+.dark body:has(.app-layout) :is(.security-dialog-surface, .toast, .model-whitelist-dropdown) {
   background-color: rgb(8 21 38) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse } from 'postcss'
 
 import { describe, expect, it } from 'vitest'
 
@@ -10,6 +11,20 @@ const headerSource = readFileSync(resolve(dir, '../../layout/AppHeader.vue'), 'u
 const styleSource = readFileSync(resolve(dir, '../../../style.css'), 'utf8')
 
 describe('console floating surfaces', () => {
+  it.each([
+    ['html:not(.dark)', 'rgb(255 255 255)'],
+    ['.dark', 'rgb(8 21 38)']
+  ])('keeps the model whitelist menu opaque in %s', (theme, color) => {
+    const rules = parse(styleSource).nodes.filter(node => node.type === 'rule')
+    const rule = rules.find(node => node.selector === `${theme} body:has(.app-layout) :is(.security-dialog-surface, .toast, .model-whitelist-dropdown)`)
+    expect(rule).toBeDefined()
+    const background = rule?.nodes.find(node => node.type === 'decl' && node.prop === 'background-color')
+    expect(background).toMatchObject({ value: color, important: true })
+    expect(rule?.nodes.find(node => node.type === 'decl' && node.prop === 'backdrop-filter'))
+      .toMatchObject({ value: 'none', important: true })
+    expect(rules.indexOf(rule!)).toBeGreaterThan(rules.findIndex(node => node.selector.includes("[class*='dark:bg-dark-700']")))
+  })
+
   it('uses the profile-menu opacity for generic dropdowns and popovers', () => {
     expect(styleSource).toContain('--xiass-console-light-floating-surface: rgb(255 255 255 / 0.92)')
     expect(styleSource).toContain('--xiass-console-floating-surface: rgb(8 21 38 / 0.88)')
