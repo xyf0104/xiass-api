@@ -200,7 +200,7 @@ func TestRefreshTokenProviderReadinessNeverReplaysLegacyErrors(t *testing.T) {
 		t.Run(map[bool]string{false: "ambiguous-consume", true: "activation-between-observation-and-guard"}[activateGap], func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			legacy := &readinessFailureLegacy{}
 			s := &migrationReadyRefreshStore{db: db, redis: &authorityCheckedRedisRefreshStore{db: db, legacy: legacy}}
 			expectReadinessObservation(mock, "redis", false, nil)
@@ -229,7 +229,7 @@ func TestRefreshTokenProviderReadinessNeverReplaysLegacyErrors(t *testing.T) {
 func TestRefreshTokenProviderReadinessCannotUpgradeLegacyIssuance(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s := &migrationReadyRefreshStore{db: db, redis: &authorityCheckedRedisRefreshStore{db: db}, postgres: NewPersistentRefreshTokenStore(db)}
 	expectReadinessObservation(mock, "redis", false, nil)
 	mock.ExpectBegin()
@@ -250,7 +250,7 @@ func TestRefreshTokenProviderReadinessCannotUpgradeLegacyIssuance(t *testing.T) 
 func TestRefreshTokenProviderReadinessPGPrepareRequiresCommit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s := &migrationReadyRefreshStore{db: db, postgres: NewPersistentRefreshTokenStore(db)}
 	commitErr := errors.New("lost prepare commit acknowledgment")
 	for _, fail := range []bool{true, false} {
@@ -306,7 +306,7 @@ func TestRefreshTokenProviderReadinessHelperKeepsFixedAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			mock.ExpectQuery("SELECT backend, pg_is_in_recovery").WillReturnRows(
 				sqlmock.NewRows([]string{"backend", "recovery", "read_only"}).AddRow(tc.actual, false, tc.readOnly))
 			var store service.RefreshTokenCache = &authorityCheckedRedisRefreshStore{db: db}

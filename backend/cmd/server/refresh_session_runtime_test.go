@@ -49,7 +49,7 @@ func TestRefreshRuntimeEnvironmentVersionCompatibility(t *testing.T) {
 			require.NoError(t, os.WriteFile(manifest.Runtime.AppPasswordFile, []byte(password), 0600))
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			for _, retry := range []bool{false, true} {
 				rows := sqlmock.NewRows([]string{"transition_id"})
 				if retry {

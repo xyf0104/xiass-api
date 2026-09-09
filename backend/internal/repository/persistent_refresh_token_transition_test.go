@@ -212,10 +212,18 @@ func (h *refreshTransitionTopologyHook) ProcessHook(_ redis.ProcessHook) redis.P
 				lines = append(lines, key+":"+value)
 			}
 			sort.Strings(lines)
-			command.(*redis.StringCmd).SetVal(strings.Join(lines, "\r\n"))
+			info, ok := command.(*redis.StringCmd)
+			if !ok {
+				return errors.New("unexpected info command type")
+			}
+			info.SetVal(strings.Join(lines, "\r\n"))
 			return nil
 		case "config":
-			command.(*redis.MapStringStringCmd).SetVal(map[string]string{"aclfile": "/fixture/acl"})
+			cfg, ok := command.(*redis.MapStringStringCmd)
+			if !ok {
+				return errors.New("unexpected config command type")
+			}
+			cfg.SetVal(map[string]string{"aclfile": "/fixture/acl"})
 			return nil
 		}
 		return errors.New("unexpected topology command")
