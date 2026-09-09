@@ -284,13 +284,13 @@ func (h *PelicanBenchmarkHandler) StopAll(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	accountIDs := map[int64]struct{}{}
 	if req.AccountID > 0 {
 		if err := ensureAdminAccountManagementAccess(ctx, h.accounts, req.AccountID); err != nil {
 			response.ErrorFrom(c, err)
 			return
 		}
 	} else {
-		accountIDs := map[int64]struct{}{}
 		for _, status := range []string{"queued", "running"} {
 			for page := 1; ; page++ {
 				result, err := h.store.List(ctx, benchmark.Filter{Status: status, Page: page, PageSize: 100})
@@ -315,8 +315,10 @@ func (h *PelicanBenchmarkHandler) StopAll(c *gin.Context) {
 			}
 		}
 	}
-	// Restrict the mutation to already-authorized account IDs. This keeps the
-	// legacy read-only boundary intact even when the caller uses all=true.
+	// Restrict the mutation to the account IDs that were both observed and
+	// authorized above. Do not re-list while mutating: changing a paginated
+	// result set can skip rows, and newly-created rows must not inherit an
+	// authorization decision from this request.
 	if req.AccountID > 0 {
 		affected, err := h.store.Stop(ctx, "", req.AccountID)
 		if err != nil {
@@ -326,36 +328,19 @@ func (h *PelicanBenchmarkHandler) StopAll(c *gin.Context) {
 		response.Success(c, gin.H{"affected": affected})
 		return
 	}
-	// Re-read the active rows and stop each account separately. A bulk store
-	// update would create a time-of-check/time-of-use permission bypass.
+	authorized := make([]int64, 0, len(accountIDs))
+	for accountID := range accountIDs {
+		authorized = append(authorized, accountID)
+	}
+	sort.Slice(authorized, func(i, j int) bool { return authorized[i] < authorized[j] })
 	affected := int64(0)
-	seen := map[int64]struct{}{}
-	for _, status := range []string{"queued", "running"} {
-		for page := 1; ; page++ {
-			result, err := h.store.List(ctx, benchmark.Filter{Status: status, Page: page, PageSize: 100})
-			if err != nil {
-				pelicanError(c, err)
-				return
-			}
-			for _, task := range result.Items {
-				if task.AccountID <= 0 {
-					continue
-				}
-				if _, ok := seen[task.AccountID]; ok {
-					continue
-				}
-				seen[task.AccountID] = struct{}{}
-				n, err := h.store.Stop(ctx, "", task.AccountID)
-				if err != nil {
-					pelicanError(c, err)
-					return
-				}
-				affected += n
-			}
-			if len(result.Items) == 0 || int64(page*result.PageSize) >= result.Total {
-				break
-			}
+	for _, accountID := range authorized {
+		n, err := h.store.Stop(ctx, "", accountID)
+		if err != nil {
+			pelicanError(c, err)
+			return
 		}
+		affected += n
 	}
 	response.Success(c, gin.H{"affected": affected})
 }
