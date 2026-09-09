@@ -53,6 +53,11 @@ async function currentTab(wrapper: VueWrapper) {
   await wrapper.get('[data-testid="tab-current"]').trigger('click')
   await flushPromises()
 }
+async function setDocumentHidden(hidden: boolean) {
+  Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
+  document.dispatchEvent(new Event('visibilitychange'))
+  await flushPromises()
+}
 
 describe('PelicanBenchmarkModal', () => {
   beforeEach(() => {
@@ -133,8 +138,8 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.stopAllPelicanTests).toHaveBeenCalledWith(expect.any(AbortSignal))
   })
 
-  it('polls every three seconds only for running current tests and stops at terminal state', async () => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run()] })
+  it.each(['queued', 'running', 'canceling'] as const)('polls %s tasks every three seconds only while the current modal tab is visible', async status => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('done', { status: 'succeeded', html_bytes: 120 }), run('run-1', { status })] })
     const wrapper = render()
     await flushPromises()
     await vi.advanceTimersByTimeAsync(30_000)
@@ -145,49 +150,137 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls)
     await vi.advanceTimersByTimeAsync(1)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
-    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'succeeded', html_bytes: 120 })] })
     await vi.advanceTimersByTimeAsync(3000)
-    const finishedCalls = api.getPelicanCurrent.mock.calls.length
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
+
+    for (const tab of ['history', 'new']) {
+      await wrapper.get(`[data-testid="tab-${tab}"]`).trigger('click')
+      await flushPromises()
+      const tabCalls = api.getPelicanCurrent.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60_000)
+      await setDocumentHidden(true)
+      await setDocumentHidden(false)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(api.getPelicanCurrent).toHaveBeenCalledTimes(tabCalls)
+      await currentTab(wrapper)
+      expect(api.getPelicanCurrent).toHaveBeenCalledTimes(tabCalls + 1)
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(api.getPelicanCurrent).toHaveBeenCalledTimes(tabCalls + 2)
+    }
+
+    await wrapper.setProps({ show: false })
+    const closedCalls = api.getPelicanCurrent.mock.calls.length
+    await setDocumentHidden(true)
+    await setDocumentHidden(false)
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(finishedCalls)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(closedCalls)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
     expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
-  it.each(['queued', 'canceling', 'succeeded', 'failed', 'canceled'] as const)('does not keep polling %s tasks', async status => {
+  it.each(['succeeded', 'failed', 'canceled', 'interrupted'] as const)('does not poll %s tasks or refresh them on visibility changes', async status => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status })] })
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
     const calls = api.getPelicanCurrent.mock.calls.length
     await vi.advanceTimersByTimeAsync(60_000)
+    await setDocumentHidden(true)
+    await setDocumentHidden(false)
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
   })
 
-  it('pauses polling in background tabs and cancels in-flight reads when closed', async () => {
+  it.each(['succeeded', 'failed', 'canceled', 'interrupted'] as const)('stops polling when a running task becomes %s without removing it', async status => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run()] })
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
-    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
-    document.dispatchEvent(new Event('visibilitychange'))
+    const calls = api.getPelicanCurrent.mock.calls.length
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status })] })
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
+    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe(zh.accounts.pelicanBenchmark.status[status])
+    await setDocumentHidden(true)
+    await setDocumentHidden(false)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
+    expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+  })
+
+  it.each(['queued', 'running', 'canceling'] as const)('pauses %s polling in background tabs, resumes when visible, and cancels in-flight reads when closed', async status => {
+    const items = [run('run-1', { status })]
+    api.getPelicanCurrent.mockResolvedValue({ items })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await setDocumentHidden(true)
     const calls = api.getPelicanCurrent.mock.calls.length
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls)
-    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
-    document.dispatchEvent(new Event('visibilitychange'))
-    await flushPromises()
+    await setDocumentHidden(false)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
     const pending = deferred<{ items: PelicanBenchmarkRun[] }>()
     api.getPelicanCurrent.mockReturnValue(pending.promise)
     await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
     const signal = api.getPelicanCurrent.mock.calls[api.getPelicanCurrent.mock.calls.length - 1][0] as AbortSignal
     await wrapper.setProps({ show: false })
     expect(signal.aborted).toBe(true)
-    pending.resolve({ items: [run()] })
+    pending.resolve({ items })
     await flushPromises()
     const closedCalls = api.getPelicanCurrent.mock.calls.length
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(closedCalls)
+  })
+
+  it('keeps a newly queued task visible through running and success, fetching HTML only when details are clicked', async () => {
+    api.startPelicanTests.mockResolvedValue({ items: [run('run-1', { status: 'queued', started_at: null, duration_ms: null })] })
+    const wrapper = render()
+    await flushPromises()
+    api.getPelicanCurrent.mockResolvedValueOnce({ items: [run()] })
+      .mockResolvedValue({ items: [run('run-1', { status: 'succeeded', finished_at: '2026-09-09T12:00:05Z', html_bytes: 120 })] })
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
+    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('排队中')
+    expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+
+    const calls = api.getPelicanCurrent.mock.calls.length
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
+    expect(api.getPelicanCurrent).toHaveBeenLastCalledWith(expect.any(AbortSignal), ['batch-1'], false)
+    expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
+    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('测试中')
+    expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
+    expect(api.getPelicanCurrent).toHaveBeenLastCalledWith(expect.any(AbortSignal), ['batch-1'], false)
+    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('已完成')
+    expect(wrapper.find('[data-testid="stop-run-1"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="details-run-1"]').attributes('aria-expanded')).toBe('false')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
+    expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
+    expect(api.getPelicanHistory).not.toHaveBeenCalled()
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
+    await flushPromises()
+    expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith('run-1', expect.any(AbortSignal))
+    expect(wrapper.get('[data-testid="details-run-1"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[data-testid="result-preview"]').isVisible()).toBe(true)
   })
 
   it('never overlaps polling requests and stops automatic retries after an error', async () => {

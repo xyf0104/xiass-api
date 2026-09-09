@@ -25,6 +25,12 @@ type Manager struct {
 	retry   *time.Timer
 }
 
+const (
+	finishRetryInitialDelay = time.Second
+	finishRetryMaxDelay     = 30 * time.Second
+	finishAttemptTimeout    = 5 * time.Second
+)
+
 func NewManager(store Store, runner Runner) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{store: store, runner: runner, ctx: ctx, cancel: cancel, owner: uuid.NewString(), wake: make(chan struct{}, 1)}
@@ -69,6 +75,9 @@ func (m *Manager) retryLater(delay time.Duration) {
 		m.retryMu.Lock()
 		m.retry = nil
 		m.retryMu.Unlock()
+		if m.ctx.Err() != nil {
+			return
+		}
 		m.Wake()
 	})
 }
@@ -157,17 +166,57 @@ func (m *Manager) run(task *Task) {
 	if status != "succeeded" {
 		output.HTML = ""
 	}
-	// Only the goroutine that has returned from the upstream call may release
-	// the unique guard. Never release on cancellation request or lease expiry.
-	for attempt := 0; attempt < 3; attempt++ {
-		finishCtx, finishCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err = m.store.Finish(finishCtx, task.ID, m.owner, status, code, output.HTML)
+	m.finish(task.ID, status, code, output.HTML)
+}
+
+// finish retries only the terminal database write. The upstream call has
+// already returned, so this cannot create another request or release the
+// account guard before the store acknowledges the transition.
+func (m *Manager) finish(id, status, code, html string) {
+	delay := finishRetryInitialDelay
+	shutdownAttempt := false
+	for {
+		finishParent := m.ctx
+		if shutdownAttempt {
+			// Stop cancels normal work. Give one final bounded write a fresh
+			// context so cancellation does not strand a completed upstream call.
+			finishParent = context.Background()
+		}
+		finishCtx, finishCancel := context.WithTimeout(finishParent, finishAttemptTimeout)
+		err := m.store.Finish(finishCtx, id, m.owner, status, code, html)
 		finishCancel()
 		if err == nil {
 			return
 		}
+		if shutdownAttempt {
+			slog.Error("pelican_benchmark_finalize_failed", "task_id", id)
+			return
+		}
+		if m.ctx.Err() != nil {
+			shutdownAttempt = true
+			continue
+		}
+
+		slog.Warn("pelican_benchmark_finalize_retrying", "task_id", id)
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-m.ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			// The next iteration performs the single final bounded attempt.
+		}
+		if delay < finishRetryMaxDelay {
+			delay *= 2
+			if delay > finishRetryMaxDelay {
+				delay = finishRetryMaxDelay
+			}
+		}
 	}
-	slog.Error("pelican_benchmark_finalize_failed", "task_id", task.ID)
 }
 
 func (m *Manager) invoke(ctx context.Context, task *Task) (out Output, err error) {

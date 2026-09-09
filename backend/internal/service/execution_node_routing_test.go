@@ -549,6 +549,17 @@ type executionNodeSettingRepo struct {
 	calls  int
 }
 
+func (r *executionNodeSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
+	value, ok := r.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
+}
+
 func (r *executionNodeSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	r.calls++
 	if r.err != nil {

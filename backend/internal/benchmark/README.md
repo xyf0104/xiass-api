@@ -46,7 +46,9 @@ and its response body has closed, acknowledges cancellation and releases the
 slot. A late success cannot overwrite cancellation.
 
 The dispatcher wakes on creation and once on startup, using at most three
-short-lived workers. Once the queue is empty it performs no idle database
+short-lived workers. A transient Claim error schedules a bounded, timer-driven
+retry of the durable queue; a recovered queue is drained without another
+creation or explicit Wake. Once the queue is empty it performs no idle database
 polling. Cancellation reads occur only while a job is running. A coalescing
 wakeup prevents a create/worker-exit race from losing queued work.
 
@@ -63,14 +65,20 @@ network access or parent navigation. Never inject into the admin DOM or use
 ## Recovery Boundary
 
 Graceful shutdown cancels active calls and waits for return before finalizing
-them. Queued jobs survive restart and are drained once at startup. Running jobs
-left by a hard process crash, or a finalization write that fails all retries,
-remain fail-closed and keep their account guard. There is deliberately no lease
-expiry that unlocks a possibly-live upstream request. Fully automatic recovery
-of those claims still requires authoritative confirmation that the old executor
-has exited/fenced its upstream calls. Database connection loss or node heartbeat
-expiry alone is not such confirmation. This is an outstanding operational
-limitation, not a claim of completed crash recovery.
+them. After upstream returns, a transient Finish error is retried while this
+process remains alive with 1, 2, 4, 8, 16 and then 30-second delays; this is
+not an idle queue poll. If shutdown interrupts that retry, the manager makes
+one fresh-context Finish attempt bounded by five seconds and then stops. A
+finalization write that still fails remains fail-closed and keeps its account
+guard. Queued jobs survive restart and are drained once at startup.
+
+Running jobs left by a hard process crash remain fail-closed and keep their
+account guard. There is deliberately no lease expiry that unlocks a possibly
+live upstream request. Fully automatic recovery of those claims still requires
+authoritative confirmation that the old executor has exited and fenced its
+upstream calls; database connection loss or node heartbeat expiry alone is not
+such confirmation. This is an explicit hard-crash boundary, not a claim that
+crash recovery is solved.
 
 No schema cleanup or result retention scheduler is added. Apply migration 242
 before starting this build. Real PostgreSQL tests use the repository's existing

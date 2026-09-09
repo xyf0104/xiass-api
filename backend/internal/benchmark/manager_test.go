@@ -3,9 +3,11 @@ package benchmark
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -136,4 +138,135 @@ func TestPelicanIdleManagerDoesNotPollDatabase(t *testing.T) {
 	require.EqualValues(t, 3, store.claims.Load(), "idle manager must not periodically query PostgreSQL")
 	m.Wake()
 	require.Eventually(t, func() bool { return store.claims.Load() == 6 }, time.Second, time.Millisecond)
+}
+
+type pelicanTransientStore struct {
+	Store
+	mu             sync.Mutex
+	status         string
+	task           Task
+	claimErr       error
+	claimed        bool
+	claims         int
+	finishErr      error
+	finishAttempts int
+	finishHTML     string
+}
+
+func (s *pelicanTransientStore) Claim(context.Context, string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claims++
+	if s.claimErr != nil {
+		return nil, s.claimErr
+	}
+	if s.claimed {
+		return nil, nil
+	}
+	s.claimed = true
+	s.status = "running"
+	task := s.task
+	return &task, nil
+}
+
+func (s *pelicanTransientStore) Get(context.Context, string) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task := s.task
+	task.Status = s.status
+	return &task, nil
+}
+
+func (s *pelicanTransientStore) Finish(_ context.Context, _, _, status, _, html string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishAttempts++
+	if s.finishErr != nil {
+		return s.finishErr
+	}
+	if s.status == "canceling" {
+		s.status, s.finishHTML = "canceled", ""
+		return nil
+	}
+	s.status, s.finishHTML = status, html
+	return nil
+}
+
+func (s *pelicanTransientStore) snapshot() (status, html string, claims, finishAttempts int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status, s.finishHTML, s.claims, s.finishAttempts
+}
+
+func TestPelicanClaimErrorsRecoverQueuedWorkWithoutWake(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &pelicanTransientStore{
+			status:   "queued",
+			task:     Task{ID: "queued-task", AccountID: 1, Model: DefaultModel},
+			claimErr: errors.New("database unavailable"),
+		}
+		var runs atomic.Int64
+		m := NewManager(store, pelicanRunnerFunc(func(context.Context, int64, string, func(string) error) (Output, error) {
+			runs.Add(1)
+			return Output{HTML: "<html>recovered</html>"}, nil
+		}))
+		m.Start()
+		defer m.Stop()
+		synctest.Wait()
+		_, _, claims, _ := store.snapshot()
+		require.Equal(t, 3, claims)
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		_, _, claims, _ = store.snapshot()
+		require.Equal(t, 6, claims)
+
+		// The same durable queued task becomes claimable without a new Wake or Create.
+		store.mu.Lock()
+		store.claimErr = nil
+		store.mu.Unlock()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		status, html, _, _ := store.snapshot()
+		require.EqualValues(t, 1, runs.Load())
+		require.Equal(t, "succeeded", status)
+		require.Equal(t, "<html>recovered</html>", html)
+	})
+}
+
+func TestPelicanFinishErrorRetriesWithoutRerunningUpstream(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &pelicanTransientStore{
+			status:    "queued",
+			task:      Task{ID: "finish-task", AccountID: 1, Model: DefaultModel},
+			finishErr: errors.New("database unavailable"),
+		}
+		var runs atomic.Int64
+		m := NewManager(store, pelicanRunnerFunc(func(context.Context, int64, string, func(string) error) (Output, error) {
+			runs.Add(1)
+			return Output{HTML: "<html>result</html>"}, nil
+		}))
+		m.Start()
+		defer m.Stop()
+		synctest.Wait()
+		_, _, _, attempts := store.snapshot()
+		require.Equal(t, 1, attempts)
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		_, _, _, attempts = store.snapshot()
+		require.Equal(t, 2, attempts)
+
+		// Protect the fault-injection state with the same mutex as Finish.
+		store.mu.Lock()
+		store.finishErr = nil
+		store.mu.Unlock()
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		status, html, _, attempts := store.snapshot()
+		require.EqualValues(t, 1, runs.Load(), "Finish retry must never replay upstream")
+		require.Equal(t, 3, attempts)
+		require.Equal(t, "succeeded", status)
+		require.Equal(t, "<html>result</html>", html)
+	})
 }

@@ -42,6 +42,38 @@ do
       exit 1
     fi
   done < "$gateway_variables"
+
+  for key in \
+    REDIS_SENTINEL_ADDRS \
+    REDIS_SENTINEL_MASTER_NAME \
+    REDIS_SENTINEL_USERNAME \
+    REDIS_SENTINEL_PASSWORD \
+    GATEWAY_EXECUTION_NODE_WITNESS_URL \
+    GATEWAY_EXECUTION_NODE_WITNESS_TOKEN \
+    GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID
+  do
+    expected=$(printf '      - %s=${%s:-}' "$key" "$key")
+    expected_count=$(grep -Fxc "$expected" "$compose_file" || true)
+    key_count=$(grep -Ec "^[[:space:]]*-[[:space:]]*${key}([[:space:]]*=.*)?[[:space:]]*$" "$compose_file" || true)
+    if [ "$expected_count" -ne 1 ] || [ "$key_count" -ne 1 ]; then
+      printf '%s must pass %s without enabling Sentinel by default\n' "$compose_file" "$key" >&2
+      exit 1
+    fi
+  done
+
+  for pair in \
+    'GATEWAY_EXECUTION_NODE_WITNESS_ENABLED false' \
+    'GATEWAY_EXECUTION_NODE_WITNESS_LEASE_TTL_SECONDS 15' \
+    'GATEWAY_EXECUTION_NODE_WITNESS_REQUEST_TIMEOUT_SECONDS 3'
+  do
+    key=${pair%% *}
+    default=${pair#* }
+    expected=$(printf '      - %s=${%s:-%s}' "$key" "$key" "$default")
+    if [ "$(grep -Fxc "$expected" "$compose_file" || true)" -ne 1 ]; then
+      printf '%s must pass %s with default %s\n' "$compose_file" "$key" "$default" >&2
+      exit 1
+    fi
+  done
 done
 
 printf 'docker compose Gateway environment test passed\n'

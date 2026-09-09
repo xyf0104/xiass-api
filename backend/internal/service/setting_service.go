@@ -292,10 +292,6 @@ func (s *SettingService) SetExecutionNodeFailoverService(failover *ExecutionNode
 	}
 }
 
-// ExecutionNodeFailoverReady is consumed by the public readiness route. When
-// witness protection is enabled, only the node holding the current lease may
-// advertise itself as a writable ingress. Existing deployments keep the
-// legacy readiness behavior while the witness switch is disabled.
 func (s *SettingService) SetExecutionNodeAccountStatsReader(reader ExecutionNodeAccountStatsReader) {
 	if s != nil {
 		s.executionNodeAccountStats = reader

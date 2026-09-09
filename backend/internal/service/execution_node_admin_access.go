@@ -18,7 +18,7 @@ func (s *SettingService) pairedAdminAccess(ctx context.Context) (bool, error) {
 	if key == "" {
 		return false, nil
 	}
-	_, err := s.readExecutionNodeSetting(ctx, key)
+	_, err := s.settingRepo.GetValue(ctx, key)
 	if errors.Is(err, ErrSettingNotFound) {
 		return false, nil
 	}
@@ -103,29 +103,11 @@ func (s *SettingService) executionNodeTakeoverPermission(ctx context.Context) (b
 	if key == "" {
 		return false, errors.New("execution-node identity is unavailable")
 	}
-	raw, err := s.readExecutionNodeSetting(ctx, key)
+	raw, err := s.settingRepo.GetValue(ctx, key)
 	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return false, err
 	}
 	return decodeExecutionNodeEmergencyEgress(raw, s.cfg.Gateway.ExecutionNode.EmergencyLocalEgress)
-}
-
-// Use the multi-key read for these policy checks. Besides batching naturally,
-// this keeps partially initialized setting repositories from invoking a
-// promoted nil interface method during startup and test construction.
-func (s *SettingService) readExecutionNodeSetting(ctx context.Context, key string) (string, error) {
-	if s == nil || s.settingRepo == nil || key == "" {
-		return "", ErrSettingNotFound
-	}
-	values, err := s.settingRepo.GetMultiple(ctx, []string{key})
-	if err != nil {
-		return "", err
-	}
-	value := strings.TrimSpace(values[key])
-	if value == "" {
-		return "", ErrSettingNotFound
-	}
-	return value, nil
 }
 
 func (s *SettingService) CanWriteSharedAdminState(ctx context.Context) bool {

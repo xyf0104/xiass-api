@@ -98,6 +98,15 @@ ENV
             jq --argjson store "$store" '.jwt_refresh_token_store=$store | if $store == "postgres" then .version=2 else . end' "$fixture/source.json" > "$fixture/source-adjusted.json"
             mv "$fixture/source-adjusted.json" "$fixture/source.json"
         fi
+        if [ "$scenario" = witness ]; then
+            jq '.witness_enabled=true
+                | .witness_url="https://witness.example.invalid"
+                | .witness_token="01234567890123456789012345678901"
+                | .witness_cluster_id="cluster-1"
+                | .witness_lease_ttl_seconds=15
+                | .witness_request_timeout_seconds=3' "$fixture/source.json" > "$fixture/source-adjusted.json"
+            mv "$fixture/source-adjusted.json" "$fixture/source.json"
+        fi
         JOIN_BUNDLE_B64=$(base64 < "$fixture/source.json" | tr -d '\n')
     fi
     ready_node=primary
@@ -240,7 +249,7 @@ for flow in runtime join; do
         readyz-error-node readyz-missing-node readyz-error-checks readyz-missing-checks readyz-empty-checks
         readyz-health-body readyz-error-json readyz-multi-json readyz-curl-error)
     if [ "$flow" = join ]; then
-        scenarios+=(source-redis source-postgres source-postgres-custom-port invalid-store-empty invalid-store-null invalid-store-bool invalid-store-case invalid-store-other finalize-failure unstable-failure)
+        scenarios+=(source-redis source-postgres source-postgres-custom-port witness invalid-store-empty invalid-store-null invalid-store-bool invalid-store-case invalid-store-other finalize-failure unstable-failure)
     fi
     for scenario in "${scenarios[@]}"; do
         fixture="$TEST_DIR/$flow-$scenario"
@@ -304,6 +313,12 @@ for flow in runtime join; do
                     grep -Fqx "XIASS_CLUSTER_TUNNEL_TOKEN='fixture-proof'" "$env_file" || fail 'join lost tunnel credential'
                     [ "$(wc -l < "$fixture/readyz.calls")" -ge 2 ] || fail 'join skipped state verification before finalize'
                     grep -Fqx finalize "$fixture/calls" || fail 'successful join was not finalized'
+                    if [ "$scenario" = witness ]; then
+                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_ENABLED='true'" "$env_file" || fail 'join did not enable the shared witness'
+                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_URL='https://witness.example.invalid'" "$env_file" || fail 'join lost the witness address'
+                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_TOKEN='01234567890123456789012345678901'" "$env_file" || fail 'join lost the witness token'
+                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID='cluster-1'" "$env_file" || fail 'join lost the witness cluster identity'
+                    fi
                 else
                     grep -Fqx "JWT_REFRESH_TOKEN_STORE='postgres'" "$env_file" || fail 'runtime initialization changed token storage policy'
                     grep -Fqx "JWT_SECRET='target-jwt-\$#=literal'" "$env_file" || fail 'runtime initialization changed auth secret'

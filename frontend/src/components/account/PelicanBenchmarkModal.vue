@@ -199,7 +199,7 @@ function cancelPoll() {
 
 function schedulePoll() {
   cancelPoll()
-  if (!props.show || controller.signal.aborted || tab.value !== 'current' || document.hidden || busy.value || !current.value.some(run => run.status === 'running')) return
+  if (!props.show || controller.signal.aborted || tab.value !== 'current' || document.hidden || busy.value || !current.value.some(active)) return
   pollTimer = setTimeout(() => void loadCurrent(), 3_000)
 }
 
@@ -408,7 +408,7 @@ function onVisibilityChange() {
   cancelPoll()
   if (document.hidden) {
     currentRequest?.abort()
-  } else if (props.show && !controller.signal.aborted && tab.value === 'current' && !busy.value && current.value.some(run => run.status === 'running')) {
+  } else if (props.show && !controller.signal.aborted && tab.value === 'current' && !busy.value && current.value.some(active)) {
     void refresh()
   }
 }
