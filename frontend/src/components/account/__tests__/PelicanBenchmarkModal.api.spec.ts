@@ -121,7 +121,7 @@ describe('Pelican benchmark backend contract', () => {
   it('derives history pages from the backend total rather than assuming a pages field exists', async () => {
     get.mockResolvedValue({ data: { items: [task()], total: 21, page: 2, page_size: 20 } })
     expect((await getPelicanHistory(2)).pages).toBe(2)
-    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20 }, signal: undefined })
+    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded' }, signal: undefined })
   })
 
   it('uses actual detail and single/all stop endpoints, with no invented result or stop-ID-list route', async () => {

@@ -23,7 +23,7 @@
               <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
               <button type="button" class="btn btn-primary" data-testid="start-selected" :disabled="!ready || busy || loading || !selectedStartable.length" @click="start(selectedStartable)"><Icon name="play" size="sm" />{{ t(`${prefix}.startSelected`, { count: selectedStartable.length }) }}</button>
             </template>
-            <Select v-else v-model="filters[tab]" class="w-32" :options="filterOptions" :aria-label="t(`${prefix}.filter`)" data-testid="result-filter" />
+            <Select v-else-if="tab === 'current'" v-model="filters.current" class="w-32" :options="filterOptions" :aria-label="t(`${prefix}.filter`)" data-testid="result-filter" />
             <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || !startable.length" @click="start(startable)">
               <Icon name="play" size="sm" />{{ t(`${prefix}.startAll`) }}
             </button>
@@ -56,7 +56,7 @@
           </div>
         </template>
         <template v-else>
-          <div v-for="run in rows" :key="run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
+          <div v-for="run in rows" :key="tab === 'current' ? run.account_id : run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
             <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
               <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}<br><span :class="nodeClass(runOwner(run))" data-testid="node-badge">{{ nodeLabel(runOwner(run)) }}</span></div>
               <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
@@ -69,11 +69,11 @@
                 <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
                 <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
-                  <button type="button" class="btn btn-secondary !px-2 !py-1 text-xs" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
+                  <button type="button" class="btn btn-primary min-h-10 !px-4 !py-2 text-sm font-semibold" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
                 </div>
               </div>
             </div>
-            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}</p>
+            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}<span v-if="run.error_message" class="mt-1 block whitespace-pre-wrap">{{ run.error_message }}</span><span v-else-if="run.error_code.startsWith('upstream_')" class="mt-1 block">{{ t(`${prefix}.errors.no_upstream_detail`) }}</span></p>
           </div>
         </template>
 
@@ -171,10 +171,12 @@ const rows = computed(() => [...(tab.value === 'history' ? history.value : curre
 const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
 function errorLabel(code: string) {
+  const http = /^upstream_http_(\d{3})$/.exec(code)
   const known = ['account_unavailable', 'ineligible', 'free_plan', 'unknown_plan', 'unsupported_auth_mode', 'model_not_supported', 'fixed_egress_unavailable', 'upstream_failed', 'html_too_large', 'invalid_html', 'timeout', 'runner_interrupted', 'runner_panic', 'account_access_denied', 'account_not_found']
   const upstream = ['upstream_http_400', 'upstream_http_401', 'upstream_http_403', 'upstream_http_404', 'upstream_http_408', 'upstream_http_429', 'upstream_http_500', 'upstream_http_502', 'upstream_http_503', 'upstream_http_504', 'upstream_network_error', 'upstream_stream_error', 'upstream_incomplete']
   const continuation = ['upstream_client_upgrade_required', 'continuation_source_unavailable', 'invalid_continuation_source']
-  return t(`${prefix}.errors.${known.includes(code) || upstream.includes(code) || continuation.includes(code) ? code : 'unknown'}`)
+  const label = t(`${prefix}.errors.${known.includes(code) || upstream.includes(code) || continuation.includes(code) ? code : 'unknown'}`)
+  return http ? `HTTP ${http[1]} · ${label}` : label
 }
 
 async function loadModels(account: PelicanBenchmarkAccount) {
@@ -197,9 +199,17 @@ async function loadModels(account: PelicanBenchmarkAccount) {
 }
 
 function mergeCurrent(items: PelicanBenchmarkRun[]) {
-  const merged = new Map(current.value.map(run => [run.id, run]))
-  for (const run of items) merged.set(run.id, run)
-  current.value = [...merged.values()]
+  current.value = uniqueAccounts([...current.value, ...items])
+}
+
+function uniqueAccounts(items: PelicanBenchmarkRun[]) {
+  const selected = new Map<number, PelicanBenchmarkRun>()
+  for (const run of items) {
+    const old = selected.get(run.account_id)
+    if (!old || old.id === run.id || run.source_id === old.id || (active(run) && !active(old)) ||
+      (active(run) === active(old) && old.source_id !== run.id && run.created_at > old.created_at)) selected.set(run.account_id, run)
+  }
+  return [...selected.values()]
 }
 
 function statusClass(status: PelicanBenchmarkStatus) {
@@ -253,7 +263,7 @@ async function loadCurrent(discover = false) {
   try {
     const result = await getPelicanCurrent(request.signal, [...new Set(current.value.map(run => run.batch_id))], discover)
     if (session !== ownSession || request.signal.aborted || version !== currentVersion) return false
-    current.value = result.items
+    current.value = uniqueAccounts(result.items)
     schedulePoll()
     return true
   } catch (cause) {
@@ -295,9 +305,9 @@ async function loadHistory(page: number) {
   loading.value = true
   error.value = ''
   try {
-    const result = await getPelicanHistory(page, signal, filters.value.history || undefined)
+    const result = await getPelicanHistory(page, signal, 'succeeded')
     if (ownSession !== session || version !== readVersion || signal.aborted) return
-    history.value = result.items
+    history.value = result.items.filter(run => run.status === 'succeeded')
     historyPage.value = result.page
     historyPages.value = result.pages
     historyTotal.value = result.total

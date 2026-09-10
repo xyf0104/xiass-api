@@ -757,7 +757,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	if resp.StatusCode != http.StatusOK {
 		if pelicanProbe(c) != nil {
-			return s.pelicanError(c, pelicanHTTPErrorCode(resp))
+			return s.pelicanHTTPError(c, resp)
 		}
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
@@ -969,7 +969,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		if pelicanProbe(c) != nil {
-			return s.pelicanError(c, pelicanHTTPErrorCode(resp))
+			return s.pelicanHTTPError(c, resp)
 		}
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusTooManyRequests {

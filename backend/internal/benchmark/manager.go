@@ -216,13 +216,13 @@ func (m *Manager) run(task *Task) {
 	if len(output.HTML) > MaxHTMLBytes {
 		status, code, output.HTML = "failed", "html_too_large", ""
 	}
-	m.finish(task.ID, status, code, output.HTML)
+	m.finish(task.ID, status, code, output.HTML, output.ErrorMessage)
 }
 
 // finish retries only the terminal database write. The upstream call has
 // already returned, so this cannot create another request or release the
 // account guard before the store acknowledges the transition.
-func (m *Manager) finish(id, status, code, html string) {
+func (m *Manager) finish(id, status, code, html, message string) {
 	delay := finishRetryInitialDelay
 	shutdownAttempt := false
 	for {
@@ -233,7 +233,7 @@ func (m *Manager) finish(id, status, code, html string) {
 			finishParent = context.Background()
 		}
 		finishCtx, finishCancel := context.WithTimeout(finishParent, finishAttemptTimeout)
-		err := m.store.Finish(finishCtx, id, m.owner, status, code, html)
+		err := m.store.Finish(WithErrorMessage(finishCtx, message), id, m.owner, status, code, html)
 		finishCancel()
 		if err == nil {
 			return

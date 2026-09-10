@@ -42,6 +42,7 @@ export interface PelicanBenchmarkRun {
   upstream_model: string
   status: PelicanBenchmarkStatus
   error_code: string
+  error_message?: string
   created_at: string
   started_at: string | null
   finished_at: string | null
@@ -165,7 +166,7 @@ export async function stopAllPelicanTests(signal?: AbortSignal): Promise<{ affec
 }
 
 export async function getPelicanHistory(page = 1, signal?: AbortSignal, status?: 'succeeded'): Promise<PaginatedResponse<PelicanBenchmarkRun>> {
-  const data = await listRuns({ page, page_size: 20, ...(status ? { status } : {}) }, signal)
+  const data = await listRuns({ page, page_size: 20, status: status || 'succeeded' }, signal)
   return { ...data, pages: Math.ceil(data.total / data.page_size) }
 }
 

@@ -9,19 +9,94 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/benchmark"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/gin-gonic/gin"
 )
 
 const pelicanProbeKey = "xiass.internal.pelican_benchmark"
 
 type openAIPelicanProbe struct {
-	beforeSend func(string) error
-	errorCode  string
+	beforeSend   func(string) error
+	errorCode    string
+	errorMessage string
+	secrets      []string
+}
+
+var pelicanSensitiveText = regexp.MustCompile(`(?i)https?://[^\s]+|socks5?://[^\s]+|bearer\s+[^\s]+|sk-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_.-]+|[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}`)
+
+func pelicanUpstreamMessage(raw []byte, secrets []string) string {
+	if len(raw) > pelicanErrorBodyLimit {
+		return ""
+	}
+	var value map[string]any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	if response, ok := value["response"].(map[string]any); ok {
+		value = response
+	}
+	var message string
+	switch detail := value["error"].(type) {
+	case map[string]any:
+		message, _ = detail["message"].(string)
+	case string:
+		message = detail
+	}
+	if message == "" {
+		message, _ = value["message"].(string)
+	}
+	if message == "" {
+		message, _ = value["detail"].(string)
+	}
+	for _, secret := range secrets {
+		if len(secret) >= 4 {
+			message = strings.ReplaceAll(message, secret, "[redacted]")
+		}
+	}
+	message = logredact.RedactText(message, "authorization", "api_key", "token", "cookie", "secret")
+	message = pelicanSensitiveText.ReplaceAllString(message, "[redacted]")
+	message = strings.Map(func(r rune) rune {
+		if r < 32 && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, message)
+	if len(message) > 2048 {
+		message = message[:2048]
+		for !utf8.ValidString(message) {
+			message = message[:len(message)-1]
+		}
+	}
+	return strings.TrimSpace(message)
+}
+
+func (s *AccountTestService) pelicanHTTPError(c *gin.Context, resp *http.Response) error {
+	code := fmt.Sprintf("upstream_http_%d", resp.StatusCode)
+	if resp.Body != nil {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, pelicanErrorBodyLimit+1))
+		if err == nil && len(body) <= pelicanErrorBodyLimit {
+			pelicanProbe(c).errorMessage = pelicanUpstreamMessage(body, pelicanProbe(c).secrets)
+			copy := *resp
+			copy.Body = io.NopCloser(bytes.NewReader(body))
+			classified := pelicanHTTPErrorCode(&copy)
+			if classified != code {
+				pelicanProbe(c).errorMessage = "HTTP 400: " + pelicanProbe(c).errorMessage
+				code = classified
+			}
+		}
+	}
+	return s.pelicanError(c, code)
+}
+
+func (s *AccountTestService) pelicanStreamError(c *gin.Context, raw string) error {
+	pelicanProbe(c).errorMessage = pelicanUpstreamMessage([]byte(raw), pelicanProbe(c).secrets)
+	return s.pelicanError(c, "upstream_stream_error")
 }
 
 func pelicanMessages(ctx context.Context, responses bool) []map[string]any {
@@ -151,6 +226,14 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	c, _ := gin.CreateTestContext(capture)
 	c.Request, _ = http.NewRequestWithContext(ctx, http.MethodPost, "/internal/pelican-benchmark", nil)
 	probe := &openAIPelicanProbe{beforeSend: beforeSend}
+	for _, value := range local.Credentials {
+		if secret, ok := value.(string); ok {
+			probe.secrets = append(probe.secrets, secret)
+		}
+	}
+	if local.Proxy != nil {
+		probe.secrets = append(probe.secrets, local.Proxy.Password)
+	}
 	c.Set(pelicanProbeKey, probe)
 	// Call the existing OpenAI-only test path, bypassing TestAccountConnection's
 	// last_used write and the admin handler's scheduling recovery.
@@ -172,7 +255,7 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 				code = "upstream_failed"
 			}
 		}
-		return benchmark.Output{HTML: text, ErrorCode: code}, errors.New(code)
+		return benchmark.Output{HTML: text, ErrorCode: code, ErrorMessage: probe.errorMessage}, errors.New(code)
 	}
 	html := pelicanUnwrapHTML(text)
 	if !pelicanCompleteHTML(html) {
@@ -329,7 +412,7 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 			return s.pelicanError(c, "upstream_stream_error")
 		}
 		if _, ok := event["error"]; ok {
-			return s.pelicanError(c, "upstream_stream_error")
+			return s.pelicanStreamError(c, raw)
 		}
 		if chat {
 			choices, _ := event["choices"].([]any)
@@ -361,7 +444,7 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 			response, _ := event["response"].(map[string]any)
 			if status, _ := response["status"].(string); status != "" && status != "completed" {
 				if status == "failed" {
-					return s.pelicanError(c, "upstream_stream_error")
+					return s.pelicanStreamError(c, raw)
 				}
 				return s.pelicanError(c, "upstream_incomplete")
 			}
@@ -369,7 +452,7 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 		case "response.incomplete":
 			return s.pelicanError(c, "upstream_incomplete")
 		case "error", "response.failed":
-			return s.pelicanError(c, "upstream_stream_error")
+			return s.pelicanStreamError(c, raw)
 		}
 		return nil
 	}

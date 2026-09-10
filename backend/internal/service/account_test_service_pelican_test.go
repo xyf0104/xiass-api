@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -15,8 +16,39 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/benchmark"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPelicanDetailedErrorsRedactSecrets(t *testing.T) {
+	raw := `{"error":{"message":"Capacity unavailable for gpt-6-astra; key=private-credential sk-testsecret user@example.com https://private.invalid/?token=secret"}}`
+	message := pelicanUpstreamMessage([]byte(raw), []string{"private-credential"})
+	require.Contains(t, message, "Capacity unavailable for gpt-6-astra")
+	for _, value := range []string{"private-credential", "sk-testsecret", "user@example.com", "private.invalid"} {
+		require.NotContains(t, message, value)
+	}
+	require.Empty(t, pelicanUpstreamMessage([]byte(`<html>private proxy error</html>`), nil))
+	require.Empty(t, pelicanUpstreamMessage([]byte(strings.Repeat("x", pelicanErrorBodyLimit+1)), nil))
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+	probe := &openAIPelicanProbe{secrets: []string{"private-credential"}}
+	c.Set(pelicanProbeKey, probe)
+	err := (&AccountTestService{}).pelicanHTTPError(c, &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(raw))})
+	require.Error(t, err)
+	require.Equal(t, "upstream_http_503", probe.errorCode)
+	require.Equal(t, message, probe.errorMessage)
+}
+
+func TestPelicanFailedStreamPreservesUpstreamReason(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+	probe := &openAIPelicanProbe{}
+	c.Set(pelicanProbeKey, probe)
+	err := (&AccountTestService{}).processPelicanStream(c, strings.NewReader("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"Model capacity exhausted\"}}}\n\n"), false)
+	require.Error(t, err)
+	require.Equal(t, "Model capacity exhausted", probe.errorMessage)
+}
 
 // The embedded nil repository makes any unexpected write panic, including
 // last_used, quota snapshots, 401/429 state and credential refresh/recovery.

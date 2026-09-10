@@ -186,7 +186,11 @@ func TestPelicanDatabaseFollowupMetadataAndSuccessfulFilter(t *testing.T) {
 	owner := uuid.NewString()
 	_, err = r.Claim(ctx, owner)
 	require.NoError(t, err)
-	require.NoError(t, r.Finish(ctx, source.ID, owner, "failed", "upstream_incomplete", "<html>partial"))
+	require.NoError(t, r.Finish(benchmark.WithErrorMessage(ctx, "Model capacity exhausted"), source.ID, owner, "failed", "upstream_http_503", "<html>partial"))
+	detail, err := r.Detail(ctx, source.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Model capacity exhausted", detail.ErrorMessage)
+	require.Equal(t, "upstream_http_503", detail.ErrorCode)
 	continued := source
 	continued.ID, continued.SourceID, continued.Action = uuid.NewString(), source.ID, "continue"
 	created, _, err := r.Create(ctx, []benchmark.Task{continued})

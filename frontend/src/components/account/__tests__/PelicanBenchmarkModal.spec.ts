@@ -62,6 +62,41 @@ async function setDocumentHidden(hidden: boolean) {
 }
 
 describe('PelicanBenchmarkModal', () => {
+  it('retries in the same account row and renders upstream HTTP details as text', async () => {
+    const failed = run('failed', { status: 'failed', error_code: 'upstream_http_503', error_message: 'Capacity exhausted <script>unsafe()</script>' })
+    api.getPelicanCurrent.mockResolvedValue({ items: [failed] })
+    api.getPelicanResult.mockResolvedValue(failed)
+    const successor = run('successor', { status: 'queued', source_id: failed.id, created_at: '2026-09-09T12:01:00Z' })
+    api.restartPelicanTest.mockImplementation(async () => {
+      api.getPelicanCurrent.mockResolvedValue({ items: [failed, successor] })
+      return { items: [successor] }
+    })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.text()).toContain('HTTP 503')
+    expect(wrapper.text()).toContain('Capacity exhausted')
+    expect(wrapper.find('script').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="retry-failed"]').classes()).toContain('btn-primary')
+    await wrapper.get('[data-testid="retry-failed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="run-successor"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="run-failed"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('排队中')
+  })
+
+  it('history never renders unsuccessful records even from a stale response', async () => {
+    api.getPelicanHistory.mockResolvedValue({ items: [run('good', { status: 'succeeded' }), run('bad', { status: 'failed' })], total: 1, page: 1, pages: 1 })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
+    await flushPromises()
+    expect(api.getPelicanHistory).toHaveBeenCalledWith(1, expect.any(AbortSignal), 'succeeded')
+    expect(wrapper.find('[data-testid="run-bad"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="run-good"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="result-filter"]').exists()).toBe(false)
+  })
   it.each(['queued', 'running', 'canceling', 'succeeded', 'canceled', 'failed', 'interrupted'] as const)('shows followup controls only for actionable %s state', async status => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('state', { status })] })
     const wrapper = render()
@@ -277,7 +312,7 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('排队中')
+    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('正在启动')
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
     expect(api.getPelicanResult).not.toHaveBeenCalled()
     expect(wrapper.find('iframe').exists()).toBe(false)
@@ -369,10 +404,10 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     await wrapper.get('[data-testid="tab-history"]').trigger('click')
     await flushPromises()
-    expect(api.getPelicanHistory).toHaveBeenCalledWith(1, expect.any(AbortSignal), undefined)
+    expect(api.getPelicanHistory).toHaveBeenCalledWith(1, expect.any(AbortSignal), 'succeeded')
     await wrapper.get('[data-testid="history-next"]').trigger('click')
     await flushPromises()
-    expect(api.getPelicanHistory).toHaveBeenCalledWith(2, expect.any(AbortSignal), undefined)
+    expect(api.getPelicanHistory).toHaveBeenCalledWith(2, expect.any(AbortSignal), 'succeeded')
     expect(wrapper.get('[data-testid="history-next"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-testid="run-page-2"]').exists()).toBe(true)
     await vi.advanceTimersByTimeAsync(60_000)
@@ -474,7 +509,7 @@ describe('PelicanBenchmarkModal', () => {
 
   it('ticks running durations every second without a network poll and freezes completed durations', async () => {
     vi.setSystemTime(new Date('2026-09-09T12:00:02Z'))
-    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('done', { status: 'succeeded', duration_ms: 1234 })] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('done', { account_id: 2, status: 'succeeded', duration_ms: 1234 })] })
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
@@ -522,7 +557,7 @@ describe('PelicanBenchmarkModal', () => {
     api.getPelicanAccounts.mockResolvedValue({ items: [account(1, { execution_node_id: 'api' }), account(2, { execution_node_id: 'api2' }), account(3)] })
     const items = [run('old', { execution_node_id: '' }), run('snapshot', { account_id: 2, execution_node_id: 'worker-east' }), run('unknown', { account_id: 3, execution_node_id: '' })]
     api.getPelicanCurrent.mockResolvedValue({ items })
-    api.getPelicanHistory.mockResolvedValue({ items, page: 1, page_size: 20, total: 3, pages: 1 })
+    api.getPelicanHistory.mockResolvedValue({ items: items.map(item => ({ ...item, status: 'succeeded' })), page: 1, page_size: 20, total: 3, pages: 1 })
     const wrapper = render()
     await flushPromises()
     expect(wrapper.get('[data-testid="account-1"] [data-testid="node-badge"]').text()).toBe('本机')
@@ -538,7 +573,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('filters current results locally but requests filtered history pages from the backend', async () => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('done', { status: 'succeeded' })] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('done', { account_id: 2, status: 'succeeded' })] })
     api.getPelicanHistory.mockImplementation((page: number) => Promise.resolve({ items: [run(`page-${page}`, { status: 'succeeded' })], total: 41, page, page_size: 20, pages: 3 }))
     const wrapper = render()
     await flushPromises()
@@ -550,12 +585,11 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     await wrapper.get('[data-testid="history-next"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-testid="result-filter"]').setValue('succeeded')
-    await flushPromises()
-    expect(api.getPelicanHistory).toHaveBeenLastCalledWith(1, expect.any(AbortSignal), 'succeeded')
+    expect(wrapper.find('[data-testid="result-filter"]').exists()).toBe(false)
+    expect(api.getPelicanHistory).toHaveBeenLastCalledWith(2, expect.any(AbortSignal), 'succeeded')
     await wrapper.get('[data-testid="history-next"]').trigger('click')
     await flushPromises()
-    expect(api.getPelicanHistory).toHaveBeenLastCalledWith(2, expect.any(AbortSignal), 'succeeded')
+    expect(api.getPelicanHistory).toHaveBeenLastCalledWith(3, expect.any(AbortSignal), 'succeeded')
   })
 
   it.each(['continue', 'retry'] as const)('%s waits for every same-account active task to exit before creating a successor', async action => {
@@ -592,7 +626,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.restartPelicanTest).not.toHaveBeenCalled()
   })
 
-  it('stops an active successor before retrying its completed source, leaving other accounts alone', async () => {
+  it('shows only the active successor and never offers retry on its old source', async () => {
     const completed = run('source', { status: 'failed' })
     api.getPelicanCurrent.mockResolvedValue({ items: [completed, run('successor'), run('other', { account_id: 2 })] })
     api.getPelicanResult.mockResolvedValue(completed)
@@ -601,10 +635,9 @@ describe('PelicanBenchmarkModal', () => {
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
-    await wrapper.get('[data-testid="retry-source"]').trigger('click')
-    await flushPromises()
-    expect(api.stopPelicanTests).toHaveBeenCalledExactlyOnceWith(['successor'], expect.any(AbortSignal))
-    expect(api.restartPelicanTest).toHaveBeenCalledExactlyOnceWith('source', 'retry', expect.any(AbortSignal))
+    expect(wrapper.find('[data-testid="run-source"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="run-successor"]').exists()).toBe(true)
+    expect(api.restartPelicanTest).not.toHaveBeenCalled()
   })
 
   it('never starts after a stop failure or an unconfirmed terminal poll', async () => {
@@ -626,13 +659,15 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.restartPelicanTest).not.toHaveBeenCalled()
   })
 
-  it('ignores a late unfiltered history response after the filter changes', async () => {
+  it('ignores a late history response after leaving and returning to history', async () => {
     const pending = deferred<{ items: PelicanBenchmarkRun[]; page: number; page_size: number; total: number; pages: number }>()
     api.getPelicanHistory.mockReturnValueOnce(pending.promise).mockResolvedValue({ items: [run('passed', { status: 'succeeded' })], page: 1, page_size: 20, total: 1, pages: 1 })
     const wrapper = render()
     await flushPromises()
     await wrapper.get('[data-testid="tab-history"]').trigger('click')
-    await wrapper.get('[data-testid="result-filter"]').setValue('succeeded')
+    await wrapper.get('[data-testid="tab-new"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
     await flushPromises()
     pending.resolve({ items: [run('stale')], page: 2, page_size: 20, total: 41, pages: 3 })
     await flushPromises()
@@ -647,7 +682,7 @@ describe('PelicanBenchmarkModal', () => {
     await currentTab(wrapper)
     expect(wrapper.text()).not.toContain(error_code)
     expect(wrapper.get('[data-testid="run-run-1"] p').text()).not.toContain('admin.accounts.')
-    if (error_code !== 'raw secret error') expect(wrapper.get('[data-testid="run-run-1"] p').text()).toBe(zh.accounts.pelicanBenchmark.errors[error_code as keyof typeof zh.accounts.pelicanBenchmark.errors])
+    if (error_code !== 'raw secret error') expect(wrapper.get('[data-testid="run-run-1"] p').text()).toContain(zh.accounts.pelicanBenchmark.errors[error_code as keyof typeof zh.accounts.pelicanBenchmark.errors])
   })
 
   it.each(['continue', 'retry'] as const)('%s releases busy after 30 seconds without creating a task and keeps stop usable', async action => {

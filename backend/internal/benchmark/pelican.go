@@ -47,6 +47,7 @@ type Task struct {
 	UpstreamModel   string     `json:"upstream_model"`
 	Status          string     `json:"status"`
 	ErrorCode       string     `json:"error_code"`
+	ErrorMessage    string     `json:"error_message"`
 	CreatedAt       time.Time  `json:"created_at"`
 	StartedAt       *time.Time `json:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at"`
@@ -100,8 +101,20 @@ type Store interface {
 }
 
 type Output struct {
-	HTML      string
-	ErrorCode string
+	HTML         string
+	ErrorCode    string
+	ErrorMessage string
+}
+
+type errorMessageKey struct{}
+
+func WithErrorMessage(ctx context.Context, message string) context.Context {
+	return context.WithValue(ctx, errorMessageKey{}, message)
+}
+
+func ErrorMessage(ctx context.Context) string {
+	message, _ := ctx.Value(errorMessageKey{}).(string)
+	return message
 }
 
 type Runner interface {

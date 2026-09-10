@@ -98,5 +98,11 @@ destroys previews and stops frontend polling, but does not cancel server jobs.
 The current-results UI offers Continue only after cancellation and Retry only
 after failure/interruption; running and successful jobs have neither action.
 
-Apply migrations 242 through 244 before starting this build. Real PostgreSQL tests use the repository's existing
+Current results show one row per account, replacing the displayed attempt on
+retry; successful history uses a server-side status filter and correct pagination.
+Execution attempt IDs remain distinct internally to preserve cancellation CAS.
+HTTP status and bounded, redacted structured upstream error messages are stored
+separately from generated HTML. Missing upstream messages are never invented.
+
+Apply migrations 242 through 245 before starting this build. Real PostgreSQL tests use the repository's existing
 Docker integration harness and isolated test schemas, never a live XIASS DB.
