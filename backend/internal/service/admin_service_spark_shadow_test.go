@@ -648,6 +648,7 @@ func TestUpdateAccount_PropagatesProxyToShadow(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, storedShadow.ProxyID)
 	require.Equal(t, newProxy, *storedShadow.ProxyID)
+	require.True(t, storedShadow.hasExplicitExecutionProxy())
 }
 
 // TestUpdateAccount_RejectsCredentialWriteToShadow 验证安全不变量「影子绝不持有鉴权凭据」

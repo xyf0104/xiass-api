@@ -361,8 +361,7 @@ func (r *accountRepository) prepareExecutionNodeRoutingTx(ctx context.Context, t
 		if marshalErr != nil {
 			return rollback(fmt.Errorf("marshal execution node proxy validation: %w", marshalErr))
 		}
-		// Strict mode checks both that every configured proxy exists and that
-		// every account's durable proxy matches its durable node owner.
+		// Validate node defaults and explicit administrator-selected account proxies.
 		var expectedProxyCount int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM proxies
@@ -391,15 +390,17 @@ func (r *accountRepository) prepareExecutionNodeRoutingTx(ctx context.Context, t
 				) AS invalid_proxy_count,
 				COUNT(*) FILTER (
 					WHERE proxy_id IS DISTINCT FROM (($3::jsonb ->> node_id)::bigint)
+						AND explicit_proxy_id IS DISTINCT FROM proxy_id::text
 				) AS mismatched_proxy_count
 			FROM (
-				SELECT COALESCE(NULLIF(BTRIM(extra ->> $1), ''), $2) AS node_id, proxy_id
+				SELECT COALESCE(NULLIF(BTRIM(extra ->> $1), ''), $2) AS node_id, proxy_id,
+					CASE WHEN jsonb_typeof(extra -> $4) = 'string' THEN extra ->> $4 END AS explicit_proxy_id
 				FROM accounts
 				WHERE deleted_at IS NULL
 			) AS owned
 			GROUP BY node_id
 		`
-		validationArgs = []any{service.AccountExecutionNodeExtraKey, legacyNodeID, string(proxyIDsJSON)}
+		validationArgs = []any{service.AccountExecutionNodeExtraKey, legacyNodeID, string(proxyIDsJSON), service.AccountExecutionProxyExtraKey}
 	}
 	rows, err := tx.QueryContext(ctx, validationQuery, validationArgs...)
 	if err != nil {

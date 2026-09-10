@@ -635,6 +635,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		accountExtra, input.ProxyID = applyExecutionNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
 	} else {
 		delete(accountExtra, AccountExecutionNodeExtraKey)
+		delete(accountExtra, AccountExecutionProxyExtraKey)
 	}
 
 	// 绑定分组
@@ -896,11 +897,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
 	if input.ProxyID != nil && !account.IsCredentialShadow() {
-		if s.executionNodeRoutingActive(ctx) {
-			if *input.ProxyID == 0 || account.ProxyID == nil || *input.ProxyID != *account.ProxyID {
-				return nil, infraerrors.BadRequest("EXECUTION_NODE_PROXY_IMMUTABLE", "an account's egress proxy cannot be changed while multi-node routing is enabled")
-			}
-		}
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		if *input.ProxyID == 0 {
 			if s.executionNodeRoutingActive(ctx) {
@@ -909,6 +905,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			account.ProxyID = nil
 		} else {
 			account.ProxyID = input.ProxyID
+		}
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		delete(account.Extra, AccountExecutionProxyExtraKey)
+		if *input.ProxyID > 0 {
+			account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
@@ -1214,6 +1217,7 @@ func (s *adminServiceImpl) ApplyAntigravityOAuthCredentials(
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripOpenAIQuotaRuntimeExtra(updates)
 	delete(updates, AccountExecutionNodeExtraKey)
+	delete(updates, AccountExecutionProxyExtraKey)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
@@ -1251,6 +1255,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Extra = stripOpenAIQuotaRuntimeExtra(input.Extra)
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	delete(input.Extra, AccountExecutionNodeExtraKey)
+	delete(input.Extra, AccountExecutionProxyExtraKey)
 	fingerprintModeValue, hasFingerprintModeUpdate := input.Extra[codexFingerprintModeExtraKey]
 	if hasFingerprintModeUpdate {
 		mode, ok := fingerprintModeValue.(string)
@@ -1392,13 +1397,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		if *input.ProxyID <= 0 && s.executionNodeRoutingActive(ctx) {
 			return nil, infraerrors.BadRequest("EXECUTION_NODE_PROXY_REQUIRED", "accounts must keep a private egress proxy while multi-node routing is enabled")
 		}
-		if s.executionNodeRoutingActive(ctx) {
-			for _, acc := range cachedTargets {
-				if acc != nil && (acc.ProxyID == nil || *input.ProxyID != *acc.ProxyID) {
-					return nil, infraerrors.BadRequest("EXECUTION_NODE_PROXY_IMMUTABLE", "an account's egress proxy cannot be changed while multi-node routing is enabled")
-				}
-			}
-		}
 		for _, acc := range cachedTargets {
 			if acc != nil && acc.IsCredentialShadow() {
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
@@ -1485,6 +1483,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 	if input.ProxyID != nil {
 		repoUpdates.ProxyID = input.ProxyID
+		if repoUpdates.Extra == nil {
+			repoUpdates.Extra = make(map[string]any)
+		}
+		repoUpdates.Extra[AccountExecutionProxyExtraKey] = nil
+		if *input.ProxyID > 0 {
+			repoUpdates.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
+		}
 	}
 	if input.Concurrency != nil {
 		repoUpdates.Concurrency = input.Concurrency
@@ -1900,8 +1905,23 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 	if err != nil {
 		return fmt.Errorf("list spark shadows for proxy propagation: %w", err)
 	}
+	var explicitProxy any
+	if len(shadows) > 0 {
+		parent, err := repo.GetByID(ctx, parentID)
+		if err != nil {
+			return fmt.Errorf("read parent proxy selection: %w", err)
+		}
+		if parent.hasExplicitExecutionProxy() {
+			explicitProxy = parent.Extra[AccountExecutionProxyExtraKey]
+		}
+	}
 	for _, shadow := range shadows {
 		shadow.ProxyID = proxyID
+		shadow.Proxy = nil
+		if shadow.Extra == nil {
+			shadow.Extra = make(map[string]any)
+		}
+		shadow.Extra[AccountExecutionProxyExtraKey] = explicitProxy
 		if err := repo.Update(ctx, shadow); err != nil {
 			return fmt.Errorf("update spark shadow %d proxy: %w", shadow.ID, err)
 		}

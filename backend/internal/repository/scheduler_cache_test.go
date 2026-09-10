@@ -46,14 +46,16 @@ func TestSchedulerMetadataAccountKeepsExecutionNodeOwnership(t *testing.T) {
 		ProxyID:  &proxyID,
 		Proxy:    &service.Proxy{ID: proxyID, Status: service.StatusActive},
 		Extra: map[string]any{
-			service.AccountExecutionNodeExtraKey: "api2",
-			"unused_large_field":                 "drop-me",
+			service.AccountExecutionNodeExtraKey:  "api2",
+			service.AccountExecutionProxyExtraKey: "99",
+			"unused_large_field":                  "drop-me",
 		},
 	}
 
 	metadata := buildSchedulerMetadataAccount(account)
 
 	require.Equal(t, "api2", metadata.ExecutionNodeID("api"))
+	require.Equal(t, "99", metadata.Extra[service.AccountExecutionProxyExtraKey])
 	require.NotNil(t, metadata.ProxyID)
 	require.Equal(t, proxyID, *metadata.ProxyID)
 	require.NotNil(t, metadata.Proxy)

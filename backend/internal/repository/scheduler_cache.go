@@ -983,6 +983,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	}
 	keys := []string{
 		service.AccountExecutionNodeExtraKey,
+		service.AccountExecutionProxyExtraKey,
 		"quota_limit",
 		"quota_used",
 		"quota_daily_limit",

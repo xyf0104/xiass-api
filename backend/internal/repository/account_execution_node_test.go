@@ -117,7 +117,7 @@ func TestPrepareAndEnableExecutionNodeRoutingWithProxyIDsRejectsCrossNodeProxy(t
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	mock.ExpectQuery("SELECT node_id,[\\s\\S]+mismatched_proxy_count").
-		WithArgs(service.AccountExecutionNodeExtraKey, "api", `{"api":84,"api2":83}`).
+		WithArgs(service.AccountExecutionNodeExtraKey, "api", `{"api":84,"api2":83}`, service.AccountExecutionProxyExtraKey).
 		WillReturnRows(sqlmock.NewRows([]string{"node_id", "missing_proxy_count", "invalid_proxy_count", "mismatched_proxy_count"}).
 			AddRow("api", 0, 0, 1))
 	mock.ExpectRollback()
@@ -154,7 +154,7 @@ func TestPrepareAndEnableExecutionNodeRoutingWithProxyIDsPersistsAtomicMapping(t
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	mock.ExpectQuery("SELECT node_id,[\\s\\S]+mismatched_proxy_count").
-		WithArgs(service.AccountExecutionNodeExtraKey, "api", `{"api":84,"api2":83}`).
+		WithArgs(service.AccountExecutionNodeExtraKey, "api", `{"api":84,"api2":83}`, service.AccountExecutionProxyExtraKey).
 		WillReturnRows(sqlmock.NewRows([]string{"node_id", "missing_proxy_count", "invalid_proxy_count", "mismatched_proxy_count"}).
 			AddRow("api", 0, 0, 0))
 	mock.ExpectExec("INSERT INTO settings").

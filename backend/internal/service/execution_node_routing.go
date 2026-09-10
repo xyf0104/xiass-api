@@ -450,7 +450,7 @@ func (p executionNodeRoutingPolicy) accountEgressIDAllowed(account *Account) boo
 		return false
 	}
 	expectedProxyID, ok := p.proxyIDs[p.nodeID(account)]
-	return ok && expectedProxyID > 0 && *account.ProxyID == expectedProxyID
+	return ok && expectedProxyID > 0 && (*account.ProxyID == expectedProxyID || account.hasExplicitExecutionProxy())
 }
 
 func (p executionNodeRoutingPolicy) nodeHealthy(nodeID string) bool {

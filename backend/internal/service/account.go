@@ -109,9 +109,20 @@ type OpenAIEndpointCapability string
 const openAILongContextBillingEnabledKey = "openai_long_context_billing_enabled"
 
 // AccountExecutionNodeExtraKey is system-managed account ownership metadata.
-// It identifies the node whose private egress must carry direct upstream
-// traffic for this account.
+// It identifies the scheduling owner and default private egress. An explicit
+// administrator proxy selection does not transfer this ownership.
 const AccountExecutionNodeExtraKey = "xiass_execution_node_id"
+
+// AccountExecutionProxyExtraKey binds an explicit administrator choice to its proxy ID.
+const AccountExecutionProxyExtraKey = "xiass_execution_proxy_id"
+
+func (a *Account) hasExplicitExecutionProxy() bool {
+	if a == nil || a.ProxyID == nil || *a.ProxyID <= 0 {
+		return false
+	}
+	id, ok := a.Extra[AccountExecutionProxyExtraKey].(string)
+	return ok && id == strconv.FormatInt(*a.ProxyID, 10)
+}
 
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
@@ -181,6 +192,7 @@ func (a *Account) ExecutionNodeID(legacyDefault string) string {
 }
 
 func applyExecutionNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
+	delete(extra, AccountExecutionProxyExtraKey)
 	if cfg == nil || !cfg.Gateway.ExecutionNode.Enabled {
 		// The ownership field is always system-managed. Strip untrusted import data
 		// even while multi-node routing is disabled so a later activation cannot
@@ -209,7 +221,11 @@ func preserveExecutionNodeOnUpdate(account *Account, extra map[string]any) map[s
 		extra = make(map[string]any)
 	}
 	delete(extra, AccountExecutionNodeExtraKey)
+	delete(extra, AccountExecutionProxyExtraKey)
 	if account != nil && account.Extra != nil {
+		if account.hasExplicitExecutionProxy() {
+			extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
+		}
 		if nodeID, ok := account.Extra[AccountExecutionNodeExtraKey].(string); ok && strings.TrimSpace(nodeID) != "" {
 			extra[AccountExecutionNodeExtraKey] = strings.TrimSpace(nodeID)
 		}
