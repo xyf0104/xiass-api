@@ -15,11 +15,6 @@ on:
         required: false
         type: boolean
         default: false
-      publish_witness:
-        description: 'Optional: publish the separate XIASS Witness image'
-        required: false
-        type: boolean
-        default: false
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
@@ -258,18 +253,6 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/xiass-updater:${{ github.event.inputs.tag || github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/xiass-updater:latest
-
-      - name: Build and push failover witness image
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_witness == true }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./deploy/witness/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/xiass-witness:${{ github.event.inputs.tag || github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/xiass-witness:latest
 
   release:
     needs: [update-version, build-frontend, test-backend, test-helper, test-deploy-scripts, build-runtime-support-images]

@@ -71,7 +71,7 @@ describe('PelicanBenchmarkModal', () => {
     api.stopPelicanTests.mockResolvedValue({ items: [run('run-1', { status: 'canceled' })] })
     api.getPelicanModels.mockResolvedValue(['gpt-6-astra', 'gpt-5.6-luna'])
     api.stopAllPelicanTests.mockResolvedValue({ affected: 2 })
-    api.getPelicanResult.mockResolvedValue({ ...run('run-1', { status: 'succeeded', html_bytes: 120 }), html: '<html><body><svg><circle r="10" /></svg><script>document.body.dataset.animated="yes"</script></body></html>' })
+    api.getPelicanResult.mockImplementation((id: string) => Promise.resolve({ ...run(id, { status: 'succeeded', html_bytes: 120 }), html: '<html><body><svg><circle r="10" /></svg><script>document.body.dataset.animated="yes"</script></body></html>' }))
   })
   afterEach(() => {
     for (const wrapper of wrappers.splice(0)) wrapper.unmount()
@@ -170,11 +170,12 @@ describe('PelicanBenchmarkModal', () => {
 
     await wrapper.setProps({ show: false })
     const closedCalls = api.getPelicanCurrent.mock.calls.length
+    const previewCalls = api.getPelicanResult.mock.calls.length
     await setDocumentHidden(true)
     await setDocumentHidden(false)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(closedCalls)
-    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(previewCalls)
     expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
@@ -237,7 +238,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(closedCalls)
   })
 
-  it('keeps a newly queued task visible through running and success, fetching HTML only when details are clicked', async () => {
+  it('keeps queued and running tasks compact, automatically showing a thumbnail on success', async () => {
     api.startPelicanTests.mockResolvedValue({ items: [run('run-1', { status: 'queued', started_at: null, duration_ms: null })] })
     const wrapper = render()
     await flushPromises()
@@ -267,19 +268,14 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenLastCalledWith(expect.any(AbortSignal), ['batch-1'], false)
     expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('已完成')
     expect(wrapper.find('[data-testid="stop-run-1"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="details-run-1"]').attributes('aria-expanded')).toBe('false')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
     expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
     expect(api.getPelicanHistory).not.toHaveBeenCalled()
-    expect(api.getPelicanResult).not.toHaveBeenCalled()
-    expect(wrapper.find('iframe').exists()).toBe(false)
-
-    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
-    await flushPromises()
     expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith('run-1', expect.any(AbortSignal))
-    expect(wrapper.get('[data-testid="details-run-1"]').attributes('aria-expanded')).toBe('true')
     expect(wrapper.get('[data-testid="result-preview"]').isVisible()).toBe(true)
   })
 
@@ -303,16 +299,14 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(failedCalls)
   })
 
-  it('loads HTML only after completed details are clicked, retaining scripts inside an opaque CSP-first sandbox', async () => {
+  it('loads completed HTML automatically, retaining scripts inside an opaque CSP-first sandbox', async () => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'succeeded', html_bytes: 120 }), run('failed', { status: 'failed' })] })
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
-    expect(api.getPelicanResult).not.toHaveBeenCalled()
-    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith('run-1', expect.any(AbortSignal))
+    expect(wrapper.find('iframe').exists()).toBe(true)
     expect(wrapper.find('[data-testid="details-failed"]').exists()).toBe(false)
-    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
-    await flushPromises()
     const frame = wrapper.get('iframe')
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('referrerpolicy')).toBe('no-referrer')
@@ -321,18 +315,17 @@ describe('PelicanBenchmarkModal', () => {
     for (const directive of ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", 'img-src data:', 'font-src data:', "connect-src 'none'", "form-action 'none'", "base-uri 'none'"]) expect(srcdoc).toContain(directive)
     expect(srcdoc).toContain('<script>document.body.dataset.animated="yes"</script>')
     expect(wrapper.find('script').exists()).toBe(false)
-    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
+    await wrapper.setProps({ show: false })
     expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
-  it('ignores late result requests after collapsing or switching tabs', async () => {
+  it('ignores late result requests after switching tabs', async () => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'succeeded', html_bytes: 120 })] })
     const pending = deferred<{ id: string; html: string }>()
     api.getPelicanResult.mockReturnValue(pending.promise)
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
-    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
     const signal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
     await wrapper.get('[data-testid="tab-history"]').trigger('click')
     pending.resolve({ id: 'run-1', html: '<html>late result</html>' })
@@ -355,7 +348,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('[data-testid="run-page-2"]').exists()).toBe(true)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanHistory).toHaveBeenCalledTimes(2)
-    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed when the backend is missing instead of displaying simulated success', async () => {
@@ -427,10 +420,9 @@ describe('PelicanBenchmarkModal', () => {
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
-    await wrapper.get('[data-testid="details-run-1"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('iframe').exists()).toBe(false)
-    expect(wrapper.get('[role="alert"]').text()).toContain('结果预览加载失败')
+    expect(wrapper.get('[data-testid="result-thumbnail"]').text()).toContain('结果预览加载失败')
   })
 
   it('supports keyboard tab navigation', async () => {
@@ -442,5 +434,37 @@ describe('PelicanBenchmarkModal', () => {
     await wrapper.get('[data-testid="tab-history"]').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
     expect(wrapper.get('[data-testid="tab-new"]').attributes('tabindex')).toBe('0')
+  })
+
+  it('orders plans Pro, Pro Lite, Plus, Team before other accounts', async () => {
+    api.getPelicanAccounts.mockResolvedValue({ items: [account(1, { plan_type: 'team' }), account(2, { plan_type: 'plus' }), account(3, { plan_type: 'pro_lite' }), account(4), account(5, { plan_type: null })] })
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="account-"]').map(row => row.attributes('data-testid'))).toEqual(['account-4', 'account-3', 'account-2', 'account-1', 'account-5'])
+  })
+
+  it('ticks running durations every second without a network poll and freezes completed durations', async () => {
+    vi.setSystemTime(new Date('2026-09-09T12:00:02Z'))
+    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('done', { status: 'succeeded', duration_ms: 1234 })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    const calls = api.getPelicanCurrent.mock.calls.length
+    expect(wrapper.get('[data-testid="run-run-1"] .run-duration').text()).toBe('1.0 秒')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.get('[data-testid="run-run-1"] .run-duration').text()).toBe('2.0 秒')
+    expect(wrapper.get('[data-testid="run-done"] .run-duration').text()).toBe('1.2 秒')
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls)
+  })
+
+  it('shows multiple completed previews together while other accounts keep running', async () => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('a', { status: 'succeeded', html_bytes: 100 }), run('b', { account_id: 2, status: 'succeeded', html_bytes: 100 }), run('c', { account_id: 3 })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.findAll('iframe')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="stop-c"]').exists()).toBe(true)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
   })
 })

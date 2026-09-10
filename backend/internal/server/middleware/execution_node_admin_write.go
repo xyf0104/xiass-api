@@ -10,7 +10,7 @@ import (
 )
 
 // ExecutionNodeSharedWriteGuard allows shared-state-verified paired nodes to
-// write and retains the primary/takeover policy for unpaired deployments.
+// write and retains the primary-only policy for unpaired deployments.
 // Administrator authentication remains the responsibility of the parent group.
 // Execution-node pairing and routing controls are deliberately outside this
 // guard because weight changes must be possible from either connected node.

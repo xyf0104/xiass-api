@@ -321,22 +321,21 @@ func TestAuthoritativePairingPublishesTargetURLAndFixedEgressMapping(t *testing.
 	var proxyIDs map[string]int64
 	require.NoError(t, json.Unmarshal([]byte(sourceRepo.values[SettingKeyExecutionNodeProxyIDs]), &proxyIDs))
 	require.Equal(t, map[string]int64{"primary-us": 84, "edge-jp": 100}, proxyIDs)
-	require.NotContains(t, sourceRepo.values, executionNodeEmergencyEgressSettingKey("edge-jp"), "pairing cannot enable offline takeover")
+	require.NotContains(t, sourceRepo.values, "execution_node_emergency_egress:edge-jp", "pairing cannot enable offline takeover")
 }
 
 func TestExecutionNodePairingDoesNotWriteTakeoverPermissions(t *testing.T) {
 	source, repo := newExecutionNodePairingService("primary", "db", "redis")
 	source.cfg.Gateway.ExecutionNode.DefaultProxyID = 84
-	source.cfg.Gateway.ExecutionNode.EmergencyLocalEgress = true
 	for _, value := range []string{"true", "false"} {
 		for _, node := range []string{"primary", "secondary"} {
-			repo.values[executionNodeEmergencyEgressSettingKey(node)] = value
+			repo.values["execution_node_emergency_egress:"+node] = value
 		}
 		updates, err := source.executionNodePairingRoutingSettings(context.Background(), "secondary", 100)
 		require.NoError(t, err)
 		for _, node := range []string{"primary", "secondary"} {
-			require.NotContains(t, updates, executionNodeEmergencyEgressSettingKey(node))
-			require.Equal(t, value, repo.values[executionNodeEmergencyEgressSettingKey(node)])
+			require.NotContains(t, updates, "execution_node_emergency_egress:"+node)
+			require.Equal(t, value, repo.values["execution_node_emergency_egress:"+node])
 		}
 	}
 }
@@ -469,6 +468,22 @@ func TestAuthoritativePairingRejectsSessionMigrationBeforeConsumingInvite(t *tes
 	require.Equal(t, before, repo.values[SettingKeyExecutionNodePairingInvite])
 	require.NotContains(t, repo.values, executionNodePairingPeerKey("api"))
 	require.Empty(t, proxies.proxies)
+}
+
+func TestExecutionNodeJoinConfigOmitsRetiredWitnessFields(t *testing.T) {
+	legacy := []byte(`{"source_node_id":"api","target_node_id":"api2","witness_enabled":true,"witness_url":"invalid","witness_token":"retired"}`)
+	var join ExecutionNodeJoinConfig
+	require.NoError(t, json.Unmarshal(legacy, &join))
+	require.Equal(t, "api", join.SourceNodeID)
+	raw, err := json.Marshal(join)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "witness_")
+	var bundle executionNodeJoinBundle
+	require.NoError(t, json.Unmarshal(legacy, &bundle))
+	require.Equal(t, "api2", bundle.TargetNodeID)
+	raw, err = json.Marshal(bundle)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "witness_")
 }
 
 func TestExecutionNodeJoinBundleRefreshAuthorityCompatibility(t *testing.T) {

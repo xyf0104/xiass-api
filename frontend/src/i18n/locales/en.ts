@@ -1506,7 +1506,6 @@ export default {
       localNode: 'Local node',
       runtimeEnabled: 'Local multi-node runtime',
       controlPlane: 'Control-plane jobs',
-      emergencyEgress: 'Emergency egress',
       yes: 'Yes',
       no: 'No',
       configured: 'Configured',

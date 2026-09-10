@@ -581,17 +581,10 @@ const (
 	// egress proxy ID. The mapping is shared so every replica can validate that
 	// an account keeps the proxy belonging to its execution node.
 	SettingKeyExecutionNodeProxyIDs = "execution_node_proxy_ids"
-	// SettingKeyExecutionNodeEmergencyEgressPrefix stores one independent
-	// offline-takeover switch per node, avoiding cross-node lost updates.
-	SettingKeyExecutionNodeEmergencyEgressPrefix = "execution_node_emergency_egress:"
 	// The following settings are owned by the execution-node pairing protocol.
 	// Pairing is deliberately separate from the routing policy so a failed or
 	// incomplete handshake can never enable scheduling by itself.
-	SettingKeyExecutionNodeClusterID = "execution_node_cluster_id"
-	// SettingKeyExecutionNodeFence stores the witness generation currently
-	// committed to the writable PostgreSQL state. A stale database copy cannot
-	// pass failover readiness after a newer generation is granted elsewhere.
-	SettingKeyExecutionNodeFence             = "execution_node_failover_fence"
+	SettingKeyExecutionNodeClusterID         = "execution_node_cluster_id"
 	SettingKeyExecutionNodePairingInvite     = "execution_node_pairing_invite"
 	SettingKeyExecutionNodePairingPeerPrefix = "execution_node_pairing_peer:"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。

@@ -46,6 +46,9 @@ case "${!#}" in
             printf '{"code":0,"data":{"version":"9.8.7"}}\n'
         fi
         exit 0 ;;
+    http://127.0.0.1:18080/readyz)
+        printf '{"status":"ok","checks":{"postgres":"ok","redis":"ok","execution_node":"ok"}}\n'
+        exit 0 ;;
 esac
 [ "${!#}" = http://127.0.0.1:18080/health ] || exit 91
 printf 'health\n' >> "$FIXTURE_NODE/calls"

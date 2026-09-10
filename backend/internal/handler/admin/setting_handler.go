@@ -472,23 +472,6 @@ func (h *SettingHandler) InitializeExecutionNodeRuntime(c *gin.Context) {
 	})
 }
 
-// UpdateExecutionNodeEmergencyEgress enables or disables this machine's
-// permission to temporarily take over accounts owned by an offline peer.
-func (h *SettingHandler) UpdateExecutionNodeEmergencyEgress(c *gin.Context) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid offline-takeover request")
-		return
-	}
-	if err := h.settingService.SetExecutionNodeEmergencyLocalEgress(c.Request.Context(), req.Enabled); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, gin.H{"enabled": req.Enabled})
-}
-
 // GetExecutionNodePairingStatus reports whether the local instance has a
 // verified peer using the same PostgreSQL and Redis state.
 func (h *SettingHandler) GetExecutionNodePairingStatus(c *gin.Context) {

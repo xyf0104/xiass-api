@@ -255,12 +255,10 @@ prepare_restored_runtime() {
         .config | .database.host="postgres" | .database.port=5432 | .database.sslmode="disable"
         | .database.password=env.XIASS_RESTORE_PG_PASSWORD
         | .redis.host="redis" | .redis.port=6379 | .redis.enable_tls=false
-        | .redis.sentinel_addrs=[] | .redis.sentinel_master_name="" | .redis.sentinel_username="" | .redis.sentinel_password=""
+        | del(.redis.sentinel_addrs, .redis.sentinel_master_name, .redis.sentinel_username, .redis.sentinel_password)
         | .server.host="0.0.0.0" | .server.port=8080
         | .gateway.execution_node.enabled=false
-        | .gateway.execution_node.witness.enabled=false
-        | .gateway.execution_node.witness.url="" | .gateway.execution_node.witness.token=""
-        | .gateway.execution_node.witness.cluster_id=""
+        | del(.gateway.execution_node.witness, .gateway.execution_node.emergency_local_egress)
         | .gateway.forced_codex_instructions_template_file=""
     ' "$source" > "$DEPLOY_DIR/data/xiass-restored-config.json"
     # Config values come from the effective snapshot. Empty optional env values

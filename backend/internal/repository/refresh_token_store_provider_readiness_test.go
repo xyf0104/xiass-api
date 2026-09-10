@@ -32,7 +32,7 @@ func expectReadinessObservation(mock sqlmock.Sqlmock, backend string, ready bool
 }
 
 func TestRefreshTokenProviderReadinessStartupGates(t *testing.T) {
-	for _, name := range []string{"redis", "committed PG", "unproven PG", "standby", "read-only", "missing-marker", "unknown-marker", "ambiguous-observation", "no-redis", "explicit-PG", "sentinel"} {
+	for _, name := range []string{"redis", "committed PG", "unproven PG", "standby", "read-only", "missing-marker", "unknown-marker", "ambiguous-observation", "no-redis", "explicit-PG"} {
 		t.Run(name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
@@ -43,8 +43,6 @@ func TestRefreshTokenProviderReadinessStartupGates(t *testing.T) {
 			switch name {
 			case "explicit-PG":
 				cfg.JWT.RefreshTokenStore = "postgres"
-			case "sentinel":
-				cfg.Redis.SentinelAddrs = []string{"unreachable.example.invalid:26379"}
 			case "committed PG", "unproven PG", "ambiguous-observation":
 				var commitErr error
 				if name == "ambiguous-observation" {

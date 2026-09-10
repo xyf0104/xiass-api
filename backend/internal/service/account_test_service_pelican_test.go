@@ -122,7 +122,7 @@ func TestPelicanDoesNotWriteAccountStateOnUpstreamFailure(t *testing.T) {
 
 type pelicanEmptySettings struct{ SettingRepository }
 
-func TestPelicanPairedNodeKeepsOwnerExitEvenWithEmergencyTakeover(t *testing.T) {
+func TestPelicanPairedNodeKeepsFixedOwnerExit(t *testing.T) {
 	id := int64(91)
 	a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &id,
 		Proxy: &Proxy{ID: id, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive},
@@ -134,7 +134,6 @@ func TestPelicanPairedNodeKeepsOwnerExitEvenWithEmergencyTakeover(t *testing.T) 
 	s.settingService = &SettingService{cfg: s.cfg, settingRepo: &pelicanEmptySettings{}}
 	s.settingService.executionNodeRoutingCache.Store(&cachedExecutionNodeRoutingSettings{expiresAt: time.Now().Add(time.Minute).UnixNano(), settings: ExecutionNodeRoutingSettings{
 		Available: true, Enabled: true, ProxyIDs: map[string]int64{"api": 91, "api2": 92}, Healthy: map[string]bool{"api": true, "api2": true},
-		EmergencyLocalEgress: true, LocalProxy: &Proxy{ID: 92, Protocol: "socks5", Host: "wrong-egress.example", Port: 1080, Status: StatusActive},
 	}})
 	_, err := s.RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, func(string) error { return nil })
 	require.NoError(t, err)

@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -63,10 +64,10 @@ func executionNodeAdminProxyMap() *executionNodeAdminProxyRepo {
 
 func TestGetExecutionNodeAdminStatusReportsRuntimeAndAccountPool(t *testing.T) {
 	repo := &executionNodeSettingRepo{values: map[string]string{
-		SettingKeyExecutionNodeBalancingEnabled:       "true",
-		SettingKeyExecutionNodeWeights:                `{"api":3,"api2":1}`,
-		SettingKeyExecutionNodeProxyIDs:               `{"api":84,"api2":83}`,
-		executionNodeEmergencyEgressSettingKey("api"): "false",
+		SettingKeyExecutionNodeBalancingEnabled: "true",
+		SettingKeyExecutionNodeWeights:          `{"api":3,"api2":1}`,
+		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
+		"execution_node_emergency_egress:api":   "invalid-retired-setting",
 	}}
 	svc := NewSettingService(repo, executionNodeAdminTestConfig())
 	svc.SetProxyRepository(executionNodeAdminProxyMap())
@@ -81,9 +82,12 @@ func TestGetExecutionNodeAdminStatusReportsRuntimeAndAccountPool(t *testing.T) {
 	require.True(t, status.DatabaseReachable)
 	require.True(t, status.HeartbeatStoreReachable)
 	require.True(t, status.BalancingEnabled)
-	require.False(t, status.Runtime.EmergencyLocalEgress)
 	require.True(t, status.CanEnable)
 	require.Len(t, status.Nodes, 2)
+	raw, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"failover"`)
+	require.NotContains(t, string(raw), `"emergency_local_egress"`)
 	require.Equal(t, "api", status.Nodes[0].NodeID)
 	require.Equal(t, int64(5), status.Nodes[0].AccountStats.Total)
 	require.True(t, status.Nodes[0].ProxyValid)

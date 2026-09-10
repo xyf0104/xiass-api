@@ -35,7 +35,7 @@ type ExecutionNodeHeartbeatStore interface {
 
 // ExecutionNodeHeartbeatService publishes one short-lived heartbeat per XIASS
 // application instance. A missing heartbeat is the only condition that permits
-// emergency local-egress takeover; ordinary upstream or proxy errors continue
+// owner availability filtering; ordinary upstream or proxy errors continue
 // through the existing request-level account failover path.
 type ExecutionNodeHeartbeatService struct {
 	store    ExecutionNodeHeartbeatStore

@@ -63,35 +63,29 @@ type ExecutionNodeRuntimeConfig struct {
 }
 
 type ExecutionNodeJoinConfig struct {
-	SourceURL             string `json:"source_url"`
-	TargetURL             string `json:"target_url"`
-	SourceNodeID          string `json:"source_node_id"`
-	TargetNodeID          string `json:"target_node_id"`
-	TunnelProof           string `json:"tunnel_proof"`
-	TargetProxyID         int64  `json:"target_proxy_id"`
-	LegacyNodeID          string `json:"legacy_node_id"`
-	LegacyProxyID         int64  `json:"legacy_proxy_id"`
-	DatabaseHost          string `json:"database_host"`
-	DatabasePort          int    `json:"database_port"`
-	DatabaseUser          string `json:"database_user"`
-	DatabasePass          string `json:"database_pass"`
-	DatabaseName          string `json:"database_name"`
-	DatabaseSSLMode       string `json:"database_sslmode"`
-	RedisHost             string `json:"redis_host"`
-	RedisPort             int    `json:"redis_port"`
-	RedisUsername         string `json:"redis_username"`
-	RedisPassword         string `json:"redis_password"`
-	RedisDB               int    `json:"redis_db"`
-	RedisEnableTLS        bool   `json:"redis_enable_tls"`
-	JWTSecret             string `json:"jwt_secret"`
-	JWTRefreshTokenStore  string `json:"jwt_refresh_token_store"`
-	TOTPKey               string `json:"totp_key"`
-	WitnessEnabled        bool   `json:"witness_enabled,omitempty"`
-	WitnessURL            string `json:"witness_url,omitempty"`
-	WitnessToken          string `json:"witness_token,omitempty"`
-	WitnessClusterID      string `json:"witness_cluster_id,omitempty"`
-	WitnessLeaseTTL       int    `json:"witness_lease_ttl_seconds,omitempty"`
-	WitnessRequestTimeout int    `json:"witness_request_timeout_seconds,omitempty"`
+	SourceURL            string `json:"source_url"`
+	TargetURL            string `json:"target_url"`
+	SourceNodeID         string `json:"source_node_id"`
+	TargetNodeID         string `json:"target_node_id"`
+	TunnelProof          string `json:"tunnel_proof"`
+	TargetProxyID        int64  `json:"target_proxy_id"`
+	LegacyNodeID         string `json:"legacy_node_id"`
+	LegacyProxyID        int64  `json:"legacy_proxy_id"`
+	DatabaseHost         string `json:"database_host"`
+	DatabasePort         int    `json:"database_port"`
+	DatabaseUser         string `json:"database_user"`
+	DatabasePass         string `json:"database_pass"`
+	DatabaseName         string `json:"database_name"`
+	DatabaseSSLMode      string `json:"database_sslmode"`
+	RedisHost            string `json:"redis_host"`
+	RedisPort            int    `json:"redis_port"`
+	RedisUsername        string `json:"redis_username"`
+	RedisPassword        string `json:"redis_password"`
+	RedisDB              int    `json:"redis_db"`
+	RedisEnableTLS       bool   `json:"redis_enable_tls"`
+	JWTSecret            string `json:"jwt_secret"`
+	JWTRefreshTokenStore string `json:"jwt_refresh_token_store"`
+	TOTPKey              string `json:"totp_key"`
 }
 
 // ExecutionNodePairingRepository adds the two operations that need database
@@ -173,36 +167,30 @@ type ExecutionNodePairingHandshakeResponse struct {
 }
 
 type executionNodeJoinBundle struct {
-	Version               int    `json:"version"`
-	SourceURL             string `json:"source_url,omitempty"`
-	TargetURL             string `json:"target_url,omitempty"`
-	SourceNodeID          string `json:"source_node_id"`
-	TargetNodeID          string `json:"target_node_id"`
-	TunnelProof           string `json:"tunnel_proof"`
-	TargetProxyID         int64  `json:"target_proxy_id,omitempty"`
-	LegacyNodeID          string `json:"legacy_node_id,omitempty"`
-	LegacyProxyID         int64  `json:"legacy_proxy_id,omitempty"`
-	DatabaseHost          string `json:"database_host"`
-	DatabasePort          int    `json:"database_port"`
-	DatabaseUser          string `json:"database_user"`
-	DatabasePass          string `json:"database_pass"`
-	DatabaseName          string `json:"database_name"`
-	DatabaseSSLMode       string `json:"database_sslmode"`
-	RedisHost             string `json:"redis_host"`
-	RedisPort             int    `json:"redis_port"`
-	RedisUsername         string `json:"redis_username"`
-	RedisPassword         string `json:"redis_password"`
-	RedisDB               int    `json:"redis_db"`
-	RedisEnableTLS        bool   `json:"redis_enable_tls"`
-	JWTSecret             string `json:"jwt_secret"`
-	JWTRefreshTokenStore  string `json:"jwt_refresh_token_store,omitempty"`
-	TOTPKey               string `json:"totp_key"`
-	WitnessEnabled        bool   `json:"witness_enabled,omitempty"`
-	WitnessURL            string `json:"witness_url,omitempty"`
-	WitnessToken          string `json:"witness_token,omitempty"`
-	WitnessClusterID      string `json:"witness_cluster_id,omitempty"`
-	WitnessLeaseTTL       int    `json:"witness_lease_ttl_seconds,omitempty"`
-	WitnessRequestTimeout int    `json:"witness_request_timeout_seconds,omitempty"`
+	Version              int    `json:"version"`
+	SourceURL            string `json:"source_url,omitempty"`
+	TargetURL            string `json:"target_url,omitempty"`
+	SourceNodeID         string `json:"source_node_id"`
+	TargetNodeID         string `json:"target_node_id"`
+	TunnelProof          string `json:"tunnel_proof"`
+	TargetProxyID        int64  `json:"target_proxy_id,omitempty"`
+	LegacyNodeID         string `json:"legacy_node_id,omitempty"`
+	LegacyProxyID        int64  `json:"legacy_proxy_id,omitempty"`
+	DatabaseHost         string `json:"database_host"`
+	DatabasePort         int    `json:"database_port"`
+	DatabaseUser         string `json:"database_user"`
+	DatabasePass         string `json:"database_pass"`
+	DatabaseName         string `json:"database_name"`
+	DatabaseSSLMode      string `json:"database_sslmode"`
+	RedisHost            string `json:"redis_host"`
+	RedisPort            int    `json:"redis_port"`
+	RedisUsername        string `json:"redis_username"`
+	RedisPassword        string `json:"redis_password"`
+	RedisDB              int    `json:"redis_db"`
+	RedisEnableTLS       bool   `json:"redis_enable_tls"`
+	JWTSecret            string `json:"jwt_secret"`
+	JWTRefreshTokenStore string `json:"jwt_refresh_token_store,omitempty"`
+	TOTPKey              string `json:"totp_key"`
 }
 
 const executionNodeJoinBundleVersion = 1
@@ -314,26 +302,7 @@ func decryptExecutionNodeJoinBundle(token, targetNodeID, encoded string) (execut
 		return executionNodeJoinBundle{}, errors.New("join bundle refresh-session storage is invalid")
 	}
 	bundle.JWTRefreshTokenStore = store
-	if !validExecutionNodeWitnessJoinBundle(bundle) {
-		return executionNodeJoinBundle{}, errors.New("join bundle witness configuration is invalid")
-	}
 	return bundle, nil
-}
-
-func validExecutionNodeWitnessJoinBundle(bundle executionNodeJoinBundle) bool {
-	if !bundle.WitnessEnabled {
-		return true
-	}
-	parsed, err := url.Parse(strings.TrimSpace(bundle.WitnessURL))
-	if err != nil || parsed == nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
-	}
-	host := strings.TrimSpace(parsed.Hostname())
-	loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	return (parsed.Scheme == "https" || (parsed.Scheme == "http" && loopback)) &&
-		len(strings.TrimSpace(bundle.WitnessToken)) >= 32 && validExecutionNodeClusterID(bundle.WitnessClusterID) &&
-		bundle.WitnessLeaseTTL >= 10 && bundle.WitnessLeaseTTL <= 60 &&
-		bundle.WitnessRequestTimeout >= 1 && bundle.WitnessRequestTimeout <= 10 && bundle.WitnessRequestTimeout < bundle.WitnessLeaseTTL
 }
 
 func executionNodeJoinRefreshStore(value string) (string, error) {
@@ -367,19 +336,6 @@ func (s *SettingService) createExecutionNodeJoinBundle(ctx context.Context, targ
 	bundleVersion := executionNodeJoinBundleVersion
 	if store == "postgres" {
 		bundleVersion = executionNodePersistentJoinBundleVersion
-	}
-	witnessCfg := s.cfg.Gateway.ExecutionNode.Witness
-	witnessClusterID := strings.TrimSpace(witnessCfg.ClusterID)
-	if witnessCfg.Enabled {
-		if s.executionNodeFailover == nil || !s.executionNodeFailover.Ready() {
-			return executionNodeJoinBundle{}, "", errors.New("source node failover witness is not ready")
-		}
-		if witnessClusterID == "" {
-			witnessClusterID, err = s.ensureExecutionNodeDatabaseIdentity(ctx)
-			if err != nil {
-				return executionNodeJoinBundle{}, "", err
-			}
-		}
 	}
 	tunnelProof := configuredExecutionNodeTunnelToken()
 	if tunnelProof == "" && s.cfg != nil {
@@ -415,11 +371,6 @@ func (s *SettingService) createExecutionNodeJoinBundle(ctx context.Context, targ
 		DatabaseName: s.cfg.Database.DBName, DatabaseSSLMode: s.cfg.Database.SSLMode,
 		RedisHost: s.cfg.Redis.Host, RedisPort: s.cfg.Redis.Port, RedisUsername: s.cfg.Redis.Username, RedisPassword: s.cfg.Redis.Password, RedisDB: s.cfg.Redis.DB, RedisEnableTLS: s.cfg.Redis.EnableTLS,
 		JWTSecret: s.cfg.JWT.Secret, JWTRefreshTokenStore: store, TOTPKey: s.cfg.Totp.EncryptionKey,
-		WitnessEnabled: witnessCfg.Enabled, WitnessURL: strings.TrimRight(strings.TrimSpace(witnessCfg.URL), "/"), WitnessToken: strings.TrimSpace(witnessCfg.Token),
-		WitnessClusterID: witnessClusterID, WitnessLeaseTTL: witnessCfg.LeaseTTLSeconds, WitnessRequestTimeout: witnessCfg.RequestTimeoutSeconds,
-	}
-	if !validExecutionNodeWitnessJoinBundle(bundle) {
-		return executionNodeJoinBundle{}, "", errors.New("source node failover witness configuration is invalid")
 	}
 	return bundle, tunnelProof, nil
 }
@@ -480,8 +431,7 @@ func (s *SettingService) executionNodePairingRoutingSettings(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	// Pairing establishes routing, not takeover permission. Never overwrite a
-	// concurrent or existing admin choice; the independent toggle owns it.
+	// Pairing changes only routing weights and fixed node proxy mappings.
 	return map[string]string{
 		SettingKeyExecutionNodeWeights:  string(weightsJSON),
 		SettingKeyExecutionNodeProxyIDs: string(proxyJSON),
@@ -797,8 +747,6 @@ func (s *SettingService) PairExecutionNodeWithTarget(ctx context.Context, peerUR
 			DatabaseHost: bundle.DatabaseHost, DatabasePort: bundle.DatabasePort, DatabaseUser: bundle.DatabaseUser, DatabasePass: bundle.DatabasePass, DatabaseName: bundle.DatabaseName, DatabaseSSLMode: bundle.DatabaseSSLMode,
 			RedisHost: bundle.RedisHost, RedisPort: bundle.RedisPort, RedisUsername: bundle.RedisUsername, RedisPassword: bundle.RedisPassword, RedisDB: bundle.RedisDB, RedisEnableTLS: bundle.RedisEnableTLS,
 			JWTSecret: bundle.JWTSecret, JWTRefreshTokenStore: bundle.JWTRefreshTokenStore, TOTPKey: bundle.TOTPKey,
-			WitnessEnabled: bundle.WitnessEnabled, WitnessURL: bundle.WitnessURL, WitnessToken: bundle.WitnessToken,
-			WitnessClusterID: bundle.WitnessClusterID, WitnessLeaseTTL: bundle.WitnessLeaseTTL, WitnessRequestTimeout: bundle.WitnessRequestTimeout,
 		}); err != nil {
 			return nil, infraerrors.BadRequest("EXECUTION_NODE_PAIRING_APPLY_FAILED", "the target host rejected the source-authoritative join: "+err.Error())
 		}

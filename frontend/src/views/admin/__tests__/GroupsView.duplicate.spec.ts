@@ -41,7 +41,6 @@ vi.mock('@/composables/useExecutionNodeAdminAccess', () => ({
       },
       sharedWriteAllowed: { __v_isRef: true, value: !readOnly },
       sharedReadOnly: { __v_isRef: true, value: readOnly },
-      emergencyTakeover: { __v_isRef: true, value: false },
       loadExecutionNodeAdminAccess: vi.fn().mockResolvedValue(null)
     }
   }

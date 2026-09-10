@@ -549,24 +549,12 @@ gateway:
     enabled: false
     id: ""
     default_proxy_id: 0
-    # 归属节点心跳过期后，存活节点仅在请求内临时改用本机出口；不修改账号归属或持久代理。
-    emergency_local_egress: true
     # Only singleton periodic workers are gated by this flag. Every instance
     # remains an active-active HTTP gateway and admin surface.
     # Exactly one shared-state instance should set this to true.
     control_plane: true
     legacy_unassigned_node_id: "api"
     legacy_unassigned_proxy_id: 0
-    # 独立仲裁只保存当前持有节点、租约和递增代次，不保存任何客户或账号数据。
-    # 两个节点全部升级并部署好 Witness 后再启用；远程地址必须使用 HTTPS。
-    witness:
-      enabled: false
-      url: ""
-      token: ""
-      # 留空时使用共享 PostgreSQL 的集群身份。
-      cluster_id: ""
-      lease_ttl_seconds: 15
-      request_timeout_seconds: 3
   # TLS fingerprint simulation / TLS 指纹伪装
   # Default profile "claude_cli_v2" simulates Node.js 20.x
   # 默认模板 "claude_cli_v2" 模拟 Node.js 20.x 指纹
@@ -893,21 +881,6 @@ redis:
   # 是否启用 TLS/SSL 连接
   enable_tls: false
 
-  # Optional master discovery; configure BOTH fields or leave both empty.
-  # Example: ["sentinel-1.example.net:26379", "sentinel-2.example.net:26379"]
-  sentinel_addrs: []
-  # Requires migrated jwt.refresh_token_store: postgres before activation.
-  # Example: "cache-primary"
-  sentinel_master_name: ""
-  # App-to-Sentinel credentials, independent of Redis username/password above.
-  # Leave both credentials empty when discovery is disabled.
-  sentinel_username: ""
-  sentinel_password: ""
-  # enable_tls applies to Sentinel AND Redis; every advertised hostname/IP must
-  # be reachable and match a trusted certificate. DNS-only certificates require
-  # Sentinel resolve-hostnames/announce-hostnames. Verification is never skipped.
-  # Discovery is not write fencing or zero-loss promotion. This configuration
-  # does not provision Sentinel or change any server-side promotion policy.
 
 # =============================================================================
 # Ops Monitoring (Optional)

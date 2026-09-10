@@ -65,12 +65,6 @@ type Account struct {
 	GroupIDs      []int64
 	Groups        []*Group
 
-	// executionProxy is a request-local egress override used only while another
-	// XIASS node temporarily takes over an account whose owner is offline. The
-	// durable ProxyID and Proxy remain unchanged so OAuth refresh CAS operations
-	// still compare the account's persisted identity.
-	executionProxy *Proxy
-
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
 	modelMappingCacheReady          bool
@@ -91,9 +85,6 @@ type Account struct {
 func (a *Account) requestProxy() *Proxy {
 	if a == nil {
 		return nil
-	}
-	if a.executionProxy != nil {
-		return a.executionProxy
 	}
 	if a.ProxyID == nil {
 		return nil

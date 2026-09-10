@@ -59,14 +59,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountRepository := repository.NewAccountRepository(client, db, schedulerCache)
 	executionNodeHeartbeatStore := repository.NewExecutionNodeHeartbeatStore(redisClient)
 	executionNodeHeartbeatService := service.ProvideExecutionNodeHeartbeatService(executionNodeHeartbeatStore, configConfig)
-	executionNodeWitnessClient := repository.NewExecutionNodeWitnessClient(configConfig)
-	executionNodeFailoverService := service.ProvideExecutionNodeFailoverService(settingRepository, executionNodeHeartbeatService, executionNodeWitnessClient, configConfig)
 	updateCache := repository.NewUpdateCache(redisClient)
 	gitHubReleaseClient := repository.ProvideGitHubReleaseClient(configConfig)
 	serviceBuildInfo := provideServiceBuildInfo(buildInfo)
 	updateService := service.ProvideUpdateService(updateCache, gitHubReleaseClient, serviceBuildInfo)
 	dockerUpdateService := service.ProvideDockerUpdateService(updateService)
-	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, accountRepository, executionNodeHeartbeatService, executionNodeFailoverService, dockerUpdateService, configConfig)
+	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, accountRepository, executionNodeHeartbeatService, dockerUpdateService, configConfig)
 	emailCache := repository.NewEmailCache(redisClient)
 	emailService := service.NewEmailService(settingRepository, emailCache)
 	turnstileVerifier := repository.NewTurnstileVerifier()
@@ -363,7 +361,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorQuotaFetcher := service.NewChannelMonitorQuotaFetcher(accountUsageService, cnProviderQuotaService, cnProviderBalanceService, accountRepository, configConfig)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService, channelMonitorQuotaFetcher, configConfig)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, executionNodeHeartbeatService, executionNodeFailoverService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, inactiveUserCleanupService, idempotencyCleanupService, batchImageCleanupService, pixlabSMSService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, openAIQuotaService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, auditLogService, promptService, adminHandlers)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, executionNodeHeartbeatService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, inactiveUserCleanupService, idempotencyCleanupService, batchImageCleanupService, pixlabSMSService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, openAIQuotaService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, auditLogService, promptService, adminHandlers)
 	application := &Application{
 		Server:      httpServer,
 		PromptAudit: promptService,
@@ -406,7 +404,6 @@ func provideCleanup(
 	authCacheInvalidationWorker *service.AuthCacheInvalidationWorker,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	executionNodeHeartbeat *service.ExecutionNodeHeartbeatService,
-	executionNodeFailover *service.ExecutionNodeFailoverService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
@@ -459,12 +456,6 @@ func provideCleanup(
 				return nil
 			}},
 			{"OpenAIQuotaAutoReset", func() error { openaiQuota.Stop(); return nil }},
-			{"ExecutionNodeFailoverService", func() error {
-				if executionNodeFailover != nil {
-					executionNodeFailover.Stop()
-				}
-				return nil
-			}},
 			{"ExecutionNodeHeartbeatService", func() error {
 				if executionNodeHeartbeat != nil {
 					executionNodeHeartbeat.Stop()

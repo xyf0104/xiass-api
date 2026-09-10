@@ -18,7 +18,7 @@ func TestRuntimeExportContextRoundTripsEffectiveConfig(t *testing.T) {
 	cfg := &config.Config{
 		RunMode: "standard", Timezone: "Asia/Shanghai",
 		Database:  config.DatabaseConfig{Host: "actual-state.example.invalid", Port: 15432, User: "current-user", Password: "current$secret", DBName: "shared", SSLMode: "verify-full", MaxOpenConns: 17},
-		Redis:     config.RedisConfig{Host: "cache.example.invalid", Port: 16379, DB: 4, Username: "xiass-app-test", Password: "new-cache-secret", SentinelMasterName: "cache", SentinelAddrs: []string{"one.invalid:26379", "two.invalid:26379"}},
+		Redis:     config.RedisConfig{Host: "cache.example.invalid", Port: 16379, DB: 4, Username: "xiass-app-test", Password: "new-cache-secret"},
 		JWT:       config.JWTConfig{Secret: "generated-signing-secret", RefreshTokenStore: "postgres", ExpireHour: 168},
 		Totp:      config.TotpConfig{EncryptionKey: strings.Repeat("a", 64), EncryptionKeyConfigured: true},
 		Dashboard: config.DashboardCacheConfig{Enabled: true, KeyPrefix: "custom:"},

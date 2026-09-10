@@ -35,11 +35,10 @@ func executionNodeAdminAccessService(nodeID string, primaryHealthy bool, takeove
 	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
 		Enabled:                true,
 		ID:                     nodeID,
-		EmergencyLocalEgress:   true,
 		LegacyUnassignedNodeID: "api",
 	}
 	repo := newExecutionNodePairingRepo("shared-db")
-	repo.values[executionNodeEmergencyEgressSettingKey(nodeID)] = takeover
+	repo.values["execution_node_emergency_egress:"+nodeID] = takeover
 	svc := NewSettingService(repo, cfg)
 	svc.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{values: map[string]bool{"api": primaryHealthy}})
 	return svc
@@ -105,7 +104,7 @@ func TestExecutionNodeAdminWriteAccessSecondaryReadOnlyWhilePrimaryHealthy(t *te
 	require.Equal(t, "secondary_read_only", mode)
 }
 
-func TestExecutionNodeAdminWriteAccessSecondaryRequiresOfflineAndTakeover(t *testing.T) {
+func TestExecutionNodeAdminWriteAccessSecondaryRemainsReadOnlyWhenPrimaryOffline(t *testing.T) {
 	disabled := executionNodeAdminAccessService("api2", false, "false")
 	allowed, mode := disabled.ExecutionNodeAdminWriteAccess(context.Background())
 	require.False(t, allowed)
@@ -113,8 +112,8 @@ func TestExecutionNodeAdminWriteAccessSecondaryRequiresOfflineAndTakeover(t *tes
 
 	enabled := executionNodeAdminAccessService("api2", false, "true")
 	allowed, mode = enabled.ExecutionNodeAdminWriteAccess(context.Background())
-	require.True(t, allowed)
-	require.Equal(t, "emergency_takeover", mode)
+	require.False(t, allowed)
+	require.Equal(t, "secondary_read_only", mode)
 }
 
 func TestExecutionNodeAdminWriteAccessFailsClosedWhenHeartbeatUnknown(t *testing.T) {
@@ -142,7 +141,7 @@ func TestExecutionNodeAdminWriteAccessDoesNotTreatPolicyReadErrorAsPermission(t 
 	svc := executionNodeAdminAccessService("api2", false, "false")
 	svc.settingRepo = executionNodeAdminAccessSettingsError{SettingRepository: svc.settingRepo, err: errors.New("database read unavailable")}
 	allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
-	require.False(t, allowed, "the local deployment default true cannot override an unreadable shared choice")
+	require.False(t, allowed, "unreadable pairing state cannot grant administrative access")
 	require.Equal(t, "pairing_unavailable", mode)
 }
 
@@ -171,8 +170,6 @@ func TestExecutionNodeAdminPairedAccessIndependentOfRuntimeAuthority(t *testing.
 			{err: errors.New("heartbeat unavailable")},
 		} {
 			svc, _ := verifiedPairedAdminService(t, nodeID)
-			svc.cfg.Gateway.ExecutionNode.Witness.Enabled = true // No witness service or local authority.
-			svc.cfg.Gateway.ExecutionNode.EmergencyLocalEgress = false
 			svc.SetExecutionNodeHealthReader(health)
 			allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
 			require.True(t, allowed)
@@ -187,7 +184,6 @@ func TestExecutionNodeAdminPairedMismatchCannotFallBackToLegacyPermission(t *tes
 		for _, field := range []string{"protocol_version", "database_fingerprint", "redis_fingerprint", "auth_fingerprint", "state_fingerprint", "node_id", "malformed", "pending"} {
 			t.Run(nodeID+"/"+field, func(t *testing.T) {
 				svc, repo := verifiedPairedAdminService(t, nodeID)
-				svc.cfg.Gateway.ExecutionNode.EmergencyLocalEgress = true
 				svc.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{values: map[string]bool{"api": false}})
 				key := executionNodePairingPeerKey(nodeID)
 				var peer map[string]any
@@ -246,10 +242,10 @@ func TestExecutionNodeAdminSingleNodeRetainsAccess(t *testing.T) {
 	require.Equal(t, "single_node", mode)
 }
 
-func TestExecutionNodeAdminWriteAccessRetainsExplicitLegacyConfigFallback(t *testing.T) {
+func TestExecutionNodeAdminWriteAccessMissingSettingsCannotGrantSecondaryAccess(t *testing.T) {
 	svc := executionNodeAdminAccessService("api2", false, "true")
 	svc.settingRepo = executionNodeAdminAccessSettingsError{SettingRepository: svc.settingRepo, err: ErrSettingNotFound}
 	allowed, mode := svc.ExecutionNodeAdminWriteAccess(context.Background())
-	require.True(t, allowed, "only a missing setting may retain the explicit deployment choice")
-	require.Equal(t, "emergency_takeover", mode)
+	require.False(t, allowed, "missing pairing state cannot grant secondary administrative access")
+	require.Equal(t, "secondary_read_only", mode)
 }

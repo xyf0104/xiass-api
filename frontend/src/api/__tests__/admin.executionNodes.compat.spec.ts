@@ -6,7 +6,7 @@ vi.mock('@/api/client', () => ({
   apiClient: { get }
 }))
 
-import { getStatus } from '@/api/admin/executionNodes'
+import { executionNodesAPI, getStatus } from '@/api/admin/executionNodes'
 
 const legacyStatus = (nodeID: string, primaryNodeID: string, enabled = true) => ({
   balancing_enabled: enabled,
@@ -17,7 +17,6 @@ const legacyStatus = (nodeID: string, primaryNodeID: string, enabled = true) => 
     enabled,
     node_id: nodeID,
     default_proxy_id: 84,
-    emergency_local_egress: false,
     control_plane: nodeID === primaryNodeID,
     legacy_unassigned_node_id: primaryNodeID,
     legacy_unassigned_proxy_id: 84
@@ -54,13 +53,23 @@ describe('execution nodes API rolling-update compatibility', () => {
       data: {
         ...legacyStatus('api2', 'api'),
         admin_write_allowed: true,
-        admin_write_mode: 'emergency_takeover'
+        admin_write_mode: 'paired_full_access'
       }
     })
 
     await expect(getStatus()).resolves.toMatchObject({
       admin_write_allowed: true,
-      admin_write_mode: 'emergency_takeover'
+      admin_write_mode: 'paired_full_access'
     })
+  })
+
+  it('does not synthesize disaster recovery status or expose its mutation endpoint', async () => {
+    get.mockResolvedValue({ data: legacyStatus('api', 'api') })
+
+    const status = await getStatus()
+    expect(status).not.toHaveProperty('failover')
+    expect(status.runtime).not.toHaveProperty('emergency_local_egress')
+    expect(executionNodesAPI).not.toHaveProperty('updateOfflineTakeover')
+    expect(get).toHaveBeenCalledWith('/admin/settings/execution-nodes/status')
   })
 })

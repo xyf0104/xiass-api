@@ -14,16 +14,23 @@ func TestLoadExecutionNodeDefaultsDisabled(t *testing.T) {
 	require.False(t, cfg.Gateway.ExecutionNode.Enabled)
 	require.Empty(t, cfg.Gateway.ExecutionNode.ID)
 	require.Zero(t, cfg.Gateway.ExecutionNode.DefaultProxyID)
-	require.True(t, cfg.Gateway.ExecutionNode.EmergencyLocalEgress)
 	require.True(t, cfg.Gateway.ExecutionNode.ControlPlane)
 	require.Equal(t, "api", cfg.Gateway.ExecutionNode.LegacyUnassignedNodeID)
 	require.Zero(t, cfg.Gateway.ExecutionNode.LegacyUnassignedProxyID)
-	require.False(t, cfg.Gateway.ExecutionNode.Witness.Enabled)
-	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.URL)
-	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.Token)
-	require.Empty(t, cfg.Gateway.ExecutionNode.Witness.ClusterID)
-	require.Equal(t, 15, cfg.Gateway.ExecutionNode.Witness.LeaseTTLSeconds)
-	require.Equal(t, 3, cfg.Gateway.ExecutionNode.Witness.RequestTimeoutSeconds)
+}
+
+func TestRetiredDisasterRecoveryEnvironmentDoesNotChangeSharedState(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("REDIS_HOST", "shared-cache.example.invalid")
+	t.Setenv("REDIS_PORT", "16380")
+	t.Setenv("REDIS_SENTINEL_ADDRS", "unavailable.example.invalid:26379")
+	t.Setenv("REDIS_SENTINEL_MASTER_NAME", "retired-master")
+	t.Setenv("GATEWAY_EXECUTION_NODE_WITNESS_ENABLED", "true")
+	t.Setenv("GATEWAY_EXECUTION_NODE_WITNESS_URL", "https://retired.example.invalid")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "shared-cache.example.invalid:16380", cfg.Redis.Address())
+	require.False(t, cfg.Gateway.ExecutionNode.Enabled)
 }
 
 func TestValidateExecutionNodeConfiguration(t *testing.T) {
@@ -96,46 +103,4 @@ func TestValidateExecutionNodeConfiguration(t *testing.T) {
 		})
 	}
 
-	t.Run("valid witness", func(t *testing.T) {
-		cfg := buildValid(t)
-		cfg.Gateway.ExecutionNode.Witness = GatewayExecutionNodeWitnessConfig{
-			Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32),
-			ClusterID: "cluster-1", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3,
-		}
-		require.NoError(t, cfg.Validate())
-	})
-
-	for _, test := range []struct {
-		name    string
-		witness GatewayExecutionNodeWitnessConfig
-		wantErr string
-	}{
-		{
-			name:    "non-loopback http witness",
-			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "http://witness.example.com", Token: strings.Repeat("a", 32), LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
-			wantErr: "must use HTTPS",
-		},
-		{
-			name:    "short witness token",
-			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: "short", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
-			wantErr: "at least 32",
-		},
-		{
-			name:    "unsafe witness cluster id",
-			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32), ClusterID: "cluster/1", LeaseTTLSeconds: 15, RequestTimeoutSeconds: 3},
-			wantErr: "cluster_id",
-		},
-		{
-			name:    "unsafe witness ttl",
-			witness: GatewayExecutionNodeWitnessConfig{Enabled: true, URL: "https://witness.example.com", Token: strings.Repeat("a", 32), LeaseTTLSeconds: 5, RequestTimeoutSeconds: 3},
-			wantErr: "lease_ttl_seconds",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := buildValid(t)
-			cfg.Gateway.ExecutionNode.Witness = test.witness
-			err := cfg.Validate()
-			require.ErrorContains(t, err, test.wantErr)
-		})
-	}
 }

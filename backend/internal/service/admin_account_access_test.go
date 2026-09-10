@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *testing.T) {
+func TestUnpairedRemoteAccountManagementRemainsReadOnly(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		health  map[string]bool
@@ -21,9 +21,9 @@ func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *test
 		want    string
 	}{
 		{"healthy", map[string]bool{"api": true}, "true", nil, "ACCOUNT_REMOTE_NODE_READ_ONLY"},
-		{"unknown", map[string]bool{}, "true", nil, "ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE"},
-		{"disabled", map[string]bool{"api": false}, "false", nil, "ACCOUNT_REMOTE_NODE_TAKEOVER_DISABLED"},
-		{"explicitly enabled", map[string]bool{"api": false}, "true", nil, ""},
+		{"unknown", map[string]bool{}, "true", nil, "ACCOUNT_REMOTE_NODE_READ_ONLY"},
+		{"disabled", map[string]bool{"api": false}, "false", nil, "ACCOUNT_REMOTE_NODE_READ_ONLY"},
+		{"legacy permission ignored", map[string]bool{"api": false}, "true", nil, "ACCOUNT_REMOTE_NODE_READ_ONLY"},
 		{"policy unavailable", map[string]bool{"api": false}, "true", errors.New("database unavailable"), "EXECUTION_NODE_PAIRING_UNAVAILABLE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -31,7 +31,7 @@ func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *test
 			settings.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{values: tc.health})
 			// An old routing cache may stay available during database failure.
 			settings.executionNodeRoutingCache.Store(&cachedExecutionNodeRoutingSettings{
-				settings:  ExecutionNodeRoutingSettings{Available: true, EmergencyLocalEgress: true},
+				settings:  ExecutionNodeRoutingSettings{Available: true},
 				expiresAt: time.Now().Add(time.Minute).UnixNano(),
 			})
 			if tc.readErr != nil {
@@ -52,7 +52,6 @@ func TestRemoteAccountManagementRequiresKnownOfflineAndCurrentPermission(t *test
 func TestPairedAccountManagementPreservesOwnershipAndRejectsMismatch(t *testing.T) {
 	for _, nodeID := range []string{"api", "api2"} {
 		settings, repo := verifiedPairedAdminService(t, nodeID)
-		settings.cfg.Gateway.ExecutionNode.Witness.Enabled = true
 		settings.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{err: errors.New("offline")})
 		svc := &adminServiceImpl{settingService: settings}
 		for _, ownerID := range []string{"api", "api2"} {

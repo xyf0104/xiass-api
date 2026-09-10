@@ -419,9 +419,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	var proxyURL string
-	if account.executionProxy != nil {
-		proxyURL = account.executionProxy.URL()
-	} else if account.ProxyID != nil && s.proxyRepo != nil {
+	if account.ProxyID != nil && s.proxyRepo != nil {
 		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
 		if err == nil && proxy != nil {
 			proxyURL = proxy.URL()

@@ -6,7 +6,7 @@
           <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.title') }}</h1>
           <p class="mt-1 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('admin.executionNodes.description') }}</p>
         </div>
-        <button type="button" class="btn btn-secondary" :disabled="loading || saving || pairingSaving || runtimeSaving || takeoverSaving" :title="t('admin.executionNodes.refresh')" data-testid="execution-node-refresh" @click="refreshAll()">
+        <button type="button" class="btn btn-secondary" :disabled="loading || saving || pairingSaving || runtimeSaving" :title="t('admin.executionNodes.refresh')" data-testid="execution-node-refresh" @click="refreshAll()">
           <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           <span>{{ t('admin.executionNodes.refresh') }}</span>
         </button>
@@ -31,11 +31,10 @@
             <StatusTile :label="t('admin.executionNodes.localNode')" :value="status.runtime.enabled ? t('admin.executionNodes.configured') : t('admin.executionNodes.notConfigured')" :tone="status.runtime.enabled ? 'ok' : 'bad'" />
             <StatusTile :label="t('admin.executionNodes.dataConnection')" :value="status.database_reachable ? t('admin.executionNodes.healthy') : t('admin.executionNodes.unavailable')" :tone="status.database_reachable ? 'ok' : 'bad'" />
             <StatusTile :label="t('admin.executionNodes.machineConnection')" :value="status.runtime.enabled ? (status.heartbeat_store_reachable ? t('admin.executionNodes.healthy') : t('admin.executionNodes.unavailable')) : t('admin.executionNodes.notRequired')" :tone="status.runtime.enabled ? (status.heartbeat_store_reachable ? 'ok' : 'warn') : 'warn'" />
-            <StatusTile :label="t('admin.executionNodes.failoverProtection')" :value="status.failover?.enabled ? (status.failover.ready ? t('admin.executionNodes.failoverReady') : t('admin.executionNodes.failoverNotReady')) : t('admin.executionNodes.notConfigured')" :tone="status.failover?.ready ? 'ok' : status.failover?.enabled ? 'bad' : 'warn'" />
           </div>
-          <div v-if="status.runtime.enabled" class="mx-5 mb-5 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm leading-6 sm:mx-6" :class="status.admin_write_mode === 'emergency_takeover' ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300' : status.admin_write_allowed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300' : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-300'" data-testid="execution-node-admin-access">
+          <div v-if="status.runtime.enabled" class="mx-5 mb-5 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm leading-6 sm:mx-6" :class="status.admin_write_allowed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300' : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-300'" data-testid="execution-node-admin-access">
             <Icon :name="status.admin_write_allowed ? 'check' : 'lock'" size="sm" class="mt-1 shrink-0" />
-            <span>{{ status.admin_write_mode === 'paired_full_access' ? t('admin.executionNodes.adminWritePaired') : status.admin_write_mode === 'pairing_unavailable' ? t('admin.executionNodes.adminWritePairingUnavailable') : status.admin_write_mode === 'emergency_takeover' ? t('admin.executionNodes.adminWriteTakeover') : status.admin_write_allowed ? t('admin.executionNodes.adminWritePrimary') : t('admin.executionNodes.adminWriteSecondary') }}</span>
+            <span>{{ status.admin_write_mode === 'paired_full_access' ? t('admin.executionNodes.adminWritePaired') : status.admin_write_mode === 'pairing_unavailable' ? t('admin.executionNodes.adminWritePairingUnavailable') : status.admin_write_allowed ? t('admin.executionNodes.adminWritePrimary') : t('admin.executionNodes.adminWriteSecondary') }}</span>
           </div>
         </section>
 
@@ -195,18 +194,6 @@
               <span>{{ saving ? t('admin.executionNodes.saving') : t('admin.executionNodes.save') }}</span>
             </button>
           </div>
-          <div v-if="status.runtime.enabled" class="flex flex-wrap items-center justify-between gap-4 border-t border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
-            <div class="min-w-0">
-              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.offlineTakeover') }}</h3>
-              <p class="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.executionNodes.offlineTakeoverHint') }}</p>
-            </div>
-            <div class="flex items-center gap-3">
-              <span class="text-sm font-medium" :class="status.runtime.emergency_local_egress ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
-                {{ status.runtime.emergency_local_egress ? t('admin.executionNodes.on') : t('admin.executionNodes.off') }}
-              </span>
-              <Toggle :model-value="status.runtime.emergency_local_egress" :disabled="takeoverSaving" :aria-label="t('admin.executionNodes.offlineTakeover')" :title="t('admin.executionNodes.offlineTakeover')" data-testid="execution-node-takeover-toggle" @update:model-value="updateOfflineTakeover" />
-            </div>
-          </div>
         </section>
 
         <section class="rounded-lg border border-sky-200 bg-sky-50 p-5 dark:border-sky-900/60 dark:bg-sky-950/20">
@@ -293,7 +280,6 @@ const loading = ref(false)
 const saving = ref(false)
 const pairingSaving = ref(false)
 const runtimeSaving = ref(false)
-const takeoverSaving = ref(false)
 const showEnableConfirm = ref(false)
 const showUnpairConfirm = ref(false)
 const draftEnabled = ref(false)
@@ -391,21 +377,6 @@ async function initializeRuntime(): Promise<void> {
   }
 }
 
-async function updateOfflineTakeover(enabled: boolean): Promise<void> {
-  takeoverSaving.value = true
-  invalidateStatusRefresh()
-  try {
-    await adminAPI.executionNodes.updateOfflineTakeover(enabled)
-    appStore.showSuccess(enabled ? t('admin.executionNodes.offlineTakeoverEnabled') : t('admin.executionNodes.offlineTakeoverDisabled'))
-    await refreshAfterMutation()
-  } catch (error) {
-    appStore.showError(extractI18nErrorMessage(error, t, 'admin.executionNodes.issues', t('admin.executionNodes.offlineTakeoverFailed')))
-  } finally {
-    takeoverSaving.value = false
-    scheduleStatusPoll()
-  }
-}
-
 function statusPollDelay(): number {
   const current = status.value
   const pairing = pairingStatus.value
@@ -436,7 +407,7 @@ function clearStatusPoll(): void {
 function scheduleStatusPoll(): void {
   clearStatusPoll()
   if (disposed || document.visibilityState !== 'visible' || refreshInFlight ||
-    saving.value || pairingSaving.value || runtimeSaving.value || takeoverSaving.value) return
+    saving.value || pairingSaving.value || runtimeSaving.value) return
   statusPollTimer = window.setTimeout(() => {
     statusPollTimer = null
     void refreshAll(true)
@@ -495,14 +466,14 @@ function handleVisibilityChange(): void {
   clearStatusPoll()
   if (document.visibilityState !== 'visible') {
     invalidateStatusRefresh()
-  } else if (!saving.value && !pairingSaving.value && !runtimeSaving.value && !takeoverSaving.value) {
+  } else if (!saving.value && !pairingSaving.value && !runtimeSaving.value) {
     void resumeStatusRefresh()
   }
 }
 
 async function resumeStatusRefresh(): Promise<void> {
   await refreshInFlight
-  if (saving.value || pairingSaving.value || runtimeSaving.value || takeoverSaving.value) return
+  if (saving.value || pairingSaving.value || runtimeSaving.value) return
   // Several visibility events during one read still coalesce into one refresh.
   await refreshAll(true)
 }

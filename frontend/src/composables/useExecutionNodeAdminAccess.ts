@@ -26,14 +26,12 @@ async function loadExecutionNodeAdminAccess(force = false): Promise<ExecutionNod
 export function useExecutionNodeAdminAccess() {
   const sharedWriteAllowed = computed(() => status.value?.admin_write_allowed !== false)
   const sharedReadOnly = computed(() => status.value?.runtime.enabled === true && !sharedWriteAllowed.value)
-  const emergencyTakeover = computed(() => status.value?.admin_write_mode === 'emergency_takeover')
 
   return {
     executionNodeStatus: status,
     executionNodeAccessLoading: loading,
     sharedWriteAllowed,
     sharedReadOnly,
-    emergencyTakeover,
     loadExecutionNodeAdminAccess
   }
 }

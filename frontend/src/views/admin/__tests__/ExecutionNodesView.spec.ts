@@ -4,11 +4,10 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import ExecutionNodesView from '../ExecutionNodesView.vue'
 import type { ExecutionNodeAdminStatus, ExecutionNodePairingStatus } from '@/api/admin/executionNodes'
 
-const { getStatus, getPairingStatus, initializeRuntime, updateOfflineTakeover, generatePairingInvite, pairExecutionNode, unpairExecutionNode, getAllWithCount, updateSettings, showError, showSuccess } = vi.hoisted(() => ({
+const { getStatus, getPairingStatus, initializeRuntime, generatePairingInvite, pairExecutionNode, unpairExecutionNode, getAllWithCount, updateSettings, showError, showSuccess } = vi.hoisted(() => ({
   getStatus: vi.fn(),
   getPairingStatus: vi.fn(),
   initializeRuntime: vi.fn(),
-  updateOfflineTakeover: vi.fn(),
   generatePairingInvite: vi.fn(),
   pairExecutionNode: vi.fn(),
   unpairExecutionNode: vi.fn(),
@@ -20,7 +19,7 @@ const { getStatus, getPairingStatus, initializeRuntime, updateOfflineTakeover, g
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
-    executionNodes: { getStatus, getPairingStatus, initializeRuntime, updateOfflineTakeover, generatePairingInvite, pairExecutionNode, unpairExecutionNode },
+    executionNodes: { getStatus, getPairingStatus, initializeRuntime, generatePairingInvite, pairExecutionNode, unpairExecutionNode },
     proxies: { getAllWithCount },
     settings: { updateSettings }
   }
@@ -71,7 +70,6 @@ function statusFixture(overrides: Partial<ExecutionNodeAdminStatus> = {}): Execu
       enabled: true,
       node_id: 'api',
       default_proxy_id: 84,
-      emergency_local_egress: true,
       control_plane: true,
       legacy_unassigned_node_id: 'api',
       legacy_unassigned_proxy_id: 84
@@ -166,7 +164,6 @@ describe('ExecutionNodesView', () => {
     })
     generatePairingInvite.mockResolvedValue({ token: 'a'.repeat(64), expires_at: '2026-09-04T12:10:00Z' })
     initializeRuntime.mockResolvedValue({ node_id: 'api', tunnel_token: 'b'.repeat(64), default_proxy_id: 84, legacy_unassigned_node_id: 'api', legacy_unassigned_proxy_id: 84 })
-    updateOfflineTakeover.mockResolvedValue(undefined)
     pairExecutionNode.mockResolvedValue({
       protocol_version: 1,
       local_node_id: 'api',
@@ -314,18 +311,18 @@ describe('ExecutionNodesView', () => {
     expect(wrapper.text()).toContain('admin.executionNodes.pairingReady')
   })
 
-  it('auto-detects local pairing details and changes offline takeover without a restart', async () => {
+  it('auto-detects local pairing details without offering disaster recovery controls', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.find('[data-testid="execution-node-target-id"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="execution-node-target-url"]').exists()).toBe(false)
 
-    await wrapper.get('[data-testid="execution-node-takeover-toggle"]').trigger('click')
-    await flushPromises()
-
-    expect(updateOfflineTakeover).toHaveBeenCalledWith(false)
-    expect(showSuccess).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="execution-node-takeover-toggle"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.executionNodes.failoverProtection')
+    expect(wrapper.text()).not.toContain('admin.executionNodes.offlineTakeover')
+    expect(wrapper.find('[data-testid="execution-node-balancing-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="execution-node-pairing"]').exists()).toBe(true)
   })
 
   it('hides internal identity and egress while still permitting weight changes', async () => {
@@ -352,7 +349,7 @@ describe('ExecutionNodesView', () => {
     getStatus.mockResolvedValue(statusFixture({
       admin_write_allowed: true,
       admin_write_mode: 'paired_full_access',
-      runtime: { ...statusFixture().runtime, node_id: 'api2', emergency_local_egress: false },
+      runtime: { ...statusFixture().runtime, node_id: 'api2' },
       nodes: statusFixture().nodes.map((node) => ({ ...node, online }))
     }))
     const wrapper = mountView()
@@ -364,11 +361,10 @@ describe('ExecutionNodesView', () => {
     expect(notice).not.toContain('admin.executionNodes.adminWriteSecondary')
   })
 
-  it('shows pairing verification failure instead of legacy secondary or takeover permission', async () => {
+  it('shows pairing verification failure instead of legacy secondary permission', async () => {
     getStatus.mockResolvedValue(statusFixture({
       admin_write_allowed: false,
-      admin_write_mode: 'pairing_unavailable',
-      runtime: { ...statusFixture().runtime, emergency_local_egress: true }
+      admin_write_mode: 'pairing_unavailable'
     }))
     const wrapper = mountView()
     await flushPromises()
@@ -664,17 +660,17 @@ describe('ExecutionNodesView', () => {
     expect(vi.getTimerCount()).toBe(1)
   })
 
-  it('pauses polling during an offline takeover update and resumes afterward', async () => {
-    const pending = deferred<void>()
-    updateOfflineTakeover.mockReturnValueOnce(pending.promise)
+  it('pauses polling during a pairing invite update and resumes afterward', async () => {
+    const pending = deferred<{ token: string; expires_at: string }>()
+    generatePairingInvite.mockReturnValueOnce(pending.promise)
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.get('[data-testid="execution-node-takeover-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="execution-node-generate-invite"]').trigger('click')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(getStatus).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-testid="execution-node-refresh"]').attributes('disabled')).toBeDefined()
 
-    pending.resolve()
+    pending.resolve({ token: 'a'.repeat(64), expires_at: '2026-09-10T12:10:00Z' })
     await flushPromises()
     expect(getStatus).toHaveBeenCalledTimes(2)
     expect(getPairingStatus).toHaveBeenCalledTimes(2)

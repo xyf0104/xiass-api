@@ -235,25 +235,6 @@ if [ -e "$backup_credentials" ]; then
     cp "$backup_credentials" "$WORK_DIR/payload/redis-backup.json"
 fi
 
-if [ "$(jq '.config.redis.sentinel_addrs | length' "$runtime_context")" -gt 0 ]; then
-    sentinel_user=$(jq -r '.config.redis.sentinel_username // ""' "$runtime_context")
-    read_secret "$runtime_context" '.config.redis.sentinel_password'
-    sentinel_password="$SECRET_VALUE"
-    sentinel_master=$(jq -er '.config.redis.sentinel_master_name | select(length > 0)' "$runtime_context")
-    discovered=false
-    while IFS= read -r address; do
-        host="${address%:*}"; port="${address##*:}"
-        host="${host#[}"; host="${host%]}"
-        if redis_cli "$host" "$port" "$sentinel_user" "$sentinel_password" --json SENTINEL get-master-addr-by-name "$sentinel_master" > "$WORK_DIR/sentinel.json" 2> "$WORK_DIR/sentinel-error.log" && \
-            jq -e 'type == "array" and length == 2 and all(.[]; type == "string")' "$WORK_DIR/sentinel.json" >/dev/null; then
-            redis_host=$(jq -r '.[0]' "$WORK_DIR/sentinel.json")
-            redis_port=$(jq -r '.[1]' "$WORK_DIR/sentinel.json")
-            discovered=true
-            break
-        fi
-    done < <(jq -r '.config.redis.sentinel_addrs[]' "$runtime_context")
-    [ "$discovered" = "true" ] || die "cannot discover the application's current Redis primary"
-fi
 [[ "$redis_port" =~ ^[0-9]+$ ]] && [ "$redis_port" -gt 0 ] && [ "$redis_port" -le 65535 ] && [ -n "$redis_host" ] || die "invalid effective Redis endpoint"
 
 redis_info() {

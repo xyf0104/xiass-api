@@ -243,7 +243,7 @@ TEST_DIR=$(mktemp -d "$ROOT/../../artifacts/cluster-runtime-tests.XXXXXX")
 trap 'status=$?; rm -rf "$TEST_DIR"; exit "$status"' EXIT
 passed=0
 for flow in runtime join; do
-    scenarios=(default true false plain-false invalid-egress missing-base missing-overlay fallback fallback-source
+    scenarios=(default true false plain-false missing-base missing-overlay fallback fallback-source
         port-wildcard port-private port-ipv6 port-dual port-failure port-empty-failure port-range-failure port-malformed-failure
         balance-disabled transient-readyz health-failure compose-failure readyz-503-health200 readyz-error-status
         readyz-error-node readyz-missing-node readyz-error-checks readyz-missing-checks readyz-empty-checks
@@ -296,7 +296,7 @@ for flow in runtime join; do
                     true|false|plain-false)
                         before=$(grep '^GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS=' "$fixture/env.before")
                         grep -Fqx "$before" "$env_file" || fail 'explicit emergency egress setting was rewritten' ;;
-                    *) grep -Fqx "GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS='false'" "$env_file" || fail 'new runtime silently enabled emergency egress' ;;
+                    *) if grep -q '^GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS=' "$env_file"; then fail 'new runtime wrote a retired egress setting'; fi ;;
                 esac
                 if [ "$flow" = join ]; then
                     store=redis
@@ -314,10 +314,7 @@ for flow in runtime join; do
                     [ "$(wc -l < "$fixture/readyz.calls")" -ge 2 ] || fail 'join skipped state verification before finalize'
                     grep -Fqx finalize "$fixture/calls" || fail 'successful join was not finalized'
                     if [ "$scenario" = witness ]; then
-                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_ENABLED='true'" "$env_file" || fail 'join did not enable the shared witness'
-                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_URL='https://witness.example.invalid'" "$env_file" || fail 'join lost the witness address'
-                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_TOKEN='01234567890123456789012345678901'" "$env_file" || fail 'join lost the witness token'
-                        grep -Fqx "GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID='cluster-1'" "$env_file" || fail 'join lost the witness cluster identity'
+                        if grep -q '^GATEWAY_EXECUTION_NODE_WITNESS_' "$env_file"; then fail 'join revived retired witness configuration'; fi
                     fi
                 else
                     grep -Fqx "JWT_REFRESH_TOKEN_STORE='postgres'" "$env_file" || fail 'runtime initialization changed token storage policy'

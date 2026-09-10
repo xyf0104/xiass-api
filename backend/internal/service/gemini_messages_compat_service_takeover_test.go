@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGeminiTakeoverPriorityAndBoundaries(t *testing.T) {
+func TestGeminiFixedOwnerPriorityAndBoundaries(t *testing.T) {
 	for _, endpoint := range []string{"messages", "ai_studio"} {
 		for _, mode := range []string{"offline", "healthy", "disabled", "unknown", "local_unavailable", "scope", "denied", "sticky", "credential_rank", "vertex"} {
 			if endpoint == "ai_studio" && mode == "sticky" {
@@ -20,8 +20,8 @@ func TestGeminiTakeoverPriorityAndBoundaries(t *testing.T) {
 				continue
 			}
 			t.Run(endpoint+"/"+mode, func(t *testing.T) {
-				remote := gatewayTakeoverAccount(9751, "api", PlatformGemini, 0)
-				local := gatewayTakeoverAccount(9752, "api2", PlatformGemini, 10)
+				remote := gatewayFixedOwnerAccount(9751, "api", PlatformGemini, 0)
+				local := gatewayFixedOwnerAccount(9752, "api2", PlatformGemini, 10)
 				if mode == "local_unavailable" {
 					local.Schedulable = false
 				}
@@ -37,7 +37,7 @@ func TestGeminiTakeoverPriorityAndBoundaries(t *testing.T) {
 					cache.sessionBindings["gemini:bound"] = remote.ID
 				}
 				svc := &GeminiMessagesCompatService{cfg: gateway.cfg, accountRepo: gateway.accountRepo, cache: cache}
-				svc.settingService = gatewayTakeoverSettings(svc.cfg, mode)
+				svc.settingService = gatewayFixedOwnerSettings(svc.cfg, mode)
 				if mode == "scope" || mode == "denied" {
 					policy := &publicBatchImageAccountPolicy{allowedIDs: map[int64]struct{}{remote.ID: {}}}
 					if mode == "denied" {
@@ -57,9 +57,14 @@ func TestGeminiTakeoverPriorityAndBoundaries(t *testing.T) {
 					require.Nil(t, got)
 					return
 				}
+				if mode == "local_unavailable" || mode == "scope" || mode == "vertex" {
+					require.Error(t, err)
+					require.Nil(t, got)
+					return
+				}
 				require.NoError(t, err)
 				want := remote.ID
-				if mode == "offline" || mode == "disabled" || mode == "unknown" {
+				if mode != "healthy" {
 					want = local.ID
 				}
 				require.Equal(t, want, got.ID)
@@ -69,20 +74,20 @@ func TestGeminiTakeoverPriorityAndBoundaries(t *testing.T) {
 				}
 				require.Equal(t, proxyID, got.requestProxy().ID)
 				require.Equal(t, int64(84), *remote.ProxyID)
-				require.Nil(t, remote.executionProxy)
+
 			})
 		}
 	}
 }
 
-func TestGeminiTakeoverHealthyWeightsAndExclusion(t *testing.T) {
-	remote := gatewayTakeoverAccount(9761, "api", PlatformGemini, 1)
-	local := gatewayTakeoverAccount(9762, "api2", PlatformGemini, 1)
+func TestGeminiFixedOwnerHealthyWeightsAndExclusion(t *testing.T) {
+	remote := gatewayFixedOwnerAccount(9761, "api", PlatformGemini, 1)
+	local := gatewayFixedOwnerAccount(9762, "api2", PlatformGemini, 1)
 	gateway := newGatewayExecutionNodeStickyTestService(t, []*Account{remote, local}, &mockGatewayCacheForPlatform{}, nil)
 	svc := &GeminiMessagesCompatService{cfg: gateway.cfg, accountRepo: gateway.accountRepo, cache: &schedulerTestGatewayCache{}}
-	svc.settingService = gatewayTakeoverSettings(svc.cfg, "healthy")
+	svc.settingService = gatewayFixedOwnerSettings(svc.cfg, "healthy")
 	policy := resolveExecutionNodeRoutingPolicy(context.Background(), svc.cfg, svc.settingService)
-	policy.emergencyLocalEgress = false
+
 	remoteCount := 0
 	for i := 0; i < 2000; i++ {
 		anchor := fmt.Sprintf("healthy-session-%d", i)
@@ -95,9 +100,9 @@ func TestGeminiTakeoverHealthyWeightsAndExclusion(t *testing.T) {
 		}
 	}
 	require.InDelta(t, 0.9, float64(remoteCount)/2000, 0.03)
-	svc.settingService = gatewayTakeoverSettings(svc.cfg, "offline")
+	svc.settingService = gatewayFixedOwnerSettings(svc.cfg, "healthy")
 	got, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gemini-2.5-flash", map[int64]struct{}{local.ID: {}})
 	require.NoError(t, err)
 	require.Equal(t, remote.ID, got.ID)
-	require.Equal(t, int64(83), got.requestProxy().ID)
+	require.Equal(t, int64(84), got.requestProxy().ID)
 }

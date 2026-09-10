@@ -61,20 +61,7 @@ func main() {
 	// Parse command line flags
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
-	refreshMigration := flag.String("migrate-refresh-sessions", "", "Offline: adopt existing refresh sessions using a protected manifest file")
-	offlineMaintenance := flag.Bool("offline-maintenance", false, "Confirm manifest maintenance: v1 stops apps; v2 blocks and drains auth endpoints")
 	flag.Parse()
-	if *refreshMigration != "" || *offlineMaintenance {
-		if *refreshMigration == "" || !*offlineMaintenance || *setupMode || *showVersion || flag.NArg() != 0 {
-			log.Fatal("Session migration requires -migrate-refresh-sessions <file> and -offline-maintenance, without other modes")
-		}
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-		if err := migrateRefreshSessions(ctx, *refreshMigration, os.Stdout); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
 
 	if *showVersion {
 		fmt.Printf("XIASS API %s (commit: %s, built: %s)\n", Version, Commit, Date)

@@ -1,23 +1,27 @@
-# Bounded Legacy Refresh Transition
+# Historical Legacy Refresh Transition
 
 ## Status and Scope
 
-This is an explicit operator-only repository operation. The existing server executable
-now exposes it through `-migrate-refresh-sessions <private-manifest>` together with
-`-offline-maintenance`, before normal setup/tunnel/server startup. It never runs
-as an installation or online-update side effect, and is not a zero-downtime
-rolling upgrade. Version 1 requires stopped applications; opt-in version 2
-requires independently blocked and drained auth endpoints while retaining only
-fixed non-session runtime grants. An explicit invocation DOES mutate the selected Redis ACLs/ACL
-files and PostgreSQL transition state. Optional runtime preparation installs new
-restricted application/replication credentials, persists replication credentials
-on every inventoried node that may later become a replica,
-and creates a separate protected environment file; it does not replace the
-installation `.env` or restart applications. See `deploy/MULTI_NODE.md` for the
-operator boundary. No production execution is implied by source/test completion.
-Migration 240 starts every installation with authority `redis`; 241 adds only
-group inventory/fence evidence. Apply 238, 240 and 241 before using this version
-of the operation. Neither migration activates PostgreSQL or contacts Redis.
+The server's offline migration CLI and its runtime credential-provisioning phase
+have been removed. This document is a historical reference for the retained
+repository transition contracts and persisted evidence, not an operator runbook
+or an available server command. XIASS does not provide built-in whole-host disaster
+recovery, Witness arbitration, or Redis Sentinel discovery. See
+`deploy/MULTI_NODE.md` for the current shared-state/load-balancing boundary.
+
+Existing installations must retain their selected refresh-session authority,
+session data, issuance/revocation records, signing keys, deployed Redis credentials
+and restricted ACLs. The application provider still reads already migrated
+PostgreSQL sessions and validates their authority; it does not migrate sessions
+at startup or fall back to stale Redis sessions. Keep any already integrated
+runtime environment settings needed by that provider. Removing the CLI does not
+authorize removing its previously deployed configuration or data.
+
+Released migrations 238, 240 and 241 remain unchanged. Migration 240 initially
+records Redis authority; 241 adds group inventory/fence evidence. Neither
+migration activates PostgreSQL or contacts Redis. The implementation details
+below describe the historical transition and are retained for compatibility
+audits, not as instructions to start a new migration.
 
 There are two modes of the SAME `AdoptLegacyRefreshTokens` operation. Omitting
 `Group` retains the original dedicated-source gates. An explicit `Group` enables
@@ -290,4 +294,4 @@ pause/disconnect/acknowledged-revoke/primary-loss/stale-replica-promotion fault,
 proves stale metadata remains in Redis, and retains both acceptance conditions:
 the revoked session is denied and the valid control still refreshes. Raw Redis
 session authority without migration is still unsafe for automatic promotion;
-the production provider rejects that combination with Sentinel discovery.
+Sentinel discovery is no longer an application configuration option.

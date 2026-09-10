@@ -37,7 +37,7 @@
         <p v-else-if="!(tab === 'new' ? accounts.length : rows.length)" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.empty.${tab}`) }}</p>
 
         <template v-if="tab === 'new'">
-          <div v-for="account in accounts" :key="account.id" class="benchmark-row grid items-center gap-2 border-b border-gray-100 py-2 text-sm dark:border-dark-700" :data-testid="`account-${account.id}`">
+          <div v-for="account in sortedAccounts" :key="account.id" class="benchmark-row grid items-center gap-2 border-b border-gray-100 py-2 text-sm dark:border-dark-700" :data-testid="`account-${account.id}`">
             <span class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ account.name }}</span>
             <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
             <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
@@ -57,16 +57,11 @@
               <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
               <div class="row-action flex items-center justify-end">
                 <button v-if="run.status === 'queued' || run.status === 'running'" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
-                <button v-else-if="run.status === 'succeeded' && run.html_bytes > 0" type="button" class="btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${expandedId === run.id ? 'collapse' : 'details'}`)" :aria-label="`${run.account_name}: ${t(`${prefix}.details`)}`" :aria-expanded="expandedId === run.id" :aria-controls="`pelican-result-${run.id}`" :data-testid="`details-${run.id}`" @click="toggleDetails(run)"><Icon :name="expandedId === run.id ? 'chevronUp' : 'eye'" size="sm" /></button>
+                <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
               </div>
             </div>
             <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}</p>
-            <div v-if="run.status === 'succeeded' && expandedId === run.id" :id="`pelican-result-${run.id}`" class="pb-3">
-              <p v-if="detailLoading" role="status" class="py-4 text-center text-sm text-gray-500">{{ t('common.loading') }}</p>
-              <p v-else-if="detailError" role="alert" class="py-3 text-sm text-red-600 dark:text-red-400">{{ detailError }}</p>
-              <iframe v-else-if="preview" :srcdoc="preview" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" class="h-80 w-full rounded-lg border border-gray-200 bg-white sm:h-96 dark:border-dark-600" data-testid="result-preview" />
-            </div>
           </div>
         </template>
 
@@ -86,9 +81,10 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
+import PelicanResultPreview from './PelicanResultPreview.vue'
 import {
   DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
-  getPelicanResult, getPelicanModels, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
+  getPelicanModels, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
   type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkStatus, type PelicanBenchmarkSkipped
 } from '@/api/admin/pelicanBenchmark'
 
@@ -111,14 +107,11 @@ const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
-const expandedId = ref<string | null>(null)
-const preview = ref('')
-const detailError = ref('')
-const detailLoading = ref(false)
+const now = ref(Date.now())
+let clockTimer: ReturnType<typeof setInterval> | undefined
 let session = 0
 let controller = new AbortController()
 let currentRequest: AbortController | undefined
-let detailRequest: AbortController | undefined
 let readVersion = 0
 let currentVersion = 0
 let pollTimer: ReturnType<typeof setTimeout> | undefined
@@ -130,7 +123,13 @@ const isAccountRunning = (id: number) => current.value.some(run => run.account_i
 const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
 const startable = computed(() => accounts.value.filter(canStart))
 const stoppable = computed(() => current.value.filter(run => run.status === 'queued' || run.status === 'running'))
-const rows = computed(() => tab.value === 'history' ? history.value : current.value)
+function planRank(plan: string | null | undefined) {
+  const normalized = plan?.toLowerCase().replace(/[\s_-]/g, '')
+  return ({ pro: 0, prolite: 1, plus: 2, team: 3 } as Record<string, number>)[normalized ?? ''] ?? 4
+}
+const sortedAccounts = computed(() => [...accounts.value].sort((a, b) => planRank(a.plan_type) - planRank(b.plan_type) || a.id - b.id))
+const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value)].sort((a, b) =>
+  planRank(accounts.value.find(item => item.id === a.account_id)?.plan_type) - planRank(accounts.value.find(item => item.id === b.account_id)?.plan_type)))
 const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
 function errorLabel(code: string) {
@@ -183,7 +182,8 @@ function formatDate(value: string) {
 }
 
 function formatDuration(run: PelicanBenchmarkRun) {
-  const ms = run.duration_ms ?? (run.status === 'running' && run.started_at ? Date.now() - Date.parse(run.started_at) : null)
+  const ms = (run.status === 'running' || run.status === 'canceling') && run.started_at
+    ? Math.max(0, now.value - Date.parse(run.started_at)) : run.duration_ms
   return ms !== null && Number.isFinite(ms) && ms >= 0 ? t(`${prefix}.seconds`, { seconds: (ms / 1000).toFixed(1) }) : '--'
 }
 
@@ -249,7 +249,6 @@ async function refresh() {
 }
 
 async function loadHistory(page: number) {
-  clearDetails()
   const version = ++readVersion
   const ownSession = session
   const signal = controller.signal
@@ -318,37 +317,6 @@ async function stop(selected: PelicanBenchmarkRun[], all = false) {
   }, 'stopFailed')
 }
 
-function clearDetails() {
-  detailRequest?.abort()
-  expandedId.value = null
-  preview.value = ''
-  detailError.value = ''
-  detailLoading.value = false
-}
-
-async function toggleDetails(run: PelicanBenchmarkRun) {
-  const collapse = expandedId.value === run.id
-  clearDetails()
-  if (collapse || run.status !== 'succeeded' || run.html_bytes <= 0) return
-  expandedId.value = run.id
-  const request = new AbortController()
-  detailRequest = request
-  detailLoading.value = true
-  try {
-    const result = await getPelicanResult(run.id, request.signal)
-    if (request.signal.aborted || expandedId.value !== run.id) return
-    if (result.id !== run.id || result.status !== 'succeeded' || !result.html?.trim()) throw new Error('Missing result')
-    // The first policy applies before ANY generated bytes. Animation scripts run only
-    // inside the opaque-origin sandbox, never via v-html or in the administrator DOM.
-    const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';"
-    preview.value = `<meta http-equiv="Content-Security-Policy" content="${policy}">${result.html}`
-  } catch (cause) {
-    if (!request.signal.aborted && expandedId.value === run.id) detailError.value = message(cause, 'resultFailed')
-  } finally {
-    if (!request.signal.aborted && expandedId.value === run.id) detailLoading.value = false
-  }
-}
-
 function dispose() {
   ++session
   ++readVersion
@@ -356,7 +324,7 @@ function dispose() {
   controller.abort()
   currentRequest?.abort()
   cancelPoll()
-  clearDetails()
+  clearInterval(clockTimer)
 }
 
 function close() {
@@ -379,7 +347,6 @@ watch(tab, () => {
   ++currentVersion
   ++readVersion
   loading.value = false
-  clearDetails()
   if (props.show && !controller.signal.aborted && !busy.value) void refresh()
 }, { flush: 'sync' })
 
@@ -387,6 +354,8 @@ watch(() => props.show, show => {
   dispose()
   if (!show) return
   controller = new AbortController()
+  now.value = Date.now()
+  clockTimer = setInterval(() => { if (!document.hidden) now.value = Date.now() }, 1000)
   accounts.value = []
   current.value = []
   history.value = []
@@ -423,7 +392,7 @@ onUnmounted(() => {
 <style scoped>
 .benchmark-row {
   grid-template-columns: minmax(0, 1fr) 64px 44px;
-  grid-template-areas: 'name name plan' 'model model action' 'status duration action' 'date date date';
+  grid-template-areas: 'name name plan' 'model model model' 'status duration duration' 'date date date' 'action action action';
 }
 .account-name { grid-area: name; overflow-wrap: anywhere; }
 .plan-label { grid-area: plan; text-align: right; }
@@ -435,7 +404,7 @@ onUnmounted(() => {
 .pelican-benchmark :deep(.select-trigger) { min-height: 44px; border-radius: 8px; }
 .pelican-benchmark button:focus-visible { outline: 2px solid var(--color-primary-500, #0ea5e9); outline-offset: 2px; }
 @media (min-width: 1024px) {
-  .benchmark-row { grid-template-columns: minmax(0, 1.5fr) 52px 72px minmax(0, 1.25fr) minmax(0, 1fr) 64px 44px; grid-template-areas: none; }
+  .benchmark-row { grid-template-columns: minmax(0, 1.5fr) 64px 64px minmax(0, 1fr) minmax(0, 1fr) 64px 220px; grid-template-areas: none; }
   .account-name, .plan-label, .model-select, .row-action, .run-status, .run-date, .run-duration { grid-area: auto; }
   .plan-label { text-align: left; }
 }

@@ -348,12 +348,6 @@ func checkExecutionNodeReadiness(ctx context.Context, db *sql.DB, redisClient *r
 		}
 	}
 
-	// A drained local node may remain a useful ingress while the selected owner
-	// is offline, but only when emergency takeover is explicitly enabled and the
-	// local private egress itself is healthy.
-	if node.EmergencyLocalEgress && activeProxyIDs[node.DefaultProxyID] {
-		return nil
-	}
 	return errors.New("no live execution node is available")
 }
 

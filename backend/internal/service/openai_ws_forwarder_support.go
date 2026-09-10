@@ -567,6 +567,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	}
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
+	if errors.Is(err, errOpenAIExecutionNodeEgressUnavailable) {
+		return 0, nil, "", store, openAIPreviousResponseAffinityBlocked(accountID, "execution_node_egress")
+	}
 	if err != nil || account == nil {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil, nil
@@ -651,7 +654,6 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		// to a different account.
 		return 0, nil, "", store, openAIPreviousResponseAffinityBlocked(accountID, "execution_node_egress")
 	}
-	account = policy.routeAccountForExecution(account)
 	return accountID, account, responseID, store, nil
 }
 

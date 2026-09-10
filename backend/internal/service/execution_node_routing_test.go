@@ -178,82 +178,59 @@ func executionNodeTestPolicy(weights map[string]float64) executionNodeRoutingPol
 	}
 }
 
-func TestExecutionNodeEmergencyTakeoverUsesRequestLocalProxyOnly(t *testing.T) {
+func TestExecutionNodeOfflineOwnerNeverUsesLocalEgress(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
 	policy.localNodeID = "api2"
-	policy.emergencyLocalEgress = true
 	policy.healthy["api"] = false
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive, Host: "api2.internal", Port: 1080}
 	account := executionNodeTestAccount(71, "api", 1)
-	originalProxyID := *account.ProxyID
-	originalProxy := account.Proxy
-
-	require.True(t, executionNodeCandidateAllowed(policy, account))
-	routed := policy.routeAccountForExecution(account)
-
-	require.NotSame(t, account, routed)
-	require.Equal(t, originalProxyID, *routed.ProxyID)
-	require.Same(t, originalProxy, routed.Proxy)
-	require.Equal(t, int64(83), routed.requestProxy().ID)
-	require.Equal(t, originalProxyID, *account.ProxyID)
-	require.Same(t, originalProxy, account.Proxy)
+	require.False(t, executionNodeCandidateAllowed(policy, account))
+	require.False(t, executionNodeCandidateAllowed(policy, account, account.ID), "a bound request cannot bypass owner health")
+	require.Equal(t, int64(84), *account.ProxyID)
+	require.Equal(t, int64(84), account.requestProxy().ID)
 	require.Equal(t, "api", account.ExecutionNodeID("api"))
 }
 
-func TestExecutionNodeEmergencyTakeoverRequiresValidDurableProxyBinding(t *testing.T) {
+func TestExecutionNodeRoutingRequiresValidDurableProxyBinding(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
 	policy.localNodeID = "api2"
-	policy.emergencyLocalEgress = true
 	policy.healthy["api"] = false
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
 	account := executionNodeTestAccount(74, "api", 1)
 	account.Proxy = nil
 
 	require.False(t, executionNodeCandidateAllowed(policy, account))
-	require.Same(t, account, policy.routeAccountForExecution(account))
 
 	account.Proxy = &Proxy{ID: *account.ProxyID, Status: StatusDisabled}
 	require.False(t, executionNodeCandidateAllowed(policy, account))
-	require.Same(t, account, policy.routeAccountForExecution(account))
 }
 
 func TestExecutionNodeHealthyOwnerNeverChangesEgress(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
 	policy.localNodeID = "api2"
-	policy.emergencyLocalEgress = true
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
 	account := executionNodeTestAccount(72, "api", 1)
 
-	require.Same(t, account, policy.routeAccountForExecution(account))
 	require.Equal(t, int64(84), *account.ProxyID)
 }
 
-func TestExecutionNodeDeadOwnerFailsClosedWhenTakeoverDisabled(t *testing.T) {
+func TestExecutionNodeDeadOwnerFailsClosed(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
 	policy.localNodeID = "api2"
 	policy.healthy["api"] = false
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
 	account := executionNodeTestAccount(73, "api", 1)
 
 	require.False(t, executionNodeCandidateAllowed(policy, account))
-	require.Same(t, account, policy.routeAccountForExecution(account))
 }
 
-func TestExecutionNodeTakeoverRequiresKnownOfflineOwner(t *testing.T) {
+func TestExecutionNodeUnknownOwnerHeartbeatFailsClosed(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 9, "api2": 1})
-	policy.localNodeID, policy.emergencyLocalEgress = "api2", true
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
+	policy.localNodeID = "api2"
 	delete(policy.healthy, "api")
 	account := executionNodeTestAccount(75, "api", 0)
-	require.False(t, policy.canTakeOver(account), "missing health evidence is not confirmation of an offline owner")
 	require.False(t, executionNodeCandidateAllowed(policy, account))
-	require.Same(t, account, policy.routeAccountForExecution(account))
 }
 
-func TestExecutionNodeTakeoverOrdersHealthyOwnersBeforeEveryOfflinePriority(t *testing.T) {
+func TestExecutionNodeOfflineOwnersExcludedAcrossPriorities(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 9, "api2": 1})
-	policy.localNodeID, policy.emergencyLocalEgress = "api2", true
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
+	policy.localNodeID = "api2"
 	policy.healthy["api"] = false
 	remote := executionNodeTestAccount(76, "api", 0)
 	local := executionNodeTestAccount(77, "api2", 10)
@@ -264,26 +241,21 @@ func TestExecutionNodeTakeoverOrdersHealthyOwnersBeforeEveryOfflinePriority(t *t
 		anchor := fmt.Sprintf("takeover-%d", i)
 		ordered := orderExecutionNodeCandidatesWithinPriorities(items,
 			func(a *Account) *Account { return a }, func(a *Account) int { return a.Priority }, policy, anchor)
-		require.Equal(t, []*Account{local, lowerLocal, remote, lowerRemote}, ordered)
+		require.Equal(t, []*Account{local, lowerLocal}, ordered)
 		partitions := partitionExecutionNodeCandidates(items, func(a *Account) *Account { return a }, policy, anchor)
-		require.Equal(t, [][]*Account{{local, lowerLocal}, {remote, lowerRemote}}, partitions)
-		require.Equal(t, []string{"api2", "api"}, weightedExecutionNodePermutation([]string{"api", "api2"}, policy, anchor))
+		require.Equal(t, [][]*Account{{local, lowerLocal}}, partitions)
 	}
 	require.Equal(t, []*Account{remote, local, lowerLocal, lowerRemote}, items, "ordering must not mutate the input snapshot")
 }
 
-func TestExecutionNodeTakeoverHealthyNineToOnePlacementIsUnchanged(t *testing.T) {
+func TestExecutionNodeHealthyNineToOnePlacement(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 9, "api2": 1})
 	policy.localNodeID = "api2"
-	policy.localProxy = &Proxy{ID: 83, Status: StatusActive}
 	const samples = 20000
 	primaryCount := 0
 	for i := 0; i < samples; i++ {
 		anchor := fmt.Sprintf("healthy-nine-to-one-%d", i)
 		ordinary := weightedExecutionNodePermutation([]string{"api", "api2"}, policy, anchor)
-		emergency := policy
-		emergency.emergencyLocalEgress = true
-		require.Equal(t, ordinary, weightedExecutionNodePermutation([]string{"api", "api2"}, emergency, anchor), "healthy placement must match exactly, not just statistically")
 		if ordinary[0] == "api" {
 			primaryCount++
 		}
@@ -583,22 +555,29 @@ func (r *executionNodeSettingRepo) Set(_ context.Context, key, value string) err
 	return nil
 }
 
-func TestExecutionNodeOfflineTakeoverCanBeChangedPerMachine(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:                true,
-		ID:                     "api2",
-		EmergencyLocalEgress:   true,
-		LegacyUnassignedNodeID: "api",
+func TestExecutionNodeRetiredTakeoverSettingsCannotAdmitOfflineOwner(t *testing.T) {
+	for _, value := range []string{"true", "false", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
+				Enabled: true, ID: "api2", DefaultProxyID: 83, LegacyUnassignedNodeID: "api",
+			}
+			repo := &executionNodeSettingRepo{values: map[string]string{
+				SettingKeyExecutionNodeBalancingEnabled: "true",
+				SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
+				SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
+				"execution_node_emergency_egress:api2":  value,
+			}}
+			svc := NewSettingService(repo, cfg)
+			svc.SetExecutionNodeHealthReader(executionNodeHealthMapStub{"api": false, "api2": true})
+			policy := resolveExecutionNodeRoutingPolicy(context.Background(), cfg, svc)
+			require.False(t, policy.unavailable)
+			require.Equal(t, "api2", policy.localNodeID)
+			require.False(t, executionNodeCandidateAllowed(policy, executionNodeTestAccount(1, "api", 0)))
+			require.True(t, executionNodeCandidateAllowed(policy, executionNodeTestAccount(2, "api2", 1)))
+			require.Equal(t, value, repo.values["execution_node_emergency_egress:api2"])
+		})
 	}
-	repo := &executionNodeSettingRepo{values: map[string]string{
-		executionNodeEmergencyEgressSettingKey("api"): "true",
-	}}
-	svc := NewSettingService(repo, cfg)
-
-	require.NoError(t, svc.SetExecutionNodeEmergencyLocalEgress(context.Background(), false))
-	require.Equal(t, "false", repo.values[executionNodeEmergencyEgressSettingKey("api2")])
-	require.Equal(t, "true", repo.values[executionNodeEmergencyEgressSettingKey("api")])
 }
 
 func TestExecutionNodeExpiredCacheRefreshesBeforeNewPlacement(t *testing.T) {
@@ -749,13 +728,13 @@ func (s executionNodeHealthMapStub) HealthyExecutionNodes(_ context.Context, nod
 	return healthy, nil
 }
 
-func TestExecutionNodeUnavailableLocalTakeoverProxyKeepsRemoteAccountsRoutable(t *testing.T) {
+func TestExecutionNodeLocalProxyLookupDoesNotBlockHealthyRemoteOwner(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:                true,
-		ID:                     "api2",
-		DefaultProxyID:         83,
-		EmergencyLocalEgress:   true,
+		Enabled:        true,
+		ID:             "api2",
+		DefaultProxyID: 83,
+
 		LegacyUnassignedNodeID: "api",
 	}
 	repo := &executionNodeSettingRepo{values: map[string]string{
@@ -770,15 +749,13 @@ func TestExecutionNodeUnavailableLocalTakeoverProxyKeepsRemoteAccountsRoutable(t
 	settings := service.GetExecutionNodeRoutingSettings(context.Background())
 	require.True(t, settings.Available)
 	require.True(t, settings.Enabled)
-	require.Nil(t, settings.LocalProxy)
 
 	policy := resolveExecutionNodeRoutingPolicy(context.Background(), cfg, service)
 	remote := executionNodeTestAccount(1, "api", 1)
 	require.True(t, executionNodeCandidateAllowed(policy, remote))
-	require.Same(t, remote, policy.routeAccountForExecution(remote))
 }
 
-func TestOpenAIRecheckPreservesRequestLocalEmergencyEgress(t *testing.T) {
+func TestOpenAIRecheckRejectsOfflineOwnerWithoutChangingFixedProxy(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(912)
 	account := executionNodeTestAccount(81, "api", 1)
@@ -790,10 +767,10 @@ func TestOpenAIRecheckPreservesRequestLocalEmergencyEgress(t *testing.T) {
 
 	cfg := &config.Config{RunMode: config.RunModeStandard}
 	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:                true,
-		ID:                     "api2",
-		DefaultProxyID:         83,
-		EmergencyLocalEgress:   true,
+		Enabled:        true,
+		ID:             "api2",
+		DefaultProxyID: 83,
+
 		LegacyUnassignedNodeID: "api",
 	}
 	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
@@ -811,10 +788,7 @@ func TestOpenAIRecheckPreservesRequestLocalEmergencyEgress(t *testing.T) {
 	}
 
 	routed := svc.recheckSelectedOpenAIAccountFromDB(ctx, account, &groupID, PlatformOpenAI, "gpt-5.1", false, "")
-	require.NotNil(t, routed)
-	require.Equal(t, int64(84), *routed.ProxyID)
-	require.Equal(t, int64(84), routed.Proxy.ID)
-	require.Equal(t, int64(83), routed.requestProxy().ID)
+	require.Nil(t, routed)
 	require.Equal(t, int64(84), account.requestProxy().ID)
 }
 

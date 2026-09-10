@@ -59,8 +59,7 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	if !benchmark.ValidModel(model) {
 		return benchmark.Output{ErrorCode: "invalid_model"}, errors.New("invalid model")
 	}
-	// Unlike customer failover, benchmarking must never replace an owner's
-	// fixed exit with emergency local egress, even when its node is offline.
+	// Benchmarking must use the account owner's fixed egress and reject offline owners.
 	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
 	if policy.unavailable || !policy.accountEgressIDAllowed(account) ||
 		(policy.enabled && !policy.nodeHealthy(policy.nodeID(account))) ||
@@ -69,7 +68,6 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 		return benchmark.Output{ErrorCode: "fixed_egress_unavailable"}, errors.New("fixed egress unavailable")
 	}
 	local := *account
-	local.executionProxy = nil
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	capture := &pelicanCapture{header: make(http.Header), cancel: cancel}

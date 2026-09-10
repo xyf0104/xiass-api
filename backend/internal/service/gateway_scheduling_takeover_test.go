@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func gatewayTakeoverAccount(id int64, owner, platform string, priority int) *Account {
+func gatewayFixedOwnerAccount(id int64, owner, platform string, priority int) *Account {
 	account := executionNodeTestAccount(id, owner, priority)
 	account.Platform, account.Type = platform, AccountTypeAPIKey
 	account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
@@ -22,15 +22,14 @@ func gatewayTakeoverAccount(id int64, owner, platform string, priority int) *Acc
 	return account
 }
 
-func gatewayTakeoverSettings(cfg *config.Config, mode string) *SettingService {
+func gatewayFixedOwnerSettings(cfg *config.Config, mode string) *SettingService {
 	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
 		Enabled: true, ID: "api2", DefaultProxyID: 83, LegacyUnassignedNodeID: "api", LegacyUnassignedProxyID: 84,
-		EmergencyLocalEgress: mode != "disabled",
 	}
 	settings := ExecutionNodeRoutingSettings{
-		Available: true, Enabled: true, EmergencyLocalEgress: mode != "disabled",
+		Available: true, Enabled: true,
 		Weights: map[string]float64{"api": 9, "api2": 1}, ProxyIDs: map[string]int64{"api": 84, "api2": 83},
-		Healthy: map[string]bool{"api": false, "api2": true}, LocalProxy: &Proxy{ID: 83, Status: StatusActive},
+		Healthy: map[string]bool{"api": false, "api2": true},
 	}
 	if mode == "healthy" {
 		settings.Healthy["api"] = true
@@ -43,13 +42,12 @@ func gatewayTakeoverSettings(cfg *config.Config, mode string) *SettingService {
 	return svc
 }
 
-func TestGatewayTakeoverPriorityAndSlots(t *testing.T) {
+func TestGatewayFixedOwnerPriorityAndSlots(t *testing.T) {
 	for _, mode := range []string{"batch", "no_batch", "routed"} {
-		for _, scenario := range []string{"idle", "local_full", "all_full", "local_unavailable", "lower_local", "stale_load", "load_error", "equal_priority_full"} {
+		for _, scenario := range []string{"idle", "local_full", "all_full", "local_unavailable", "load_error", "equal_priority_full"} {
 			t.Run(mode+"/"+scenario, func(t *testing.T) {
-				remote := gatewayTakeoverAccount(9711, "api", PlatformAnthropic, 0)
-				local := gatewayTakeoverAccount(9712, "api2", PlatformAnthropic, 10)
-				lower := gatewayTakeoverAccount(9713, "api2", PlatformAnthropic, 20)
+				remote := gatewayFixedOwnerAccount(9711, "api", PlatformAnthropic, 0)
+				local := gatewayFixedOwnerAccount(9712, "api2", PlatformAnthropic, 10)
 				accounts := []*Account{remote, local}
 				attempts := []int64{}
 				cache := schedulerTestConcurrencyCache{acquiredIDs: &attempts, acquireResults: map[int64]bool{remote.ID: true, local.ID: true}}
@@ -57,7 +55,7 @@ func TestGatewayTakeoverPriorityAndSlots(t *testing.T) {
 				switch scenario {
 				case "local_full", "equal_priority_full":
 					cache.acquireResults[local.ID] = false
-					want = remote.ID
+					acquired = false
 					if scenario == "equal_priority_full" {
 						local.Priority = remote.Priority
 					}
@@ -66,13 +64,6 @@ func TestGatewayTakeoverPriorityAndSlots(t *testing.T) {
 					acquired = false
 				case "local_unavailable":
 					local.Schedulable = false
-					want = remote.ID
-				case "lower_local":
-					cache.acquireResults[local.ID] = false
-					accounts = append(accounts, lower)
-					want = lower.ID
-				case "stale_load":
-					cache.loadMap = map[int64]*AccountLoadInfo{local.ID: {AccountID: local.ID, LoadRate: 100}}
 				case "load_error":
 					cache.loadBatchErr = errors.New("test load snapshot unavailable")
 				}
@@ -86,29 +77,31 @@ func TestGatewayTakeoverPriorityAndSlots(t *testing.T) {
 					}
 					groups = &mockGroupRepoForGateway{groups: map[int64]*Group{id: {
 						ID: id, Platform: PlatformAnthropic, Status: StatusActive, Hydrated: true, ModelRoutingEnabled: true,
-						ModelRouting: map[string][]int64{"claude-3-5-sonnet-20241022": {remote.ID, local.ID, lower.ID}},
+						ModelRouting: map[string][]int64{"claude-3-5-sonnet-20241022": {remote.ID, local.ID}},
 					}}}
 				}
 				svc := newGatewayExecutionNodeStickyTestService(t, accounts, &mockGatewayCacheForPlatform{}, groups)
 				svc.cfg.Gateway.Scheduling.LoadBatchEnabled = mode != "no_batch"
-				svc.settingService = gatewayTakeoverSettings(svc.cfg, "offline")
+				svc.settingService = gatewayFixedOwnerSettings(svc.cfg, "offline")
 				svc.concurrencyService = NewConcurrencyService(cache)
 				result, err := svc.SelectAccountWithLoadAwareness(context.Background(), groupID, "new-session", "claude-3-5-sonnet-20241022", nil, "", 0)
+				if scenario == "local_unavailable" {
+					require.Error(t, err)
+					require.Nil(t, result)
+					require.NotContains(t, attempts, remote.ID)
+					return
+				}
 				require.NoError(t, err)
 				require.Equal(t, want, result.Account.ID)
 				require.Equal(t, acquired, result.Acquired)
 				if result.ReleaseFunc != nil {
 					result.ReleaseFunc()
 				}
-				if scenario != "local_unavailable" {
-					require.Equal(t, local.ID, attempts[0], "healthy-owner slots precede the offline owner's priority and weight")
-				}
-				if acquired && want != remote.ID {
-					require.NotContains(t, attempts, remote.ID)
-				}
+				require.Equal(t, local.ID, attempts[0])
+				require.NotContains(t, attempts, remote.ID, "offline owners must never acquire a slot")
 				require.Equal(t, int64(83), result.Account.requestProxy().ID)
 				require.Equal(t, int64(84), *remote.ProxyID)
-				require.Nil(t, remote.executionProxy)
+
 				if mode == "no_batch" {
 					require.Equal(t, want, svc.cache.(*mockGatewayCacheForPlatform).sessionBindings["new-session"])
 				}
@@ -117,24 +110,24 @@ func TestGatewayTakeoverPriorityAndSlots(t *testing.T) {
 	}
 }
 
-func TestGatewayTakeoverHealthyWeightsUnchanged(t *testing.T) {
+func TestGatewayFixedOwnerHealthyWeightsUnchanged(t *testing.T) {
 	for _, batch := range []bool{true, false} {
 		t.Run(fmt.Sprint(batch), func(t *testing.T) {
-			remote := gatewayTakeoverAccount(9731, "api", PlatformAnthropic, 1)
-			local := gatewayTakeoverAccount(9732, "api2", PlatformAnthropic, 1)
+			remote := gatewayFixedOwnerAccount(9731, "api", PlatformAnthropic, 1)
+			local := gatewayFixedOwnerAccount(9732, "api2", PlatformAnthropic, 1)
 			svc := newGatewayExecutionNodeStickyTestService(t, []*Account{remote, local}, &mockGatewayCacheForPlatform{}, nil)
 			svc.cfg.Gateway.Scheduling.LoadBatchEnabled = batch
-			svc.settingService = gatewayTakeoverSettings(svc.cfg, "healthy")
+			svc.settingService = gatewayFixedOwnerSettings(svc.cfg, "healthy")
 			svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{})
 			policy := resolveExecutionNodeRoutingPolicy(context.Background(), svc.cfg, svc.settingService)
-			policy.emergencyLocalEgress = false
+
 			remoteCount := 0
 			for i := 0; i < 2000; i++ {
 				anchor := fmt.Sprintf("healthy-session-%d", i)
 				expected := firstExecutionNodeCandidateGroup([]*Account{remote, local}, func(a *Account) *Account { return a }, policy, anchor)
 				got, err := svc.SelectAccountWithLoadAwareness(context.Background(), nil, anchor, "claude-3-5-sonnet-20241022", nil, "", 0)
 				require.NoError(t, err)
-				require.Equal(t, expected[0].ID, got.Account.ID, "emergency toggle must not change healthy placement for the same anchor")
+				require.Equal(t, expected[0].ID, got.Account.ID, "healthy placement must match the weighted owner policy")
 				got.ReleaseFunc()
 				if got.Account.ID == remote.ID {
 					remoteCount++
@@ -145,40 +138,39 @@ func TestGatewayTakeoverHealthyWeightsUnchanged(t *testing.T) {
 	}
 }
 
-type gatewayTakeoverRevokingPolicy struct{ *publicBatchImageAccountPolicy }
+type gatewayFixedOwnerRevokingPolicy struct{ *publicBatchImageAccountPolicy }
 
-func (p gatewayTakeoverRevokingPolicy) FilterCandidates(ctx context.Context, groupID *int64, accounts []Account) ([]Account, error) {
-	if len(p.calls) > 0 {
-		p.allowedIDs = nil
-	}
-	return p.publicBatchImageAccountPolicy.FilterCandidates(ctx, groupID, accounts)
+func (p gatewayFixedOwnerRevokingPolicy) FilterCandidates(ctx context.Context, groupID *int64, accounts []Account) ([]Account, error) {
+	filtered, err := p.publicBatchImageAccountPolicy.FilterCandidates(ctx, groupID, accounts)
+	p.allowedIDs = nil
+	return filtered, err
 }
 
-func TestGatewayTakeoverWaitRejectsRevokedAccess(t *testing.T) {
-	local := gatewayTakeoverAccount(9733, "api2", PlatformAnthropic, 10)
+func TestGatewayFixedOwnerWaitRejectsRevokedAccess(t *testing.T) {
+	local := gatewayFixedOwnerAccount(9733, "api2", PlatformAnthropic, 10)
 	svc := newGatewayExecutionNodeStickyTestService(t, []*Account{local}, &mockGatewayCacheForPlatform{}, nil)
 	svc.cfg.Gateway.Scheduling.LoadBatchEnabled = false
-	svc.settingService = gatewayTakeoverSettings(svc.cfg, "offline")
+	svc.settingService = gatewayFixedOwnerSettings(svc.cfg, "offline")
 	svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{local.ID: false}})
-	svc.SetAccountCandidateAccessPolicy(gatewayTakeoverRevokingPolicy{&publicBatchImageAccountPolicy{allowedIDs: map[int64]struct{}{local.ID: {}}}})
+	svc.SetAccountCandidateAccessPolicy(gatewayFixedOwnerRevokingPolicy{&publicBatchImageAccountPolicy{allowedIDs: map[int64]struct{}{local.ID: {}}}})
 	got, err := svc.SelectAccountWithLoadAwareness(context.Background(), nil, "", "claude-3-5-sonnet-20241022", nil, "", 0)
 	require.ErrorIs(t, err, ErrUserGroupAccountNotAllowed)
 	require.Nil(t, got)
 }
 
-func TestGatewayTakeoverGatesStickyAndScope(t *testing.T) {
+func TestGatewayFixedOwnerGatesStickyAndScope(t *testing.T) {
 	for _, batch := range []bool{true, false} {
 		for _, mode := range []string{"healthy", "disabled", "unknown", "sticky", "scope", "denied"} {
 			t.Run(mode+map[bool]string{true: "/batch", false: "/no_batch"}[batch], func(t *testing.T) {
-				remote := gatewayTakeoverAccount(9721, "api", PlatformAnthropic, 0)
-				local := gatewayTakeoverAccount(9722, "api2", PlatformAnthropic, 10)
+				remote := gatewayFixedOwnerAccount(9721, "api", PlatformAnthropic, 0)
+				local := gatewayFixedOwnerAccount(9722, "api2", PlatformAnthropic, 10)
 				cache := &mockGatewayCacheForPlatform{sessionBindings: map[string]int64{}}
 				if mode == "sticky" {
 					cache.sessionBindings["bound"] = remote.ID
 				}
 				svc := newGatewayExecutionNodeStickyTestService(t, []*Account{remote, local}, cache, nil)
 				svc.cfg.Gateway.Scheduling.LoadBatchEnabled = batch
-				svc.settingService = gatewayTakeoverSettings(svc.cfg, mode)
+				svc.settingService = gatewayFixedOwnerSettings(svc.cfg, mode)
 				svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{})
 				if mode == "scope" || mode == "denied" {
 					policy := &publicBatchImageAccountPolicy{allowedIDs: map[int64]struct{}{remote.ID: {}}}
@@ -189,14 +181,14 @@ func TestGatewayTakeoverGatesStickyAndScope(t *testing.T) {
 				}
 				ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(19))
 				result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "bound", "claude-3-5-sonnet-20241022", nil, "", 19)
-				if mode == "denied" {
+				if mode == "denied" || mode == "scope" {
 					require.Error(t, err)
 					require.Nil(t, result)
 					return
 				}
 				require.NoError(t, err)
 				want := remote.ID
-				if mode == "disabled" || mode == "unknown" {
+				if mode != "healthy" {
 					want = local.ID
 				}
 				require.Equal(t, want, result.Account.ID)

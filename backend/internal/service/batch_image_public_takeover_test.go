@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBatchImageTakeoverPriorityAndScope(t *testing.T) {
+func TestBatchImageFixedOwnerPriorityAndScope(t *testing.T) {
 	for _, mode := range []string{"offline", "healthy", "disabled", "unknown", "local_unavailable", "local_unsupported", "scope", "denied"} {
 		t.Run(mode, func(t *testing.T) {
-			remote := gatewayTakeoverAccount(9771, "api", PlatformGemini, 100)
-			local := gatewayTakeoverAccount(9772, "api2", PlatformGemini, 1)
+			remote := gatewayFixedOwnerAccount(9771, "api", PlatformGemini, 100)
+			local := gatewayFixedOwnerAccount(9772, "api2", PlatformGemini, 1)
 			if mode == "local_unavailable" {
 				local.Schedulable = false
 			}
@@ -23,7 +23,7 @@ func TestBatchImageTakeoverPriorityAndScope(t *testing.T) {
 			}
 			svc, _, _, gemini, vertex := newTestBatchImagePublicService(true)
 			svc.AccountRepo = &publicBatchImageAccountRepo{accounts: []Account{*remote, *local}}
-			svc.SettingService = gatewayTakeoverSettings(svc.Config, mode)
+			svc.SettingService = gatewayFixedOwnerSettings(svc.Config, mode)
 			policy := &publicBatchImageAccountPolicy{allowedIDs: map[int64]struct{}{remote.ID: {}, local.ID: {}}}
 			if mode == "scope" {
 				delete(policy.allowedIDs, local.ID)
@@ -40,6 +40,13 @@ func TestBatchImageTakeoverPriorityAndScope(t *testing.T) {
 				require.Nil(t, got)
 				return
 			}
+			if mode == "local_unavailable" || mode == "local_unsupported" || mode == "scope" {
+				require.Error(t, err)
+				require.Nil(t, got)
+				require.Empty(t, gemini.submits)
+				require.Empty(t, vertex.submits)
+				return
+			}
 			require.NoError(t, err)
 			want := remote.ID
 			if mode == "offline" || mode == "disabled" || mode == "unknown" {
@@ -53,7 +60,7 @@ func TestBatchImageTakeoverPriorityAndScope(t *testing.T) {
 			}
 			require.Equal(t, proxyID, got.requestProxy().ID)
 			require.Equal(t, int64(84), *remote.ProxyID)
-			require.Nil(t, remote.executionProxy)
+
 			require.Empty(t, gemini.submits)
 			require.Empty(t, vertex.submits)
 			require.NotEmpty(t, policy.calls)
@@ -66,12 +73,12 @@ func TestBatchImageTakeoverPriorityAndScope(t *testing.T) {
 	}
 }
 
-func TestBatchImageTakeoverHealthyWeightsAndProviderOrder(t *testing.T) {
-	remote := gatewayTakeoverAccount(9781, "api", PlatformGemini, 1)
-	local := gatewayTakeoverAccount(9782, "api2", PlatformGemini, 1)
+func TestBatchImageFixedOwnerHealthyWeightsAndProviderOrder(t *testing.T) {
+	remote := gatewayFixedOwnerAccount(9781, "api", PlatformGemini, 1)
+	local := gatewayFixedOwnerAccount(9782, "api2", PlatformGemini, 1)
 	svc, _, _, _, _ := newTestBatchImagePublicService(true)
 	svc.AccountRepo = &publicBatchImageAccountRepo{accounts: []Account{*remote, *local}}
-	svc.SettingService = gatewayTakeoverSettings(svc.Config, "healthy")
+	svc.SettingService = gatewayFixedOwnerSettings(svc.Config, "healthy")
 	remoteCount := 0
 	for i := 0; i < 4000; i++ {
 		_, got, err := svc.selectProviderAndAccount(context.Background(), testBatchImageOwner(), "", "gemini-2.5-flash-image")
@@ -86,13 +93,14 @@ func TestBatchImageTakeoverHealthyWeightsAndProviderOrder(t *testing.T) {
 	// provider preference. Its presence also must not bypass SupportsAccount.
 	local.Type = AccountTypeServiceAccount
 	svc.AccountRepo = &publicBatchImageAccountRepo{accounts: []Account{*remote, *local}}
-	svc.SettingService = gatewayTakeoverSettings(svc.Config, "offline")
+	svc.SettingService = gatewayFixedOwnerSettings(svc.Config, "healthy")
 	svc.ProviderRegistry = NewBatchImageProviderRegistry(&GeminiAPIBatchImageProvider{}, &publicBatchImageProvider{name: BatchImageProviderVertex})
 	provider, got, err := svc.selectProviderAndAccount(context.Background(), testBatchImageOwner(), "", "gemini-2.5-flash-image")
 	require.NoError(t, err)
 	require.Equal(t, BatchImageProviderGeminiAPI, provider.Name())
 	require.Equal(t, remote.ID, got.ID)
-	require.Equal(t, int64(83), got.requestProxy().ID)
+	require.Equal(t, int64(84), got.requestProxy().ID)
+	svc.SettingService = gatewayFixedOwnerSettings(svc.Config, "offline")
 	provider, got, err = svc.selectProviderAndAccount(context.Background(), testBatchImageOwner(), BatchImageProviderVertex, "gemini-2.5-flash-image")
 	require.NoError(t, err)
 	require.Equal(t, BatchImageProviderVertex, provider.Name())

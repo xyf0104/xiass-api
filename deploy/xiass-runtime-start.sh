@@ -127,16 +127,34 @@ container_health() {
     docker inspect --type container --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || true
 }
 
+team_probe() {
+    local limiter
+    limiter=$(command -v timeout || command -v gtimeout) || return 1
+    "$limiter" --kill-after=2 10 "$@"
+}
+
+team_compose_probe() (
+    local limiter
+    limiter=$(command -v timeout || command -v gtimeout) || return 1
+    COMPOSE=("$limiter" --kill-after=2 10 "${COMPOSE[@]}")
+    profile_compose "$@"
+)
+
+automation_protocol() {
+    local command=(docker)
+    [ "${2:-}" != bounded ] || command=(team_probe docker)
+    "${command[@]}" exec "$1" node -e \
+        "fetch('http://127.0.0.1:8090/healthz', { signal: AbortSignal.timeout(5000) }).then(async (response) => { const body = await response.json(); process.stdout.write(response.ok && response.headers.get('x-xiass-team-child-protocol') === '4' && body.workflow_schema_version === 4 ? '4' : '') }).catch(() => process.exit(1))"
+}
+
 wait_for_automation_health() {
     local container="$1" attempt state health protocol
     log "等待 Team 自动化服务就绪..."
     for attempt in $(seq 1 60); do
         state=$(container_state "$container")
         health=$(container_health "$container")
-        if [ "$health" = "healthy" ]; then
-            protocol=$(docker exec "$container" node -e \
-                "fetch('http://127.0.0.1:8090/healthz').then(async (response) => { const body = await response.json(); process.stdout.write(response.headers.get('x-xiass-team-child-protocol') === '4' && body.workflow_schema_version === 4 ? '4' : '') }).catch(() => process.exit(1))" \
-                2>/dev/null || true)
+        if [ "$state" = "running" ] && [ "$health" = "healthy" ]; then
+            protocol=$(automation_protocol "$container" 2>/dev/null || true)
             if [ "$protocol" != "4" ]; then
                 warn "Team 自动化服务协议不是当前版本，拒绝将旧工作流标记为就绪。"
                 return 1
@@ -216,9 +234,23 @@ start_browser_stack() {
 
     if [ "$SKIP_CORE_START" = "true" ]; then
         # The fast online-update path has already restored the main app. Keep
-        # Chromium and its persistent login profile untouched, but always
-        # rebuild/recreate the automation sidecar so Team behavior cannot stay
-        # on an older image under the same latest tag.
+        # Chromium and its persistent login profile untouched. Unknown metadata
+        # takes the regular image preparation path; Compose detects changes.
+        local existing_container existing_state existing_health existing_protocol
+        local sidecar_up=(up -d --no-deps --no-build --pull never)
+        existing_container=$(team_compose_probe ps -q team-child-automation 2>/dev/null || true)
+        if [ -n "$existing_container" ] && [[ "$existing_container" != *$'\n'* ]]; then
+            existing_state=$(team_probe docker inspect --type container --format '{{.State.Status}}' "$existing_container" 2>/dev/null || true)
+            existing_health=$(team_probe docker inspect --type container --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$existing_container" 2>/dev/null || true)
+            if [ "$existing_state" = running ] && [ "$existing_health" = healthy ]; then
+                existing_protocol=$(automation_protocol "$existing_container" bounded 2>/dev/null || true)
+                if [ "$existing_protocol" != 4 ]; then
+                    sidecar_up+=(--force-recreate)
+                fi
+            elif [ -n "$existing_state" ] && [ -n "$existing_health" ]; then
+                sidecar_up+=(--force-recreate)
+            fi
+        fi
         if [ "$BUILD_MODE" = "source" ]; then
             log "构建并更新 Team 自动化组件..."
             if ! profile_compose build team-child-automation; then
@@ -226,6 +258,9 @@ start_browser_stack() {
                 return 0
             fi
         else
+            # Repository refs and the local image may both advance independently
+            # of a successful Team update. Always refresh the registry image;
+            # Compose below decides whether the running sidecar needs replacing.
             log "拉取并更新 Team 自动化组件..."
             if ! profile_compose pull team-child-automation; then
                 warn "Team 自动化组件镜像拉取失败；保留当前运行实例，避免无新镜像时中断工作流。"
@@ -240,7 +275,7 @@ start_browser_stack() {
         if [ "$automation_image_ready" != "true" ]; then
             return 0
         fi
-        if ! profile_compose up -d --no-deps --no-build --force-recreate team-child-automation; then
+        if ! profile_compose "${sidecar_up[@]}" team-child-automation; then
             warn "Team 自动化组件更新失败；主服务保持运行，可稍后重试。"
             return 0
         fi

@@ -120,29 +120,6 @@ func (s *SettingService) InitializeExecutionNodeRuntime(ctx context.Context, nod
 	return &runtime, nil
 }
 
-// SetExecutionNodeEmergencyLocalEgress changes only this machine's offline
-// takeover permission. It is shared through PostgreSQL and picked up by the
-// routing cache without recreating the application container.
-func (s *SettingService) SetExecutionNodeEmergencyLocalEgress(ctx context.Context, enabled bool) error {
-	if s == nil || s.cfg == nil || s.settingRepo == nil {
-		return errors.New("execution-node runtime is unavailable")
-	}
-	nodeID := strings.TrimSpace(s.cfg.Gateway.ExecutionNode.ID)
-	if !s.cfg.Gateway.ExecutionNode.Enabled || !validExecutionNodeID(nodeID) {
-		return infraerrors.BadRequest("EXECUTION_NODE_RUNTIME_NODE_INVALID", "prepare this machine before changing offline takeover")
-	}
-	key := executionNodeEmergencyEgressSettingKey(nodeID)
-	if err := s.settingRepo.Set(ctx, key, fmt.Sprintf("%t", enabled)); err != nil {
-		return fmt.Errorf("save execution-node offline takeover settings: %w", err)
-	}
-	if cached, ok := s.executionNodeRoutingCache.Load().(*cachedExecutionNodeRoutingSettings); ok && cached != nil {
-		expired := *cached
-		expired.expiresAt = 0
-		s.executionNodeRoutingCache.Store(&expired)
-	}
-	return nil
-}
-
 func (s *SettingService) ensureExecutionNodeBuiltinProxy(ctx context.Context, nodeID, token string) (*Proxy, string, error) {
 	name := executionNodeBuiltinProxyNamePrefix + nodeID
 	proxies, err := s.proxyRepo.ListAllForFallback(ctx)

@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net"
 	"net/textproto"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1092,10 +1090,6 @@ type GatewayExecutionNodeConfig struct {
 	Enabled        bool   `mapstructure:"enabled"`
 	ID             string `mapstructure:"id"`
 	DefaultProxyID int64  `mapstructure:"default_proxy_id"`
-	// EmergencyLocalEgress lets a surviving gateway temporarily execute an
-	// account through its own node egress after the account owner's shared
-	// heartbeat expires. The durable account owner and proxy are never changed.
-	EmergencyLocalEgress bool `mapstructure:"emergency_local_egress"`
 	// ControlPlane starts singleton-style periodic workers on one instance,
 	// including expiry scans, scheduled tests/backups, channel monitoring, and
 	// proactive token/quota maintenance. It does not restrict HTTP gateway,
@@ -1108,23 +1102,6 @@ type GatewayExecutionNodeConfig struct {
 	// LegacyUnassignedProxyID is the durable private egress assigned to legacy
 	// accounts when multi-node routing is activated for the first time.
 	LegacyUnassignedProxyID int64 `mapstructure:"legacy_unassigned_proxy_id"`
-	// Witness protects automatic takeover with an independent, durable lease.
-	// It is opt-in so existing single-node and paired installations keep their
-	// current behavior until every member and the witness are ready.
-	Witness GatewayExecutionNodeWitnessConfig `mapstructure:"witness"`
-}
-
-// GatewayExecutionNodeWitnessConfig configures the independent arbitration
-// service used to fence automatic takeover during network partitions. The
-// shared token is sent only to the configured HTTPS endpoint and is never
-// returned by the admin status API.
-type GatewayExecutionNodeWitnessConfig struct {
-	Enabled               bool   `mapstructure:"enabled"`
-	URL                   string `mapstructure:"url"`
-	Token                 string `mapstructure:"token"`
-	ClusterID             string `mapstructure:"cluster_id"`
-	LeaseTTLSeconds       int    `mapstructure:"lease_ttl_seconds"`
-	RequestTimeoutSeconds int    `mapstructure:"request_timeout_seconds"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.
@@ -1579,11 +1556,6 @@ type RedisConfig struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
-	// Sentinel discovery is opt-in; its credentials never fall back to Redis credentials.
-	SentinelMasterName string   `mapstructure:"sentinel_master_name"`
-	SentinelAddrs      []string `mapstructure:"sentinel_addrs"`
-	SentinelUsername   string   `mapstructure:"sentinel_username"`
-	SentinelPassword   string   `mapstructure:"sentinel_password"`
 	// 连接池与超时配置（性能优化：可配置化连接池参数）
 	// DialTimeoutSeconds: 建立连接超时，防止慢连接阻塞
 	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
@@ -1836,26 +1808,6 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
-	}
-	// Explicit empty values can disable discovery even when YAML supplies a pair.
-	if addrs, ok := os.LookupEnv("REDIS_SENTINEL_ADDRS"); ok {
-		cfg.Redis.SentinelAddrs = nil
-		if strings.TrimSpace(addrs) != "" {
-			cfg.Redis.SentinelAddrs = strings.Split(addrs, ",")
-		}
-	}
-	if master, ok := os.LookupEnv("REDIS_SENTINEL_MASTER_NAME"); ok {
-		cfg.Redis.SentinelMasterName = master
-	}
-	if username, ok := os.LookupEnv("REDIS_SENTINEL_USERNAME"); ok {
-		cfg.Redis.SentinelUsername = username
-	}
-	if password, ok := os.LookupEnv("REDIS_SENTINEL_PASSWORD"); ok {
-		cfg.Redis.SentinelPassword = password
-	}
-	cfg.Redis.SentinelMasterName = strings.TrimSpace(cfg.Redis.SentinelMasterName)
-	for i := range cfg.Redis.SentinelAddrs {
-		cfg.Redis.SentinelAddrs[i] = strings.TrimSpace(cfg.Redis.SentinelAddrs[i])
 	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
@@ -2216,10 +2168,6 @@ func setDefaults() {
 	viper.SetDefault("redis.username", "")
 	viper.SetDefault("redis.password", "")
 	viper.SetDefault("redis.db", 0)
-	viper.SetDefault("redis.sentinel_master_name", "")
-	viper.SetDefault("redis.sentinel_addrs", []string{})
-	viper.SetDefault("redis.sentinel_username", "")
-	viper.SetDefault("redis.sentinel_password", "")
 	viper.SetDefault("redis.dial_timeout_seconds", 5)
 	viper.SetDefault("redis.read_timeout_seconds", 3)
 	viper.SetDefault("redis.write_timeout_seconds", 3)
@@ -2542,16 +2490,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.execution_node.enabled", false)
 	viper.SetDefault("gateway.execution_node.id", "")
 	viper.SetDefault("gateway.execution_node.default_proxy_id", int64(0))
-	viper.SetDefault("gateway.execution_node.emergency_local_egress", true)
 	viper.SetDefault("gateway.execution_node.control_plane", true)
 	viper.SetDefault("gateway.execution_node.legacy_unassigned_node_id", "api")
 	viper.SetDefault("gateway.execution_node.legacy_unassigned_proxy_id", int64(0))
-	viper.SetDefault("gateway.execution_node.witness.enabled", false)
-	viper.SetDefault("gateway.execution_node.witness.url", "")
-	viper.SetDefault("gateway.execution_node.witness.token", "")
-	viper.SetDefault("gateway.execution_node.witness.cluster_id", "")
-	viper.SetDefault("gateway.execution_node.witness.lease_ttl_seconds", 15)
-	viper.SetDefault("gateway.execution_node.witness.request_timeout_seconds", 3)
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
@@ -3106,22 +3047,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.ConnMaxIdleTimeMinutes < 0 {
 		return fmt.Errorf("database.conn_max_idle_time_minutes must be non-negative")
-	}
-	if (len(c.Redis.SentinelAddrs) > 0) != (c.Redis.SentinelMasterName != "") {
-		return fmt.Errorf("redis.sentinel_addrs and redis.sentinel_master_name must be configured together")
-	}
-	if strings.ContainsAny(c.Redis.SentinelMasterName, " \t\r\n") {
-		return fmt.Errorf("redis.sentinel_master_name must not contain whitespace")
-	}
-	for i, addr := range c.Redis.SentinelAddrs {
-		host, port, err := net.SplitHostPort(addr)
-		portNumber, portErr := strconv.Atoi(port)
-		if err != nil || host == "" || strings.ContainsAny(host, " \t\r\n/@?#\\") || portErr != nil || portNumber < 1 || portNumber > 65535 {
-			return fmt.Errorf("redis.sentinel_addrs[%d] must be a host:port address with port 1-65535", i)
-		}
-	}
-	if len(c.Redis.SentinelAddrs) == 0 && (c.Redis.SentinelUsername != "" || c.Redis.SentinelPassword != "") {
-		return fmt.Errorf("redis.sentinel_username and redis.sentinel_password require Sentinel discovery to be configured")
 	}
 	if c.Redis.DialTimeoutSeconds <= 0 {
 		return fmt.Errorf("redis.dial_timeout_seconds must be positive")
@@ -3733,9 +3658,6 @@ func (c *Config) Validate() error {
 		if c.Gateway.ExecutionNode.LegacyUnassignedProxyID <= 0 {
 			return fmt.Errorf("gateway.execution_node.legacy_unassigned_proxy_id must be positive when enabled")
 		}
-		if err := validateExecutionNodeWitnessConfig(c.Gateway.ExecutionNode.Witness); err != nil {
-			return err
-		}
 	}
 	if c.Gateway.Scheduling.OutboxLagWarnSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds > 0 &&
@@ -3783,50 +3705,6 @@ func (c *Config) Validate() error {
 func isValidExecutionNodeID(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func validateExecutionNodeWitnessConfig(cfg GatewayExecutionNodeWitnessConfig) error {
-	if !cfg.Enabled {
-		return nil
-	}
-	rawURL := strings.TrimSpace(cfg.URL)
-	parsed, err := url.Parse(rawURL)
-	if err != nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("gateway.execution_node.witness.url must be an absolute HTTPS URL without credentials, query, or fragment")
-	}
-	host := strings.TrimSpace(parsed.Hostname())
-	loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback) {
-		return fmt.Errorf("gateway.execution_node.witness.url must use HTTPS unless it is loopback-only")
-	}
-	if len(strings.TrimSpace(cfg.Token)) < 32 {
-		return fmt.Errorf("gateway.execution_node.witness.token must contain at least 32 characters")
-	}
-	if value := strings.TrimSpace(cfg.ClusterID); value != "" && !isValidExecutionNodeClusterID(value) {
-		return fmt.Errorf("gateway.execution_node.witness.cluster_id must contain only letters, numbers, dots, underscores, or hyphens")
-	}
-	if cfg.LeaseTTLSeconds < 10 || cfg.LeaseTTLSeconds > 60 {
-		return fmt.Errorf("gateway.execution_node.witness.lease_ttl_seconds must be between 10 and 60")
-	}
-	if cfg.RequestTimeoutSeconds < 1 || cfg.RequestTimeoutSeconds > 10 || cfg.RequestTimeoutSeconds >= cfg.LeaseTTLSeconds {
-		return fmt.Errorf("gateway.execution_node.witness.request_timeout_seconds must be between 1 and 10 and shorter than the lease TTL")
-	}
-	return nil
-}
-
-func isValidExecutionNodeClusterID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
 		return false
 	}
 	for _, r := range value {

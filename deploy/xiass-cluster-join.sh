@@ -201,29 +201,9 @@ main() {
     [ "$(json_value tunnel_proof)" = "$JOIN_TUNNEL_PROOF" ] || die "加入证明不匹配"
 
     resolve_compose
-    local emergency_egress refresh_token_store witness_enabled witness_url witness_token witness_cluster_id witness_ttl witness_timeout
-    emergency_egress=$(read_env_value GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS)
-    case "$emergency_egress" in
-        ''|true|false) ;;
-        *) die "现有应急本地出口配置必须为 true 或 false；未修改配置。" ;;
-    esac
+    local refresh_token_store
     refresh_token_store=$(jq -er 'if has("jwt_refresh_token_store") then .jwt_refresh_token_store else "redis" end | select(. == "redis" or . == "postgres")' /tmp/xiass-cluster-join-bundle.json) \
         || die "来源刷新令牌存储策略必须为 redis 或 postgres；未修改配置。"
-    witness_enabled=$(json_value witness_enabled)
-    [ -n "$witness_enabled" ] || witness_enabled=false
-    case "$witness_enabled" in true|false) ;; *) die "来源容灾仲裁开关无效；未修改配置。" ;; esac
-    witness_url=$(json_value witness_url)
-    witness_token=$(json_value witness_token)
-    witness_cluster_id=$(json_value witness_cluster_id)
-    witness_ttl=$(json_value witness_lease_ttl_seconds)
-    witness_timeout=$(json_value witness_request_timeout_seconds)
-    if [ "$witness_enabled" = true ]; then
-        case "$witness_url" in https://*|http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*) ;; *) die "来源容灾仲裁地址必须使用 HTTPS；未修改配置。" ;; esac
-        [ "${#witness_token}" -ge 32 ] || die "来源容灾仲裁密钥无效；未修改配置。"
-        [ -n "$witness_cluster_id" ] || die "来源容灾集群身份缺失；未修改配置。"
-        [ "$witness_ttl" -ge 10 ] && [ "$witness_ttl" -le 60 ] || die "来源容灾租约时间无效；未修改配置。"
-        [ "$witness_timeout" -ge 1 ] && [ "$witness_timeout" -le 10 ] && [ "$witness_timeout" -lt "$witness_ttl" ] || die "来源容灾请求超时无效；未修改配置。"
-    fi
     mkdir -p "$BACKUP_ROOT"
     JOIN_BACKUP_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$JOIN_TARGET_NODE_ID"
     mkdir -p "$JOIN_BACKUP_DIR"
@@ -244,9 +224,6 @@ main() {
     set_env_value GATEWAY_EXECUTION_NODE_ENABLED true
     set_env_value GATEWAY_EXECUTION_NODE_ID "$JOIN_TARGET_NODE_ID"
     set_env_value GATEWAY_EXECUTION_NODE_DEFAULT_PROXY_ID "$target_proxy_id"
-    if [ -z "$emergency_egress" ]; then
-        set_env_value GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS false
-    fi
     set_env_value GATEWAY_EXECUTION_NODE_CONTROL_PLANE false
     set_env_value GATEWAY_EXECUTION_NODE_LEGACY_UNASSIGNED_NODE_ID "$legacy_node_id"
     set_env_value GATEWAY_EXECUTION_NODE_LEGACY_UNASSIGNED_PROXY_ID "$legacy_proxy_id"
@@ -284,20 +261,6 @@ main() {
     set_env_value XIASS_CLUSTER_TUNNEL_TOKEN "$JOIN_TUNNEL_PROOF"
     set_env_value XIASS_CLUSTER_STATE_SOURCE_NODE_ID "$(json_value source_node_id)"
     set_env_value XIASS_CLUSTER_NODE_URLS_JSON "$(jq -cn --arg id "$(json_value source_node_id)" --arg url "$source_url" '{($id):$url}')"
-    set_env_value GATEWAY_EXECUTION_NODE_WITNESS_ENABLED "$witness_enabled"
-    if [ "$witness_enabled" = true ]; then
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_URL "$witness_url"
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_TOKEN "$witness_token"
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID "$witness_cluster_id"
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_LEASE_TTL_SECONDS "$witness_ttl"
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_REQUEST_TIMEOUT_SECONDS "$witness_timeout"
-    else
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_URL ""
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_TOKEN ""
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID ""
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_LEASE_TTL_SECONDS 15
-        set_env_value GATEWAY_EXECUTION_NODE_WITNESS_REQUEST_TIMEOUT_SECONDS 3
-    fi
 
     log "已写入来源 PostgreSQL/Redis 和认证配置，开始仅重建目标应用容器。"
     compose up -d --no-deps --no-build --force-recreate xiass-api >/dev/null

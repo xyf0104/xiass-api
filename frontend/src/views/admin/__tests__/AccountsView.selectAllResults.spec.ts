@@ -203,7 +203,6 @@ describe('admin AccountsView select all filtered results', () => {
         enabled: false,
         node_id: '',
         default_proxy_id: 0,
-        emergency_local_egress: false,
         control_plane: true,
         legacy_unassigned_node_id: 'api',
         legacy_unassigned_proxy_id: 0
@@ -373,7 +372,7 @@ describe('admin AccountsView select all filtered results', () => {
     }))
   })
 
-  it('keeps an online remote api2 account amber, read-only, and outside page or result selection', async () => {
+  it.each([true, false, undefined])('keeps an unpaired remote api2 account read-only and unselectable with online=%s', async online => {
     const localAccount = { ...makeAccounts(1)[0], id: 1, name: 'local', execution_node_id: 'api' }
     const remoteAccount = { ...makeAccounts(1)[0], id: 2, name: 'remote', execution_node_id: 'api2' }
     const accounts = [localAccount, remoteAccount]
@@ -389,14 +388,13 @@ describe('admin AccountsView select all filtered results', () => {
         enabled: true,
         node_id: 'api',
         default_proxy_id: 84,
-        emergency_local_egress: false,
         control_plane: true,
         legacy_unassigned_node_id: 'api',
         legacy_unassigned_proxy_id: 84
       },
       nodes: [
         { node_id: 'api', online: true, is_local: true },
-        { node_id: 'api2', online: true, is_local: false }
+        ...(online === undefined ? [] : [{ node_id: 'api2', online, is_local: false }])
       ],
       issues: []
     })
@@ -428,9 +426,11 @@ describe('admin AccountsView select all filtered results', () => {
   })
 
   it.each([
-    ['api', 'api2'],
-    ['api2', 'api']
-  ])('allows paired management from %s of %s without changing owner styling or filtered selection', async (local, remote) => {
+    ['api', 'api2', true],
+    ['api2', 'api', true],
+    ['api', 'api2', false],
+    ['api2', 'api', false]
+  ])('allows paired management from %s of %s with peer online=%s', async (local, remote, online) => {
     const accounts = [
       { ...makeAccounts(1)[0], id: 1, execution_node_id: local },
       { ...makeAccounts(1)[0], id: 2, execution_node_id: remote }
@@ -438,8 +438,8 @@ describe('admin AccountsView select all filtered results', () => {
     listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
     getExecutionNodeStatus.mockResolvedValue({
       admin_write_mode: 'paired_full_access', admin_write_allowed: true,
-      runtime: { enabled: true, node_id: local, emergency_local_egress: false, legacy_unassigned_node_id: 'api' },
-      nodes: [{ node_id: local, online: true, is_local: true }, { node_id: remote, online: true, is_local: false }]
+      runtime: { enabled: true, node_id: local, legacy_unassigned_node_id: 'api' },
+      nodes: [{ node_id: local, online: true, is_local: true }, { node_id: remote, online, is_local: false }]
     })
     const wrapper = mountView()
     await flushPromises()
@@ -473,7 +473,7 @@ describe('admin AccountsView select all filtered results', () => {
     listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
     getExecutionNodeStatus.mockResolvedValue({
       admin_write_mode: 'paired_full_access', admin_write_allowed: allowed,
-      runtime: { enabled: true, node_id: 'api', emergency_local_egress: false },
+      runtime: { enabled: true, node_id: 'api' },
       nodes: [{ node_id: 'api2', online: true, is_local: false }]
     })
     const wrapper = mountView()
@@ -493,7 +493,7 @@ describe('admin AccountsView select all filtered results', () => {
     listAccounts.mockResolvedValue({ items: accounts, total: 3, page: 1, page_size: 20, pages: 1 })
     getExecutionNodeStatus.mockResolvedValue({
       admin_write_mode: 'pairing_unavailable', admin_write_allowed: false,
-      runtime: { enabled: true, node_id: 'api', legacy_unassigned_node_id: 'api', emergency_local_egress: true },
+      runtime: { enabled: true, node_id: 'api', legacy_unassigned_node_id: 'api' },
       nodes: [{ node_id: 'api', online: true, is_local: true }, { node_id: 'api2', online: false, is_local: false }]
     })
     const wrapper = mountView()
@@ -529,7 +529,7 @@ describe('admin AccountsView select all filtered results', () => {
     wrapper.unmount()
   })
 
-  it('keeps a taken-over remote api2 badge amber while restoring account selection', async () => {
+  it('ignores legacy takeover flags and keeps an offline unpaired account read-only', async () => {
     const remoteAccount = { ...makeAccounts(1)[0], id: 2, name: 'remote', execution_node_id: 'api2' }
     listAccounts.mockResolvedValue({ items: [remoteAccount], total: 1, page: 1, page_size: 20, pages: 1 })
     getExecutionNodeStatus.mockResolvedValue({
@@ -560,8 +560,8 @@ describe('admin AccountsView select all filtered results', () => {
 
     const remoteRow = wrapper.get('[data-test="account-row-2"]')
     const remoteCheckbox = remoteRow.get('input[type="checkbox"]')
-    const remoteBadge = remoteRow.get('span[title="admin.accounts.columns.executionNodeHint"]')
-    expect(remoteCheckbox.attributes('disabled')).toBeUndefined()
+    const remoteBadge = remoteRow.get('span[title="admin.accounts.executionNodeRemoteReadOnly"]')
+    expect(remoteCheckbox.attributes('disabled')).toBeDefined()
     expect(remoteBadge.classes()).toEqual(expect.arrayContaining([
       'bg-amber-50',
       'text-amber-700',
@@ -569,10 +569,15 @@ describe('admin AccountsView select all filtered results', () => {
       'shrink-0'
     ]))
     expect(remoteBadge.text()).toContain('api2')
-    expect(remoteBadge.text()).toContain('admin.accounts.executionNodeTakeoverBadge')
+    expect(remoteBadge.text()).toContain('admin.accounts.executionNodeReadOnlyBadge')
+    expect(remoteBadge.text()).not.toContain('admin.accounts.executionNodeTakeoverBadge')
+    expect(remoteBadge.get('[data-icon="lock"]').exists()).toBe(true)
 
     await wrapper.get('[data-test="select-page"]').trigger('click')
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('1')
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
     wrapper.unmount()
   })
 })

@@ -387,17 +387,17 @@ func (s *GeminiMessagesCompatService) selectBestGeminiAccount(
 		return nil
 	}
 	minPriority := eligible[0].Priority
-	takeoverTier := policy.nodeRequiresTakeover(policy.nodeID(eligible[0]))
+
 	for _, account := range eligible[1:] {
-		takeover := policy.nodeRequiresTakeover(policy.nodeID(account))
-		if (takeoverTier && !takeover) || (takeover == takeoverTier && account.Priority < minPriority) {
+
+		if account.Priority < minPriority {
 			minPriority = account.Priority
-			takeoverTier = takeover
+
 		}
 	}
 	highestPriority := make([]*Account, 0, len(eligible))
 	for _, account := range eligible {
-		if account.Priority == minPriority && policy.nodeRequiresTakeover(policy.nodeID(account)) == takeoverTier {
+		if account.Priority == minPriority {
 			highestPriority = append(highestPriority, account)
 		}
 	}
@@ -501,7 +501,7 @@ func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context,
 	if !policy.hydratedAccountEgressAllowed(account) {
 		return nil, nil
 	}
-	return policy.routeAccountForExecution(account), nil
+	return account, nil
 }
 
 func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
@@ -523,7 +523,7 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 	if !policy.hydratedAccountEgressAllowed(hydrated) {
 		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
 	}
-	return policy.routeAccountForExecution(hydrated), nil
+	return hydrated, nil
 }
 
 func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
@@ -658,17 +658,17 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 		}
 	}
 	minPriority := bestRankCandidates[0].Priority
-	takeoverTier := policy.nodeRequiresTakeover(policy.nodeID(bestRankCandidates[0]))
+
 	for _, account := range bestRankCandidates[1:] {
-		takeover := policy.nodeRequiresTakeover(policy.nodeID(account))
-		if (takeoverTier && !takeover) || (takeover == takeoverTier && account.Priority < minPriority) {
+
+		if account.Priority < minPriority {
 			minPriority = account.Priority
-			takeoverTier = takeover
+
 		}
 	}
 	highestPriority := make([]*Account, 0, len(bestRankCandidates))
 	for _, account := range bestRankCandidates {
-		if account.Priority == minPriority && policy.nodeRequiresTakeover(policy.nodeID(account)) == takeoverTier {
+		if account.Priority == minPriority {
 			highestPriority = append(highestPriority, account)
 		}
 	}

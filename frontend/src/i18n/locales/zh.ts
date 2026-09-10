@@ -1510,7 +1510,6 @@ export default {
       localNode: '本机节点',
       runtimeEnabled: '本机多节点运行参数',
       controlPlane: '控制面任务',
-      emergencyEgress: '故障应急出口',
       yes: '是',
       no: '否',
       configured: '已配置',

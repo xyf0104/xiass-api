@@ -49,7 +49,7 @@ func (h executionNodeWriteHealth) HealthyExecutionNodes(_ context.Context, nodeI
 func TestExecutionNodeSharedWriteGuardKeepsReadsAndBlocksSecondaryWrites(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api", EmergencyLocalEgress: true}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api"}
 	svc := service.NewSettingService(&executionNodeWriteRepo{values: map[string]string{"execution_node_emergency_egress:api2": "true"}}, cfg)
 	svc.SetExecutionNodeHealthReader(executionNodeWriteHealth(true))
 
@@ -71,7 +71,7 @@ func TestExecutionNodeSharedWriteGuardKeepsReadsAndBlocksSecondaryWrites(t *test
 func TestExecutionNodeSharedWriteGuardAllowsClusterSMSRuntimeOperations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api", EmergencyLocalEgress: true}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api"}
 	svc := service.NewSettingService(&executionNodeWriteRepo{values: map[string]string{"execution_node_emergency_egress:api2": "true"}}, cfg)
 	svc.SetExecutionNodeHealthReader(executionNodeWriteHealth(true))
 
@@ -102,10 +102,10 @@ func TestExecutionNodeSharedWriteGuardAllowsClusterSMSRuntimeOperations(t *testi
 	require.Contains(t, cardKeyWrite.Body.String(), "EXECUTION_NODE_ADMIN_READ_ONLY")
 }
 
-func TestExecutionNodeSharedWriteGuardAllowsEmergencyTakeover(t *testing.T) {
+func TestExecutionNodeSharedWriteGuardRejectsLegacyTakeoverPermissionWhenPrimaryOffline(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api", EmergencyLocalEgress: true}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api2", LegacyUnassignedNodeID: "api"}
 	svc := service.NewSettingService(&executionNodeWriteRepo{values: map[string]string{"execution_node_emergency_egress:api2": "true"}}, cfg)
 	svc.SetExecutionNodeHealthReader(executionNodeWriteHealth(false))
 
@@ -115,5 +115,6 @@ func TestExecutionNodeSharedWriteGuardAllowsEmergencyTakeover(t *testing.T) {
 
 	write := httptest.NewRecorder()
 	router.ServeHTTP(write, httptest.NewRequest(http.MethodPut, "/groups/1", nil))
-	require.Equal(t, http.StatusNoContent, write.Code)
+	require.Equal(t, http.StatusForbidden, write.Code)
+	require.Contains(t, write.Body.String(), "EXECUTION_NODE_ADMIN_READ_ONLY")
 }

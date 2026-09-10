@@ -35,13 +35,11 @@ type ExecutionNodeRoutingSettings struct {
 	// Available distinguishes a successful read of the shared policy from a
 	// local/default value. A configured multi-node instance must fail closed when
 	// the shared policy cannot be read for the first time.
-	Available            bool               `json:"-"`
-	Enabled              bool               `json:"enabled"`
-	Weights              map[string]float64 `json:"weights"`
-	ProxyIDs             map[string]int64   `json:"proxy_ids"`
-	Healthy              map[string]bool    `json:"-"`
-	LocalProxy           *Proxy             `json:"-"`
-	EmergencyLocalEgress bool               `json:"-"`
+	Available bool               `json:"-"`
+	Enabled   bool               `json:"enabled"`
+	Weights   map[string]float64 `json:"weights"`
+	ProxyIDs  map[string]int64   `json:"proxy_ids"`
+	Healthy   map[string]bool    `json:"-"`
 }
 
 type cachedExecutionNodeRoutingSettings struct {
@@ -73,27 +71,6 @@ func cloneExecutionNodeProxyIDs(proxyIDs map[string]int64) map[string]int64 {
 		cloned[nodeID] = proxyID
 	}
 	return cloned
-}
-
-func executionNodeEmergencyEgressSettingKey(nodeID string) string {
-	nodeID = strings.TrimSpace(nodeID)
-	if !validExecutionNodeID(nodeID) {
-		return ""
-	}
-	return SettingKeyExecutionNodeEmergencyEgressPrefix + nodeID
-}
-
-func decodeExecutionNodeEmergencyEgress(raw string, fallback bool) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "":
-		return fallback, nil
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return fallback, errors.New("execution node offline-takeover setting must be true or false")
-	}
 }
 
 func validExecutionNodeID(value string) bool {
@@ -288,10 +265,6 @@ func cloneExecutionNodeRoutingSettings(settings ExecutionNodeRoutingSettings) Ex
 		}
 		settings.Healthy = healthyNodes
 	}
-	if settings.LocalProxy != nil {
-		proxy := *settings.LocalProxy
-		settings.LocalProxy = &proxy
-	}
 	return settings
 }
 
@@ -304,14 +277,10 @@ func (s *SettingService) loadExecutionNodeRoutingSettings(ctx context.Context, p
 	defer cancel()
 
 	localNodeID := strings.TrimSpace(s.cfg.Gateway.ExecutionNode.ID)
-	emergencyEgressKey := executionNodeEmergencyEgressSettingKey(localNodeID)
 	settingKeys := []string{
 		SettingKeyExecutionNodeBalancingEnabled,
 		SettingKeyExecutionNodeWeights,
 		SettingKeyExecutionNodeProxyIDs,
-	}
-	if emergencyEgressKey != "" {
-		settingKeys = append(settingKeys, emergencyEgressKey)
 	}
 	values, err := s.settingRepo.GetMultiple(dbCtx, settingKeys)
 	if err != nil {
@@ -330,15 +299,9 @@ func (s *SettingService) loadExecutionNodeRoutingSettings(ctx context.Context, p
 	enabled := strings.EqualFold(strings.TrimSpace(values[SettingKeyExecutionNodeBalancingEnabled]), "true")
 	weights := parseExecutionNodeWeights(values[SettingKeyExecutionNodeWeights])
 	proxyIDs := parseExecutionNodeProxyIDs(values[SettingKeyExecutionNodeProxyIDs])
-	emergencyLocalEgress, overrideErr := decodeExecutionNodeEmergencyEgress(values[emergencyEgressKey], s.cfg.Gateway.ExecutionNode.EmergencyLocalEgress)
-	if overrideErr != nil {
-		slog.Warn("parse execution node offline-takeover setting failed; using local deployment default", "error", overrideErr)
-	}
 	if enabled {
-		validationErr := overrideErr
-		if validationErr == nil {
-			weights, validationErr = decodeExecutionNodeWeights(values[SettingKeyExecutionNodeWeights])
-		}
+		var validationErr error
+		weights, validationErr = decodeExecutionNodeWeights(values[SettingKeyExecutionNodeWeights])
 		if validationErr == nil {
 			proxyIDs, validationErr = decodeExecutionNodeProxyIDs(values[SettingKeyExecutionNodeProxyIDs])
 		}
@@ -381,32 +344,13 @@ func (s *SettingService) loadExecutionNodeRoutingSettings(ctx context.Context, p
 		// The process serving this request is necessarily alive. Marking its own
 		// heartbeat healthy avoids a startup race before the first Redis SET.
 		healthy[localNodeID] = true
-		var localProxy *Proxy
-		if s.executionNodeHealthReader != nil {
-			if s.proxyRepo == nil {
-				slog.Warn("local execution node proxy repository is unavailable; emergency takeover is disabled for this instance")
-			} else {
-				var proxyErr error
-				localProxy, proxyErr = s.proxyRepo.GetByID(dbCtx, s.cfg.Gateway.ExecutionNode.DefaultProxyID)
-				if proxyErr != nil || localProxy == nil || !localProxy.IsActive() || localProxy.IsExpired(time.Now()) {
-					localProxy = nil
-					slog.Warn("local execution node proxy is unavailable; remote healthy-node accounts remain routable but emergency local-egress takeover is disabled",
-						"node_id", localNodeID,
-						"proxy_id", s.cfg.Gateway.ExecutionNode.DefaultProxyID,
-						"error", proxyErr,
-					)
-				}
-			}
-		}
 		entry := &cachedExecutionNodeRoutingSettings{
 			settings: ExecutionNodeRoutingSettings{
-				Available:            true,
-				Enabled:              true,
-				Weights:              weights,
-				ProxyIDs:             proxyIDs,
-				Healthy:              healthy,
-				LocalProxy:           localProxy,
-				EmergencyLocalEgress: emergencyLocalEgress,
+				Available: true,
+				Enabled:   true,
+				Weights:   weights,
+				ProxyIDs:  proxyIDs,
+				Healthy:   healthy,
 			},
 			expiresAt: time.Now().Add(executionNodeRoutingCacheTTL).UnixNano(),
 		}
@@ -416,11 +360,10 @@ func (s *SettingService) loadExecutionNodeRoutingSettings(ctx context.Context, p
 
 	entry := &cachedExecutionNodeRoutingSettings{
 		settings: ExecutionNodeRoutingSettings{
-			Available:            true,
-			Enabled:              enabled,
-			Weights:              weights,
-			ProxyIDs:             proxyIDs,
-			EmergencyLocalEgress: emergencyLocalEgress,
+			Available: true,
+			Enabled:   enabled,
+			Weights:   weights,
+			ProxyIDs:  proxyIDs,
 		},
 		expiresAt: time.Now().Add(executionNodeRoutingCacheTTL).UnixNano(),
 	}
@@ -429,15 +372,13 @@ func (s *SettingService) loadExecutionNodeRoutingSettings(ctx context.Context, p
 }
 
 type executionNodeRoutingPolicy struct {
-	enabled              bool
-	unavailable          bool
-	legacyNodeID         string
-	localNodeID          string
-	emergencyLocalEgress bool
-	weights              map[string]float64
-	proxyIDs             map[string]int64
-	healthy              map[string]bool
-	localProxy           *Proxy
+	enabled      bool
+	unavailable  bool
+	legacyNodeID string
+	localNodeID  string
+	weights      map[string]float64
+	proxyIDs     map[string]int64
+	healthy      map[string]bool
 }
 
 func resolveExecutionNodeRoutingPolicy(ctx context.Context, cfg *config.Config, settingService *SettingService) executionNodeRoutingPolicy {
@@ -470,14 +411,12 @@ func resolveExecutionNodeRoutingPolicy(ctx context.Context, cfg *config.Config, 
 		return executionNodeRoutingPolicy{}
 	}
 	return executionNodeRoutingPolicy{
-		enabled:              true,
-		legacyNodeID:         legacyNodeID,
-		localNodeID:          strings.TrimSpace(cfg.Gateway.ExecutionNode.ID),
-		emergencyLocalEgress: settings.EmergencyLocalEgress,
-		weights:              cloneExecutionNodeWeights(settings.Weights),
-		proxyIDs:             cloneExecutionNodeProxyIDs(settings.ProxyIDs),
-		healthy:              settings.Healthy,
-		localProxy:           settings.LocalProxy,
+		enabled:      true,
+		legacyNodeID: legacyNodeID,
+		localNodeID:  strings.TrimSpace(cfg.Gateway.ExecutionNode.ID),
+		weights:      cloneExecutionNodeWeights(settings.Weights),
+		proxyIDs:     cloneExecutionNodeProxyIDs(settings.ProxyIDs),
+		healthy:      settings.Healthy,
 	}
 }
 
@@ -521,51 +460,11 @@ func (p executionNodeRoutingPolicy) nodeHealthy(nodeID string) bool {
 	return p.healthy[strings.TrimSpace(nodeID)]
 }
 
-func (p executionNodeRoutingPolicy) nodeRequiresTakeover(nodeID string) bool {
-	healthy, known := p.healthy[nodeID]
-	return p.enabled && !p.unavailable && p.emergencyLocalEgress &&
-		nodeID != p.localNodeID && known && !healthy
-}
-
-func (p executionNodeRoutingPolicy) hasOfflineTakeoverOwner() bool {
-	for nodeID, weight := range p.weights {
-		if weight > 0 && p.nodeRequiresTakeover(nodeID) {
-			return true
-		}
-	}
-	return false
-}
-
-func (p executionNodeRoutingPolicy) canTakeOver(account *Account) bool {
-	if !p.enabled || p.unavailable || !p.emergencyLocalEgress || account == nil {
-		return false
-	}
-	// A takeover may replace only the runtime route, never repair an invalid
-	// durable account-to-proxy binding. Missing or mismatched persistent state
-	// remains fail-closed for an administrator to repair explicitly.
-	if account.ProxyID == nil || account.Proxy == nil || account.Proxy.ID != *account.ProxyID ||
-		!account.Proxy.IsActive() || account.Proxy.IsExpired(time.Now()) {
-		return false
-	}
-	owner := p.nodeID(account)
-	if !p.nodeRequiresTakeover(owner) {
-		return false
-	}
-	if !p.nodeHealthy(p.localNodeID) || p.localProxy == nil ||
-		!p.localProxy.IsActive() || p.localProxy.IsExpired(time.Now()) {
-		return false
-	}
-	return p.proxyIDs[p.localNodeID] == p.localProxy.ID && p.localProxy.ID > 0
-}
-
 func (p executionNodeRoutingPolicy) hydratedAccountEgressAllowed(account *Account) bool {
 	if !p.accountEgressIDAllowed(account) {
 		return false
 	}
 	if !p.enabled {
-		return true
-	}
-	if p.canTakeOver(account) {
 		return true
 	}
 	if !p.nodeHealthy(p.nodeID(account)) {
@@ -575,20 +474,6 @@ func (p executionNodeRoutingPolicy) hydratedAccountEgressAllowed(account *Accoun
 		account.Proxy.ID == *account.ProxyID &&
 		account.Proxy.IsActive() &&
 		!account.Proxy.IsExpired(time.Now())
-}
-
-// routeAccountForExecution returns a request-local account snapshot. Emergency
-// takeover changes only this snapshot's proxy; the durable owner/proxy in
-// PostgreSQL and scheduler caches remain untouched and automatically resume
-// when the owner heartbeat returns.
-func (p executionNodeRoutingPolicy) routeAccountForExecution(account *Account) *Account {
-	if account == nil || !p.canTakeOver(account) {
-		return account
-	}
-	routed := *account
-	proxy := *p.localProxy
-	routed.executionProxy = &proxy
-	return &routed
 }
 
 func (p executionNodeRoutingPolicy) candidateAccountEgressAllowed(account *Account) bool {
@@ -720,15 +605,6 @@ func orderExecutionNodeCandidatesWithinPriorities[T any](items []T, accountOf fu
 	if !policy.enabled {
 		return items
 	}
-	if policy.hasOfflineTakeoverOwner() {
-		// Emergency takeover is the explicit exception to global account
-		// priority: exhaust healthy-owner tiers before any offline-owner tier.
-		items = append([]T(nil), items...)
-		sort.SliceStable(items, func(i, j int) bool {
-			return !policy.nodeRequiresTakeover(policy.nodeID(accountOf(items[i]))) &&
-				policy.nodeRequiresTakeover(policy.nodeID(accountOf(items[j])))
-		})
-	}
 	ordered := make([]T, 0, len(items))
 	for start := 0; start < len(items); {
 		end := start + 1
@@ -772,14 +648,6 @@ func weightedExecutionNodePermutation(nodes []string, policy executionNodeRoutin
 		ordered = append(ordered, remaining[selected])
 		remaining = append(remaining[:selected], remaining[selected+1:]...)
 		weights = append(weights[:selected], weights[selected+1:]...)
-	}
-	if policy.hasOfflineTakeoverOwner() {
-		// Preserve the exact normal weighted permutation (including healthy
-		// nodes' relative order), but never let a dead owner's old weight win
-		// ahead of surviving owners during explicit emergency takeover.
-		sort.SliceStable(ordered, func(i, j int) bool {
-			return !policy.nodeRequiresTakeover(ordered[i]) && policy.nodeRequiresTakeover(ordered[j])
-		})
 	}
 	return ordered
 }

@@ -54,7 +54,7 @@ func (r *BatchImageAccountRepositoryResolver) ResolveBatchImageAccount(ctx conte
 	if !policy.hydratedAccountEgressAllowed(account) {
 		return nil, ErrNoAvailableAccounts
 	}
-	return policy.routeAccountForExecution(account), nil
+	return account, nil
 }
 
 type BatchImageProviderProcessor struct {

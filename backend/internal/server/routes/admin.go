@@ -624,14 +624,14 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, setting
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
 		adminSettings.GET("/execution-nodes/status", h.Admin.Setting.GetExecutionNodeStatus)
 		adminSettings.POST("/execution-nodes/runtime/initialize", h.Admin.Setting.InitializeExecutionNodeRuntime)
-		adminSettings.POST("/execution-nodes/runtime/offline-takeover", h.Admin.Setting.UpdateExecutionNodeEmergencyEgress)
+
 		adminSettings.GET("/execution-nodes/pairing", h.Admin.Setting.GetExecutionNodePairingStatus)
 		adminSettings.POST("/execution-nodes/pairing/invite", h.Admin.Setting.GenerateExecutionNodePairingInvite)
 		adminSettings.POST("/execution-nodes/pairing/join", h.Admin.Setting.PairExecutionNode)
 		adminSettings.POST("/execution-nodes/pairing/unpair", h.Admin.Setting.UnpairExecutionNode)
 		// All remaining mutating settings endpoints own shared business state.
 		// Reads still pass through this guard; a secondary becomes writable only
-		// after an explicit offline-takeover decision.
+		// after verified shared-state pairing.
 		adminSettings.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)

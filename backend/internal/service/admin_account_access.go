@@ -83,34 +83,5 @@ func (s *adminServiceImpl) ensureAccountManagementAccess(ctx context.Context, ac
 		return nil
 	}
 
-	reader := s.settingService.executionNodeHealthReader
-	if reader == nil {
-		return infraerrors.ServiceUnavailable("ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "the shared node heartbeat is unavailable; remote accounts remain read-only")
-	}
-	health, err := reader.HealthyExecutionNodes(ctx, []string{ownerNodeID})
-	if err != nil {
-		return infraerrors.ServiceUnavailable("ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "the shared node heartbeat is unavailable; remote accounts remain read-only").WithCause(err)
-	}
-	ownerHealthy, known := health[ownerNodeID]
-	if !known {
-		return infraerrors.ServiceUnavailable("ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "the remote node heartbeat is unknown; remote accounts remain read-only")
-	}
-	if ownerHealthy {
-		return infraerrors.Newf(http.StatusForbidden, "ACCOUNT_REMOTE_NODE_READ_ONLY", "%s accounts are managed by node %s and are read-only here", account.Name, ownerNodeID)
-	}
-
-	// The same shared-state read is used by request routing. If it is stale or
-	// invalid, do not turn an uncertain state into a writable takeover.
-	settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
-	if !settings.Available {
-		return infraerrors.ServiceUnavailable("ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "the shared node policy is unavailable; remote accounts remain read-only")
-	}
-	takeover, err := s.settingService.executionNodeTakeoverPermission(ctx)
-	if err != nil {
-		return infraerrors.ServiceUnavailable("ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "the shared takeover permission is unavailable; remote accounts remain read-only")
-	}
-	if !takeover {
-		return infraerrors.Newf(http.StatusForbidden, "ACCOUNT_REMOTE_NODE_TAKEOVER_DISABLED", "%s is offline; enable emergency takeover on this server before managing its accounts", ownerNodeID)
-	}
-	return nil
+	return infraerrors.Newf(http.StatusForbidden, "ACCOUNT_REMOTE_NODE_READ_ONLY", "%s accounts are managed by node %s and are read-only here", account.Name, ownerNodeID)
 }

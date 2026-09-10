@@ -182,33 +182,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		for k, v := range excludedIDs {
 			localExcluded[k] = v
 		}
-		policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-		var waitCandidates []*Account
 
 		for {
 			account, err := s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, localExcluded)
 			if err != nil {
-				if errors.Is(err, ErrNoAvailableAccounts) {
-					for _, waiting := range waitCandidates {
-						if accessErr := s.requireAccountCandidate(ctx, groupID, waiting.ID); accessErr != nil {
-							return nil, accessErr
-						}
-						if !s.checkAndRegisterSession(ctx, waiting, sessionHash) {
-							continue
-						}
-						selection, selectErr := s.newSelectionResult(ctx, waiting, false, nil, &AccountWaitPlan{
-							AccountID: waiting.ID, MaxConcurrency: waiting.Concurrency,
-							Timeout: cfg.FallbackWaitTimeout, MaxWaiting: cfg.FallbackMaxWaiting,
-						})
-						if selectErr != nil {
-							return nil, selectErr
-						}
-						if sessionHash != "" && s.cache != nil {
-							_ = s.bindGatewayStickySessionDuringSelection(ctx, groupID, sessionHash, waiting.ID)
-						}
-						return selection, nil
-					}
-				}
 				return nil, err
 			}
 
@@ -223,15 +200,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 			}
 
-			// Emergency new placement must exhaust healthy-owner slots before takeover
-			// or waiting. Existing sticky bindings retain their original wait behavior.
-			if policy.hasOfflineTakeoverOwner() && account.ID != stickyAccountID {
-				waitCandidates = append(waitCandidates, account)
-				localExcluded[account.ID] = struct{}{}
-				continue
+			// 等待计划同样需要复核账号权限和会话限制。
+			if err := s.requireAccountCandidate(ctx, groupID, account.ID); err != nil {
+				return nil, err
 			}
-
-			// 对于等待计划的情况，也需要先检查会话限制
 			if !s.checkAndRegisterSession(ctx, account, sessionHash) {
 				localExcluded[account.ID] = struct{}{}
 				continue
@@ -481,9 +453,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 			// 2. 批量获取负载信息
 			routingLoads := make([]AccountWithConcurrency, 0, len(routingCandidates))
-			hasTakeoverCandidates := false
 			for _, acc := range routingCandidates {
-				hasTakeoverCandidates = hasTakeoverCandidates || executionNodePolicy.nodeRequiresTakeover(executionNodePolicy.nodeID(acc))
 				routingLoads = append(routingLoads, AccountWithConcurrency{
 					ID:             acc.ID,
 					MaxConcurrency: acc.EffectiveLoadFactor(),
@@ -498,7 +468,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				if loadInfo == nil {
 					loadInfo = &AccountLoadInfo{AccountID: acc.ID}
 				}
-				if loadInfo.LoadRate < 100 || (hasTakeoverCandidates && !executionNodePolicy.nodeRequiresTakeover(executionNodePolicy.nodeID(acc))) {
+				if loadInfo.LoadRate < 100 {
 					routingAvailable = append(routingAvailable, accountWithLoad{account: acc, loadInfo: loadInfo})
 				}
 			}
@@ -755,9 +725,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	accountLoads := make([]AccountWithConcurrency, 0, len(candidates))
-	hasTakeoverCandidates := false
 	for _, acc := range candidates {
-		hasTakeoverCandidates = hasTakeoverCandidates || executionNodePolicy.nodeRequiresTakeover(executionNodePolicy.nodeID(acc))
 		accountLoads = append(accountLoads, AccountWithConcurrency{
 			ID:             acc.ID,
 			MaxConcurrency: acc.EffectiveLoadFactor(),
@@ -778,7 +746,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if loadInfo == nil {
 				loadInfo = &AccountLoadInfo{AccountID: acc.ID}
 			}
-			if loadInfo.LoadRate < 100 || (hasTakeoverCandidates && !executionNodePolicy.nodeRequiresTakeover(executionNodePolicy.nodeID(acc))) {
+			if loadInfo.LoadRate < 100 {
 				available = append(available, accountWithLoad{
 					account:  acc,
 					loadInfo: loadInfo,
@@ -788,20 +756,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
 		for len(available) > 0 {
-			priorityPool := available
-			if hasTakeoverCandidates {
-				healthy := make([]accountWithLoad, 0, len(available))
-				for _, item := range available {
-					if !executionNodePolicy.nodeRequiresTakeover(executionNodePolicy.nodeID(item.account)) {
-						healthy = append(healthy, item)
-					}
-				}
-				if len(healthy) > 0 {
-					priorityPool = healthy
-				}
-			}
 			// 1. 取优先级最小的集合
-			candidates := filterByMinPriority(priorityPool)
+			candidates := filterByMinPriority(available)
 			// 2. 新会话先按节点权重选定执行节点；该节点无可用账号时，
 			// 下一轮会自动尝试同优先级的其余节点。
 			candidates = firstExecutionNodeCandidateGroup(
@@ -1626,7 +1582,6 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	if !policy.hydratedAccountEgressAllowed(account) {
 		return nil, nil
 	}
-	account = policy.routeAccountForExecution(account)
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
@@ -1675,7 +1630,7 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	if !policy.hydratedAccountEgressAllowed(hydrated) {
 		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
 	}
-	return policy.routeAccountForExecution(hydrated), nil
+	return hydrated, nil
 }
 
 func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
@@ -2000,17 +1955,14 @@ func selectGatewayLegacyExecutionNodeAccount(candidates []*Account, preferOAuth,
 		return nil
 	}
 	minPriority := candidates[0].Priority
-	takeoverTier := policy.nodeRequiresTakeover(policy.nodeID(candidates[0]))
 	for _, account := range candidates[1:] {
-		takeover := policy.nodeRequiresTakeover(policy.nodeID(account))
-		if (takeoverTier && !takeover) || (takeover == takeoverTier && account.Priority < minPriority) {
+		if account.Priority < minPriority {
 			minPriority = account.Priority
-			takeoverTier = takeover
 		}
 	}
 	highestPriority := make([]*Account, 0, len(candidates))
 	for _, account := range candidates {
-		if account.Priority == minPriority && policy.nodeRequiresTakeover(policy.nodeID(account)) == takeoverTier {
+		if account.Priority == minPriority {
 			highestPriority = append(highestPriority, account)
 		}
 	}

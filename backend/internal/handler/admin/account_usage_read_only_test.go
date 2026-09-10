@@ -40,14 +40,13 @@ func (*passiveHandlerStatsRepo) GetAccountWindowStats(context.Context, int64, ti
 
 func TestAccountGetUsageReadOnlyFallback(t *testing.T) {
 	for _, reason := range []string{
-		"ACCOUNT_REMOTE_NODE_READ_ONLY", "ACCOUNT_REMOTE_NODE_TAKEOVER_DISABLED",
-		"ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "ACCOUNT_NODE_ACCESS_UNAVAILABLE",
+		"ACCOUNT_REMOTE_NODE_READ_ONLY", "ACCOUNT_NODE_ACCESS_UNAVAILABLE",
 		"UNRELATED_DENIAL",
 	} {
 		for _, query := range []string{"", "?force=false", "?source=passive", "?source=active", "?force=true", "?source=passive&force=true", "?source=invalid"} {
 			t.Run(reason+query, func(t *testing.T) {
 				status := http.StatusForbidden
-				if reason == "ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE" || reason == "ACCOUNT_NODE_ACCESS_UNAVAILABLE" {
+				if reason == "ACCOUNT_NODE_ACCESS_UNAVAILABLE" {
 					status = http.StatusServiceUnavailable
 				}
 				access := &accountManagementAccessSpy{denied: map[int64]error{42: infraerrors.New(status, reason, "management unavailable")}}

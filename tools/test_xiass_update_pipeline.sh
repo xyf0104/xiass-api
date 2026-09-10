@@ -153,6 +153,14 @@ run_fixture() {
                     *) printf '{"code":0,"data":{"version":"9.8.7"}}\n' ;;
                 esac
                 return 0 ;;
+            http://127.0.0.1:8080/readyz)
+                event runtime-ready
+                case "$preparation" in
+                    runtime-readiness-failure) return 22 ;;
+                    runtime-readiness-json-failure) printf '{"status":"ok","checks":{"redis":"unavailable"}}\n' ;;
+                    *) printf '{"status":"ok","checks":{"postgres":"ok","redis":"ok","execution_node":"ok"}}\n' ;;
+                esac
+                return 0 ;;
         esac
         [ "$scenario" = full-backup ] || fail 'ordinary update attempted a full backup or network request'
         event full-backup
@@ -298,7 +306,7 @@ assert_before() {
 for scenario in image clean-config source pull-failure build-failure config-failure compose-unsupported health-failure legacy full-backup migration \
     legacy-source legacy-pull-failure legacy-build-failure legacy-config-failure legacy-compose-unsupported legacy-dependency-pull-failure legacy-existing-profile \
     image-json-failure image-inspect-failure image-probe-failure image-version-failure image-probe-timeout-failure image-probe-exit-failure image-id-drift-failure \
-    runtime-version-failure runtime-image-failure runtime-json-failure runtime-http-failure \
+    runtime-version-failure runtime-image-failure runtime-json-failure runtime-http-failure runtime-readiness-failure runtime-readiness-json-failure \
     legacy-image-version-failure legacy-runtime-version-failure; do
     fixture="$TEST_DIR/$scenario"
     mkdir -p "$fixture"
@@ -395,6 +403,7 @@ for scenario in image clean-config source pull-failure build-failure config-fail
     if [ "$expected" = 0 ]; then
         assert_has "$calls" probe-image
         assert_has "$calls" runtime-version
+        assert_has "$calls" runtime-ready
         grep -Fq '实际运行版本 9.8.7' "$fixture/output" || fail 'success must report the verified runtime version'
     else
         if grep -Fq 'XIASS 更新完成' "$fixture/output"; then fail 'failed verification reported update success'; fi

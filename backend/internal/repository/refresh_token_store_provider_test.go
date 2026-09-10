@@ -72,7 +72,7 @@ func TestRefreshTokenStoreProviderRejectsInvalidDependencies(t *testing.T) {
 	require.ErrorIs(t, err, ErrRefreshTokenAuthority)
 }
 
-func TestRefreshTokenStoreProviderAllowsExistingSentinelRedisMode(t *testing.T) {
+func TestRefreshTokenStoreProviderAllowsExistingRedisMode(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
@@ -81,8 +81,7 @@ func TestRefreshTokenStoreProviderAllowsExistingSentinelRedisMode(t *testing.T) 
 			WillReturnRows(sqlmock.NewRows([]string{"backend", "recovery", "read_only"}).AddRow("redis", false, false))
 		rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
 		store, err := NewRefreshTokenStore(db, rdb, &config.Config{
-			JWT:   config.JWTConfig{RefreshTokenStore: mode},
-			Redis: config.RedisConfig{SentinelAddrs: []string{"sentinel.example.invalid:26379"}},
+			JWT: config.JWTConfig{RefreshTokenStore: mode},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, store)

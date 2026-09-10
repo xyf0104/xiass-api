@@ -415,7 +415,7 @@ func TestRefreshIfNeeded_GrokSuccessCASLetsConcurrentReauthorizationWin(t *testi
 	require.Zero(t, repo.updateCredentialsCalls, "the provider result must not overwrite a concurrent repair")
 }
 
-func TestRefreshIfNeeded_RequestEgressOverridePreservesDurableProxyCAS(t *testing.T) {
+func TestRefreshIfNeeded_PreservesFixedProxyAndDurableProxyCAS(t *testing.T) {
 	durableProxyID := int64(17)
 	durableProxy := &Proxy{ID: durableProxyID, Status: StatusActive, Host: "api.internal", Port: 1080}
 	account := &Account{
@@ -432,7 +432,6 @@ func TestRefreshIfNeeded_RequestEgressOverridePreservesDurableProxyCAS(t *testin
 		},
 	}
 	routed := *account
-	routed.executionProxy = &Proxy{ID: 23, Status: StatusActive, Host: "api2.internal", Port: 1080}
 	repo := &refreshAPIAccountRepo{account: account}
 	observedRequestProxyID := int64(0)
 	executor := &dynamicRefreshExecutor{
@@ -453,7 +452,7 @@ func TestRefreshIfNeeded_RequestEgressOverridePreservesDurableProxyCAS(t *testin
 
 	require.NoError(t, err)
 	require.True(t, result.Refreshed)
-	require.Equal(t, int64(23), observedRequestProxyID)
+	require.Equal(t, durableProxyID, observedRequestProxyID)
 	require.NotNil(t, repo.lastExpectedProxyID)
 	require.Equal(t, durableProxyID, *repo.lastExpectedProxyID)
 	require.Same(t, durableProxy, account.Proxy)

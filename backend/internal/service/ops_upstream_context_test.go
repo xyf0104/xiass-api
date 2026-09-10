@@ -76,16 +76,12 @@ func TestOpenAIProxySnapshotUsesXIASSRequestEgressAndIsImmutable(t *testing.T) {
 			ID: 11, Name: "api-owner-egress", Protocol: "socks5", Host: "10.0.0.11", Port: 1080,
 			Username: "owner-user", Password: "owner-secret",
 		},
-		executionProxy: &Proxy{
-			ID: 22, Name: "api2-takeover-egress", Protocol: "socks5", Host: "10.0.0.22", Port: 2080,
-			Username: "api2-user", Password: "api2-secret",
-		},
 	}
 	proxyURL := account.requestProxyURL()
 	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
 
-	account.executionProxy.Name = "edited-after-dispatch"
-	account.executionProxy.Host = "203.0.113.99"
+	account.Proxy.Name = "edited-after-dispatch"
+	account.Proxy.Host = "203.0.113.99"
 	appendOpenAIOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		AccountID: 42,
 		Kind:      "request_error",
@@ -98,8 +94,8 @@ func TestOpenAIProxySnapshotUsesXIASSRequestEgressAndIsImmutable(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, events, 1)
 	require.NotNil(t, events[0].ProxyID)
-	require.Equal(t, int64(22), *events[0].ProxyID)
-	require.Equal(t, "api2-takeover-egress", events[0].ProxyName)
+	require.Equal(t, int64(11), *events[0].ProxyID)
+	require.Equal(t, "api-owner-egress", events[0].ProxyName)
 
 	encoded := marshalOpsUpstreamErrors(events)
 	require.NotNil(t, encoded)
@@ -131,13 +127,14 @@ func TestOpenAIProxySnapshotNormalizesHTTPDirectAndWSUnknown(t *testing.T) {
 	require.Equal(t, opsProxyNameUnknown, wsEvents[0].ProxyName)
 }
 
-func TestOpenAIProxySnapshotKeepsExecutionProxyIDButRedactsSensitiveName(t *testing.T) {
+func TestOpenAIProxySnapshotKeepsFixedProxyIDButRedactsSensitiveName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	account := &Account{
 		ID:       42,
 		Platform: PlatformOpenAI,
-		executionProxy: &Proxy{
+		ProxyID:  func() *int64 { id := int64(22); return &id }(),
+		Proxy: &Proxy{
 			ID:       22,
 			Name:     "socks5://api2-user:api2-secret@10.0.0.22:2080",
 			Protocol: "socks5",

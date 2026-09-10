@@ -251,15 +251,6 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	if freshAccount.ID != account.ID {
 		return nil, fmt.Errorf("%w: account identity mismatch", errOAuthRefreshAccountRereadFailed)
 	}
-	if account.executionProxy != nil {
-		// Keep the database row authoritative for credentials and durable proxy
-		// identity, while carrying the request-scoped emergency egress into the
-		// provider call. The override is unexported and is never persisted.
-		routedFreshAccount := *freshAccount
-		proxy := *account.executionProxy
-		routedFreshAccount.executionProxy = &proxy
-		freshAccount = &routedFreshAccount
-	}
 	if !freshAccount.IsActive() {
 		if requestPath {
 			return nil, fmt.Errorf("%w: account is not active", errOAuthRefreshAccountStateChanged)

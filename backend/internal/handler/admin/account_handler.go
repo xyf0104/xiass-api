@@ -2685,8 +2685,7 @@ func (h *AccountHandler) GetUsage(c *gin.Context) {
 	if source != "passive" || force {
 		if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
 			switch infraerrors.Reason(err) {
-			case "ACCOUNT_REMOTE_NODE_READ_ONLY", "ACCOUNT_REMOTE_NODE_TAKEOVER_DISABLED",
-				"ACCOUNT_REMOTE_NODE_STATUS_UNAVAILABLE", "ACCOUNT_NODE_ACCESS_UNAVAILABLE":
+			case "ACCOUNT_REMOTE_NODE_READ_ONLY", "ACCOUNT_NODE_ACCESS_UNAVAILABLE":
 				// Older clients omit source. An unavailable management path must
 				// never turn a display request into an upstream probe or write.
 				if !explicitSource && !force {

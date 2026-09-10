@@ -132,7 +132,6 @@ var ProviderSet = wire.NewSet(
 	NewBatchImageDownloadLimiter,
 	NewLeaderLockCache,
 	NewExecutionNodeHeartbeatStore,
-	NewExecutionNodeWitnessClient,
 	ProvideSchedulerCache,
 	NewSchedulerOutboxRepository,
 	NewAuthCacheInvalidationOutboxRepository,

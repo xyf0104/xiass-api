@@ -253,7 +253,6 @@ type SettingService struct {
 	executionNodeAccountPreparer    ExecutionNodeAccountPreparer
 	executionNodeRoutingActivator   ExecutionNodeRoutingActivator
 	executionNodeHealthReader       ExecutionNodeHealthReader
-	executionNodeFailover           *ExecutionNodeFailoverService
 	executionNodeAccountStats       ExecutionNodeAccountStatsReader
 	executionNodePairingState       ExecutionNodePairingStateReader
 	executionNodeJoinApplier        ExecutionNodeJoinApplier
@@ -283,12 +282,6 @@ func (s *SettingService) SetExecutionNodeRoutingActivator(activator ExecutionNod
 func (s *SettingService) SetExecutionNodeHealthReader(reader ExecutionNodeHealthReader) {
 	if s != nil {
 		s.executionNodeHealthReader = reader
-	}
-}
-
-func (s *SettingService) SetExecutionNodeFailoverService(failover *ExecutionNodeFailoverService) {
-	if s != nil {
-		s.executionNodeFailover = failover
 	}
 }
 

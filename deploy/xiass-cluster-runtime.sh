@@ -175,12 +175,6 @@ main() {
     command -v jq >/dev/null 2>&1 || die "缺少 jq"
     command -v curl >/dev/null 2>&1 || die "缺少 curl"
     resolve_compose
-    local emergency_egress
-    emergency_egress=$(read_env_value GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS)
-    case "$emergency_egress" in
-        ''|true|false) ;;
-        *) die "现有应急本地出口配置必须为 true 或 false；未修改配置。" ;;
-    esac
     mkdir -p "$BACKUP_ROOT"
     RUNTIME_BACKUP_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$RUNTIME_NODE_ID"
     mkdir -p "$RUNTIME_BACKUP_DIR"
@@ -191,9 +185,6 @@ main() {
     set_env_value GATEWAY_EXECUTION_NODE_ENABLED true
     set_env_value GATEWAY_EXECUTION_NODE_ID "$RUNTIME_NODE_ID"
     set_env_value GATEWAY_EXECUTION_NODE_DEFAULT_PROXY_ID "$RUNTIME_DEFAULT_PROXY_ID"
-    if [ -z "$emergency_egress" ]; then
-        set_env_value GATEWAY_EXECUTION_NODE_EMERGENCY_LOCAL_EGRESS false
-    fi
     set_env_value GATEWAY_EXECUTION_NODE_CONTROL_PLANE true
     set_env_value GATEWAY_EXECUTION_NODE_LEGACY_UNASSIGNED_NODE_ID "$RUNTIME_LEGACY_NODE_ID"
     set_env_value GATEWAY_EXECUTION_NODE_LEGACY_UNASSIGNED_PROXY_ID "$RUNTIME_LEGACY_PROXY_ID"

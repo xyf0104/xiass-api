@@ -340,7 +340,7 @@
                 <Icon :name="isAccountReadOnly(row) ? 'lock' : 'server'" size="xs" :stroke-width="2" />
                 <span>{{ executionNodeLabel(row) }}</span>
                 <span v-if="isAccountRemote(row)" class="border-l border-current/25 pl-1">
-                  {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : pairedFullAccess ? t('admin.accounts.executionNodeManageableBadge') : t('admin.accounts.executionNodeTakeoverBadge') }}
+                  {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeManageableBadge') }}
                 </span>
               </span>
             </div>
@@ -791,10 +791,7 @@ const isExecutionNodeOwnerReadOnly = (owner: string): boolean => {
   if (!status?.runtime.enabled) return false
   const localNodeID = status.runtime.node_id || 'api'
   if (owner === localNodeID) return false
-  if (pairedFullAccess.value) return false
-  const ownerStatus = status.nodes.find(node => node.node_id === owner)
-  // Outside explicitly authorized pairing, retain the legacy takeover boundary.
-  return !ownerStatus || ownerStatus.online || !status.runtime.emergency_local_egress
+  return !pairedFullAccess.value
 }
 const isAccountRemote = (account: Account): boolean => {
   const status = executionNodeStatus.value
@@ -807,10 +804,7 @@ const isAccountReadOnly = (account: Account): boolean => {
 const accountManagementBlockReason = (account: Account): string => {
   if (pairingUnavailable.value) return t('admin.accounts.executionNodePairingUnavailable')
   const owner = accountExecutionNodeID(account)
-  const node = executionNodeStatus.value?.nodes.find(item => item.node_id === owner)
-  if (node?.online) return t('admin.accounts.executionNodeRemoteReadOnly', { node: owner })
-  if (!executionNodeStatus.value?.runtime.emergency_local_egress) return t('admin.accounts.executionNodeTakeoverRequired', { node: owner })
-  return t('admin.accounts.executionNodeRemoteUnavailable')
+  return t('admin.accounts.executionNodeRemoteReadOnly', { node: owner })
 }
 function allowAccountWrite(account?: Account): boolean {
   if (pairingUnavailable.value || (account && isAccountReadOnly(account))) {
@@ -2283,8 +2277,7 @@ const openBulkEditFiltered = async () => {
         appStore.showError(t('admin.accounts.executionNodeBulkRemoteReadOnly'))
         return
       }
-      // A filter-wide write must never span machines implicitly. Emergency
-      // takeover can still manage explicitly selected peer rows.
+      // Without verified pairing, filter-wide writes stay on the local machine.
       if (!filters.execution_node_id) filters.execution_node_id = localNodeID
     }
     const snapshot = await fetchAllAccountSelection(
