@@ -1,6 +1,6 @@
 <template>
   <BaseDialog :show="show" :title="t(`${prefix}.title`)" width="extra-wide" @close="close">
-    <div class="pelican-benchmark min-w-0 space-y-4">
+    <div v-if="show" class="pelican-benchmark min-w-0 space-y-4">
       <div class="flex border-b border-gray-200 dark:border-dark-600" role="tablist" :aria-label="t(`${prefix}.title`)">
         <button
           v-for="item in tabs" :id="`pelican-tab-${item}`" :key="item" type="button" role="tab"
@@ -68,8 +68,8 @@
                 <button v-if="active(run)" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
                 <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
-                <div v-if="tab === 'current'" class="flex items-center gap-1">
-                  <button v-for="action in ['continue', 'retry'] as const" :key="action" type="button" class="btn btn-secondary !px-2 !py-1 text-xs" :disabled="busy || loading" :data-testid="`${action}-${run.id}`" @click="restart(run, action)"><Icon :name="action === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${action}`) }}</button>
+                <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
+                  <button type="button" class="btn btn-secondary !px-2 !py-1 text-xs" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
                 </div>
               </div>
             </div>
@@ -137,6 +137,7 @@ const loadedModels = new Set<number>()
 const loadingModels = new Set<number>()
 
 const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].includes(run.status)
+const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => run.status === 'canceled' ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
 const isAccountRunning = (id: number) => current.value.some(run => run.account_id === id && active(run))
 const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
 const startable = computed(() => accounts.value.filter(canStart))
@@ -426,6 +427,8 @@ function dispose() {
   currentRequest?.abort()
   cancelPoll()
   clearInterval(clockTimer)
+  current.value = []
+  history.value = []
 }
 
 function close() {

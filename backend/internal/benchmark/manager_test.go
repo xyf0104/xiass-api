@@ -123,6 +123,32 @@ type pelicanIdleStore struct {
 	claims atomic.Int64
 }
 
+type pelicanRetentionStore struct {
+	pelicanIdleStore
+	cleanups atomic.Int64
+}
+
+func (s *pelicanRetentionStore) PurgeExpiredHTML(context.Context) error {
+	s.cleanups.Add(1)
+	return nil
+}
+
+func TestPelicanRetentionRunsHourlyAndStops(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &pelicanRetentionStore{}
+		manager := NewManager(store, nil)
+		manager.Start()
+		synctest.Wait()
+		require.EqualValues(t, 1, store.cleanups.Load())
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		require.EqualValues(t, 2, store.cleanups.Load())
+		manager.Stop()
+		time.Sleep(time.Hour)
+		require.EqualValues(t, 2, store.cleanups.Load())
+	})
+}
+
 func (s *pelicanIdleStore) Claim(context.Context, string) (*Task, error) {
 	s.claims.Add(1)
 	return nil, nil

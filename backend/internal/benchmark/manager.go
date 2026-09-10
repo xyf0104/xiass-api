@@ -47,6 +47,27 @@ func (m *Manager) Start() {
 		return
 	}
 	m.started = true
+	if cleaner, ok := m.store.(interface{ PurgeExpiredHTML(context.Context) error }); ok {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				ctx, cancel := context.WithTimeout(m.ctx, 15*time.Second)
+				err := cleaner.PurgeExpiredHTML(ctx)
+				cancel()
+				if err != nil && m.ctx.Err() == nil {
+					slog.Warn("pelican_benchmark_retention_failed")
+				}
+				select {
+				case <-m.ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	m.wakeLocked() // One startup drain recovers queued jobs, never running claims.
 }
 

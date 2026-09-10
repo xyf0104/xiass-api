@@ -62,6 +62,32 @@ async function setDocumentHidden(hidden: boolean) {
 }
 
 describe('PelicanBenchmarkModal', () => {
+  it.each(['queued', 'running', 'canceling', 'succeeded', 'canceled', 'failed', 'interrupted'] as const)('shows followup controls only for actionable %s state', async status => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('state', { status })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.find('[data-testid="continue-state"]').exists()).toBe(status === 'canceled')
+    expect(wrapper.find('[data-testid="retry-state"]').exists()).toBe(status === 'failed' || status === 'interrupted')
+  })
+
+  it('unmounts generated previews on close and does not stop server jobs', async () => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('preview', { status: 'succeeded', html_bytes: 120 })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(true)
+    await wrapper.get('[data-testid="close"]').trigger('click')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    await wrapper.setProps({ show: false })
+    const reads = api.getPelicanCurrent.mock.calls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(api.getPelicanCurrent).toHaveBeenCalledTimes(reads)
+    expect(api.stopPelicanTests).not.toHaveBeenCalled()
+    expect(api.stopAllPelicanTests).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
@@ -533,7 +559,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it.each(['continue', 'retry'] as const)('%s waits for every same-account active task to exit before creating a successor', async action => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run(), run('other', { account_id: 2 })] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: action === 'continue' ? 'canceled' : 'failed' }), run('other', { account_id: 2 })] })
     api.getPelicanResult.mockResolvedValue(run())
     api.stopPelicanTests.mockResolvedValue({ items: [run('run-1', { status: 'canceling' })] })
     api.restartPelicanTest.mockResolvedValue({ items: [run('successor')] })
@@ -553,7 +579,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('does not create a successor if the modal closes while waiting for cancellation', async () => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'canceling' })] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'failed' })] })
     api.getPelicanResult.mockResolvedValue(run('run-1', { status: 'canceling' }))
     const wrapper = render()
     await flushPromises()
@@ -567,7 +593,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('stops an active successor before retrying its completed source, leaving other accounts alone', async () => {
-    const completed = run('source', { status: 'succeeded' })
+    const completed = run('source', { status: 'failed' })
     api.getPelicanCurrent.mockResolvedValue({ items: [completed, run('successor'), run('other', { account_id: 2 })] })
     api.getPelicanResult.mockResolvedValue(completed)
     api.stopPelicanTests.mockResolvedValue({ items: [run('successor', { status: 'canceled' })] })
@@ -582,7 +608,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('never starts after a stop failure or an unconfirmed terminal poll', async () => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run()] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'failed' })] })
     api.getPelicanResult.mockResolvedValue(run())
     api.stopPelicanTests.mockRejectedValue(new Error('private raw upstream error'))
     const wrapper = render()
@@ -625,7 +651,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it.each(['continue', 'retry'] as const)('%s releases busy after 30 seconds without creating a task and keeps stop usable', async action => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'canceling' })] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: action === 'continue' ? 'canceled' : 'failed' }), run('active', { account_id: 2 })] })
     api.getPelicanResult.mockResolvedValue(run('run-1', { status: 'canceling' }))
     const wrapper = render()
     await flushPromises()
@@ -633,20 +659,20 @@ describe('PelicanBenchmarkModal', () => {
     await wrapper.get(`[data-testid="${action}-run-1"]`).trigger('click')
     await flushPromises()
     await vi.advanceTimersByTimeAsync(29_999)
-    expect(wrapper.get('[data-testid="stop-run-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="stop-active"]').attributes('disabled')).toBeDefined()
     expect(api.restartPelicanTest).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(wrapper.get('[role="alert"]').text()).toContain('未创建新测试')
-    expect(wrapper.get('[data-testid="stop-run-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="stop-active"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.get('[data-testid="stop-all"]').attributes('disabled')).toBeUndefined()
     expect(api.restartPelicanTest).not.toHaveBeenCalled()
-    await wrapper.get('[data-testid="stop-run-1"]').trigger('click')
+    await wrapper.get('[data-testid="stop-active"]').trigger('click')
     await flushPromises()
-    expect(api.stopPelicanTests).toHaveBeenCalledWith(['run-1'], expect.any(AbortSignal))
+    expect(api.stopPelicanTests).toHaveBeenCalledWith(['active'], expect.any(AbortSignal))
   })
 
   it('bounds a stalled detail request and ignores its late terminal response', async () => {
-    api.getPelicanCurrent.mockResolvedValue({ items: [run()] })
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'failed' }), run('active', { account_id: 2 })] })
     const pending = deferred<PelicanBenchmarkRun>()
     api.getPelicanResult.mockReturnValue(pending.promise)
     const wrapper = render()
@@ -656,7 +682,7 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(30_000)
     expect(wrapper.get('[role="alert"]').text()).toContain('30 秒')
-    expect(wrapper.get('[data-testid="stop-run-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="stop-active"]').attributes('disabled')).toBeUndefined()
     pending.resolve(run('run-1', { status: 'canceled' }))
     await flushPromises()
     expect(api.restartPelicanTest).not.toHaveBeenCalled()

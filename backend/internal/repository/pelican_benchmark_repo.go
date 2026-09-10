@@ -183,3 +183,25 @@ AND status IN ('queued','running')`, id, accountID)
 }
 
 var _ benchmark.Store = (*PelicanBenchmarkRepository)(nil)
+
+// Clear only terminal HTML. Active continuations pin their source until
+// execution has finished, so retention never interrupts an upstream request.
+func (r *PelicanBenchmarkRepository) PurgeExpiredHTML(ctx context.Context) error {
+	for {
+		result, err := r.db.ExecContext(ctx, `UPDATE pelican_benchmarks SET html='' WHERE id IN (
+SELECT old.id FROM pelican_benchmarks old
+WHERE old.status IN ('succeeded','failed','canceled','interrupted')
+AND old.html <> ''
+AND old.finished_at < NOW() - INTERVAL '72 hours'
+AND NOT EXISTS (SELECT 1 FROM pelican_benchmarks active
+WHERE active.source_id=old.id AND active.status IN ('queued','running','canceling'))
+ORDER BY old.finished_at,old.id LIMIT 500 FOR UPDATE OF old SKIP LOCKED)`)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n < 500 {
+			return err
+		}
+	}
+}

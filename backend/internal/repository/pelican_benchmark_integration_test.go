@@ -138,6 +138,44 @@ func TestPelicanDatabaseConcurrentCreateClaimAndCancellationGuard(t *testing.T) 
 	require.EqualValues(t, 0, *queued.DurationMS)
 }
 
+func TestPelicanRetentionClearsOnlyExpiredTerminalHTML(t *testing.T) {
+	db := pelicanIntegrationDB(t)
+	ctx := context.Background()
+	batch := uuid.NewString()
+	old, recent, pinned, active := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	for i, row := range []struct{ id, status, age, source string }{
+		{old, "succeeded", "73 hours", ""},
+		{recent, "failed", "71 hours", ""},
+		{pinned, "canceled", "80 hours", ""},
+		{active, "running", "80 hours", pinned},
+	} {
+		_, err := db.ExecContext(ctx, `INSERT INTO pelican_benchmarks
+(id,batch_id,account_id,account_name,model,status,finished_at,html,source_id)
+VALUES ($1,$2,$3,'fixture','test',$4,NOW()-$5::interval,'<html>saved</html>',NULLIF($6,'')::uuid)`, row.id, batch, i+1, row.status, row.age, row.source)
+		require.NoError(t, err)
+	}
+	repo := &PelicanBenchmarkRepository{db: db}
+	require.NoError(t, repo.PurgeExpiredHTML(ctx))
+	expired, err := repo.Detail(ctx, old)
+	require.NoError(t, err)
+	require.Empty(t, expired.HTML)
+	require.Zero(t, expired.HTMLBytes)
+	require.Equal(t, "succeeded", expired.Status)
+	for _, id := range []string{recent, pinned, active} {
+		detail, err := repo.Detail(ctx, id)
+		require.NoError(t, err)
+		require.NotEmpty(t, detail.HTML)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE pelican_benchmarks SET status='succeeded',finished_at=NOW() WHERE id=$1`, active)
+	require.NoError(t, err)
+	require.NoError(t, repo.PurgeExpiredHTML(ctx))
+	expired, err = repo.Detail(ctx, pinned)
+	require.NoError(t, err)
+	require.Empty(t, expired.HTML)
+	_, err = repo.Detail(ctx, active)
+	require.NoError(t, err)
+}
+
 func TestPelicanDatabaseFollowupMetadataAndSuccessfulFilter(t *testing.T) {
 	db := pelicanIntegrationDB(t)
 	r := NewPelicanBenchmarkRepository(db)

@@ -90,6 +90,13 @@ upstream calls; database connection loss or node heartbeat expiry alone is not
 such confirmation. This is an explicit hard-crash boundary, not a claim that
 crash recovery is solved.
 
-No schema cleanup or result retention scheduler is added. Apply migrations 242 and 243
-before starting this build. Real PostgreSQL tests use the repository's existing
+Terminal HTML is retained for 72 hours after completion; metadata stays available.
+Startup and hourly bounded cleanup clear expired HTML in batches of 500;
+active jobs and sources pinned by active followups are never cleared. Cleanup
+normally occurs within the next hourly pass. Closing the admin modal
+destroys previews and stops frontend polling, but does not cancel server jobs.
+The current-results UI offers Continue only after cancellation and Retry only
+after failure/interruption; running and successful jobs have neither action.
+
+Apply migrations 242 through 244 before starting this build. Real PostgreSQL tests use the repository's existing
 Docker integration harness and isolated test schemas, never a live XIASS DB.
