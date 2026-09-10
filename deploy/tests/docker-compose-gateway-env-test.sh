@@ -43,29 +43,14 @@ do
     fi
   done < "$gateway_variables"
 
-  for key in \
-    REDIS_SENTINEL_ADDRS \
-    REDIS_SENTINEL_MASTER_NAME \
-    REDIS_SENTINEL_USERNAME \
-    REDIS_SENTINEL_PASSWORD \
-    GATEWAY_EXECUTION_NODE_WITNESS_URL \
-    GATEWAY_EXECUTION_NODE_WITNESS_TOKEN \
-    GATEWAY_EXECUTION_NODE_WITNESS_CLUSTER_ID
-  do
-    expected=$(printf '      - %s=${%s:-}' "$key" "$key")
-    expected_count=$(grep -Fxc "$expected" "$compose_file" || true)
-    key_count=$(grep -Ec "^[[:space:]]*-[[:space:]]*${key}([[:space:]]*=.*)?[[:space:]]*$" "$compose_file" || true)
-    if [ "$expected_count" -ne 1 ] || [ "$key_count" -ne 1 ]; then
-      printf '%s must pass %s without enabling Sentinel by default\n' "$compose_file" "$key" >&2
-      exit 1
-    fi
-  done
+  # Automatic disaster recovery was removed; shared node routing stays intact.
+  if grep -Eq '^[[:space:]]*-[[:space:]]*(REDIS_SENTINEL_|GATEWAY_EXECUTION_NODE_WITNESS_)' "$compose_file"; then
+    printf '%s must not restore retired Sentinel or witness configuration\n' "$compose_file" >&2
+    exit 1
+  fi
 
   for pair in \
-    'JWT_REFRESH_TOKEN_MIGRATION_READINESS false' \
-    'GATEWAY_EXECUTION_NODE_WITNESS_ENABLED false' \
-    'GATEWAY_EXECUTION_NODE_WITNESS_LEASE_TTL_SECONDS 15' \
-    'GATEWAY_EXECUTION_NODE_WITNESS_REQUEST_TIMEOUT_SECONDS 3'
+    'JWT_REFRESH_TOKEN_MIGRATION_READINESS false'
   do
     key=${pair%% *}
     default=${pair#* }
