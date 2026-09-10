@@ -72,18 +72,22 @@ func TestRefreshTokenStoreProviderRejectsInvalidDependencies(t *testing.T) {
 	require.ErrorIs(t, err, ErrRefreshTokenAuthority)
 }
 
-func TestRefreshTokenStoreProviderRejectsLegacyAutomaticRedisPromotion(t *testing.T) {
+func TestRefreshTokenStoreProviderAllowsExistingSentinelRedisMode(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	for _, mode := range []string{"", "redis"} {
-		store, err := NewRefreshTokenStore(db, nil, &config.Config{
+		mock.ExpectQuery("SELECT backend, pg_is_in_recovery").
+			WillReturnRows(sqlmock.NewRows([]string{"backend", "recovery", "read_only"}).AddRow("redis", false, false))
+		rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+		store, err := NewRefreshTokenStore(db, rdb, &config.Config{
 			JWT:   config.JWTConfig{RefreshTokenStore: mode},
 			Redis: config.RedisConfig{SentinelAddrs: []string{"sentinel.example.invalid:26379"}},
 		})
-		require.Nil(t, store)
-		require.ErrorIs(t, err, ErrRefreshTokenAuthority)
-		require.ErrorContains(t, err, "automatic promotion requires migrated PostgreSQL")
+		require.NoError(t, err)
+		require.NotNil(t, store)
+		require.IsType(t, &authorityCheckedRedisRefreshStore{}, store)
+		_ = rdb.Close()
 	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }

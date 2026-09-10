@@ -24,9 +24,10 @@ func NewRefreshTokenStore(db *sql.DB, rdb *redis.Client, cfg *config.Config) (se
 	if db == nil || (backend != "redis" && backend != "postgres") {
 		return nil, ErrRefreshTokenAuthority
 	}
-	if backend == "redis" && cfg != nil && len(cfg.Redis.SentinelAddrs) != 0 {
-		return nil, fmt.Errorf("%w: Redis automatic promotion requires migrated PostgreSQL refresh sessions", ErrRefreshTokenAuthority)
-	}
+	// Keep existing Redis/Sentinel installations startable. A Sentinel
+	// configuration alone does not mean this process is performing the
+	// PostgreSQL session cutover; that transition remains an explicit,
+	// separately fenced operation.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if cfg != nil && cfg.JWT.RefreshTokenMigrationReadiness {
