@@ -39,9 +39,10 @@ func (s *pelicanHandlerAccounts) CheckAccountManagementAccess(context.Context, i
 
 type pelicanHandlerStore struct {
 	benchmark.Store
-	tasks []benchmark.Task
-	stops int
-	html  string
+	tasks  []benchmark.Task
+	stops  int
+	html   string
+	source *benchmark.Task
 }
 
 func (s *pelicanHandlerStore) Create(_ context.Context, tasks []benchmark.Task) ([]benchmark.Task, []benchmark.Skipped, error) {
@@ -55,7 +56,50 @@ func (s *pelicanHandlerStore) Detail(context.Context, string) (*benchmark.Detail
 	return &benchmark.Detail{Task: benchmark.Task{ID: "test"}, HTML: s.html}, nil
 }
 func (s *pelicanHandlerStore) Get(context.Context, string) (*benchmark.Task, error) {
+	if s.source != nil {
+		return s.source, nil
+	}
 	return &benchmark.Task{ID: "test", AccountID: 1, Status: "canceling"}, nil
+}
+
+func TestPelicanFollowupUsesSourceAccountModelAndCurrentOwner(t *testing.T) {
+	for _, action := range []string{"continue", "retry"} {
+		sourceID := uuid.NewString()
+		store := &pelicanHandlerStore{source: &benchmark.Task{ID: sourceID, AccountID: 7, Model: "gpt-6-astra", Status: "failed"}}
+		accounts := &pelicanHandlerAccounts{items: []*service.Account{{ID: 7, Name: "paid", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Extra: map[string]any{service.AccountExecutionNodeExtraKey: "api2"}}}}
+		h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
+		body := `{"source_id":"` + sourceID + `","action":"` + action + `"}`
+		w := pelicanHandlerRequest("POST", "/", body, h.Create, nil)
+		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+		require.Len(t, store.tasks, 1)
+		require.Equal(t, int64(7), store.tasks[0].AccountID)
+		require.Equal(t, "api2", store.tasks[0].ExecutionNodeID)
+		require.Equal(t, sourceID, store.tasks[0].SourceID)
+		require.Equal(t, action, store.tasks[0].Action)
+		require.Equal(t, store.source.Model, store.tasks[0].Model)
+	}
+}
+
+func TestPelicanFollowupRejectsActiveSourceAndOverrides(t *testing.T) {
+	id := uuid.NewString()
+	for _, status := range []string{"queued", "running", "canceling"} {
+		store := &pelicanHandlerStore{source: &benchmark.Task{ID: id, AccountID: 1, Status: status}}
+		h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{}}
+		w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"continue"}`, h.Create, nil)
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Empty(t, store.tasks)
+	}
+	for _, fields := range []string{`,"account_ids":[2]`, `,"all":true`, `,"model":"gpt-5.6-sol"`, `,"prompt":"override"`} {
+		h := &PelicanBenchmarkHandler{}
+		w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"retry"`+fields+`}`, h.Create, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	}
+	store := &pelicanHandlerStore{source: &benchmark.Task{ID: id, AccountID: 1, Status: "succeeded"}}
+	h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{accessErr: errors.New("denied")}}
+	w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"continue"}`, h.Create, nil)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Empty(t, store.tasks)
 }
 func (s *pelicanHandlerStore) Stop(context.Context, string, int64) (int64, error) {
 	s.stops++

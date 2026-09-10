@@ -1541,6 +1541,7 @@
           <label class="mt-3 flex items-start gap-2">
             <input
               v-model="createForm.long_context_pricing_enabled"
+              data-testid="create-long-context-pricing"
               type="checkbox"
               class="mt-0.5"
             />
@@ -3326,6 +3327,7 @@
           <label class="mt-3 flex items-start gap-2">
             <input
               v-model="editForm.long_context_pricing_enabled"
+              data-testid="edit-long-context-pricing"
               type="checkbox"
               class="mt-0.5"
             />

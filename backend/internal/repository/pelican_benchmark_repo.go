@@ -17,7 +17,8 @@ func NewPelicanBenchmarkRepository(db *sql.DB) benchmark.Store {
 
 // Keep the result column out of every metadata query, including RETURNING.
 const pelicanColumns = `id::text, batch_id::text, account_id, account_name, model, upstream_model,
-status, error_code, created_at, started_at, finished_at, duration_ms, octet_length(html)`
+status, error_code, created_at, started_at, finished_at, duration_ms, octet_length(html),
+execution_node_id, COALESCE(source_id::text,''), action`
 
 type pelicanScanner interface{ Scan(...any) error }
 
@@ -25,7 +26,7 @@ func scanPelican(row pelicanScanner, html *string) (*benchmark.Task, error) {
 	var task benchmark.Task
 	args := []any{&task.ID, &task.BatchID, &task.AccountID, &task.AccountName, &task.Model,
 		&task.UpstreamModel, &task.Status, &task.ErrorCode, &task.CreatedAt, &task.StartedAt,
-		&task.FinishedAt, &task.DurationMS, &task.HTMLBytes}
+		&task.FinishedAt, &task.DurationMS, &task.HTMLBytes, &task.ExecutionNodeID, &task.SourceID, &task.Action}
 	if html != nil {
 		args = append(args, html)
 	}
@@ -55,9 +56,9 @@ func (r *PelicanBenchmarkRepository) Create(ctx context.Context, tasks []benchma
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, task := range tasks {
-		row := tx.QueryRowContext(ctx, `INSERT INTO pelican_benchmarks (id,batch_id,account_id,account_name,model)
-VALUES ($1,$2,$3,$4,$5) ON CONFLICT (account_id) WHERE status IN ('queued','running','canceling')
-DO NOTHING RETURNING `+pelicanColumns, task.ID, task.BatchID, task.AccountID, task.AccountName, task.Model)
+		row := tx.QueryRowContext(ctx, `INSERT INTO pelican_benchmarks (id,batch_id,account_id,account_name,model,execution_node_id,source_id,action)
+VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,$8) ON CONFLICT (account_id) WHERE status IN ('queued','running','canceling')
+DO NOTHING RETURNING `+pelicanColumns, task.ID, task.BatchID, task.AccountID, task.AccountName, task.Model, task.ExecutionNodeID, task.SourceID, task.Action)
 		inserted, err := scanPelican(row, nil)
 		if errors.Is(err, benchmark.ErrNotFound) {
 			skipped = append(skipped, benchmark.Skipped{AccountID: task.AccountID, Reason: "account_busy"})
@@ -154,15 +155,12 @@ func (r *PelicanBenchmarkRepository) Finish(ctx context.Context, id, owner, stat
 	if len(html) > benchmark.MaxHTMLBytes {
 		return benchmark.ErrTooLarge
 	}
-	if status != "succeeded" {
-		html = ""
-	}
 	// A concurrent stop wins over completion. The owner CAS also makes a retry
 	// harmless and prevents another process from acknowledging a running call.
 	_, err := r.db.ExecContext(ctx, `UPDATE pelican_benchmarks SET
 status=CASE WHEN status='canceling' THEN 'canceled' ELSE $3 END,
 error_code=CASE WHEN status='canceling' THEN '' ELSE $4 END,
-html=CASE WHEN status='canceling' THEN '' ELSE $5 END,
+html=$5,
 finished_at=clock_timestamp(),
 duration_ms=GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (clock_timestamp()-started_at))*1000))::bigint
 WHERE id=$1 AND executor_id=$2 AND status IN ('running','canceling')`, id, owner, status, code, html)

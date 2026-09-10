@@ -123,7 +123,7 @@ func TestPelicanDatabaseConcurrentCreateClaimAndCancellationGuard(t *testing.T) 
 	detail, err := r.Detail(ctx, winner.task.ID)
 	require.NoError(t, err)
 	require.Equal(t, "canceled", detail.Status)
-	require.Empty(t, detail.HTML)
+	require.Equal(t, "<html>late success</html>", detail.HTML, "canceled output is retained as continuation context, never marked successful")
 	require.NotNil(t, detail.FinishedAt)
 	require.NotNil(t, detail.DurationMS)
 	tasks, _, err = r.Create(ctx, []benchmark.Task{next})
@@ -136,6 +136,37 @@ func TestPelicanDatabaseConcurrentCreateClaimAndCancellationGuard(t *testing.T) 
 	require.Equal(t, "canceled", queued.Status)
 	require.Nil(t, queued.StartedAt)
 	require.EqualValues(t, 0, *queued.DurationMS)
+}
+
+func TestPelicanDatabaseFollowupMetadataAndSuccessfulFilter(t *testing.T) {
+	db := pelicanIntegrationDB(t)
+	r := NewPelicanBenchmarkRepository(db)
+	ctx := context.Background()
+	source := benchmark.Task{ID: uuid.NewString(), BatchID: uuid.NewString(), AccountID: 7, AccountName: "test", Model: benchmark.DefaultModel, ExecutionNodeID: "api2"}
+	_, _, err := r.Create(ctx, []benchmark.Task{source})
+	require.NoError(t, err)
+	owner := uuid.NewString()
+	_, err = r.Claim(ctx, owner)
+	require.NoError(t, err)
+	require.NoError(t, r.Finish(ctx, source.ID, owner, "failed", "upstream_incomplete", "<html>partial"))
+	continued := source
+	continued.ID, continued.SourceID, continued.Action = uuid.NewString(), source.ID, "continue"
+	created, _, err := r.Create(ctx, []benchmark.Task{continued})
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Equal(t, "api2", created[0].ExecutionNodeID)
+	require.Equal(t, source.ID, created[0].SourceID)
+	require.Equal(t, "continue", created[0].Action)
+	_, err = r.Claim(ctx, owner)
+	require.NoError(t, err)
+	require.NoError(t, r.Finish(ctx, continued.ID, owner, "succeeded", "", "<html>complete</html>"))
+	page, err := r.List(ctx, benchmark.Filter{Status: "succeeded", PageSize: 1})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, page.Total)
+	require.Equal(t, continued.ID, page.Items[0].ID)
+	old, err := r.Detail(ctx, source.ID)
+	require.NoError(t, err)
+	require.Equal(t, "<html>partial", old.HTML)
 }
 
 func TestPelicanDatabaseHTMLLimitMetadataAndDurableDetail(t *testing.T) {

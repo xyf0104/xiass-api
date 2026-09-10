@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 19 // v19: include per-user public-group restrictions
+const apiKeyAuthSnapshotVersion = 20 // v20: include group long-context switch and model pricing
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -379,6 +379,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 	}
 	if apiKey.Group != nil {
 		snapshot.Group = &APIKeyAuthGroupSnapshot{
+			LongContextPricingEnabled:       apiKey.Group.LongContextPricingEnabled,
+			ModelPricing:                    cloneAuthGroupModelPricing(apiKey.Group.ModelPricing),
 			ID:                              apiKey.Group.ID,
 			Name:                            apiKey.Group.Name,
 			Platform:                        apiKey.Group.Platform,
@@ -469,6 +471,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 	}
 	if snapshot.Group != nil {
 		apiKey.Group = &Group{
+			LongContextPricingEnabled:       snapshot.Group.LongContextPricingEnabled,
+			ModelPricing:                    cloneAuthGroupModelPricing(snapshot.Group.ModelPricing),
 			ID:                              snapshot.Group.ID,
 			Name:                            snapshot.Group.Name,
 			Platform:                        snapshot.Group.Platform,
@@ -519,4 +523,40 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 	}
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey
+}
+
+// Auth snapshots outlive individual requests. Clone slices and scalar pointers
+// in both directions so neither callers nor the source can mutate cached prices.
+func cloneAuthGroupModelPricing(source []ChannelModelPricing) []ChannelModelPricing {
+	if source == nil {
+		return nil
+	}
+	result := make([]ChannelModelPricing, len(source))
+	for i := range source {
+		p := source[i].Clone()
+		p.InputPrice = cloneGroupValuePointer(p.InputPrice)
+		p.OutputPrice = cloneGroupValuePointer(p.OutputPrice)
+		p.CacheWritePrice = cloneGroupValuePointer(p.CacheWritePrice)
+		p.CacheReadPrice = cloneGroupValuePointer(p.CacheReadPrice)
+		p.FastMultiplier = cloneGroupValuePointer(p.FastMultiplier)
+		p.FlexMultiplier = cloneGroupValuePointer(p.FlexMultiplier)
+		p.ImageInputPrice = cloneGroupValuePointer(p.ImageInputPrice)
+		p.ImageOutputPrice = cloneGroupValuePointer(p.ImageOutputPrice)
+		p.PerRequestPrice = cloneGroupValuePointer(p.PerRequestPrice)
+		for j := range p.Intervals {
+			iv := &p.Intervals[j]
+			iv.MaxTokens = cloneGroupValuePointer(iv.MaxTokens)
+			iv.InputPrice = cloneGroupValuePointer(iv.InputPrice)
+			iv.OutputPrice = cloneGroupValuePointer(iv.OutputPrice)
+			iv.CacheWritePrice = cloneGroupValuePointer(iv.CacheWritePrice)
+			iv.CacheReadPrice = cloneGroupValuePointer(iv.CacheReadPrice)
+			iv.InputMultiplier = cloneGroupValuePointer(iv.InputMultiplier)
+			iv.OutputMultiplier = cloneGroupValuePointer(iv.OutputMultiplier)
+			iv.CacheWriteMultiplier = cloneGroupValuePointer(iv.CacheWriteMultiplier)
+			iv.CacheReadMultiplier = cloneGroupValuePointer(iv.CacheReadMultiplier)
+			iv.PerRequestPrice = cloneGroupValuePointer(iv.PerRequestPrice)
+		}
+		result[i] = p
+	}
+	return result
 }

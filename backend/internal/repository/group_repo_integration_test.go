@@ -68,6 +68,27 @@ func (s *GroupRepoSuite) TestCreate() {
 	s.Require().Equal("test-create", got.Name)
 }
 
+func (s *GroupRepoSuite) TestLongContextPricingSaveAndReload() {
+	price := 0.0000025
+	g := &service.Group{Name: "long-context-roundtrip", Platform: service.PlatformOpenAI, RateMultiplier: 1,
+		Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard, LongContextPricingEnabled: true,
+		ModelPricing: []service.ChannelModelPricing{{Models: []string{"gpt-5.4"}, BillingMode: service.BillingModeToken, InputPrice: &price}}}
+	s.Require().NoError(s.repo.Create(s.ctx, g))
+	for _, enabled := range []bool{true, false, true} {
+		g.LongContextPricingEnabled = enabled
+		s.Require().NoError(s.repo.Update(s.ctx, g))
+		got, err := s.repo.GetByID(s.ctx, g.ID)
+		s.Require().NoError(err)
+		s.Equal(enabled, got.LongContextPricingEnabled)
+		s.Require().Len(got.ModelPricing, 1)
+		s.InDelta(price, *got.ModelPricing[0].InputPrice, 1e-12)
+		groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 20}, service.PlatformOpenAI, "", g.Name, nil)
+		s.Require().NoError(err)
+		s.Require().Len(groups, 1)
+		s.Equal(enabled, groups[0].LongContextPricingEnabled)
+	}
+}
+
 func (s *GroupRepoSuite) TestCreateFromSourcePreservesPriorityAndFiltersIneligibleAccounts() {
 	source := &service.Group{
 		Name:             "duplicate-source",

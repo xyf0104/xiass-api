@@ -36,20 +36,23 @@ func ValidStatus(status string) bool {
 
 // Task intentionally cannot serialize HTML. Only Detail exposes the untrusted text.
 type Task struct {
-	ID            string     `json:"id"`
-	BatchID       string     `json:"batch_id"`
-	AccountID     int64      `json:"account_id"`
-	AccountName   string     `json:"account_name"`
-	Model         string     `json:"model"`
-	UpstreamModel string     `json:"upstream_model"`
-	Status        string     `json:"status"`
-	ErrorCode     string     `json:"error_code"`
-	CreatedAt     time.Time  `json:"created_at"`
-	StartedAt     *time.Time `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at"`
-	DurationMS    *int64     `json:"duration_ms"`
-	HTMLBytes     int        `json:"html_bytes"`
-	ThumbnailURL  *string    `json:"thumbnail_url"`
+	ID              string     `json:"id"`
+	BatchID         string     `json:"batch_id"`
+	AccountID       int64      `json:"account_id"`
+	AccountName     string     `json:"account_name"`
+	Model           string     `json:"model"`
+	ExecutionNodeID string     `json:"execution_node_id"`
+	SourceID        string     `json:"source_id"`
+	Action          string     `json:"action"`
+	UpstreamModel   string     `json:"upstream_model"`
+	Status          string     `json:"status"`
+	ErrorCode       string     `json:"error_code"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at"`
+	FinishedAt      *time.Time `json:"finished_at"`
+	DurationMS      *int64     `json:"duration_ms"`
+	HTMLBytes       int        `json:"html_bytes"`
+	ThumbnailURL    *string    `json:"thumbnail_url"`
 }
 
 type Detail struct {
@@ -103,4 +106,16 @@ type Output struct {
 
 type Runner interface {
 	RunPelicanBenchmark(context.Context, int64, string, func(string) error) (Output, error)
+}
+
+type continuationKey struct{}
+
+// Continuation carries only bounded model output, never credentials or customer history.
+func WithContinuation(ctx context.Context, text string) context.Context {
+	return context.WithValue(ctx, continuationKey{}, text)
+}
+
+func Continuation(ctx context.Context) (string, bool) {
+	text, ok := ctx.Value(continuationKey{}).(string)
+	return text, ok
 }

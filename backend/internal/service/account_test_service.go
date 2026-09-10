@@ -665,7 +665,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
 	if pelicanProbe(c) != nil {
-		payload["input"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": prompt}}}}
+		payload["input"] = pelicanMessages(ctx, true)
 		payload["instructions"] = "Return only the requested HTML document."
 	}
 	payloadBytes, _ := json.Marshal(payload)
@@ -721,6 +721,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	credentialAccount.ApplyHeaderOverrides(req.Header)
+	if pelicanProbe(c) != nil && isOAuth {
+		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
+	}
 
 	// Get proxy URL
 	proxyURL := ""
@@ -729,12 +732,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	if probe := pelicanProbe(c); probe != nil {
-		if err := probe.beforeSend(upstreamTestModelID); err != nil {
-			return err
+		if probe.beforeSend != nil {
+			if err := probe.beforeSend(upstreamTestModelID); err != nil {
+				return err
+			}
 		}
 	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if pelicanProbe(c) != nil {
+			return s.pelicanError(c, "upstream_network_error")
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	boundPelicanResponse(c, resp)
@@ -749,7 +757,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	if resp.StatusCode != http.StatusOK {
 		if pelicanProbe(c) != nil {
-			return s.sendErrorAndEnd(c, "benchmark upstream rejected request")
+			return s.pelicanError(c, pelicanHTTPErrorCode(resp))
 		}
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
@@ -771,6 +779,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
+	if pelicanProbe(c) != nil {
+		return s.processPelicanStream(c, resp.Body, false)
+	}
 	return s.processOpenAIStream(c, resp.Body)
 }
 
@@ -914,6 +925,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	c.Writer.Flush()
 
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
+	if pelicanProbe(c) != nil {
+		payload["messages"] = pelicanMessages(ctx, false)
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -937,12 +951,17 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	}
 
 	if probe := pelicanProbe(c); probe != nil {
-		if err := probe.beforeSend(testModelID); err != nil {
-			return err
+		if probe.beforeSend != nil {
+			if err := probe.beforeSend(testModelID); err != nil {
+				return err
+			}
 		}
 	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if pelicanProbe(c) != nil {
+			return s.pelicanError(c, "upstream_network_error")
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
 	boundPelicanResponse(c, resp)
@@ -950,7 +969,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		if pelicanProbe(c) != nil {
-			return s.sendErrorAndEnd(c, "benchmark upstream rejected request")
+			return s.pelicanError(c, pelicanHTTPErrorCode(resp))
 		}
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -962,6 +981,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
+	if pelicanProbe(c) != nil {
+		return s.processPelicanStream(c, resp.Body, true)
+	}
 	return s.processOpenAIChatCompletionsStream(c, resp.Body)
 }
 

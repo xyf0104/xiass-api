@@ -57,6 +57,9 @@ type APIKeyAuthUserSnapshot struct {
 
 // APIKeyAuthGroupSnapshot 分组快照
 type APIKeyAuthGroupSnapshot struct {
+	LongContextPricingEnabled bool                  `json:"long_context_pricing_enabled"`
+	ModelPricing              []ChannelModelPricing `json:"model_pricing"`
+
 	ID                              int64    `json:"id"`
 	Name                            string   `json:"name"`
 	Platform                        string   `json:"platform"`

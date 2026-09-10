@@ -10,19 +10,23 @@ import (
 	"github.com/google/uuid"
 )
 
-// Manager follows the existing bounded admin probe worker pattern. The queue
-// and claims live in PostgreSQL; no customer scheduler or usage worker is used.
+// Manager dispatches submitted probes on demand. The queue and account guards
+// live in PostgreSQL; no customer scheduler or persistent worker pool is used.
 type Manager struct {
-	store   Store
-	runner  Runner
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	start   sync.Once
-	owner   string
-	wake    chan struct{}
-	retryMu sync.Mutex
-	retry   *time.Timer
+	store       Store
+	runner      Runner
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	owner       string
+	mu          sync.Mutex
+	started     bool
+	stopped     bool
+	dispatching bool
+	pending     bool
+	active      int
+	retryMu     sync.Mutex
+	retry       *time.Timer
 }
 
 const (
@@ -33,26 +37,43 @@ const (
 
 func NewManager(store Store, runner Runner) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{store: store, runner: runner, ctx: ctx, cancel: cancel, owner: uuid.NewString(), wake: make(chan struct{}, 1)}
+	return &Manager{store: store, runner: runner, ctx: ctx, cancel: cancel, owner: uuid.NewString()}
 }
 
 func (m *Manager) Start() {
-	m.start.Do(func() {
-		m.wg.Add(1)
-		go m.dispatch()
-		m.Wake() // One startup drain recovers durable queued jobs, never running claims.
-	})
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.started || m.stopped {
+		return
+	}
+	m.started = true
+	m.wakeLocked() // One startup drain recovers queued jobs, never running claims.
 }
 
 func (m *Manager) Wake() {
-	select {
-	case m.wake <- struct{}{}:
-	default:
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.wakeLocked()
+}
+
+func (m *Manager) wakeLocked() {
+	if m.stopped {
+		return
+	}
+	m.pending = true
+	if m.started && !m.dispatching && m.active < MaxBatchSize {
+		m.dispatching = true
+		m.wg.Add(1)
+		go m.dispatch()
 	}
 }
 
 func (m *Manager) Stop() {
+	// Serialize startup with shutdown so Wait never races an Add on an idle manager.
+	m.mu.Lock()
+	m.stopped = true
 	m.cancel()
+	m.mu.Unlock()
 	m.retryMu.Lock()
 	if m.retry != nil {
 		m.retry.Stop()
@@ -85,29 +106,40 @@ func (m *Manager) retryLater(delay time.Duration) {
 func (m *Manager) dispatch() {
 	defer m.wg.Done()
 	for {
-		select {
-		case <-m.ctx.Done():
+		m.mu.Lock()
+		if m.stopped || m.active >= MaxBatchSize {
+			m.dispatching = false
+			m.mu.Unlock()
 			return
-		case <-m.wake:
-			var workers sync.WaitGroup
-			for i := 0; i < 3; i++ {
-				workers.Add(1)
-				go func() { defer workers.Done(); m.worker() }()
-			}
-			workers.Wait()
 		}
-	}
-}
-
-func (m *Manager) worker() {
-	for m.ctx.Err() == nil {
+		m.pending = false
+		m.mu.Unlock()
 		ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
 		task, err := m.store.Claim(ctx, m.owner)
 		cancel()
 		if err == nil && task != nil {
-			m.run(task)
+			m.mu.Lock()
+			m.active++
+			m.wg.Add(1)
+			m.mu.Unlock()
+			go func() {
+				defer m.wg.Done()
+				m.run(task)
+				m.mu.Lock()
+				m.active--
+				m.wakeLocked()
+				m.mu.Unlock()
+			}()
 			continue
 		}
+		m.mu.Lock()
+		// A submission racing the final empty Claim must not lose its wakeup.
+		if err == nil && m.pending && !m.stopped {
+			m.mu.Unlock()
+			continue
+		}
+		m.dispatching = false
+		m.mu.Unlock()
 		if err != nil {
 			// A transient storage error must not strand durable queued work, but
 			// the retry is timer-driven so an idle manager remains dormant.
@@ -137,7 +169,7 @@ func (m *Manager) run(task *Task) {
 				current, err := m.store.Get(pollCtx, task.ID)
 				pollCancel()
 				// Losing storage visibility must stop egress, not keep generating.
-				if err != nil || current.Status != "running" {
+				if err != nil || current == nil || current.Status != "running" {
 					cancel()
 					return
 				}
@@ -155,16 +187,13 @@ func (m *Manager) run(task *Task) {
 		}
 	}
 	if ctx.Err() != nil {
-		status, code, output.HTML = "interrupted", "runner_interrupted", ""
+		status, code = "interrupted", "runner_interrupted"
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status, code = "failed", "timeout"
 		}
 	}
 	if len(output.HTML) > MaxHTMLBytes {
 		status, code, output.HTML = "failed", "html_too_large", ""
-	}
-	if status != "succeeded" {
-		output.HTML = ""
 	}
 	m.finish(task.ID, status, code, output.HTML)
 }
@@ -226,6 +255,19 @@ func (m *Manager) invoke(ctx context.Context, task *Task) (out Output, err error
 			err = errors.New("benchmark runner panic")
 		}
 	}()
+	if task.Action == "continue" {
+		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		detail, err := m.store.Detail(readCtx, task.SourceID)
+		cancel()
+		if err != nil {
+			return Output{ErrorCode: "continuation_source_unavailable"}, err
+		}
+		if detail == nil || task.SourceID == "" || detail.AccountID != task.AccountID || !ValidStatus(detail.Status) ||
+			detail.Status == "queued" || detail.Status == "running" || detail.Status == "canceling" || len(detail.HTML) > MaxHTMLBytes {
+			return Output{ErrorCode: "invalid_continuation_source"}, errors.New("invalid benchmark continuation source")
+		}
+		ctx = WithContinuation(ctx, detail.HTML)
+	}
 	return m.runner.RunPelicanBenchmark(ctx, task.AccountID, task.Model, func(model string) error {
 		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()

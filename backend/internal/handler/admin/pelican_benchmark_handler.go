@@ -16,13 +16,14 @@ import (
 )
 
 type PelicanBenchmarkHandler struct {
-	store    benchmark.Store
-	accounts service.AdminService
-	manager  *benchmark.Manager
+	store     benchmark.Store
+	accounts  service.AdminService
+	manager   *benchmark.Manager
+	nodeOwner func(*service.Account) string
 }
 
 func NewPelicanBenchmarkHandler(store benchmark.Store, accounts service.AdminService, tester *service.AccountTestService) *PelicanBenchmarkHandler {
-	h := &PelicanBenchmarkHandler{store: store, accounts: accounts, manager: benchmark.NewManager(store, tester)}
+	h := &PelicanBenchmarkHandler{store: store, accounts: accounts, manager: benchmark.NewManager(store, tester), nodeOwner: tester.PelicanExecutionNodeID}
 	h.manager.Start()
 	return h
 }
@@ -73,10 +74,37 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		AccountIDs []int64 `json:"account_ids"`
 		All        bool    `json:"all"`
 		Model      string  `json:"model"`
+		SourceID   string  `json:"source_id"`
+		Action     string  `json:"action"`
 	}
 	single := c.Param("id") != ""
 	if !pelicanJSON(c, &req, single) {
 		return
+	}
+	if req.SourceID != "" || req.Action != "" {
+		if single || req.All || len(req.AccountIDs) > 0 || req.Model != "" ||
+			(req.Action != "continue" && req.Action != "retry") {
+			response.BadRequest(c, "invalid benchmark follow-up")
+			return
+		}
+		if _, err := uuid.Parse(req.SourceID); err != nil {
+			response.BadRequest(c, "invalid source benchmark")
+			return
+		}
+		source, err := h.store.Get(c.Request.Context(), req.SourceID)
+		if err != nil {
+			pelicanError(c, err)
+			return
+		}
+		if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.accounts, source.AccountID); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if source.Status == "queued" || source.Status == "running" || source.Status == "canceling" {
+			response.Error(c, http.StatusConflict, "stop the current test and wait for it to exit first")
+			return
+		}
+		req.AccountIDs, req.Model = []int64{source.AccountID}, source.Model
 	}
 	if single {
 		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -142,6 +170,9 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		if account == nil || seen[account.ID] {
 			continue
 		}
+		if req.SourceID != "" && account.ID != req.AccountIDs[0] {
+			continue
+		}
 		seen[account.ID] = true
 		reason := service.PelicanBenchmarkEligibility(account, req.Model)
 		if reason == "" && ensureAdminAccountManagementAccess(ctx, h.accounts, account.ID) != nil {
@@ -151,7 +182,12 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			result.Skipped = append(result.Skipped, benchmark.Skipped{AccountID: account.ID, Reason: reason})
 			continue
 		}
-		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: req.Model})
+		owner := account.ExecutionNodeID("")
+		if h.nodeOwner != nil {
+			owner = h.nodeOwner(account)
+		}
+		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: req.Model,
+			ExecutionNodeID: owner, SourceID: req.SourceID, Action: req.Action})
 	}
 	for _, id := range req.AccountIDs {
 		if !seen[id] {

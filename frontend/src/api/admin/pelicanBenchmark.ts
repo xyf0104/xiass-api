@@ -4,10 +4,12 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
 
 /**
  * Mirrors admin/pelican_benchmark_handler.go and internal/benchmark/pelican.go.
- * POST /admin/pelican-benchmarks: { account_ids, model } or { all: true, model }.
+ * POST /admin/pelican-benchmarks: { account_ids, model }, { all: true, model },
+ * or only { source_id, action: 'continue' | 'retry' } for a same-account follow-up.
  * POST /admin/accounts/:id/pelican-benchmark: { model } (single-account shortcut).
  * GET /admin/pelican-benchmarks: page/page_size, optional batch_id/account_id/status.
- * GET /admin/pelican-benchmarks/:id: Task + untrusted html, fetched only on expansion.
+ * GET /admin/pelican-benchmarks/:id: Task + untrusted html; successful rows auto-load
+ * sandboxed thumbnails. Follow-up actions also read detail to confirm task termination.
  * POST /admin/pelican-benchmarks/:id/stop: Task; POST /.../stop: { all: true } -> { affected }.
  * Standard admin auth/response envelope, server-owned prompt/queue/cancellation.
  * No separate candidates/current/result routes: use the existing redacted account list
@@ -20,6 +22,7 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
 export const DEFAULT_PELICAN_MODEL = 'gpt-6-astra'
 
 export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | 'status'> {
+  execution_node_id?: string
   plan_type: string | null
   model_ids: string[]
   can_test: boolean
@@ -28,6 +31,9 @@ export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | '
 export type PelicanBenchmarkStatus = 'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
 
 export interface PelicanBenchmarkRun {
+  execution_node_id?: string
+  source_id?: string
+  action?: 'continue' | 'retry' | ''
   id: string
   batch_id: string
   account_id: Account['id']
@@ -72,7 +78,7 @@ export async function getPelicanAccounts(signal?: AbortSignal): Promise<{ items:
       if (account.platform !== 'openai' || !['oauth', 'apikey'].includes(account.type) || account.parent_account_id || account.extra?.synthetic_ui_test === true) continue
       if (plan === 'free' || (account.type === 'oauth' && (!plan || plan === 'abnormal'))) continue
       result.set(account.id, {
-        id: account.id, name: account.name, status: account.status, plan_type: plan || null,
+        id: account.id, name: account.name, status: account.status, execution_node_id: account.execution_node_id, plan_type: plan || null,
         model_ids: [DEFAULT_PELICAN_MODEL], can_test: true
       })
     }
@@ -141,12 +147,16 @@ export async function startPelicanTests(tests: PelicanBenchmarkTest[], signal?: 
 }
 
 export async function stopPelicanTests(runIds: string[], signal?: AbortSignal): Promise<PelicanBenchmarkSnapshot> {
-  const items: PelicanBenchmarkRun[] = []
-  for (const id of runIds) {
+  const items = await Promise.all(runIds.map(async id => {
     const { data } = await apiClient.post<PelicanBenchmarkRun>(`${base}/${encodeURIComponent(id)}/stop`, undefined, { signal })
-    items.push(data)
-  }
+    return data
+  }))
   return { items }
+}
+
+export async function restartPelicanTest(source_id: string, action: 'continue' | 'retry', signal?: AbortSignal): Promise<PelicanBenchmarkSnapshot & { skipped: PelicanBenchmarkSkipped[] }> {
+  const { data } = await apiClient.post<PelicanBenchmarkCreated>(base, { source_id, action }, { signal })
+  return { items: data.tasks, skipped: data.skipped }
 }
 
 export async function stopAllPelicanTests(signal?: AbortSignal): Promise<{ affected: number }> {
@@ -154,8 +164,8 @@ export async function stopAllPelicanTests(signal?: AbortSignal): Promise<{ affec
   return data
 }
 
-export async function getPelicanHistory(page = 1, signal?: AbortSignal): Promise<PaginatedResponse<PelicanBenchmarkRun>> {
-  const data = await listRuns({ page, page_size: 20 }, signal)
+export async function getPelicanHistory(page = 1, signal?: AbortSignal, status?: 'succeeded'): Promise<PaginatedResponse<PelicanBenchmarkRun>> {
+  const data = await listRuns({ page, page_size: 20, ...(status ? { status } : {}) }, signal)
   return { ...data, pages: Math.ceil(data.total / data.page_size) }
 }
 

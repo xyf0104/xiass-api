@@ -13,11 +13,17 @@
 
       <div v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{{ error }}</div>
       <div v-if="notice" role="status" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">{{ notice }}</div>
+      <p v-if="busy" role="status" class="text-xs text-amber-700 dark:text-amber-300">{{ t(`${prefix}.${waitingForExit ? 'waitingForExit' : 'busy'}`) }}</p>
 
       <section :id="`pelican-panel-${tab}`" role="tabpanel" :aria-labelledby="`pelican-tab-${tab}`" :aria-busy="loading">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : current.length }) }}</span>
           <div class="flex flex-wrap items-center gap-2">
+            <template v-if="tab === 'new'">
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
+              <button type="button" class="btn btn-primary" data-testid="start-selected" :disabled="!ready || busy || loading || !selectedStartable.length" @click="start(selectedStartable)"><Icon name="play" size="sm" />{{ t(`${prefix}.startSelected`, { count: selectedStartable.length }) }}</button>
+            </template>
+            <Select v-else v-model="filters[tab]" class="w-32" :options="filterOptions" :aria-label="t(`${prefix}.filter`)" data-testid="result-filter" />
             <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || !startable.length" @click="start(startable)">
               <Icon name="play" size="sm" />{{ t(`${prefix}.startAll`) }}
             </button>
@@ -38,7 +44,10 @@
 
         <template v-if="tab === 'new'">
           <div v-for="account in sortedAccounts" :key="account.id" class="benchmark-row grid items-center gap-2 border-b border-gray-100 py-2 text-sm dark:border-dark-700" :data-testid="`account-${account.id}`">
-            <span class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ account.name }}</span>
+            <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">
+              <label class="flex items-center gap-2"><input v-model="selectedIds" type="checkbox" :value="account.id" :disabled="busy || loading || !ready || !canStart(account)" :data-testid="`select-${account.id}`"><span>{{ account.name }}</span></label>
+              <span :class="nodeClass(account.execution_node_id)" data-testid="node-badge">{{ nodeLabel(account.execution_node_id) }}</span>
+            </div>
             <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
             <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
             <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || isAccountRunning(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
@@ -49,16 +58,19 @@
         <template v-else>
           <div v-for="run in rows" :key="run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
             <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
-              <span class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}</span>
+              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}<br><span :class="nodeClass(runOwner(run))" data-testid="node-badge">{{ nodeLabel(runOwner(run)) }}</span></div>
               <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
               <span class="run-status min-w-0 text-xs" :class="statusClass(run.status)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
               <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ run.model }}</span>
               <time class="run-date min-w-0 break-words text-xs text-gray-500 dark:text-gray-400" :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
               <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
-              <div class="row-action flex items-center justify-end">
-                <button v-if="run.status === 'queued' || run.status === 'running'" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
+              <div class="row-action flex flex-col items-end gap-1">
+                <button v-if="active(run)" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
                 <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
+                <div v-if="tab === 'current'" class="flex items-center gap-1">
+                  <button v-for="action in ['continue', 'retry'] as const" :key="action" type="button" class="btn btn-secondary !px-2 !py-1 text-xs" :disabled="busy || loading" :data-testid="`${action}-${run.id}`" @click="restart(run, action)"><Icon :name="action === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${action}`) }}</button>
+                </div>
               </div>
             </div>
             <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}</p>
@@ -82,9 +94,10 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PelicanResultPreview from './PelicanResultPreview.vue'
+import { getStatus as getExecutionNodeStatus, type ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import {
   DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
-  getPelicanModels, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
+  getPelicanModels, getPelicanResult, restartPelicanTest, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
   type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkStatus, type PelicanBenchmarkSkipped
 } from '@/api/admin/pelicanBenchmark'
 
@@ -97,6 +110,11 @@ type Tab = typeof tabs[number]
 const tab = ref<Tab>('new')
 const accounts = ref<PelicanBenchmarkAccount[]>([])
 const models = ref<Record<number, string>>({})
+const selectedIds = ref<number[]>([])
+const nodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
+const filters = ref<{ current: '' | 'succeeded'; history: '' | 'succeeded' }>({ current: '', history: '' })
+const filterOptions = computed(() => [{ value: '', label: t(`${prefix}.allResults`) }, { value: 'succeeded', label: t(`${prefix}.passed`) }])
+const waitingForExit = ref(false)
 const current = ref<PelicanBenchmarkRun[]>([])
 const history = ref<PelicanBenchmarkRun[]>([])
 const historyPage = ref(1)
@@ -122,19 +140,40 @@ const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].
 const isAccountRunning = (id: number) => current.value.some(run => run.account_id === id && active(run))
 const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
 const startable = computed(() => accounts.value.filter(canStart))
-const stoppable = computed(() => current.value.filter(run => run.status === 'queued' || run.status === 'running'))
+const selectedStartable = computed(() => startable.value.filter(account => selectedIds.value.includes(account.id)))
+const allSelected = computed(() => startable.value.length > 0 && selectedStartable.value.length === startable.value.length)
+function selectAll(checked: boolean) { selectedIds.value = checked ? startable.value.map(account => account.id) : [] }
+function runOwner(run: PelicanBenchmarkRun) {
+  // Migrated history has an empty snapshot. Fall back only to a known account,
+  // never to a guessed default or remote node.
+  return run.execution_node_id?.trim() || accounts.value.find(account => account.id === run.account_id)?.execution_node_id
+}
+function isLocal(owner?: string) {
+  const id = owner?.trim()
+  return !!id && (id === nodeStatus.value?.runtime.node_id?.trim() || nodeStatus.value?.nodes.some(node => node.node_id === id && node.is_local) === true)
+}
+function nodeLabel(owner?: string) { return isLocal(owner) ? t('admin.accounts.executionNodeLocal') : owner?.trim() || '--' }
+function nodeClass(owner?: string) {
+  const base = 'mt-1 inline-flex max-w-full break-all rounded px-1.5 py-0.5 text-[11px] font-medium leading-4 '
+  return base + (!owner?.trim() ? 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400' : isLocal(owner)
+    ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+    : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70')
+}
+const stoppable = computed(() => current.value.filter(active))
 function planRank(plan: string | null | undefined) {
   const normalized = plan?.toLowerCase().replace(/[\s_-]/g, '')
   return ({ pro: 0, prolite: 1, plus: 2, team: 3 } as Record<string, number>)[normalized ?? ''] ?? 4
 }
 const sortedAccounts = computed(() => [...accounts.value].sort((a, b) => planRank(a.plan_type) - planRank(b.plan_type) || a.id - b.id))
-const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value)].sort((a, b) =>
+const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value.filter(run => !filters.value.current || run.status === filters.value.current))].sort((a, b) =>
   planRank(accounts.value.find(item => item.id === a.account_id)?.plan_type) - planRank(accounts.value.find(item => item.id === b.account_id)?.plan_type)))
 const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
 function errorLabel(code: string) {
   const known = ['account_unavailable', 'ineligible', 'free_plan', 'unknown_plan', 'unsupported_auth_mode', 'model_not_supported', 'fixed_egress_unavailable', 'upstream_failed', 'html_too_large', 'invalid_html', 'timeout', 'runner_interrupted', 'runner_panic', 'account_access_denied', 'account_not_found']
-  return t(`${prefix}.errors.${known.includes(code) ? code : 'unknown'}`)
+  const upstream = ['upstream_http_400', 'upstream_http_401', 'upstream_http_403', 'upstream_http_404', 'upstream_http_408', 'upstream_http_429', 'upstream_http_500', 'upstream_http_502', 'upstream_http_503', 'upstream_http_504', 'upstream_network_error', 'upstream_stream_error', 'upstream_incomplete']
+  const continuation = ['upstream_client_upgrade_required', 'continuation_source_unavailable', 'invalid_continuation_source']
+  return t(`${prefix}.errors.${known.includes(code) || upstream.includes(code) || continuation.includes(code) ? code : 'unknown'}`)
 }
 
 async function loadModels(account: PelicanBenchmarkAccount) {
@@ -255,7 +294,7 @@ async function loadHistory(page: number) {
   loading.value = true
   error.value = ''
   try {
-    const result = await getPelicanHistory(page, signal)
+    const result = await getPelicanHistory(page, signal, filters.value.history || undefined)
     if (ownSession !== session || version !== readVersion || signal.aborted) return
     history.value = result.items
     historyPage.value = result.page
@@ -289,7 +328,7 @@ async function mutate(operation: (signal: AbortSignal) => Promise<{ items: Pelic
         mergeCurrent(cause.items)
         if (cause.items.length) tab.value = 'current'
         error.value = message(cause.cause, cause.items.length ? 'partialStart' : failureKey)
-      } else error.value = message(cause, failureKey)
+      } else error.value = cause instanceof Error && cause.message === 'pelican_stop_wait_timeout' ? t(`${prefix}.stopWaitTimeout`) : message(cause, failureKey)
       ready.value = false
     }
   } finally {
@@ -308,13 +347,75 @@ async function start(selected: PelicanBenchmarkAccount[]) {
 }
 
 async function stop(selected: PelicanBenchmarkRun[], all = false) {
-  const ids = selected.filter(run => run.status === 'queued' || run.status === 'running').map(run => run.id)
+  const ids = selected.filter(active).map(run => run.id)
   if (!ids.length) return
   await mutate(async signal => {
     if (!all) return stopPelicanTests(ids, signal)
     await stopAllPelicanTests(signal)
     return getPelicanCurrent(signal, [...new Set(current.value.map(run => run.batch_id))])
   }, 'stopFailed')
+}
+
+function waitForPoll(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 1000)
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+async function restart(run: PelicanBenchmarkRun, action: 'continue' | 'retry') {
+  await mutate(async parentSignal => {
+    const waiting = new AbortController()
+    const signal = waiting.signal
+    const abort = () => waiting.abort()
+    parentSignal.addEventListener('abort', abort, { once: true })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    waitingForExit.value = true
+    try {
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('pelican_stop_wait_timeout'))
+          waiting.abort()
+        }, 30_000)
+      })
+      await Promise.race([deadline, (async () => {
+      // Discover other batches too: the selected source may already have an active successor.
+      const snapshot = await getPelicanCurrent(signal, [...new Set(current.value.map(item => item.batch_id))], true)
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      mergeCurrent(snapshot.items)
+      const pending = new Map(snapshot.items.filter(item => item.account_id === run.account_id && active(item)).map(item => [item.id, item]))
+      const source = await getPelicanResult(run.id, signal)
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      if (active(source)) pending.set(source.id, source)
+      const stopIds = [...pending.values()].filter(item => item.status !== 'canceling').map(item => item.id)
+      if (stopIds.length) {
+        const stopped = await stopPelicanTests(stopIds, signal)
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        mergeCurrent(stopped.items)
+        for (const item of stopped.items) if (!active(item)) pending.delete(item.id)
+      }
+      while (pending.size) {
+        await waitForPoll(signal)
+        const results = await Promise.all([...pending.keys()].map(id => getPelicanResult(id, signal)))
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        mergeCurrent(results)
+        for (const item of results) if (!active(item)) pending.delete(item.id)
+      }
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      })()])
+      clearTimeout(timer)
+      if (parentSignal.aborted) throw new DOMException('Aborted', 'AbortError')
+      waitingForExit.value = false
+      return await restartPelicanTest(run.id, action, parentSignal)
+    } finally {
+      clearTimeout(timer)
+      parentSignal.removeEventListener('abort', abort)
+      waiting.abort()
+      if (!parentSignal.aborted) waitingForExit.value = false
+    }
+  }, 'startFailed')
 }
 
 function dispose() {
@@ -350,6 +451,14 @@ watch(tab, () => {
   if (props.show && !controller.signal.aborted && !busy.value) void refresh()
 }, { flush: 'sync' })
 
+watch(() => filters.value.history, () => {
+  history.value = []
+  historyPage.value = 1
+  historyPages.value = 0
+  historyTotal.value = 0
+  if (props.show && tab.value === 'history') void loadHistory(1)
+})
+
 watch(() => props.show, show => {
   dispose()
   if (!show) return
@@ -360,6 +469,14 @@ watch(() => props.show, show => {
   current.value = []
   history.value = []
   models.value = {}
+  selectedIds.value = []
+  filters.value = { current: '', history: '' }
+  waitingForExit.value = false
+  nodeStatus.value = null
+  const ownSession = session
+  void getExecutionNodeStatus().then(status => {
+    if (ownSession === session && !controller.signal.aborted) nodeStatus.value = status
+  }).catch(() => { /* Unknown ownership remains explicit when status is unavailable. */ })
   loadedModels.clear()
   loadingModels.clear()
   notice.value = ''

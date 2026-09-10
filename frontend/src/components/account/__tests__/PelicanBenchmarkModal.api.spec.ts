@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getPelicanAccounts, getPelicanCurrent, getPelicanHistory, getPelicanModels, getPelicanResult,
-  startPelicanTests, stopAllPelicanTests, stopPelicanTests, PelicanPartialStartError,
+  startPelicanTests, restartPelicanTest, stopAllPelicanTests, stopPelicanTests, PelicanPartialStartError,
   type PelicanBenchmarkRun
 } from '@/api/admin/pelicanBenchmark'
 
@@ -42,6 +42,27 @@ describe('Pelican benchmark backend contract', () => {
     get.mockResolvedValue({ data: [{ id: 'gpt-6-astra', display_name: 'Astra' }] })
     expect(await getPelicanModels(7)).toEqual(['gpt-6-astra'])
     expect(get).toHaveBeenCalledWith('/admin/accounts/7/models', { signal: undefined })
+  })
+
+  it.each(['continue', 'retry'] as const)('posts only source_id and action for %s', async action => {
+    post.mockResolvedValue({ data: { batch_id: 'batch-1', tasks: [task()], skipped: [] } })
+    expect(await restartPelicanTest('source', action)).toEqual({ items: [task()], skipped: [] })
+    expect(post).toHaveBeenCalledExactlyOnceWith('/admin/pelican-benchmarks', { source_id: 'source', action }, { signal: undefined })
+  })
+
+  it('passes the success filter to backend pagination', async () => {
+    get.mockResolvedValue({ data: { items: [], total: 45, page: 2, page_size: 20 } })
+    expect((await getPelicanHistory(2, undefined, 'succeeded')).pages).toBe(3)
+    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded' }, signal: undefined })
+  })
+
+  it('dispatches stops in parallel even while the first request is pending', async () => {
+    let finish!: (value: unknown) => void
+    post.mockReturnValueOnce(new Promise(resolve => { finish = resolve })).mockResolvedValueOnce({ data: task({ id: 'two' }) })
+    const result = stopPelicanTests(['one', 'two'])
+    expect(post).toHaveBeenCalledTimes(2)
+    finish({ data: task({ id: 'one' }) })
+    expect((await result).items.map(item => item.id)).toEqual(['one', 'two'])
   })
 
   it('creates a single task using the actual shortcut and server default prompt', async () => {

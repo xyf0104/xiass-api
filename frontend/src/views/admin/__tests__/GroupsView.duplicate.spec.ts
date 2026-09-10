@@ -8,6 +8,7 @@ import GroupsView from '@/views/admin/GroupsView.vue'
 const {
   listGroups,
   duplicateGroup,
+  updateGroup,
   getModelsListCandidates,
   getUsageSummary,
   getCapacitySummary,
@@ -17,6 +18,7 @@ const {
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   duplicateGroup: vi.fn(),
+  updateGroup: vi.fn(),
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
@@ -57,7 +59,7 @@ vi.mock('@/api/admin', () => ({
       getLiveCapability,
       getAll: vi.fn(),
       create: vi.fn(),
-      update: vi.fn(),
+      update: updateGroup,
       delete: vi.fn(),
       updateSortOrder: vi.fn()
     },
@@ -157,7 +159,7 @@ const DataTableStub = defineComponent({
   template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div></div>'
 })
 
-function mountView() {
+function mountView(renderDialogs = false) {
   return mount(GroupsView, {
     global: {
       stubs: {
@@ -165,7 +167,7 @@ function mountView() {
         TablePageLayout: TablePageLayoutStub,
         DataTable: DataTableStub,
         Pagination: true,
-        BaseDialog: true,
+        BaseDialog: renderDialogs ? defineComponent({ props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' }) : true,
         ConfirmDialog: true,
         EmptyState: true,
         Select: true,
@@ -188,6 +190,7 @@ describe('GroupsView duplicate action', () => {
     for (const fn of [
       listGroups,
       duplicateGroup,
+      updateGroup,
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
@@ -219,6 +222,31 @@ describe('GroupsView duplicate action', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it.each([false, true])('persists long-context switch %s and shows it after reopening', async enabled => {
+    let saved = { ...sourceGroup, long_context_pricing_enabled: !enabled, model_pricing: [] }
+    listGroups.mockImplementation(async () => ({ items: [saved], total: 1, page: 1, page_size: 20, pages: 1 }))
+    updateGroup.mockImplementation(async (_id, payload) => {
+      saved = { ...saved, ...payload }
+      return saved
+    })
+    const wrapper = mountView(true)
+    await flushPromises()
+    const state = (wrapper.vm as unknown as { $: { setupState: { handleEdit: (group: AdminGroup) => Promise<void>; handleUpdateGroup: () => Promise<void> } } }).$.setupState
+    await state.handleEdit(saved)
+    await flushPromises()
+    const checkbox = wrapper.get<HTMLInputElement>('[data-testid="edit-long-context-pricing"]')
+    expect(checkbox.element.checked).toBe(!enabled)
+    await checkbox.setValue(enabled)
+    await state.handleUpdateGroup()
+    await flushPromises()
+    expect(showError).not.toHaveBeenCalled()
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({ long_context_pricing_enabled: enabled }))
+    await state.handleEdit(saved)
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-long-context-pricing"]').element.checked).toBe(enabled)
+    wrapper.unmount()
   })
 
   it('duplicates the selected group, reports success, and refreshes the list', async () => {

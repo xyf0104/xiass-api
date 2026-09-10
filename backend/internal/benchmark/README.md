@@ -6,6 +6,7 @@ audit middleware. Responses use the existing `{code, message, data}` envelope.
 | Method / Path (relative to `/api/v1/admin`) | Request | `data` |
 | --- | --- | --- |
 | POST `/pelican-benchmarks` | `{account_ids: number[], model?: string}` OR `{all: true, model?: string}` | `{batch_id, tasks, skipped: [{account_id, reason}]}` (202) |
+| POST `/pelican-benchmarks` | `{source_id: UUID, action: "continue" or "retry"}` | Same creation result; source must have stopped |
 | POST `/accounts/:id/pelican-benchmark` | Empty body or `{model?: string}` | Same as bulk creation (202) |
 | GET `/pelican-benchmarks` | Query: `page`, `page_size`, `account_id`, `batch_id`, `status` | `{items, total, page, page_size}` |
 | GET `/pelican-benchmarks/:id` | None | Task plus `html` |
@@ -13,7 +14,7 @@ audit middleware. Responses use the existing `{code, message, data}` envelope.
 | POST `/pelican-benchmarks/stop` | `{all: true}` OR `{account_id: number}` | `{affected}` |
 
 Task fields: string `id`, `batch_id`, `account_name`, `model`, `upstream_model`,
-`status`, `error_code`; numeric `account_id`, `html_bytes`; nullable integer
+`status`, `error_code`, `execution_node_id`, `source_id`, `action`; numeric `account_id`, `html_bytes`; nullable integer
 `duration_ms`; UTC RFC3339 `created_at`; nullable UTC RFC3339 `started_at` and
 `finished_at`; `thumbnail_url` is always null in this version. Public `model`
 is distinct from the actual outbound `upstream_model` (empty before send).
@@ -45,8 +46,9 @@ are persisted globally; only the original executor, after upstream has returned
 and its response body has closed, acknowledges cancellation and releases the
 slot. A late success cannot overwrite cancellation.
 
-The dispatcher wakes on creation and once on startup, using at most three
-short-lived workers. A transient Claim error schedules a bounded, timer-driven
+The dispatcher wakes on creation and once on startup, starting each claimed
+account independently without a three-worker bottleneck, up to 2000 concurrent
+tests per process. A transient Claim error schedules a bounded, timer-driven
 retry of the durable queue; a recovered queue is drained without another
 creation or explicit Wake. Once the queue is empty it performs no idle database
 polling. Cancellation reads occur only while a job is running. A coalescing
@@ -57,10 +59,18 @@ wakeup prevents a create/worker-exit race from losing queued work.
 Lists select metadata only. Detail returns JSON-escaped HTML, `no-store`,
 `nosniff` and restrictive CSP headers, never a rendered HTML document. The
 server never executes, tests or renders generated HTML. It does not generate
-thumbnails. The frontend must fetch HTML only on explicit detail activation
-and render, if desired, in an isolated sandbox without same-origin access,
+thumbnails. The frontend fetches successful visible results and renders uniform
+full-document thumbnails in an isolated sandbox without same-origin access,
 network access or parent navigation. Never inject into the admin DOM or use
 `v-html`.
+
+Only model-generated text is retained as bounded continuation context, including
+partial output after failure or cancellation. Failed or canceled output is never
+marked successful or rendered as a successful thumbnail. Continue uses the same
+account/model, original prompt, previous output and a final user message of
+`继续`; retry sends the original prompt. Both require the prior call to finish
+before another account claim is admitted. Historical ownership uses the stored
+node ID; migrated records retain an empty snapshot rather than a guessed owner.
 
 ## Recovery Boundary
 
@@ -80,6 +90,6 @@ upstream calls; database connection loss or node heartbeat expiry alone is not
 such confirmation. This is an explicit hard-crash boundary, not a claim that
 crash recovery is solved.
 
-No schema cleanup or result retention scheduler is added. Apply migration 242
+No schema cleanup or result retention scheduler is added. Apply migrations 242 and 243
 before starting this build. Real PostgreSQL tests use the repository's existing
 Docker integration harness and isolated test schemas, never a live XIASS DB.
