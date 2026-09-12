@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,9 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -27,6 +26,20 @@ type batchOAuthClientStub struct {
 	calls   atomic.Int32
 	entered chan struct{}
 	release chan struct{}
+}
+
+type batchOAuthTestEncryptor struct{}
+
+func (batchOAuthTestEncryptor) Encrypt(value string) (string, error) {
+	return "enc:" + base64.RawStdEncoding.EncodeToString([]byte(value)), nil
+}
+
+func (batchOAuthTestEncryptor) Decrypt(value string) (string, error) {
+	decoded, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, "enc:"))
+	if err != nil {
+		return "", err
+	}
+	return string(decoded), nil
 }
 
 func (s *batchOAuthClientStub) ExchangeCode(ctx context.Context, code, verifier, redirect, proxy, client string) (*openai.TokenResponse, error) {
@@ -54,11 +67,7 @@ func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 	t.Helper()
 	f := &batchOAuthFixture{admin: newStubAdminService(), client: &batchOAuthClientStub{teamChildOAuthClientStub: teamChildOAuthClientStub{email: "owner@example.test"}}, states: map[string]string{}, status: "completed", stage: "completed"}
 	f.h = NewOpenAIOAuthHandler(service.NewOpenAIOAuthService(nil, f.client), f.admin, nil, nil)
-	cfg := &config.Config{}
-	cfg.Totp.EncryptionKey = strings.Repeat("ab", 32)
-	encryptor, err := repository.NewAESEncryptor(cfg)
-	require.NoError(t, err)
-	f.h.ConfigureTeamChildSecrets(encryptor)
+	f.h.ConfigureTeamChildSecrets(batchOAuthTestEncryptor{})
 	t.Cleanup(f.h.openaiOAuthService.Stop)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.sidecarCalls.Add(1)
@@ -70,7 +79,10 @@ func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 		defer f.mu.Unlock()
 		var payload map[string]any
 		if r.Method == http.MethodPost {
-			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/batch-oauth/tasks/")
 		id = strings.Split(id, "/")[0]

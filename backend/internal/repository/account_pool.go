@@ -88,7 +88,7 @@ func (r *accountRepository) queryAccountPools(ctx context.Context, suffix string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	pools := make([]service.AccountPool, 0)
 	for rows.Next() {
 		var pool service.AccountPool
@@ -135,14 +135,14 @@ func (r *accountRepository) CreateAccountPool(ctx context.Context, name string, 
 	var id int64
 	if !rows.Next() {
 		err = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("pool insert returned no ID")
 	}
 	err = rows.Scan(&id)
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}

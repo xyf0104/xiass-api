@@ -153,7 +153,7 @@ func batchOAuthSidecarRequest(ctx context.Context, method, path string, payload 
 	if err != nil {
 		return nil, errors.New("batch automation unavailable")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, errBatchOAuthMissing
 	}
@@ -725,7 +725,7 @@ func (h *OpenAIOAuthHandler) cancelBatchReservation(ctx context.Context, t *batc
 		return nil
 	}
 	if !confirmed {
-		return errors.New("Confirm SMS cancellation in XIASS first")
+		return errors.New("confirm SMS cancellation in XIASS first")
 	}
 	if _, err := h.batchSMSService.WorkflowAction(ctx, t.ownerID, t.ID, id, "cancel", true); err != nil {
 		return errors.New("SMS cancellation failed")
