@@ -198,11 +198,13 @@ func ProvideOpenAIOAuthHandler(
 	redisClient *redisclient.Client,
 	secretEncryptor service.SecretEncryptor,
 	settingRepo service.SettingRepository,
+	pixlabSMSService *service.PixlabSMSService,
 ) *admin.OpenAIOAuthHandler {
 	h := admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
 	h.ConfigureTeamChildSessionStore(redisClient)
 	h.ConfigureTeamChildSecrets(secretEncryptor)
 	h.ConfigureTeamChildSharedSettings(settingRepo)
+	h.ConfigureBatchOAuthSMS(pixlabSMSService)
 	return h
 }
 

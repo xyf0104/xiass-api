@@ -51,6 +51,18 @@ const automationDirectory = path.dirname(fileURLToPath(import.meta.url))
 const deployDirectory = path.dirname(automationDirectory)
 
 describe('Team child OAuth automation state', () => {
+  it('keeps the 401 authenticator secret out of snapshots and preserves it only until completion or cancel', () => {
+    const workflow = createReauthorizationWorkflow(91, 'account@example.test', 'synthetic-password', authURL, 'oauth-session-abcdefghijklmnop', 'JBSWY3DPEHPK3PXP')
+    assert.equal(workflow.loginTOTPSecret, 'JBSWY3DPEHPK3PXP')
+    assert.equal(JSON.stringify(workflow).includes('JBSWY3DPEHPK3PXP'), false)
+    assert.equal(JSON.stringify(workflowSummary(workflow)).includes('loginTOTPSecret'), false)
+    workflow.totpSubmitted = true
+    resetOAuthWorkflowSteps(workflow)
+    assert.equal(workflow.totpSubmitted, false)
+    assert.equal(workflow.loginTOTPSecret, 'JBSWY3DPEHPK3PXP')
+    cancelWorkflowState(workflow)
+    assert.equal(workflow.loginTOTPSecret, '')
+  })
   it('activates managed pages without requiring the noVNC viewer', async () => {
     const sent = []
     let broughtToFront = 0

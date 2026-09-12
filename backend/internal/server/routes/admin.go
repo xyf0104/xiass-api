@@ -42,6 +42,7 @@ func RegisterAdminRoutes(
 
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
+		registerAccountPoolRoutes(admin, h)
 		registerPelicanBenchmarkRoutes(admin, h)
 
 		// 公告管理
@@ -49,6 +50,7 @@ func RegisterAdminRoutes(
 
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h, stepUpAuth)
+		registerBatchOAuthRoutes(admin, h)
 
 		// Gemini OAuth
 		registerGeminiOAuthRoutes(admin, h)

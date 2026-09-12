@@ -50,6 +50,7 @@ type teamChildAutomationReauthorizeRequest struct {
 	AccountID      int64  `json:"account_id"`
 	Email          string `json:"email"`
 	Password       string `json:"password"`
+	TOTPSecret     string `json:"totp_secret,omitempty"`
 	AuthURL        string `json:"auth_url"`
 	OAuthSessionID string `json:"oauth_session_id"`
 }
@@ -361,6 +362,7 @@ func (h *OpenAIOAuthHandler) ReauthorizeOpenAIAccount(c *gin.Context) {
 }
 
 func (h *OpenAIOAuthHandler) reauthorizeOpenAIAccount(c *gin.Context, teamChildOnly bool) {
+	c.Header("Cache-Control", "no-store")
 	if !requireTeamChildAdminSession(c) {
 		return
 	}
@@ -409,15 +411,26 @@ func (h *OpenAIOAuthHandler) reauthorizeOpenAIAccount(c *gin.Context, teamChildO
 	password := ""
 	if strings.TrimSpace(ciphertext) != "" {
 		password, err = h.secretEncryptor.Decrypt(ciphertext)
-		if err != nil || len(password) < 8 || len(password) > 256 {
+		if err != nil || len(password) == 0 || len(password) > 2048 {
 			response.InternalError(c, "OpenAI 登录密码无法解密")
 			return
+		}
+	}
+	var totpSecret string
+	if credentialKind == "openai_oauth" {
+		if ciphertext, _ := account.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey].(string); ciphertext != "" {
+			totpSecret, err = h.secretEncryptor.Decrypt(ciphertext)
+			if err != nil || totpSecret == "" || validateOpenAIReauthorizationTOTP(totpSecret) != nil {
+				response.InternalError(c, "OpenAI authenticator secret cannot be decrypted")
+				return
+			}
 		}
 	}
 	h.teamChildMemberAutomationRequest(c, http.MethodPost, "/workflows/reauthorize", teamChildAutomationReauthorizeRequest{
 		AccountID:      accountID,
 		Email:          email,
 		Password:       password,
+		TOTPSecret:     totpSecret,
 		AuthURL:        req.AuthURL,
 		OAuthSessionID: req.OAuthSessionID,
 	})
@@ -448,7 +461,7 @@ func openAIAccountReauthorizationLogin(account *service.Account) (email, ciphert
 	}
 	email, _ = account.Credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey].(string)
 	email = normalizeTeamChildWorkflowEmail(email)
-	if !validTeamChildWorkflowEmail(email) {
+	if !validTeamChildWorkflowEmail(email) || !openAIReauthorizationEmailMatches(account, email) {
 		return "", "", ""
 	}
 	ciphertext, _ = account.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey].(string)

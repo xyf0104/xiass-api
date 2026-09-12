@@ -736,6 +736,7 @@ func (s *PixlabSMSService) activeSessionID(ctx context.Context, ownerUserID int6
 		SELECT card.session_id
 		FROM xiass_sms_card_keys AS card
 		WHERE card.owner_user_id = $1 AND card.status = 'active'
+			AND card.workflow_scope = ''
 			AND NOT EXISTS (
 				SELECT 1
 				FROM xiass_sms_member_charges AS charge
@@ -1058,7 +1059,7 @@ func (s *PixlabSMSService) withActiveSessionLocked(ctx context.Context, ownerUse
 				WHERE charge.session_id = card.session_id
 					AND charge.user_id = card.owner_user_id
 					AND charge.status = 'held'
-			) = $3`, sessionID, ownerUserID, settleMemberFee).Scan(&encryptedKey, &consumedAt)
+			) = $3 AND card.workflow_scope = $4`, sessionID, ownerUserID, settleMemberFee, pixlabWorkflowScope(ctx)).Scan(&encryptedKey, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPixlabSMSSession
 	}
@@ -1159,6 +1160,7 @@ func (s *PixlabSMSService) cleanupExpiredSessions(ctx context.Context) error {
 		SELECT
 			card.session_id,
 			card.owner_user_id,
+			card.workflow_scope,
 			EXISTS (
 				SELECT 1
 				FROM xiass_sms_member_charges AS charge
@@ -1180,12 +1182,13 @@ func (s *PixlabSMSService) cleanupExpiredSessions(ctx context.Context) error {
 	type expiredSession struct {
 		sessionID string
 		ownerID   int64
+		scope     string
 		member    bool
 	}
 	sessions := make([]expiredSession, 0)
 	for rows.Next() {
 		var session expiredSession
-		if err := rows.Scan(&session.sessionID, &session.ownerID, &session.member); err != nil {
+		if err := rows.Scan(&session.sessionID, &session.ownerID, &session.scope, &session.member); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan expired sms session: %w", err)
 		}
@@ -1236,7 +1239,10 @@ func (s *PixlabSMSService) cleanupExpiredSessions(ctx context.Context) error {
 			continue
 		}
 		sessionCtx, sessionCancel := context.WithTimeout(ctx, 5*time.Second)
-		_, err = s.withActiveSessionMode(sessionCtx, session.ownerID, session.sessionID, "check", session.member, true)
+		// Natural expiry is independent of the 180-second workflow timeout.
+		// Cleanup checks/settles only; it never cancels or acquires a number.
+		sessionCtx = context.WithValue(sessionCtx, pixlabWorkflowContextKey{}, session.scope)
+		_, err = s.withActiveSessionMode(sessionCtx, session.ownerID, session.sessionID, "check", session.member, session.scope == "")
 		sessionCancel()
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		releaseErr := s.releaseCleanupLease(releaseCtx, leaseToken)
@@ -1787,7 +1793,7 @@ func (s *PixlabSMSService) claimMemberSession(ctx context.Context, userID int64)
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM xiass_sms_card_keys
-			WHERE owner_user_id = $1 AND status = 'active'
+			WHERE owner_user_id = $1 AND status = 'active' AND workflow_scope = ''
 		)`, userID).Scan(&active); err != nil {
 		return "", "", fmt.Errorf("check member active sms session: %w", err)
 	}

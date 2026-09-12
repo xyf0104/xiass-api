@@ -240,7 +240,8 @@ func TestSaveOpenAIAccountReauthorizationCredentialsAllowsPasswordlessLogin(t *t
 }
 
 func TestReauthorizeOpenAIAccountUsesOnlyDedicatedEncryptedCredentials(t *testing.T) {
-	const password = "Abc123456789!"
+	const password = "  Abc123456789!  "
+	const totpSecret = "JBSWY3DPEHPK3PXP"
 	var automationPayload map[string]any
 	automation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(teamChildWorkflowProtocolHeader, teamChildWorkflowProtocolVersion)
@@ -265,8 +266,9 @@ func TestReauthorizeOpenAIAccountUsesOnlyDedicatedEncryptedCredentials(t *testin
 		Platform: service.PlatformOpenAI,
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
-			service.OpenAIOAuthReauthorizationEmailCredentialKey:    "ordinary@example.test",
-			service.OpenAIOAuthReauthorizationPasswordCredentialKey: "encrypted:" + password,
+			service.OpenAIOAuthReauthorizationEmailCredentialKey:      "ordinary@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted:" + password,
+			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted:" + totpSecret,
 		},
 	}
 	handler := &OpenAIOAuthHandler{adminService: adminService, secretEncryptor: teamChildTestEncryptor{}}
@@ -283,6 +285,8 @@ func TestReauthorizeOpenAIAccountUsesOnlyDedicatedEncryptedCredentials(t *testin
 	require.Equal(t, float64(92), automationPayload["account_id"])
 	require.Equal(t, "ordinary@example.test", automationPayload["email"])
 	require.Equal(t, password, automationPayload["password"])
+	require.Equal(t, totpSecret, automationPayload["totp_secret"])
+	require.NotContains(t, recorder.Body.String(), totpSecret)
 	require.NotContains(t, recorder.Body.String(), password)
 }
 

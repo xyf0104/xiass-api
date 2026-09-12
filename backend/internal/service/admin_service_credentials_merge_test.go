@@ -124,6 +124,7 @@ func TestCreateAccount_RejectsManagedOpenAIReauthorizationCredentials(t *testing
 		OpenAITeamChildPasswordCredentialKey,
 		OpenAIOAuthReauthorizationEmailCredentialKey,
 		OpenAIOAuthReauthorizationPasswordCredentialKey,
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
 	} {
 		t.Run(key, func(t *testing.T) {
 			account, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
@@ -194,15 +195,17 @@ func TestUpdateAccount_ManagedOpenAIReauthorizationCredentialsRequireDedicatedCa
 
 func TestStripOpenAIReauthorizationCredentials_RemovesAllManagedKeys(t *testing.T) {
 	credentials := stripOpenAIReauthorizationCredentials(map[string]any{
-		OpenAITeamChildPasswordCredentialKey:            "encrypted:team-password",
-		OpenAIOAuthReauthorizationEmailCredentialKey:    "ordinary@example.test",
-		OpenAIOAuthReauthorizationPasswordCredentialKey: "encrypted:ordinary-password",
+		OpenAITeamChildPasswordCredentialKey:              "encrypted:team-password",
+		OpenAIOAuthReauthorizationEmailCredentialKey:      "ordinary@example.test",
+		OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted:ordinary-password",
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted:ordinary-totp",
 		"base_url": "https://api.example.test",
 	})
 
 	require.NotContains(t, credentials, OpenAITeamChildPasswordCredentialKey)
 	require.NotContains(t, credentials, OpenAIOAuthReauthorizationEmailCredentialKey)
 	require.NotContains(t, credentials, OpenAIOAuthReauthorizationPasswordCredentialKey)
+	require.NotContains(t, credentials, OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
 	require.Equal(t, "https://api.example.test", credentials["base_url"])
 }
 

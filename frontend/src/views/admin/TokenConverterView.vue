@@ -29,6 +29,8 @@
         </div>
       </header>
 
+      <AccountCredentialParser />
+
       <OpenAIReauthorizationPanel @tokens="loadTokenJson" />
 
       <section class="card overflow-hidden" aria-labelledby="token-converter-workspace">
@@ -119,6 +121,7 @@
             </div>
             <textarea
               v-model="inputText"
+              data-test="token-converter-input"
               class="token-editor block min-h-[420px] w-full resize-y bg-transparent px-4 py-4 font-mono text-[13px] leading-6 text-gray-800 outline-none placeholder:text-gray-400 dark:text-gray-200 dark:placeholder:text-gray-600 sm:px-5"
               spellcheck="false"
               autocomplete="off"
@@ -305,6 +308,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import PublicToolLayout from '@/components/layout/PublicToolLayout.vue'
 import AdminAccountPicker from '@/components/token-converter/AdminAccountPicker.vue'
+import AccountCredentialParser from '@/components/token-converter/AccountCredentialParser.vue'
 import DirectAccountImportDialog from '@/components/token-converter/DirectAccountImportDialog.vue'
 import OpenAIReauthorizationPanel from '@/components/token-converter/OpenAIReauthorizationPanel.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'

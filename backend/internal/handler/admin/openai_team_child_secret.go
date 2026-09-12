@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/base32"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,8 @@ type openAIAccountReauthorizationCredentialsRequest struct {
 	// email to an email challenge, workspace choice, or OAuth callback.
 	// An explicit empty value clears any previously saved password.
 	Password string `json:"password"`
+	// Omitted preserves the saved authenticator; an explicit empty value clears it.
+	TOTPSecret *string `json:"totp_secret"`
 }
 
 // SaveOpenAIAccountReauthorizationCredentials saves an administrator-provided
@@ -37,6 +40,7 @@ type openAIAccountReauthorizationCredentialsRequest struct {
 // expose the password through Account DTOs or accept arbitrary account fields.
 // POST /api/v1/admin/openai/accounts/:id/reauthorization-credentials
 func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	if !requireTeamChildAdminSession(c) {
 		return
 	}
@@ -54,6 +58,7 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		return
 	}
 	var req openAIAccountReauthorizationCredentialsRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, teamChildSecretBodyLimit)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "登录邮箱无效")
 		return
@@ -67,8 +72,12 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 	// trailing spaces can be a valid password character. A deliberately empty
 	// value means this account should wait for manual entry if OpenAI asks for a
 	// password, so only validate a non-empty submitted password.
-	if req.Password != "" && (len(req.Password) < 8 || len(req.Password) > 256 || strings.TrimSpace(req.Password) == "") {
+	if len(req.Password) > 2048 {
 		response.BadRequest(c, "登录密码长度无效")
+		return
+	}
+	if req.TOTPSecret != nil && validateOpenAIReauthorizationTOTP(*req.TOTPSecret) != nil {
+		response.BadRequest(c, "Invalid authenticator secret")
 		return
 	}
 
@@ -89,6 +98,10 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		response.BadRequest(c, "Team 子号使用工作流生成的登录信息，不能覆盖")
 		return
 	}
+	if !openAIReauthorizationEmailMatches(account, email) {
+		response.BadRequest(c, "Login email must match the OAuth account identity")
+		return
+	}
 
 	credentials := map[string]any{
 		service.OpenAIOAuthReauthorizationEmailCredentialKey: email,
@@ -100,11 +113,22 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = nil
 	} else {
 		ciphertext, err := h.secretEncryptor.Encrypt(req.Password)
-		if err != nil {
+		if err != nil || ciphertext == "" {
 			response.InternalError(c, "登录密码加密失败")
 			return
 		}
 		credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = ciphertext
+	}
+	if req.TOTPSecret != nil {
+		credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = nil
+		if *req.TOTPSecret != "" {
+			ciphertext, err := h.secretEncryptor.Encrypt(*req.TOTPSecret)
+			if err != nil || ciphertext == "" {
+				response.InternalError(c, "Authenticator secret encryption failed")
+				return
+			}
+			credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = ciphertext
+		}
 	}
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Credentials:                           credentials,
@@ -115,6 +139,31 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		return
 	}
 	response.Success(c, dto.AccountFromService(updated))
+}
+
+func validateOpenAIReauthorizationTOTP(secret string) error {
+	if secret == "" {
+		return nil
+	}
+	if len(secret) > 256 {
+		return fmt.Errorf("invalid authenticator secret")
+	}
+	normalized := strings.TrimRight(strings.ToUpper(strings.ReplaceAll(secret, " ", "")), "=")
+	raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(normalized)
+	if err != nil || len(raw) < 10 {
+		return fmt.Errorf("invalid authenticator secret")
+	}
+	return nil
+}
+
+func openAIReauthorizationEmailMatches(account *service.Account, email string) bool {
+	for _, key := range []string{"email", service.OpenAIOAuthReauthorizationEmailCredentialKey} {
+		known, _ := account.Credentials[key].(string)
+		if known != "" && !strings.EqualFold(strings.TrimSpace(known), email) {
+			return false
+		}
+	}
+	return true
 }
 
 // fetchTeamChildWorkflowSecret is the only bridge from the isolated browser

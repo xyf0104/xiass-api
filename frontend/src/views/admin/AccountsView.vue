@@ -19,6 +19,12 @@
             @create="allowAccountWrite() && (showCreate = true)"
           >
             <template #beforeCreate>
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-pools" @click="allowAccountWrite() && (showAccountPools = true)">
+                <Icon name="users" size="sm" /><span>号池管理</span>
+              </button>
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="batch-openai-oauth" @click="allowAccountWrite() && (showBatchOpenAIOAuth = true)">
+                <Icon name="userPlus" size="sm" /><span>批量添加账号</span>
+              </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="pelican-benchmark" @click="showPelicanBenchmark = true">
                 <Icon name="lightbulb" size="sm" />
                 <span>{{ t('admin.accounts.pelicanBenchmark.title') }}</span>
@@ -549,6 +555,8 @@
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
+    <BatchOpenAIOAuthModal v-if="showBatchOpenAIOAuth" :show="showBatchOpenAIOAuth" :groups="groups" :proxies="proxies" @close="showBatchOpenAIOAuth = false" @created="reload" />
+    <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="reload" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <OAuthBillingBreakdownDialog
       :show="showOAuthBillingDetails"
@@ -620,7 +628,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch, defineAsyncComponent } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -648,6 +656,8 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import PelicanBenchmarkModal from '@/components/account/PelicanBenchmarkModal.vue'
+const BatchOpenAIOAuthModal = defineAsyncComponent(() => import('@/components/account/BatchOpenAIOAuthModal.vue'))
+const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import OAuthBillingBreakdownDialog, { type OAuthBillingInitialRange } from '@/components/admin/account/OAuthBillingBreakdownDialog.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
@@ -828,6 +838,8 @@ const accountAllowlistAccount = ref<Account | null>(null)
 const showReAuth = ref(false)
 const showTest = ref(false)
 const showPelicanBenchmark = ref(false)
+const showBatchOpenAIOAuth = ref(false)
+const showAccountPools = ref(false)
 const showStats = ref(false)
 const showOAuthBillingDetails = ref(false)
 const showErrorPassthrough = ref(false)

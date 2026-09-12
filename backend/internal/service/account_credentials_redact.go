@@ -6,10 +6,11 @@ const (
 	OpenAITeamChildEmailExtraKey         = "xiass_team_child_email"
 	// OpenAIOAuthReauthorization* keys are local XIASS login material used only
 	// by the private Team automation to recover an existing OpenAI OAuth
-	// account. Neither key is an OAuth credential and neither is returned in a
+	// account. These are not OAuth credentials and are never returned in a
 	// normal account DTO, export, or clone.
-	OpenAIOAuthReauthorizationPasswordCredentialKey = "xiass_openai_oauth_reauth_password_encrypted"
-	OpenAIOAuthReauthorizationEmailCredentialKey    = "xiass_openai_oauth_reauth_email"
+	OpenAIOAuthReauthorizationPasswordCredentialKey   = "xiass_openai_oauth_reauth_password_encrypted"
+	OpenAIOAuthReauthorizationEmailCredentialKey      = "xiass_openai_oauth_reauth_email"
+	OpenAIOAuthReauthorizationTOTPSecretCredentialKey = "xiass_openai_oauth_reauth_totp_secret_encrypted"
 )
 
 // SensitiveCredentialKeys 列出 Account.Credentials JSON map 中绝不允许返回到前端的子键。
@@ -31,6 +32,7 @@ var SensitiveCredentialKeys = []string{
 	// this private reauthorization binding into an editable/exportable field.
 	OpenAIOAuthReauthorizationPasswordCredentialKey,
 	OpenAIOAuthReauthorizationEmailCredentialKey,
+	OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
 }
 
 var sensitiveCredentialKeySet = func() map[string]struct{} {

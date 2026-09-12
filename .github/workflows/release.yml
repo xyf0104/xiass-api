@@ -181,6 +181,13 @@ jobs:
           bash -n tools/test_xiass_runtime_start_team_update.sh
           bash -n tools/test_xiass_update_pipeline.sh
 
+      - name: Test OAuth automation
+        working-directory: deploy/team-child-automation
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          npm test
+
       - name: Test install download integrity
         run: bash deploy/test-install-download-integrity.sh
 

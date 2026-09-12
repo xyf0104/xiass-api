@@ -45,6 +45,14 @@
           <input id="openai-reauth-password" v-model="loginPassword" type="password" autocomplete="current-password" class="input w-full" placeholder="仅在官方页面要求时使用" :disabled="!selectedAccount || saving" @keydown.enter.prevent="saveCredentials" />
           <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">留空保存会清除旧密码；OpenAI 若出现密码框，自动化会在内嵌浏览器等待人工处理。</p>
         </div>
+        <div class="min-w-0">
+          <label class="mb-2 flex items-center gap-2 text-sm">
+            <input v-model="updateTOTP" type="checkbox" :disabled="!selectedAccount || saving" />修改 2FA 密钥
+          </label>
+          <input v-if="updateTOTP" v-model="loginTOTP" type="password" autocomplete="off" aria-label="2FA 密钥" class="input w-full" placeholder="留空保存将清除 2FA 密钥" :disabled="saving" />
+          <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ selectedAccount?.credentials_status?.has_xiass_openai_oauth_reauth_totp_secret_encrypted ? '2FA 已保存' : '未保存 2FA' }}</span>
+          <p v-if="totpInvalid" role="alert" class="mt-1 text-xs text-red-600">2FA 密钥格式无效</p>
+        </div>
       </div>
     </div>
 
@@ -66,6 +74,7 @@ import { computed, ref, watch } from 'vue'
 import { Icon } from '@/components/icons'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import type { Account } from '@/types'
+import { normalizeBase32Secret } from '@/features/token-converter/totp'
 
 const props = withDefaults(defineProps<{
   accounts: Account[]
@@ -80,13 +89,19 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   refresh: []
-  'save-credentials': [payload: { account: Account; email: string; password: string }]
+  'save-credentials': [payload: { account: Account; email: string; password: string; totp_secret?: string }]
   reauthorize: [account: Account]
 }>()
 
 const selectedAccountID = ref(0)
 const loginEmail = ref('')
 const loginPassword = ref('')
+const loginTOTP = ref('')
+const updateTOTP = ref(false)
+const totpInvalid = computed(() => {
+  if (!updateTOTP.value || !loginTOTP.value) return false
+  try { return !/^[A-Z2-7]{16,256}$/.test(normalizeBase32Secret(loginTOTP.value)) } catch { return true }
+})
 
 const selectedAccount = computed(() => props.accounts.find((account) => account.id === selectedAccountID.value) || null)
 const accountOptions = computed<SelectOption[]>(() => props.accounts.map((account) => ({
@@ -97,6 +112,7 @@ const credentialsConfigured = computed(() => Boolean(selectedAccount.value?.cred
 const reauthorizing = computed(() => selectedAccount.value?.id === props.reauthorizingAccountID)
 const canSaveCredentials = computed(() => Boolean(selectedAccount.value)
   && !props.saving
+  && !totpInvalid.value
   && /^\S+@\S+\.\S+$/.test(loginEmail.value))
 const canReauthorize = computed(() => Boolean(selectedAccount.value)
   && credentialsConfigured.value
@@ -119,16 +135,21 @@ function saveCredentials() {
   emit('save-credentials', {
     account: selectedAccount.value,
     email: loginEmail.value,
-    password: loginPassword.value
+    password: loginPassword.value,
+    ...(updateTOTP.value ? { totp_secret: loginTOTP.value ? normalizeBase32Secret(loginTOTP.value) : '' } : {})
   })
   // The parent sends the value directly to the dedicated encrypted endpoint.
   // Keep no login password in component state after the explicit action.
   loginPassword.value = ''
+  loginTOTP.value = ''
+  updateTOTP.value = false
 }
 
 watch(selectedAccount, (account) => {
   loginEmail.value = accountEmail(account)
   loginPassword.value = ''
+  loginTOTP.value = ''
+  updateTOTP.value = false
 }, { immediate: true })
 
 watch(() => props.accounts, (accounts) => {

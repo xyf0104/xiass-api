@@ -57,7 +57,7 @@ function mountView() {
 }
 
 async function enterConvertibleAccount(wrapper: ReturnType<typeof mountView>): Promise<void> {
-  const input = wrapper.findAll('textarea')[0]
+  const input = wrapper.get('[data-test="token-converter-input"]')
   await input.setValue(JSON.stringify({
     access_token: 'access-token',
     refresh_token: 'refresh-token',

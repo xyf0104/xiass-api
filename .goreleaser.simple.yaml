@@ -67,7 +67,11 @@ archives:
       - deploy/nowind-*.sh
       - deploy/team-child-automation/Dockerfile
       - deploy/team-child-automation/package.json
+      - deploy/team-child-automation/package-lock.json
       - deploy/team-child-automation/server.mjs
+      - deploy/team-child-automation/batch-oauth.mjs
+      - deploy/team-child-automation/totp.mjs
+      - deploy/team-child-automation/browser-proxy.mjs
       - deploy/xiass-updater/Dockerfile
       - deploy/xiass-updater/xiass-updater-entrypoint.sh
       - deploy/openwrt/xiass-soft-router-agent/README.md

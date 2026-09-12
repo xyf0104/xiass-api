@@ -1,9 +1,12 @@
-FROM mcr.microsoft.com/playwright:v1.55.0-noble
+FROM mcr.microsoft.com/playwright:v1.55.1-noble
 
 WORKDIR /app
-COPY package.json ./package.json
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY server.mjs ./server.mjs
+COPY totp.mjs ./totp.mjs
+COPY batch-oauth.mjs ./batch-oauth.mjs
+COPY browser-proxy.mjs ./browser-proxy.mjs
 
 ENV NODE_ENV=production
 EXPOSE 8090

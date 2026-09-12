@@ -31,6 +31,8 @@ type OpenAIOAuthHandler struct {
 	teamMailboxShareStore    *openAITeamMailboxShareStore
 	teamMailboxShareRegistry *openAITeamMailboxShareRegistry
 	teamBrowserStore         *openAITeamBrowserStore
+	batchOAuthStore          *batchOAuthStore
+	batchSMSService          batchOAuthSMS
 }
 
 // ConfigureTeamChildSecrets attaches the application encryption boundary used
@@ -130,6 +132,7 @@ func NewOpenAIOAuthHandler(
 		teamMailboxShareStore:    newOpenAITeamMailboxShareStore(),
 		teamMailboxShareRegistry: newOpenAITeamMailboxShareRegistry(),
 		teamBrowserStore:         newOpenAITeamBrowserStore(),
+		batchOAuthStore:          newBatchOAuthStore(),
 	}
 	// Assign through explicit nil checks: storing a nil *Service in an interface
 	// field yields a non-nil interface, which would silently defeat the

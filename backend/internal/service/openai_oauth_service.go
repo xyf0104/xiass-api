@@ -168,6 +168,16 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 	return s.exchangeCode(ctx, input, true, false)
 }
 
+// ExchangeWorkflowCode leaves identity verification to the owned workflow
+// before any account enrichment, privacy mutation or durable account creation.
+func (s *OpenAIOAuthService) ExchangeWorkflowCode(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
+	return s.exchangeCode(ctx, input, false, false)
+}
+
+func (s *OpenAIOAuthService) RevokeWorkflowSession(sessionID string) {
+	s.sessionStore.Delete(sessionID)
+}
+
 // ExchangeCodeForPublicTool exchanges an authorization code without account
 // enrichment or privacy-setting side effects. It is used by the public token
 // conversion tool, where tokens must only be returned to the current browser.

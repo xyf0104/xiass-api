@@ -320,6 +320,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	delete(credentials, OpenAITeamChildPasswordCredentialKey)
 	delete(credentials, OpenAIOAuthReauthorizationEmailCredentialKey)
 	delete(credentials, OpenAIOAuthReauthorizationPasswordCredentialKey)
+	delete(credentials, OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
 	extra, err := duplicateAccountExtra(source.Extra)
 	if err != nil {
 		return nil, fmt.Errorf("clone account extra configuration: %w", err)
@@ -593,6 +594,7 @@ func containsOpenAIReauthorizationCredentials(credentials map[string]any) bool {
 		OpenAITeamChildPasswordCredentialKey,
 		OpenAIOAuthReauthorizationEmailCredentialKey,
 		OpenAIOAuthReauthorizationPasswordCredentialKey,
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
 	} {
 		if _, exists := credentials[key]; exists {
 			return true
@@ -610,7 +612,8 @@ func stripOpenAIReauthorizationCredentials(credentials map[string]any) map[strin
 		switch key {
 		case OpenAITeamChildPasswordCredentialKey,
 			OpenAIOAuthReauthorizationEmailCredentialKey,
-			OpenAIOAuthReauthorizationPasswordCredentialKey:
+			OpenAIOAuthReauthorizationPasswordCredentialKey,
+			OpenAIOAuthReauthorizationTOTPSecretCredentialKey:
 			continue
 		default:
 			filtered[key] = value
@@ -782,6 +785,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		credentials := input.Credentials
 		if !input.AllowOpenAIReauthorizationCredentials {
 			credentials = stripOpenAIReauthorizationCredentials(credentials)
+		} else {
+			// The dedicated login endpoint patches credentials, unlike ordinary
+			// full-document edits. Preserve current tokens and account settings.
+			credentials = make(map[string]any, len(account.Credentials)+len(input.Credentials))
+			maps.Copy(credentials, account.Credentials)
+			maps.Copy(credentials, input.Credentials)
 		}
 		if len(credentials) > 0 {
 			// 敏感子键采用"incoming 没提供就保留"的合并语义：前端响应已脱敏，

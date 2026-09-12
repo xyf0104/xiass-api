@@ -1709,6 +1709,16 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 			return
 		}
 		req.Credentials["email"] = teamChildEmail
+	} else if existing.IsOpenAIOAuth() {
+		loginEmail := normalizeTeamChildWorkflowEmail(existing.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey))
+		if validTeamChildWorkflowEmail(loginEmail) {
+			incomingEmail, _ := req.Credentials["email"].(string)
+			if !strings.EqualFold(strings.TrimSpace(incomingEmail), loginEmail) {
+				response.BadRequest(c, "Reauthorization email must match the saved login identity")
+				return
+			}
+			req.Credentials["email"] = loginEmail
+		}
 	}
 
 	var updatedAccount *service.Account

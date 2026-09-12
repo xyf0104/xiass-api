@@ -505,6 +505,7 @@ func exportableAccountCredentials(credentials map[string]any) map[string]any {
 	for key, value := range credentials {
 		if key == service.OpenAITeamChildPasswordCredentialKey ||
 			key == service.OpenAIOAuthReauthorizationPasswordCredentialKey ||
+			key == service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey ||
 			key == service.OpenAIOAuthReauthorizationEmailCredentialKey {
 			continue
 		}

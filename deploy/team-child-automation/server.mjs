@@ -4,6 +4,9 @@ import http from 'node:http'
 import path from 'node:path'
 
 import { chromium } from '@playwright/test'
+import { generateTOTP, normalizeTOTPSecret, isAuthenticatorChallenge } from './totp.mjs'
+import { BatchOAuthRunner } from './batch-oauth.mjs'
+import { createProxyContext } from './browser-proxy.mjs'
 
 const port = Number(process.env.PORT || 8090)
 const cdpURL = process.env.BROWSER_CDP_URL || 'http://127.0.0.1:9222'
@@ -1546,6 +1549,7 @@ const normalLoginPatterns = [/^log\s*in$/i, /^sign\s*in$/i, /^登录$/i]
 
 function isReauthorizationEmailCodePage(body, inputs) {
   if (!inputs.length) return false
+  if (isAuthenticatorChallenge(body, inputs)) return false
   if (/phone|text message|\bsms\b|mobile|手机号|短信/i.test(body)) return false
   return /email|inbox|mail|check your inbox|verify your email|verification code|邮箱|验证邮件|邮箱验证码/i.test(body)
 }
@@ -1562,6 +1566,7 @@ async function reauthorizationNextState(current, workflow) {
 
   const verification = await verificationInputs(current)
   const body = await oauthBody(current)
+  if (isAuthenticatorChallenge(body, verification)) return { kind: 'totp' }
   if (isReauthorizationEmailCodePage(body, verification)) return { kind: 'email_code' }
 
   if (isReauthorizationAccountChooserPage(body)) return { kind: 'account_chooser' }
@@ -2362,6 +2367,21 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
     return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
   }
 
+  if (state.kind === 'totp') {
+    if (!workflow.loginTOTPSecret || workflow.totpSubmitted) {
+      markReauthorizationManualRequirement(workflow, 'password', 'totp', '请在内嵌浏览器完成 2FA 验证后继续')
+      return
+    }
+    workflow.totpSubmitted = true
+    setWorkflowNode(workflow, 'password', 'running', '正在填写该账号的实时 2FA 验证码')
+    // Avoid submitting a code at the very end of its validity window.
+    const remaining = 30000 - Date.now() % 30000
+    if (remaining < 3000) await sleep(remaining + 100)
+    if (workflow.cancelRequested || workflow.pauseRequested) return
+    await fillVerificationCode(current, generateTOTP(workflow.loginTOTPSecret))
+    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
+  }
+
   if (state.kind === 'email_code') {
     const passwordWasManual = workflow.reauthorizationManualReason === 'password'
     completeReauthorizationPasswordNode(workflow, passwordWasManual
@@ -2596,11 +2616,14 @@ function createWorkflow(seatEmail, inviteEmail, authURL, oauthSessionID, seatAlr
   }
 }
 
-function createReauthorizationWorkflow(accountID, email, password, authURL, oauthSessionID) {
+function createReauthorizationWorkflow(accountID, email, password, authURL, oauthSessionID, totpSecret = '') {
   const workflow = createWorkflow('', email, authURL, oauthSessionID, true)
   workflow.mode = 'reauthorization'
   workflow.targetAccountID = accountID
   workflow.loginPassword = password
+  // Reauthorization material is encrypted in the account, never in workflow snapshots.
+  Object.defineProperty(workflow, 'loginTOTPSecret', { value: totpSecret ? normalizeTOTPSecret(totpSecret) : '', writable: true, enumerable: false })
+  workflow.totpSubmitted = false
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
   workflow.inviteSubmitted = true
@@ -2863,6 +2886,7 @@ function restartableOAuthWorkflow(id) {
 }
 
 function resetOAuthWorkflowSteps(workflow) {
+  workflow.totpSubmitted = false
   const startIndex = workflow.nodes.findIndex((node) => node.key === 'oauth')
   const reauthorizationLoginNodes = new Set(['signup', 'email', 'mail', 'mailbox', 'email_code'])
   for (let index = 0; index < workflow.nodes.length; index += 1) {
@@ -2999,6 +3023,7 @@ function completeWorkflowImport(id) {
   workflow.status = 'completed'
   workflow.currentNodeKey = 'import'
   workflow.loginPassword = ''
+  workflow.loginTOTPSecret = ''
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
   workflow.emailCodePurpose = ''
@@ -3035,14 +3060,14 @@ async function startReauthorizationWorkflow(payload) {
   if (!Number.isSafeInteger(accountID) || accountID <= 0) throw new Error('Team 子号账号 ID 无效')
   const email = validateWorkflowEmail(payload?.email, 'Team 子号邮箱')
   const password = String(payload?.password || '')
-  if (password && (password.length < 8 || password.length > 256 || password.trim() === '')) {
+  if (password && (password.length > 2048 || password.trim() === '')) {
     throw new Error('Team 子号登录密码无效')
   }
   const authURL = validateOpenAIAuthURL(payload?.auth_url)
   const oauthSessionID = validateOAuthSessionID(payload?.oauth_session_id)
   if (activeWorkflow()) throw new Error('已有 Team 子号工作流正在进行，请先完成或取消当前工作流')
 
-  const workflow = createReauthorizationWorkflow(accountID, email, password, authURL, oauthSessionID)
+  const workflow = createReauthorizationWorkflow(accountID, email, password, authURL, oauthSessionID, payload?.totp_secret || '')
   workflows.set(workflow.id, workflow)
   activeWorkflowID = workflow.id
   persistWorkflowState()
@@ -3157,6 +3182,7 @@ function cancelWorkflowState(workflow) {
   workflow.error = ''
   workflow.failedNodeKey = ''
   workflow.loginPassword = ''
+  workflow.loginTOTPSecret = ''
   workflow.reauthorizationEmailSubmitted = false
   workflow.reauthorizationManualReason = ''
   workflow.emailCodePurpose = ''
@@ -3268,6 +3294,30 @@ async function handle(req, res) {
     }
   }
   if (!authorized(req)) return json(res, 401, { error: 'automation service authentication required' })
+
+  if (path === '/batch-oauth/tasks' || path.startsWith('/batch-oauth/tasks/')) {
+    try {
+      if (req.method === 'POST' && path === '/batch-oauth/tasks') {
+        return json(res, 200, await batchOAuth.start(await readBody(req)))
+      }
+      const match = path.match(/^\/batch-oauth\/tasks\/([A-Za-z0-9_-]{16,128})(?:\/(cancel|phone|sms-code))?$/)
+      if (!match) return json(res, 404, { error: 'not found' })
+      const [, id, action] = match
+      if (req.method === 'GET' && !action) {
+        const owner = Number(new URL(req.url, 'http://127.0.0.1').searchParams.get('owner_id'))
+        return json(res, 200, batchOAuth.get(id, owner))
+      }
+      if (req.method !== 'POST' || !action) return json(res, 405, { error: 'method not allowed' })
+      const body = await readBody(req)
+      const owner = body.owner_id
+      if (action === 'cancel') return json(res, 200, await batchOAuth.cancel(id, owner))
+      if (action === 'phone') return json(res, 200, batchOAuth.phone(id, owner, body.phone))
+      return json(res, 200, batchOAuth.smsCode(id, owner, body.code))
+    } catch (error) {
+      // Never include external page text, callback URLs or request payloads.
+      return json(res, [400, 404, 409, 429].includes(error?.statusCode) ? error.statusCode : 503, { error: 'batch OAuth action failed' })
+    }
+  }
 
   if (req.method === 'GET' && path === '/workflows/active') {
     try {
@@ -3382,6 +3432,14 @@ async function handle(req, res) {
   }
 }
 
+const batchOAuth = new BatchOAuthRunner({
+  browser: async () => {
+    const connected = await browser()
+    return { newContext: options => createProxyContext(connected, options) }
+  },
+  validateAuthURL: validateOpenAIAuthURL
+})
+
 if (process.env.NODE_ENV !== 'test') {
   restoreWorkflowState()
   http.createServer(handle).listen(port, '0.0.0.0', () => {
@@ -3390,6 +3448,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export {
+  handle,
   activateBrowserPage,
   callbackURLFromNavigationEntries,
   cancelWorkflowState,
