@@ -10,7 +10,7 @@ export default {
       localOnly: '仅本地解析，不上传、不保存',
       input: '粘贴原始内容',
       inputHint: '每行一个账号，使用连续四个短横线分隔',
-      placeholder: '账号@example.com----密码----2FA\n第二个账号----密码----2FA',
+      placeholder: "账号{'@'}example.com----密码----2FA\n第二个账号----密码----2FA",
       chooseFile: '选择 TXT',
       dropFile: '松开即可读取 TXT',
       showSecrets: '显示敏感内容',

@@ -10,7 +10,7 @@ export default {
       localOnly: 'Parsed locally. Never uploaded or stored.',
       input: 'Paste source text',
       inputHint: 'Use one account per line and four consecutive hyphens as separators',
-      placeholder: 'account@example.com----password----2FA\nsecond-account----password----2FA',
+      placeholder: "account{'@'}example.com----password----2FA\nsecond-account----password----2FA",
       chooseFile: 'Choose TXT',
       dropFile: 'Drop the TXT file to read it',
       showSecrets: 'Show secrets',
