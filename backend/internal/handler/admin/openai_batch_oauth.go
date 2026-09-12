@@ -691,8 +691,8 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 		}
 	}
 	if t.config.PoolID != nil {
-		pool, err := h.adminService.(service.AccountPoolService).GetAccountPool(ctx, *t.config.PoolID)
-		if err != nil || pool == nil || pool.ID != *t.config.PoolID ||
+		pool, poolErr := h.adminService.(service.AccountPoolService).GetAccountPool(ctx, *t.config.PoolID)
+		if poolErr != nil || pool == nil || pool.ID != *t.config.PoolID ||
 			!batchProxyEqual(pool.ProxyID, t.config.ProxyID) || !slices.Contains(pool.AccountIDs, a.ID) ||
 			a.GetExtraString(service.AccountPoolExtraKey) != strconv.FormatInt(pool.ID, 10) {
 			t.Reason = "pool_assignment_failed"

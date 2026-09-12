@@ -51,7 +51,8 @@ func TestAccountPoolRepositoryTransactionCommitsOnlyCompleteMutation(t *testing.
 			}
 			err := r.WithAccountPoolTransaction(context.Background(), func(ctx context.Context, txRepo service.AccountPoolRepository) error {
 				require.NotNil(t, dbent.TxFromContext(ctx))
-				bound := txRepo.(*accountPoolTransactionRepository)
+				bound, ok := txRepo.(*accountPoolTransactionRepository)
+				require.True(t, ok)
 				require.Same(t, dbent.TxFromContext(ctx).Client(), bound.client)
 				_, err := txRepo.BulkUpdate(ctx, []int64{7}, service.AccountBulkUpdate{Extra: map[string]any{service.AccountPoolExtraKey: "8"}})
 				if err != nil {

@@ -190,12 +190,12 @@ func (r *accountRepository) LockAccountPoolAccounts(ctx context.Context, ids []i
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (r *accountRepository) ValidateAccountPoolProxy(ctx context.Context, id int
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return err
