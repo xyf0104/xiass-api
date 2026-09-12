@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,6 +121,7 @@ func batchOAuthRouter(h *OpenAIOAuthHandler, owner int64, role string) *gin.Engi
 	r.POST("/tasks", h.StartBatchOAuthTask)
 	r.GET("/tasks", h.ListBatchOAuthTasks)
 	r.GET("/tasks/:task_id", h.GetBatchOAuthTask)
+	r.DELETE("/tasks/:task_id", h.DeleteBatchOAuthTask)
 	r.POST("/tasks/:task_id/complete", h.CompleteBatchOAuthTask)
 	r.POST("/tasks/:task_id/cancel", h.CancelBatchOAuthTask)
 	r.POST("/tasks/:task_id/restart", h.RestartBatchOAuthTask)
@@ -165,7 +167,7 @@ func TestBatchOAuthTaskOwnershipAndSecretRedaction(t *testing.T) {
 	before := f.sidecarCalls.Load()
 	other := batchOAuthRouter(f.h, 43, "admin")
 	for _, route := range []struct{ method, path, body string }{
-		{"GET", "", ""}, {"POST", "/complete", "{}"}, {"POST", "/cancel", `{"confirmed":true}`}, {"POST", "/restart", `{"password":"secret"}`}, {"POST", "/sms/acquire", `{"confirmed":true}`}, {"GET", "/sms", ""},
+		{"GET", "", ""}, {"DELETE", "", ""}, {"POST", "/complete", "{}"}, {"POST", "/cancel", `{"confirmed":true}`}, {"POST", "/restart", `{"password":"secret"}`}, {"POST", "/sms/acquire", `{"confirmed":true}`}, {"GET", "/sms", ""},
 	} {
 		w := batchOAuthRequest(other, route.method, "/tasks/"+id+route.path, route.body)
 		require.Equal(t, 404, w.Code)
@@ -184,15 +186,87 @@ func TestBatchOAuthStartIdempotencyAndCapacity(t *testing.T) {
 	require.Len(t, f.requests, 1)
 	w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"other@example.test","password":"secret","idempotency_key":"batch-operation-0001"}`)
 	require.Equal(t, 409, w.Code)
-	for _, key := range []string{"batch-operation-0002", "batch-operation-0003"} {
-		w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"secret","idempotency_key":"`+key+`"}`)
+	for i, key := range []string{"batch-operation-0002", "batch-operation-0003"} {
+		w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner`+strconv.Itoa(i+2)+`@example.test","password":"secret","idempotency_key":"`+key+`"}`)
 		require.Equal(t, 200, w.Code)
 	}
-	w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"secret","idempotency_key":"batch-operation-0004"}`)
+	w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner4@example.test","password":"secret","idempotency_key":"batch-operation-0004"}`)
 	require.Equal(t, 409, w.Code)
 	require.Len(t, f.requests, 3)
 	require.NotEqual(t, f.requests[0]["auth_url"], f.requests[1]["auth_url"])
 	require.NotEqual(t, f.requests[0]["oauth_session_id"], f.requests[1]["oauth_session_id"])
+}
+
+func TestBatchOAuthTerminalTaskWipesLoginAndCanBeDeleted(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, id := startFixtureTask(t, f)
+	task := f.h.batchOAuthStore.tasks[id]
+	require.NotEmpty(t, task.loginPasswordEncrypted)
+	f.mu.Lock()
+	f.status, f.stage = "failed", "failed"
+	f.mu.Unlock()
+
+	w := batchOAuthRequest(r, "GET", "/tasks/"+id, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Empty(t, task.loginPasswordEncrypted)
+	require.Empty(t, task.loginTOTPEncrypted)
+
+	w = batchOAuthRequest(r, "DELETE", "/tasks/"+id, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Nil(t, f.h.batchOAuthStore.tasks[id])
+	require.Empty(t, f.admin.createdAccounts)
+}
+
+func TestBatchOAuthDeleteCompletedTaskKeepsCreatedAccount(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, id := startFixtureTask(t, f)
+	require.Equal(t, http.StatusOK, batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}").Code)
+	require.Len(t, f.admin.createdAccounts, 1)
+
+	w := batchOAuthRequest(r, "DELETE", "/tasks/"+id, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Nil(t, f.h.batchOAuthStore.tasks[id])
+	require.Len(t, f.admin.createdAccounts, 1)
+}
+
+func TestBatchOAuthSameEmailRejectsLiveAndReplacesOldFailure(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, firstID := startFixtureTask(t, f)
+	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"secret","idempotency_key":"same-email-live-0002"}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+	task := f.h.batchOAuthStore.tasks[firstID]
+	task.mu.Lock()
+	task.Status, task.Stage = "failed", "failed"
+	task.markFinishedIfTerminal()
+	task.mu.Unlock()
+	w = batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"secret","idempotency_key":"same-email-new-0003"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Nil(t, f.h.batchOAuthStore.tasks[firstID])
+	require.Len(t, f.h.batchOAuthStore.tasks, 1)
+}
+
+func TestBatchOAuthDuplicatePruneDefersBusyMailbox(t *testing.T) {
+	store := newBatchOAuthStore()
+	now := time.Now().UTC()
+	busy := &batchOAuthTask{ID: "busy", ownerID: 42, Email: "owner@example.test", Status: "running", CreatedAt: now}
+	failed := &batchOAuthTask{ID: "failed", ownerID: 42, Email: "OWNER@example.test", Status: "failed", CreatedAt: now.Add(-time.Minute)}
+	store.tasks[busy.ID] = busy
+	store.tasks[failed.ID] = failed
+
+	busy.mu.Lock()
+	store.mu.Lock()
+	store.pruneTerminalDuplicatesLocked(42)
+	store.mu.Unlock()
+	require.Contains(t, store.tasks, busy.ID)
+	require.Contains(t, store.tasks, failed.ID)
+	busy.mu.Unlock()
+
+	store.mu.Lock()
+	store.pruneTerminalDuplicatesLocked(42)
+	store.mu.Unlock()
+	require.Contains(t, store.tasks, busy.ID)
+	require.NotContains(t, store.tasks, failed.ID)
 }
 
 func TestBatchOAuthIdentityAndValidationBeforeCodeConsumption(t *testing.T) {

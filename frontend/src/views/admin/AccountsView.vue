@@ -25,6 +25,11 @@
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="batch-openai-oauth" @click="allowAccountWrite() && (showBatchOpenAIOAuth = true)">
                 <Icon name="userPlus" size="sm" /><span>批量添加账号</span>
               </button>
+              <button type="button" class="btn flex items-center gap-2" :class="openAI401Accounts.length ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/70 dark:bg-red-950/25 dark:text-red-300' : 'btn-secondary'" data-testid="openai-401-reauthorization" @click="openOpenAIReauthorizationManagement">
+                <Icon :name="openAI401Accounts.length ? 'exclamationTriangle' : 'key'" size="sm" />
+                <span>401 重新授权管理</span>
+                <span v-if="openAI401Accounts.length" class="rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold leading-none text-white">{{ openAI401Accounts.length }}</span>
+              </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="pelican-benchmark" @click="showPelicanBenchmark = true">
                 <Icon name="lightbulb" size="sm" />
                 <span>{{ t('admin.accounts.pelicanBenchmark.title') }}</span>
@@ -202,6 +207,16 @@
             <span class="h-10 w-28 shrink-0 animate-pulse rounded-xl bg-gray-200 dark:bg-dark-700"></span>
             <span class="h-10 w-24 shrink-0 animate-pulse rounded-xl bg-gray-200 dark:bg-dark-700"></span>
           </div>
+        </div>
+        <div
+          v-if="openAI401Accounts.length"
+          data-testid="openai-401-reminder"
+          class="mt-2 flex flex-wrap items-center justify-between gap-3 border-y border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200"
+        >
+          <span>检测到 {{ openAI401Accounts.length }} 个 OpenAI OAuth 账号授权失效：{{ openAI401AccountNames }}</span>
+          <button type="button" class="btn btn-secondary flex-shrink-0 px-2 py-1 text-xs" @click="openOpenAIReauthorizationManagement">
+            立即处理
+          </button>
         </div>
         <div
           v-if="hasPendingListSync"
@@ -420,6 +435,7 @@
               :today-stats-loading="todayStatsLoading"
               :manual-refresh-token="usageManualRefreshToken"
               @account-updated="handleAccountUpdated"
+              @reauth-status="handleUsageReauthStatus"
               @open-billing-details="handleOpenBillingDetails"
             />
           </template>
@@ -709,6 +725,14 @@ function openTeamChildCreation() {
   })
 }
 
+function openOpenAIReauthorizationManagement() {
+  if (!allowAccountWrite()) return
+  void router?.push({
+    name: 'AdminTeamChildCreation',
+    query: { openai_reauthorization: '1' }
+  })
+}
+
 const normalizeActiveConcurrencyGroup = (value: unknown): string => {
   const rawValue = Array.isArray(value) ? value[0] : value
   if (typeof rawValue !== 'string' || !/^[1-9]\d*$/.test(rawValue)) return ''
@@ -771,6 +795,8 @@ const selTypes = computed<AccountType[]>(() => {
   return [...types]
 })
 const showCreate = ref(false)
+const usageReauthAccountIDs = ref(new Set<number>())
+const announcedReauthAccountIDs = new Set<number>()
 const teamChildCreationEnabled = ref(false)
 const teamChildSettingsReady = ref(false)
 const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
@@ -1209,6 +1235,44 @@ const teamChildNeedsReauth = computed(() => {
     || /\b401\b|unauthori[sz]ed|token\s*(?:expired|invalid|失效|过期)/i.test(errorText)
 })
 
+const accountNeedsOpenAIReauthorization = (account: Account) => {
+  if (account.platform !== 'openai' || account.type !== 'oauth') return false
+  const extra = account.extra as Record<string, unknown> | undefined
+  const errorText = [
+    account.error_message || '',
+    typeof extra?.error === 'string' ? extra.error : '',
+    typeof extra?.error_code === 'string' ? extra.error_code : ''
+  ].join(' ')
+  return usageReauthAccountIDs.value.has(account.id)
+    || extra?.needs_reauth === true
+    || extra?.error_code === 'unauthenticated'
+    || /\b401\b|unauthori[sz]ed|token\s*(?:expired|invalid|失效|过期)/i.test(errorText)
+}
+
+const openAI401Accounts = computed(() => accounts.value.filter(accountNeedsOpenAIReauthorization))
+const openAI401AccountNames = computed(() => {
+  const names = openAI401Accounts.value.slice(0, 3).map(account => `#${account.id} ${account.name}`)
+  return `${names.join('、')}${openAI401Accounts.value.length > names.length ? ' 等' : ''}`
+})
+
+function handleUsageReauthStatus(payload: { accountId: number; needsReauth: boolean }) {
+  const next = new Set(usageReauthAccountIDs.value)
+  if (payload.needsReauth) next.add(payload.accountId)
+  else next.delete(payload.accountId)
+  usageReauthAccountIDs.value = next
+}
+
+watch(openAI401Accounts, (current) => {
+  const currentIDs = new Set(current.map(account => account.id))
+  for (const id of [...announcedReauthAccountIDs]) {
+    if (!currentIDs.has(id)) announcedReauthAccountIDs.delete(id)
+  }
+  const newlyDetected = current.filter(account => !announcedReauthAccountIDs.has(account.id))
+  if (!newlyDetected.length) return
+  newlyDetected.forEach(account => announcedReauthAccountIDs.add(account.id))
+  appStore.showWarning(`检测到 ${newlyDetected.length} 个 OpenAI OAuth 账号返回 401，请及时重新授权。`, 8000)
+}, { flush: 'post' })
+
 const {
   selectedSet,
   selectedIds: selIds,
@@ -1437,6 +1501,9 @@ const isAnyModalOpen = computed(() => {
     showDeleteDialog.value ||
     showReAuth.value ||
     showTest.value ||
+    showPelicanBenchmark.value ||
+    showBatchOpenAIOAuth.value ||
+    showAccountPools.value ||
     showStats.value ||
     showOAuthBillingDetails.value ||
     showSchedulePanel.value ||
@@ -1505,28 +1572,26 @@ const refreshRealtimeConcurrency = async () => {
     if (!snapshot.enabled) return
 
     const liveAccounts = snapshot.account ?? {}
-    let changed = false
-    const nextRows = accounts.value.map((row) => {
+    accounts.value.forEach((row, index) => {
       const live = liveAccounts[String(row.id)]
-      if (!live) return row
+      if (!live) return
 
       const current = Number(live.current_in_use)
-      if (!Number.isFinite(current)) return row
+      if (!Number.isFinite(current)) return
       const nextCurrent = Math.max(0, Math.trunc(current))
       const nextGroupCurrent = groupID ? nextCurrent : row.group_current_concurrency
-      if (row.current_concurrency === nextCurrent && row.group_current_concurrency === nextGroupCurrent) return row
+      if (row.current_concurrency === nextCurrent && row.group_current_concurrency === nextGroupCurrent) return
 
-      changed = true
       const nextRow = {
         ...row,
         current_concurrency: nextCurrent,
         ...(groupID ? { group_current_concurrency: nextCurrent } : {})
       }
       syncAccountRefs(nextRow)
-      return nextRow
+      // Update only the changed row. Replacing the full array every five
+      // seconds made busy servers repaint the entire account table.
+      accounts.value[index] = nextRow
     })
-
-    if (changed) accounts.value = nextRows
   } catch {
     // Keep the last known value during a transient 502/503/429. The next
     // interval retries without forcing a full table reload.

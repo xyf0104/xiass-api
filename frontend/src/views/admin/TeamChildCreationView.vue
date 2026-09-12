@@ -208,6 +208,7 @@
       />
 
       <OpenAIOAuthReauthorizationPanel
+        id="openai-oauth-reauthorization"
         class="xl:col-span-2"
         :accounts="ordinaryOpenAIOAuthAccounts"
         :loading="teamChildHistoryLoading"
@@ -272,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Icon } from '@/components/icons'
 import TeamChildOAuthWorkspace from '@/components/admin/account/TeamChildOAuthWorkspace.vue'
 import TeamChildMembersWorkspace from '@/components/admin/account/TeamChildMembersWorkspace.vue'
@@ -1009,6 +1010,15 @@ function requestHistoryReauthorizationFromURL() {
   if (teamWorkflow.value) return
   const entry = teamChildHistory.value.find((candidate) => candidate.account?.id === accountID)
   if (entry && historyEntryNeedsReauth(entry)) requestHistoryReauthorization(entry)
+}
+
+async function openReauthorizationManagementFromURL() {
+  const currentURL = new URL(window.location.href)
+  if (currentURL.searchParams.get('openai_reauthorization') !== '1') return
+  currentURL.searchParams.delete('openai_reauthorization')
+  window.history.replaceState(window.history.state, '', `${currentURL.pathname}${currentURL.search}${currentURL.hash}`)
+  await nextTick()
+  document.getElementById('openai-oauth-reauthorization')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function scrollToTeamChildHistory() {
@@ -1982,6 +1992,7 @@ onMounted(async () => {
   await restoreActiveWorkflow()
   await loadTeamChildHistory()
   requestHistoryReauthorizationFromURL()
+  await openReauthorizationManagementFromURL()
   if (browserConfigured.value) await loadMembers()
 })
 

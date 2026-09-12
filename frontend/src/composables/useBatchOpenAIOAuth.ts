@@ -110,22 +110,30 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       const result = await batchOAuthAPI.list()
       if (disposed) return
       error.value = ''
-      for (const task of result.items) {
+      const latestByEmail = new Map<string, BatchOAuthTask>()
+      for (const task of result.items) latestByEmail.set(task.email.trim().toLowerCase(), task)
+      const latestTasks = [...latestByEmail.values()]
+      for (const task of latestTasks) {
         let row = rows.value.find(r => r.task?.task_id === task.task_id)
         if (!row) {
           // Do not infer identity from email after a lost create response.
           if (rows.value.some(r => r.email === task.email && ['starting', 'uncertain'].includes(r.localStatus || ''))) continue
-          row = { key: task.task_id, email: task.email, task }
-          rows.value.push(row)
+          row = rows.value.find(r => r.email.trim().toLowerCase() === task.email.trim().toLowerCase() && !r.localStatus)
+          if (!row) {
+            row = { key: task.task_id, email: task.email, task }
+            rows.value.push(row)
+          }
         }
         if (!busyKeys.value.has(row.key)) update(row, task)
       }
+      const visibleTaskIDs = new Set(latestTasks.map(task => task.task_id))
+      rows.value = rows.value.filter(row => !row.task || Boolean(row.localStatus) || visibleTaskIDs.has(row.task.task_id))
       for (const row of rows.value) {
         if (disposed || stopping) break
         if (!row.task || busyKeys.value.has(row.key)) continue
         if (row.task.status === 'ready' && !row.error) {
           await operation(row, async () => update(row, await batchOAuthAPI.complete(row.task!.task_id)))
-        } else if (batchTaskWillAutoRestart(row.task)) {
+        } else if (secrets.has(row.key) && batchTaskWillAutoRestart(row.task)) {
           const state = `restart:${row.task.restart_count}:${row.task.reason}`
           await automatic(row, state, 10000, async () => retry(row))
         } else if (row.task.status === 'running' && row.task.stage === 'phone_required') {
@@ -240,14 +248,23 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
 
   async function restart(row: OAuthQueueRow, login?: BatchOAuthLogin) {
     if (!row.task || row.task.account_id || row.task.restart_count >= 2) return
+    const retryLogin = login || secrets.get(row.key)
+    if (!retryLogin) {
+      row.error = '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
+      return
+    }
     await operation(row, async () => {
-      update(row, await batchOAuthAPI.restart(row.task!.task_id, login))
+      update(row, await batchOAuthAPI.restart(row.task!.task_id, retryLogin))
       row.number = undefined
     })
   }
 
   function retry(row: OAuthQueueRow) {
     if (disposed || row.retryPending) return
+    if (!secrets.has(row.key)) {
+      row.error = '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
+      return
+    }
     if (row.localStatus !== 'uncertain' && (!row.task || row.task.account_id || row.task.restart_count >= 2)) return
     row.error = ''
     row.retryPending = true
@@ -260,6 +277,19 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     await operation(row, async () => update(row, await batchOAuthAPI.complete(row.task!.task_id)))
   }
 
+  async function remove(row: OAuthQueueRow) {
+    if (!row.task || !['completed', 'failed', 'blocked', 'canceled'].includes(row.task.status)) return
+    await operation(row, async () => {
+      await batchOAuthAPI.remove(row.task!.task_id)
+      secrets.delete(row.key)
+      rows.value = rows.value.filter(candidate => candidate !== row)
+      if (rows.value.length === 0) {
+        started.value = false
+        config = undefined
+      }
+    })
+  }
+
   function dispose() {
     disposed = true
     clearTimeout(timer)
@@ -268,6 +298,6 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   }
   onScopeDispose(dispose)
   void sync()
-  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete,
+  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove,
     hasSecret: (row: OAuthQueueRow) => secrets.has(row.key), refresh: async () => { clearTimeout(timer); await sync() } }
 }

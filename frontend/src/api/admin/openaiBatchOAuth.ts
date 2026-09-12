@@ -44,6 +44,9 @@ export const batchOAuthAPI = {
   async complete(id: string) {
     return (await apiClient.post<BatchOAuthTask>(`${path}/${encodeURIComponent(id)}/complete`)).data
   },
+  async remove(id: string) {
+    return (await apiClient.delete<{ task_id: string; account_id?: number }>(`${path}/${encodeURIComponent(id)}`)).data
+  },
   async cancel(id: string) {
     return (await apiClient.post<BatchOAuthTask>(`${path}/${encodeURIComponent(id)}/cancel`, { confirmed: true })).data
   },

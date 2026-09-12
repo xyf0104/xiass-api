@@ -98,6 +98,8 @@ func TestBatchOAuthSavesEncryptedLoginAndSameAccount401Reauthorization(t *testin
 	task := f.h.batchOAuthStore.tasks[id]
 	require.NotContains(t, task.loginPasswordEncrypted, password)
 	require.NotContains(t, task.loginTOTPEncrypted, totp)
+	passwordCiphertext := task.loginPasswordEncrypted
+	totpCiphertext := task.loginTOTPEncrypted
 	require.Equal(t, password, f.requests[0]["password"])
 	w = batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -108,8 +110,10 @@ func TestBatchOAuthSavesEncryptedLoginAndSameAccount401Reauthorization(t *testin
 	require.Len(t, f.admin.createdAccounts, 1)
 	require.True(t, f.admin.createdAccounts[0].AllowOpenAIReauthorizationCredentials)
 	a := storage.persisted
-	require.Equal(t, task.loginPasswordEncrypted, a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey))
-	require.Equal(t, task.loginTOTPEncrypted, a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey))
+	require.Empty(t, task.loginPasswordEncrypted)
+	require.Empty(t, task.loginTOTPEncrypted)
+	require.Equal(t, passwordCiphertext, a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey))
+	require.Equal(t, totpCiphertext, a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey))
 	require.Equal(t, "owner@example.test", a.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey))
 	for _, key := range []string{service.OpenAIOAuthReauthorizationPasswordCredentialKey, service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey} {
 		plain, err := encryptor.SecretEncryptor.Decrypt(a.GetCredential(key))
@@ -137,7 +141,7 @@ func TestBatchOAuthSavesEncryptedLoginAndSameAccount401Reauthorization(t *testin
 	require.Equal(t, beforeConfig.Priority, storage.persisted.Priority)
 	require.Contains(t, w.Body.String(), `"name":"saved account"`)
 	require.Contains(t, w.Body.String(), `"concurrency":7`)
-	for _, secret := range []string{password, totp, task.loginPasswordEncrypted, task.loginTOTPEncrypted, "new-access", "new-refresh"} {
+	for _, secret := range []string{password, totp, passwordCiphertext, totpCiphertext, "new-access", "new-refresh"} {
 		require.NotContains(t, w.Body.String(), secret)
 	}
 	w = batchOAuthRequest(r, "POST", "/accounts/300/apply-oauth-credentials", `{"type":"oauth","credentials":{"email":"other@example.test","access_token":"wrong-account"}}`)
@@ -177,14 +181,17 @@ func TestBatchOAuthReadbackRejectsDroppedLoginAndConfiguration(t *testing.T) {
 	}
 }
 
-func TestBatchOAuthRestartUsesEncryptedLoginAndOptionalReplacement(t *testing.T) {
+func TestBatchOAuthRestartRequiresFreshInMemoryLogin(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	encryptor := &onboardingCountingEncryptor{SecretEncryptor: f.h.secretEncryptor}
 	f.h.secretEncryptor = encryptor
 	r, id := startFixtureTask(t, f)
 	w := batchOAuthRequest(r, "POST", "/tasks/"+id+"/restart", `{"confirmed":true}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Zero(t, encryptor.decrypts)
+	w = batchOAuthRequest(r, "POST", "/tasks/"+id+"/restart", `{"password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","confirmed":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Equal(t, 2, encryptor.decrypts)
+	require.Zero(t, encryptor.decrypts)
 	require.Equal(t, "login-secret", f.requests[1]["password"])
 	require.Equal(t, "JBSWY3DPEHPK3PXP", f.requests[1]["totp_secret"])
 	w = batchOAuthRequest(r, "POST", "/tasks/"+id+"/restart", `{"password":"  changed  ","totp_secret":"","confirmed":true}`)

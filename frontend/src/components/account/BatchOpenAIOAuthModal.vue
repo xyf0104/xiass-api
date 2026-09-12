@@ -52,6 +52,9 @@
               <Icon name="refresh" size="sm" />重新授权所选<span v-if="selectedRetryCount">（{{ selectedRetryCount }}）</span>
             </button>
           </div>
+          <button v-if="failedRows.length" class="btn btn-secondary btn-sm text-red-600 dark:text-red-300" :disabled="busyKeys.size > 0" @click="ask('clearFailed')">
+            <Icon name="trash" size="sm" />清除失败记录
+          </button>
         </header>
         <div v-if="batchFinished" class="border-t border-gray-100 py-3 text-sm dark:border-dark-700" role="status">
           <p class="font-medium" :class="failedCount ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'">
@@ -89,6 +92,7 @@
               <button v-if="canRetry(row)" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重新授权</button>
               <button v-if="batchTaskActive(row.task) || row.localStatus === 'pending' || row.localStatus === 'uncertain' || row.retryPending" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('stop', row)"><Icon name="x" size="sm" />停止</button>
               <button v-else-if="row.task?.requires_sms_confirmation" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('cancel', row)">取消接码</button>
+              <button v-if="canDelete(row)" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" :title="row.task?.status === 'completed' ? '仅删除任务记录，不删除已添加账号' : '删除任务记录'" @click="ask('delete', row)"><Icon name="trash" size="sm" />删除记录</button>
             </div>
           </article>
         </div>
@@ -123,7 +127,7 @@ import { useBatchOpenAIOAuth, batchTaskActive, batchTaskWillAutoRestart, type OA
 
 defineProps<{ show: boolean; groups: AdminGroup[]; proxies: Proxy[] }>()
 const emit = defineEmits<{ close: []; created: [] }>()
-const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, refresh } = useBatchOpenAIOAuth(() => emit('created'))
+const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, hasSecret, refresh } = useBatchOpenAIOAuth(() => emit('created'))
 const input = ref('')
 const localError = ref('')
 const pools = ref<{ id: number; name: string; proxy_id: number | null }[]>([])
@@ -157,7 +161,8 @@ const poolOptions = computed(() => [{ value: null, label: '不加入号池' }, .
 const effectiveProxy = computed(() => settings.pool_id === null ? settings.proxy_id : pools.value.find(p => p.id === settings.pool_id)?.proxy_id ?? null)
 const fingerprintOptions = [{ value: 'off', label: '关闭' }, { value: 'device', label: '设备' }, { value: 'session', label: '会话' }, { value: 'full', label: '完整' }]
 const completedCount = computed(() => rows.value.filter(row => row.task?.status === 'completed').length)
-const failedRows = computed(() => rows.value.filter(row => row.task && ['failed', 'blocked'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task) && !row.retryPending))
+const willAutoRestart = (row: OAuthQueueRow) => hasSecret(row) && batchTaskWillAutoRestart(row.task)
+const failedRows = computed(() => rows.value.filter(row => row.task && ['failed', 'blocked'].includes(row.task.status) && !willAutoRestart(row) && !row.retryPending))
 const failedCount = computed(() => failedRows.value.length)
 const failedEmails = computed(() => failedRows.value.map(row => row.email))
 const batchFinished = computed(() => rows.value.length > 0 && !hasWork.value)
@@ -170,9 +175,9 @@ const flowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'wor
 const flowStepCount = flowStages.length
 const now = ref(Date.now())
 let elapsedTimer: ReturnType<typeof setInterval> | undefined
-type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry' | 'retrySelected'
+type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry' | 'retrySelected' | 'delete' | 'clearFailed'
 const confirmation = ref<{ action: Action; row?: OAuthQueueRow }>()
-const confirmationTitle = computed(() => ({ acquire: '确认领取号码', change: '确认更换号码', cancel: '确认取消接码', stop: '确认停止授权', stopAll: '确认停止全部', close: '停止任务并关闭', retry: '重新授权', retrySelected: '批量重新授权' })[confirmation.value?.action || 'stop'])
+const confirmationTitle = computed(() => ({ acquire: '确认领取号码', change: '确认更换号码', cancel: '确认取消接码', stop: '确认停止授权', stopAll: '确认停止全部', close: '停止任务并关闭', retry: '重新授权', retrySelected: '批量重新授权', delete: '删除任务记录', clearFailed: '清除失败记录' })[confirmation.value?.action || 'stop'])
 const confirmationMessage = computed(() => {
   const email = confirmation.value?.row?.email || ''
   switch (confirmation.value?.action) {
@@ -180,6 +185,8 @@ const confirmationMessage = computed(() => {
     case 'change': return `取消 ${email} 当前号码并领取新号码？`
     case 'retry': return `重新处理 ${email}。如有未结束的接码，将先取消；授权会在新的独立窗口中开始。`
     case 'retrySelected': return `重新授权已选择的 ${selectedRetryCount.value} 个失败账号。每个账号继续使用独立隐私窗口，最多同时运行 3 个。`
+    case 'delete': return confirmation.value.row?.task?.status === 'completed' ? `仅删除 ${email} 的授权任务记录，已经添加成功的账号不会被删除。` : `删除 ${email} 的失败任务记录？`
+    case 'clearFailed': return `删除当前显示的 ${failedRows.value.length} 条失败任务记录？已经添加成功的账号不受影响。`
     case 'cancel': return `取消 ${email} 当前接码？`
     case 'close': case 'stopAll': return '停止所有未完成的授权并取消对应接码。已添加成功的账号不受影响。'
     default: return `停止 ${email} 的授权并取消对应接码？`
@@ -203,13 +210,20 @@ async function confirmAction() {
   } else if (current.action === 'retrySelected') {
     for (const row of selectedRetryRows.value) await retry(row)
     selectedRetryKeys.value = new Set()
+  } else if (current.action === 'clearFailed') {
+    for (const row of [...failedRows.value]) await remove(row)
+  } else if (current.action === 'delete' && current.row) {
+    await remove(current.row)
   } else if (current.row) {
     if (current.action === 'stop') await cancel(current.row)
     else if (current.action === 'retry') await retry(current.row)
-    else await sms(current.row, current.action)
+    else if (current.action === 'acquire' || current.action === 'change' || current.action === 'cancel') {
+      await sms(current.row, current.action)
+    }
   }
 }
-function canRetry(row: OAuthQueueRow) { return !row.retryPending && (row.localStatus === 'uncertain' || (!!row.task && ['failed', 'blocked', 'canceled'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review')) }
+function canRetry(row: OAuthQueueRow) { return hasSecret(row) && !row.retryPending && (row.localStatus === 'uncertain' || (!!row.task && ['failed', 'blocked', 'canceled'].includes(row.task.status) && !willAutoRestart(row) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review')) }
+function canDelete(row: OAuthQueueRow) { return !!row.task && ['completed', 'failed', 'blocked', 'canceled'].includes(row.task.status) && !row.retryPending }
 function toggleRetry(row: OAuthQueueRow) {
   const next = new Set(selectedRetryKeys.value)
   if (next.has(row.key)) next.delete(row.key)
@@ -224,7 +238,7 @@ function statusText(row: OAuthQueueRow) {
   if (row.localStatus) return { pending: '待开始', starting: '正在启动', uncertain: '启动结果待核验', canceled: '已停止' }[row.localStatus]
   const task = row.task
   if (!task) return ''
-  if (batchTaskWillAutoRestart(task)) {
+  if (willAutoRestart(row)) {
     const seconds = Math.max(0, Math.ceil(((row.automaticAfter || now.value) - now.value) / 1000))
     return seconds > 0 ? `将在 ${seconds} 秒后自动重新授权` : '正在重新启动授权'
   }
@@ -251,7 +265,7 @@ function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'comp
 function progressClass(row: OAuthQueueRow) {
   if (row.task?.status === 'completed') return 'bg-emerald-500'
   if (row.retryPending) return 'bg-primary-500'
-  if (row.task && ['failed', 'blocked'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task)) return 'bg-red-500'
+  if (row.task && ['failed', 'blocked'].includes(row.task.status) && !willAutoRestart(row)) return 'bg-red-500'
   return 'bg-primary-500'
 }
 function stageText(row: OAuthQueueRow) {

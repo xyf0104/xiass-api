@@ -774,6 +774,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'account-updated': [account: Account]
+  'reauth-status': [payload: { accountId: number; needsReauth: boolean }]
   'open-billing-details': [payload: {
     account: Account
     windowLabel: string
@@ -1848,6 +1849,25 @@ watch(usageCacheVersionKey, () => {
   _usageCache.delete(props.account.id)
   requestAutoLoad(isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined)
 })
+
+let lastReportedReauth: boolean | undefined
+watch(
+  [() => props.account.id, () => usageInfo.value?.needs_reauth],
+  ([accountId, needsReauth], previous) => {
+    const next = needsReauth === true
+    const previousAccountID = previous?.[0]
+    if (previousAccountID && previousAccountID !== accountId && lastReportedReauth === true) {
+      emit('reauth-status', { accountId: previousAccountID, needsReauth: false })
+    }
+    // Skip the initial false report for every row. Large account tables were
+    // otherwise cloning the parent Set once per account during first paint.
+    if (next || lastReportedReauth === true) {
+      emit('reauth-status', { accountId, needsReauth: next })
+    }
+    lastReportedReauth = next
+  },
+  { immediate: true }
+)
 
 watch(
   () => props.manualRefreshToken,

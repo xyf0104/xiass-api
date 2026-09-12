@@ -432,9 +432,6 @@ export class BatchOAuthRunner {
 
   async #workspace(page) {
     if (this.#h.chooseDefaultWorkspace) return this.#h.chooseDefaultWorkspace(page)
-    const option = await this.#h.firstVisibleRole(page, 'radio', [/default|personal|默认|个人/i])
-      || await this.#h.firstVisibleRole(page, 'button', [/^default workspace$/i])
-    if (option) await option.click()
     await this.#continue(page)
   }
 

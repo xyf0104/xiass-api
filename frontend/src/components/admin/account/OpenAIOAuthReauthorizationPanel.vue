@@ -7,8 +7,8 @@
             <Icon name="key" size="sm" :stroke-width="2" />
           </span>
           <div class="min-w-0">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">其他 OpenAI OAuth 重新授权</h2>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">保存目标邮箱后，可在 401 时按 OpenAI 官方页面实际步骤重新授权</p>
+            <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">OpenAI OAuth 401 重新授权管理</h2>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">成功批量授权的账号会自动保留登录信息；既有账号仍可由管理员手动配置</p>
           </div>
         </div>
       </div>
@@ -29,7 +29,7 @@
           aria-label="选择 OpenAI OAuth 账号"
           :disabled="loading || accounts.length === 0"
         />
-        <p v-if="accounts.length === 0" class="mt-2 text-xs text-gray-500 dark:text-gray-400">暂无可配置的普通 OpenAI OAuth 账号。</p>
+        <p v-if="accounts.length === 0" class="mt-2 text-xs text-gray-500 dark:text-gray-400">暂无可管理的普通 OpenAI OAuth 账号。</p>
         <p v-else-if="selectedAccount" class="mt-2 text-xs" :class="credentialsConfigured ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'">
           {{ credentialsConfigured ? '已保存目标邮箱，可直接重新授权。' : '尚未保存目标邮箱，请先填写邮箱。' }}
         </p>

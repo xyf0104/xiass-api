@@ -82,6 +82,7 @@ type batchOAuthTask struct {
 	rejectedPhones          map[string]bool
 	loginPasswordEncrypted  string `json:"-"`
 	loginTOTPEncrypted      string `json:"-"`
+	loginTOTPConfigured     bool
 }
 
 type batchOAuthStore struct {
@@ -108,11 +109,56 @@ func (s *batchOAuthStore) hasCapacityLocked(except *batchOAuthTask) bool {
 		if !task.terminal() {
 			active++
 		} else if time.Since(task.CreatedAt) > 24*time.Hour {
+			task.clearLoginCredentials()
 			delete(s.tasks, id)
 		}
 		task.mu.Unlock()
 	}
 	return active < 3
+}
+
+func (s *batchOAuthStore) pruneTerminalDuplicatesLocked(owner int64) {
+	type candidate struct {
+		id      string
+		score   int
+		created time.Time
+	}
+	keep := make(map[string]candidate)
+	busy := make(map[string]bool)
+	for id, task := range s.tasks {
+		if task.ownerID != owner {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(task.Email))
+		if !task.mu.TryLock() {
+			// A concurrent refresh/restart owns this task. Defer pruning every
+			// record for the mailbox so the busy task cannot be misclassified.
+			busy[key] = true
+			continue
+		}
+		score := 1
+		if !task.terminal() {
+			score = 3
+		} else if task.Status == "completed" {
+			score = 2
+		}
+		current, found := keep[key]
+		if !found || score > current.score || (score == current.score && task.CreatedAt.After(current.created)) {
+			keep[key] = candidate{id: id, score: score, created: task.CreatedAt}
+		}
+		task.mu.Unlock()
+	}
+	for id, task := range s.tasks {
+		key := strings.ToLower(strings.TrimSpace(task.Email))
+		if task.ownerID != owner || busy[key] || keep[key].id == id || !task.mu.TryLock() {
+			continue
+		}
+		if task.terminal() {
+			task.clearLoginCredentials()
+			delete(s.tasks, id)
+		}
+		task.mu.Unlock()
+	}
 }
 
 func (h *OpenAIOAuthHandler) ConfigureBatchOAuthSMS(svc *service.PixlabSMSService) {
@@ -324,11 +370,21 @@ func (t *batchOAuthTask) terminal() bool {
 }
 
 func (t *batchOAuthTask) markFinishedIfTerminal() {
-	if !t.terminal() || t.FinishedAt != nil {
+	if !t.terminal() {
 		return
 	}
-	now := time.Now().UTC()
-	t.FinishedAt = &now
+	if t.FinishedAt == nil {
+		now := time.Now().UTC()
+		t.FinishedAt = &now
+	}
+	// A terminal workflow must not remain a reusable credential store. The
+	// encrypted login is copied to the account only after OAuth succeeds.
+	t.clearLoginCredentials()
+}
+
+func (t *batchOAuthTask) clearLoginCredentials() {
+	t.loginPasswordEncrypted = ""
+	t.loginTOTPEncrypted = ""
 }
 
 func batchOAuthPublicStage(stage string) string {
@@ -482,6 +538,35 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 			return
 		}
 	}
+	// One mailbox may have only one live workflow. Starting a new attempt also
+	// removes its older failed/canceled task rows; a completed account record is
+	// deliberately left untouched.
+	for id, task := range store.tasks {
+		if task.ownerID != owner || !strings.EqualFold(task.Email, req.Email) {
+			continue
+		}
+		if !task.mu.TryLock() {
+			store.mu.Unlock()
+			response.Error(c, 409, "An authorization task for this email is busy")
+			return
+		}
+		if !task.terminal() {
+			task.mu.Unlock()
+			store.mu.Unlock()
+			response.Error(c, 409, "An authorization task for this email is already running")
+			return
+		}
+		if task.AccountID == 0 {
+			task.clearLoginCredentials()
+			delete(store.tasks, id)
+		} else {
+			task.mu.Unlock()
+			store.mu.Unlock()
+			response.Error(c, 409, "An account for this email was already created")
+			return
+		}
+		task.mu.Unlock()
+	}
 	if !store.hasCapacityLocked(nil) || len(store.tasks) >= 1000 {
 		store.mu.Unlock()
 		response.Error(c, 409, "Batch task capacity reached")
@@ -494,7 +579,7 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	t := &batchOAuthTask{ID: id, sidecarID: id, ownerID: owner, Email: req.Email, config: req.batchOAuthConfig,
-		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted,
+		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
 		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
 	t.mu.Lock()
 	store.tasks[id] = t
@@ -523,6 +608,7 @@ func (h *OpenAIOAuthHandler) ListBatchOAuthTasks(c *gin.Context) {
 		return
 	}
 	h.batchOAuthStore.mu.Lock()
+	h.batchOAuthStore.pruneTerminalDuplicatesLocked(owner)
 	tasks := make([]*batchOAuthTask, 0)
 	for _, t := range h.batchOAuthStore.tasks {
 		if t.ownerID == owner {
@@ -708,10 +794,16 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 	}
 	// Verify ciphertext directly: completion must not decrypt login material or
 	// silently succeed when the trusted create path dropped private credentials.
-	if !strings.EqualFold(strings.TrimSpace(a.GetCredential("email")), t.Email) ||
-		a.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey) != t.Email ||
-		t.loginPasswordEncrypted == "" || a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey) != t.loginPasswordEncrypted ||
-		a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey) != t.loginTOTPEncrypted {
+	passwordCiphertext := a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey)
+	totpCiphertext := a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
+	credentialsMismatch := !strings.EqualFold(strings.TrimSpace(a.GetCredential("email")), t.Email) ||
+		a.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey) != t.Email || passwordCiphertext == ""
+	if t.loginPasswordEncrypted != "" {
+		credentialsMismatch = credentialsMismatch || passwordCiphertext != t.loginPasswordEncrypted || totpCiphertext != t.loginTOTPEncrypted
+	} else if t.loginTOTPConfigured {
+		credentialsMismatch = credentialsMismatch || totpCiphertext == ""
+	}
+	if credentialsMismatch {
 		t.Reason = "account_login_credentials_mismatch"
 		return
 	}
@@ -805,6 +897,51 @@ func (h *OpenAIOAuthHandler) CancelBatchOAuthTask(c *gin.Context) {
 	response.Success(c, t)
 }
 
+// DeleteBatchOAuthTask removes only a finished workflow record. A completed
+// account remains intact and keeps the login material copied during creation.
+func (h *OpenAIOAuthHandler) DeleteBatchOAuthTask(c *gin.Context) {
+	owner, ok := batchOAuthAuth(c)
+	if !ok {
+		return
+	}
+	if h.batchOAuthStore == nil {
+		response.Error(c, 503, "Batch OAuth unavailable")
+		return
+	}
+	store := h.batchOAuthStore
+	store.mu.Lock()
+	t := store.tasks[c.Param("task_id")]
+	store.mu.Unlock()
+	if t == nil || t.ownerID != owner {
+		response.NotFound(c, "Task not found")
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.terminal() {
+		response.Error(c, 409, "Only finished tasks can be deleted")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 15*time.Second)
+	defer cancel()
+	if t.RequiresSMSConfirmation {
+		if err := h.cancelBatchReservation(ctx, t, true); err != nil {
+			response.Error(c, 409, err.Error())
+			return
+		}
+	}
+	h.revokeTerminalBatchSession(t)
+	t.clearLoginCredentials()
+
+	store.mu.Lock()
+	if store.tasks[t.ID] == t {
+		delete(store.tasks, t.ID)
+	}
+	store.mu.Unlock()
+	response.Success(c, gin.H{"task_id": t.ID, "account_id": t.AccountID})
+}
+
 func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 	t, ok := h.ownedBatchTask(c)
 	if !ok {
@@ -830,21 +967,16 @@ func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 		response.Error(c, 503, "Login encryption unavailable")
 		return
 	}
-	var password, secret string
-	var err error
-	if req.Password != nil {
-		password = *req.Password
-	} else {
-		password, err = h.secretEncryptor.Decrypt(t.loginPasswordEncrypted)
+	if req.Password == nil {
+		response.BadRequest(c, "Valid login credentials required")
+		return
 	}
-	if err == nil {
-		if req.TOTPSecret != nil {
-			secret = *req.TOTPSecret
-		} else if t.loginTOTPEncrypted != "" {
-			secret, err = h.secretEncryptor.Decrypt(t.loginTOTPEncrypted)
-		}
+	password := *req.Password
+	secret := ""
+	if req.TOTPSecret != nil {
+		secret = *req.TOTPSecret
 	}
-	if err != nil || validateBatchLogin(t.Email, password, secret) != nil {
+	if validateBatchLogin(t.Email, password, secret) != nil {
 		response.BadRequest(c, "Valid login credentials required")
 		return
 	}
@@ -895,6 +1027,7 @@ func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 	t.RequiresSMSConfirmation = false
 	t.FinishedAt = nil
 	t.loginPasswordEncrypted, t.loginTOTPEncrypted = passwordEncrypted, totpEncrypted
+	t.loginTOTPConfigured = secret != ""
 	_ = h.startBatchAttempt(ctx, t, password, secret, proxy)
 	response.Success(c, t)
 }

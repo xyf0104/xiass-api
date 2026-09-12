@@ -11,6 +11,7 @@ func registerBatchOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	tasks.POST("", oauth.StartBatchOAuthTask)
 	tasks.GET("", oauth.ListBatchOAuthTasks)
 	tasks.GET("/:task_id", oauth.GetBatchOAuthTask)
+	tasks.DELETE("/:task_id", oauth.DeleteBatchOAuthTask)
 	tasks.POST("/:task_id/complete", oauth.CompleteBatchOAuthTask)
 	tasks.POST("/:task_id/cancel", oauth.CancelBatchOAuthTask)
 	tasks.POST("/:task_id/restart", oauth.RestartBatchOAuthTask)
