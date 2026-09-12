@@ -162,7 +162,7 @@ async function confirmAction() {
     else await sms(current.row, current.action)
   }
 }
-function canRetry(row: OAuthQueueRow) { return row.localStatus === 'uncertain' || (!!row.task && ['failed', 'canceled'].includes(row.task.status) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review') }
+function canRetry(row: OAuthQueueRow) { return row.localStatus === 'uncertain' || (!!row.task && ['failed', 'blocked', 'canceled'].includes(row.task.status) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review') }
 function statusText(row: OAuthQueueRow) {
   if (row.localStatus) return { pending: '待开始', starting: '正在启动', uncertain: '启动结果待核验', canceled: '已停止' }[row.localStatus]
   const task = row.task
@@ -171,7 +171,7 @@ function statusText(row: OAuthQueueRow) {
   return ({ login: '正在登录', email: '输入邮箱', password: '输入密码', totp: '验证 2FA', phone_required: '等待领取手机号', sms_waiting: '等待短信验证码', workspace: '确认工作空间', callback: '正在完成授权' } as Record<string, string>)[task.stage] || '正在授权'
 }
 function reasonText(reason?: string) {
-  return ({ sms_timeout: '短信等待超过 3 分钟，请确认取消后重试。', sms_confirmation_timeout: '接码确认已超时。', oauth_identity_mismatch: '返回的账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '创建结果需要人工核对，已禁止重复创建。', account_readback_failed: '账号已创建，读取核验未成功，请刷新后核对。', account_configuration_mismatch: '已保存的配置与本次选择不一致，请核对原账号，勿重复添加。', account_login_credentials_mismatch: '登录信息保存核验未通过，请核对原账号。', automation_start_failed: '授权浏览器未确认启动。', invalid_configuration: '账号配置不可用，请核对分组与代理。', oauth_exchange_failed: '授权交换失败。', manual_challenge: '上游要求人工验证，自动化已停止。', email_code_required: '上游要求邮件验证码，需人工处理。', captcha_required: '上游要求人机验证，自动化已停止。', account_blocked: '上游已停用或限制该账号。', authenticator_required: '上游要求 2FA，但未提供有效密钥。', invalid_credentials: '邮箱、密码或账号身份未通过验证。', phone_rejected: '上游拒绝了当前号码，请确认更换号码。', task_expired: '本次授权已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
+  return ({ sms_timeout: '短信等待超过 3 分钟，系统将取消旧号码并从头重新授权。', sms_confirmation_timeout: '领号阶段超时，系统将清理本次会话并重新授权。', oauth_identity_mismatch: '返回的账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '创建结果需要人工核对，已禁止重复创建。', account_readback_failed: '账号已创建，读取核验未成功，请刷新后核对。', account_configuration_mismatch: '已保存的配置与本次选择不一致，请核对原账号，勿重复添加。', account_login_credentials_mismatch: '登录信息保存核验未通过，请核对原账号。', automation_start_failed: '授权浏览器未确认启动。', invalid_configuration: '账号配置不可用，请核对分组与代理。', oauth_exchange_failed: '授权交换失败。', manual_challenge: '上游页面异常，系统会清理临时会话并重新尝试一次。', email_code_required: '上游要求邮件验证码，系统会使用新会话重新尝试一次。', captcha_required: '上游出现人机验证，系统会关闭当前会话并重新尝试一次。', account_blocked: '上游限制了当前账号，系统会以新会话复核一次。', authenticator_required: '上游要求 2FA，但未提供有效密钥。', invalid_credentials: '邮箱、密码或账号身份未通过验证。', phone_rejected: '上游拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权已超时，系统将重新创建授权会话。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
 }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasWork.value) { event.preventDefault(); event.returnValue = '' } }
 onMounted(async () => {

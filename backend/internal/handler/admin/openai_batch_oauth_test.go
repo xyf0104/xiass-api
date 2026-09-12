@@ -90,7 +90,9 @@ func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 		if r.URL.Path == "/batch-oauth/tasks" {
 			f.requests = append(f.requests, payload)
 			id, _ = payload["task_id"].(string)
-			u, err := url.Parse(payload["auth_url"].(string))
+			authURL, ok := payload["auth_url"].(string)
+			require.True(t, ok)
+			u, err := url.Parse(authURL)
 			require.NoError(t, err)
 			f.states[id] = u.Query().Get("state")
 			status, stage = "running", "login"

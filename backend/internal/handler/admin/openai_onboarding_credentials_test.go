@@ -93,7 +93,8 @@ func TestBatchOAuthSavesEncryptedLoginAndSameAccount401Reauthorization(t *testin
 	const totp = "JBSWY3DPEHPK3PXP"
 	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"OWNER@example.test","password":"`+password+`","totp_secret":"`+totp+`","name":"saved account","concurrency":7,"priority":9,"idempotency_key":"saved-login-operation-1"}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	id := f.requests[0]["task_id"].(string)
+	id, ok := f.requests[0]["task_id"].(string)
+	require.True(t, ok)
 	task := f.h.batchOAuthStore.tasks[id]
 	require.NotContains(t, task.loginPasswordEncrypted, password)
 	require.NotContains(t, task.loginTOTPEncrypted, totp)

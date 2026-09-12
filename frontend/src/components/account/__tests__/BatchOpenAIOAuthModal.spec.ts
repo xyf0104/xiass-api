@@ -37,17 +37,16 @@ describe('batch OAuth modal', () => {
     expect(wrapper.find('[data-testid="batch-credentials"]').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('MyPrivatePassword')
   })
-  it('does not claim a number until the XIASS confirmation button is clicked', async () => {
+  it('automatically claims a number for the isolated batch workflow', async () => {
     vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [task('phone_required')], max_concurrency: 3, max_restarts: 2 })
-    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({ task: task('sms_waiting'), sms: { number: '+12025550123', status: 'waiting', expires_at: '' } })
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (_id, action) => action === 'check'
+      ? { task: task('phone_required'), sms: null }
+      : { task: task('sms_waiting'), sms: { number: '+12025550123', status: 'waiting', expires_at: '' } })
     await render()
-    const acquire = wrapper.findAll('button').find(b => b.text() === '领取号码')!
-    await acquire.trigger('click')
-    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
-    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('person@example.test')
-    await wrapper.get('[data-testid="confirm"]').trigger('click')
     await flushPromises()
-    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('task-00000000000001', 'acquire')
+    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(1, 'task-00000000000001', 'check')
+    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(2, 'task-00000000000001', 'acquire')
+    expect(wrapper.find('[data-testid="confirmation"]').exists()).toBe(false)
   })
   it('disables start with invalid 2FA or malformed rows instead of partially importing', async () => {
     await render()

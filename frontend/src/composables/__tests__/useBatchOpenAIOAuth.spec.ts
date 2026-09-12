@@ -32,6 +32,12 @@ beforeEach(() => {
     return result
   })
   vi.mocked(batchOAuthAPI.cancel).mockImplementation(async id => ({ ...server.find(t => t.task_id === id)!, status: 'canceled', stage: 'canceled' }))
+  vi.mocked(batchOAuthAPI.restart).mockImplementation(async id => {
+    const index = server.findIndex(t => t.task_id === id)
+    const result = { ...server[index], status: 'running' as const, stage: 'login', reason: undefined, restart_count: server[index].restart_count + 1 }
+    if (index >= 0) server[index] = result
+    return result
+  })
 })
 afterEach(() => { scope?.stop(); vi.useRealTimers() })
 
@@ -61,11 +67,18 @@ describe('batch OAuth orchestration', () => {
     expect(JSON.stringify(c.rows.value)).not.toContain('password-')
     expect(JSON.stringify(c.rows.value)).not.toContain('JBSWY3')
   })
-  it('never automatically acquires numbers and routes each SMS check to its own task', async () => {
+  it('automatically acquires an independent number and routes each SMS check to its own task', async () => {
     server = [{ ...task('first'), stage: 'phone_required' }, { ...task('second', 'other@example.test'), stage: 'sms_waiting' }]
-    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({ task: server[1], sms: { status: 'waiting', number: '+12025550100', expires_at: '' } })
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (id, action) => {
+      const current = server.find(t => t.task_id === id)!
+      if (id === 'first' && action === 'check') return { task: current, sms: null }
+      const result = { ...current, stage: 'sms_waiting' }
+      return { task: result, sms: { status: 'waiting', number: id === 'first' ? '+12025550101' : '+12025550102', expires_at: '' } }
+    })
     await setup()
-    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('second', 'check')
+    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(1, 'first', 'check')
+    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(2, 'first', 'acquire')
+    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(3, 'second', 'check')
     expect(batchOAuthAPI.create).not.toHaveBeenCalled()
   })
   it('keeps ambiguous starts occupying slots and retries with the original idempotency key', async () => {
@@ -80,7 +93,7 @@ describe('batch OAuth orchestration', () => {
     expect(vi.mocked(batchOAuthAPI.create).mock.calls[3][0].idempotency_key).toBe(key)
     expect(c.activeCount.value).toBe(3)
   })
-  it('stops pending work without creating it and does not restart blocked accounts', async () => {
+  it('stops pending work without creating it', async () => {
     const c = await setup()
     c.start(credentials, settings)
     await flushPromises()
@@ -88,8 +101,18 @@ describe('batch OAuth orchestration', () => {
     expect(batchOAuthAPI.create).toHaveBeenCalledTimes(3)
     expect(batchOAuthAPI.cancel).toHaveBeenCalledTimes(3)
     expect(c.hasWork.value).toBe(false)
-    await c.retry({ key: 'blocked', email: '', task: task('blocked', '', 'blocked') }, { password: 'secret', totp_secret: '' })
-    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
+  })
+  it('cleans and restarts a blocked temporary OAuth task once without adding another row', async () => {
+    server = [{ ...task('blocked', 'person@example.test', 'blocked'), reason: 'captcha_required' }]
+    vi.mocked(batchOAuthAPI.restart).mockImplementation(async id => {
+      server[0] = { ...server[0], task_id: id, restart_count: 1 }
+      return server[0]
+    })
+    const c = await setup()
+    expect(batchOAuthAPI.restart).toHaveBeenCalledExactlyOnceWith('blocked', undefined)
+    expect(c.rows.value).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(1)
   })
   it('stops polling and clears secrets on dispose, including a late request result', async () => {
     const c = await setup()

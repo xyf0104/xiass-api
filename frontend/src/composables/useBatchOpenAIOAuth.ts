@@ -10,6 +10,18 @@ export interface OAuthQueueRow {
   localStatus?: 'pending' | 'starting' | 'uncertain' | 'canceled'
   error?: string
   number?: string
+  automaticState?: string
+  automaticAfter?: number
+}
+
+const automaticRestartLimits: Record<string, number> = {
+  sms_timeout: 2,
+  sms_confirmation_timeout: 2,
+  task_expired: 2,
+  captcha_required: 1,
+  email_code_required: 1,
+  account_blocked: 1,
+  manual_challenge: 1,
 }
 
 export function batchTaskActive(task?: BatchOAuthTask) {
@@ -55,6 +67,16 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     } finally { busyKeys.value.delete(row.key) }
   }
 
+  async function automatic(row: OAuthQueueRow, state: string, action: () => Promise<void>) {
+    if (row.automaticState !== state) {
+      row.automaticState = state
+      row.automaticAfter = 0
+    }
+    if ((row.automaticAfter || 0) > Date.now()) return
+    row.automaticAfter = Date.now() + 10000
+    await action()
+  }
+
   async function create(row: OAuthQueueRow) {
     const login = secrets.get(row.key)
     if (!config || !login || disposed) return
@@ -93,6 +115,19 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
         if (!row.task || busyKeys.value.has(row.key)) continue
         if (row.task.status === 'ready' && !row.error) {
           await operation(row, async () => update(row, await batchOAuthAPI.complete(row.task!.task_id)))
+        } else if (['failed', 'blocked'].includes(row.task.status)
+          && row.task.restart_count < (automaticRestartLimits[row.task.reason || ''] || 0)
+          && !row.task.account_id) {
+          const state = `restart:${row.task.restart_count}:${row.task.reason}`
+          await automatic(row, state, async () => retry(row))
+        } else if (row.task.status === 'running' && row.task.stage === 'phone_required') {
+          if (row.task.reason === 'phone_rejected') {
+            const state = `change:${row.task.restart_count}:${row.number || ''}`
+            await automatic(row, state, async () => sms(row, 'change'))
+          } else if (!row.number) {
+            const state = `acquire:${row.task.restart_count}`
+            await automatic(row, state, async () => ensurePhone(row))
+          }
         } else if (row.task.status === 'running' && row.task.stage === 'sms_waiting') {
           await pollSMS(row)
         }
@@ -137,6 +172,20 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     })
   }
 
+  async function ensurePhone(row: OAuthQueueRow) {
+    if (!row.task) return
+    await operation(row, async () => {
+      let result = await batchOAuthAPI.sms(row.task!.task_id, 'check')
+      update(row, result.task)
+      row.number = result.sms?.number
+      if (!result.sms?.number && row.task?.status === 'running' && row.task.stage === 'phone_required') {
+        result = await batchOAuthAPI.sms(row.task.task_id, 'acquire')
+        update(row, result.task)
+        row.number = result.sms?.number
+      }
+    })
+  }
+
   async function sms(row: OAuthQueueRow, action: 'acquire' | 'change' | 'cancel') {
     if (!row.task) return
     await operation(row, async () => {
@@ -172,7 +221,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   async function retry(row: OAuthQueueRow, login?: BatchOAuthLogin) {
     if (activeCount.value >= 3 && row.localStatus !== 'uncertain') return
     if (row.localStatus === 'uncertain') return create(row)
-    if (!row.task || row.task.account_id || row.task.status === 'blocked' || row.task.restart_count >= 2) return
+    if (!row.task || row.task.account_id || row.task.restart_count >= 2) return
     await operation(row, async () => {
       update(row, await batchOAuthAPI.restart(row.task!.task_id, login))
       row.number = undefined
