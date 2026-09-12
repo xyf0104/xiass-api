@@ -53,7 +53,7 @@ class Page extends EventEmitter {
   async goto(url) {
     this.location = url
     this.state = new URL(url).searchParams.get('state')
-    if (this.plan.gotoError) throw new Error('SECRET browser failure')
+    if (this.plan.gotoError) throw new Error(this.plan.gotoErrorMessage || 'SECRET browser failure')
   }
   navigate(url, { main = true, navigation = true } = {}) {
     this.emit('request', { url: () => url, isNavigationRequest: () => navigation, frame: () => main ? this.frame : {} })
@@ -96,6 +96,7 @@ function harness(plans = [], overrides = {}) {
   }
   const helpers = {
     now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+    stepDelayMs: 0,
     async inspectPage(page) { return { kind: page.kind, email: page.plan.identity } },
     async fillWorkflowEmail(page, value) { page.calls.push(['email', value]); page.kind = 'password' },
     async fillLoginPassword(page, value) {
@@ -198,7 +199,7 @@ test('authenticator-only login and workspace capture callback request before nav
   await flush()
   const result = h.runner.get('totp', 1)
   assert.equal(result.status, 'completed')
-  assert.equal(result.stage, 'callback')
+  assert.equal(result.stage, 'callback_received')
   assert.equal(result.callback_url, callback('state-totp'))
   assert.deepEqual(h.contexts[0].page.calls, [['email', 'totp@example.com'], ['password', 'password-totp'], ['totp', '287082'], ['workspace']])
   assert.equal(h.contexts[0].closed, true)
@@ -471,7 +472,7 @@ test('page acquisition failure is sanitized and cleanup failure does not free a 
   await h.runner.start(body('b'))
   await h.runner.start(body('c'))
   await flush()
-  assert.equal(h.runner.get('a', 1).reason, 'manual_challenge')
+  assert.equal(h.runner.get('a', 1).reason, 'browser_context_lost')
   assert.doesNotMatch(JSON.stringify(h.runner.get('a', 1)), /SECRET/)
   // Cleanup may retry once immediately when stop() and finally share a close.
   await h.clock.advance(1000)
@@ -481,6 +482,35 @@ test('page acquisition failure is sanitized and cleanup failure does not free a 
   await flush()
   assert.equal(h.maxLive(), 3)
   await stopAll(h, [['b', 1], ['c', 1], ['d', 1]])
+})
+
+test('proxy and navigation failures expose only a precise sanitized reason', async () => {
+  const proxy = harness([{ gotoError: true, gotoErrorMessage: 'page.goto: net::ERR_PROXY_CONNECTION_FAILED at SECRET' }])
+  await proxy.runner.start(body())
+  await flush()
+  assert.equal(proxy.runner.get('task-1', 1).reason, 'proxy_unavailable')
+  assert.doesNotMatch(JSON.stringify(proxy.runner.get('task-1', 1)), /SECRET/)
+
+  const timeout = harness([{ gotoError: true, gotoErrorMessage: 'page.goto: Timeout 30000ms exceeded SECRET' }])
+  await timeout.runner.start(body())
+  await flush()
+  assert.equal(timeout.runner.get('task-1', 1).reason, 'navigation_timeout')
+  assert.doesNotMatch(JSON.stringify(timeout.runner.get('task-1', 1)), /SECRET/)
+})
+
+test('normal automated login steps are paced one second apart', async () => {
+  const h = harness([{ afterPassword: 'totp' }], { helpers: { stepDelayMs: 1000 } })
+  await h.runner.start(body('paced', 1, { totp_secret: SECRET }))
+  await flush()
+  assert.equal(h.runner.get('paced', 1).stage, 'opening')
+  assert.deepEqual(h.contexts[0].page.calls, [])
+  await h.clock.advance(999)
+  assert.deepEqual(h.contexts[0].page.calls, [])
+  await h.clock.advance(1)
+  assert.deepEqual(h.contexts[0].page.calls, [['email', 'paced@example.com']])
+  await h.clock.advance(1000)
+  assert.deepEqual(h.contexts[0].page.calls.slice(0, 2), [['email', 'paced@example.com'], ['password', 'password-paced']])
+  await h.runner.cancel('paced', 1)
 })
 
 test('validation rejects unsafe URL, malformed inputs and proxy credentials without browser work', async () => {

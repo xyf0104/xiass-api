@@ -550,8 +550,8 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
-    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
+    <CreateAccountModal v-if="showCreate" :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
+    <EditAccountModal v-if="showEdit" :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
@@ -602,6 +602,7 @@
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
+      v-if="showBulkEdit"
       :show="showBulkEdit"
       :account-ids="selIds"
       :selected-platforms="selPlatforms"
@@ -647,7 +648,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
+import { SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
@@ -656,8 +657,7 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import PelicanBenchmarkModal from '@/components/account/PelicanBenchmarkModal.vue'
-const BatchOpenAIOAuthModal = defineAsyncComponent(() => import('@/components/account/BatchOpenAIOAuthModal.vue'))
-const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
+import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import OAuthBillingBreakdownDialog, { type OAuthBillingInitialRange } from '@/components/admin/account/OAuthBillingBreakdownDialog.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
@@ -685,6 +685,14 @@ import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
+
+const loadCreateAccountModal = () => import('@/components/account/CreateAccountModal.vue')
+const loadEditAccountModal = () => import('@/components/account/EditAccountModal.vue')
+const loadBulkEditAccountModal = () => import('@/components/account/BulkEditAccountModal.vue')
+const CreateAccountModal = defineAsyncComponent(loadCreateAccountModal)
+const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
+const BulkEditAccountModal = defineAsyncComponent(loadBulkEditAccountModal)
+const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
 
 const { t } = useI18n()
 const appStore = useAppStore()

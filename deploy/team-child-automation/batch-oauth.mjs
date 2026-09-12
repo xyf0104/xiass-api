@@ -6,10 +6,13 @@ const CALLBACK = 'http://localhost:1455/auth/callback'
 const SMS_TIMEOUT = 180_000
 const PHONE_CONFIRMATION_TIMEOUT = 5 * 60_000
 const TTL = 15 * 60_000
+const STEP_DELAY = 1_000
 export const BATCH_OAUTH_REASONS = Object.freeze([
   '', 'sms_timeout', 'sms_confirmation_timeout', 'email_code_required',
   'captcha_required', 'account_blocked', 'manual_challenge', 'task_expired',
-  'invalid_credentials', 'authenticator_required', 'phone_rejected'
+  'invalid_credentials', 'authenticator_required', 'phone_rejected',
+  'proxy_unavailable', 'navigation_timeout', 'browser_context_lost',
+  'page_interaction_failed', 'invalid_totp', 'invalid_sms_code'
 ])
 const reasons = new Set(BATCH_OAUTH_REASONS)
 
@@ -55,6 +58,18 @@ function ownerKey(owner) {
   throw fail('not_found', 404)
 }
 
+function automationFailureReason(error, stage) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  if (/ERR_(?:PROXY|SOCKS|TUNNEL)_|ECONNREFUSED|proxy[^\n]*(?:failed|refused|unavailable|unreachable)/i.test(message)) {
+    return 'proxy_unavailable'
+  }
+  if (stage === 'opening' && /timeout|ERR_TIMED_OUT/i.test(message)) return 'navigation_timeout'
+  if (/target page[^\n]*closed|browser[^\n]*closed|context[^\n]*closed|new page/i.test(message)) {
+    return 'browser_context_lost'
+  }
+  return 'page_interaction_failed'
+}
+
 function proxyOptions(value) {
   if (value == null) return undefined
   try {
@@ -85,6 +100,8 @@ async function firstVisible(locator) {
 }
 
 const defaults = {
+  stepDelayMs: STEP_DELAY,
+  onProgress() {},
   async oauthBody(page) { return (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim() },
   async firstVisibleInput(page, matcher) {
     const inputs = page.locator('input')
@@ -159,7 +176,7 @@ export class BatchOAuthRunner {
     if (this.#tasks.has(body.task_id)) throw fail('task_exists')
     if (this.#slots >= 3) throw fail('capacity', 429)
     const task = {
-      id: body.task_id, owner_id: body.owner_id, owner, status: 'running', stage: 'login', reason: '',
+      id: body.task_id, owner_id: body.owner_id, owner, status: 'running', stage: 'opening', reason: '',
       authURL: auth.toString(), state: auth.searchParams.get('state'),
       email: body.email.toLowerCase(), password: body.password, secret, proxy,
       rejected: new Set(), phone: '', pending: null, busy: false,
@@ -168,6 +185,7 @@ export class BatchOAuthRunner {
     }
     this.#tasks.set(task.id, task)
     this.#slots++
+    this.#report(task)
     task.ttlTimer = this.#timer(() => this.#expire(task), TTL)
     void this.#run(task)
     return this.#summary(task)
@@ -231,6 +249,10 @@ export class BatchOAuthRunner {
     return timer
   }
 
+  #report(task) {
+    this.#h.onProgress({ id: task.id, status: task.status, stage: task.stage, reason: task.reason })
+  }
+
   #checkTimeout(task) {
     if (task.status !== 'running') return true
     if (this.#h.now() >= task.expiresAt) {
@@ -259,6 +281,7 @@ export class BatchOAuthRunner {
     if (task.stageDeadline) {
       task.stageTimer = this.#timer(() => this.#checkTimeout(task), Math.max(0, task.stageDeadline - this.#h.now()))
     }
+    this.#report(task)
   }
 
   #expire(task) {
@@ -276,6 +299,7 @@ export class BatchOAuthRunner {
     task.pending = null
     this.#h.clearTimeout(task.stageTimer)
     task.stageDeadline = 0
+    this.#report(task)
     task.wake?.()
     if (task.context) void this.#close(task)
   }
@@ -303,6 +327,11 @@ export class BatchOAuthRunner {
     })
   }
 
+  async #stepPause(task) {
+    const delay = Number(this.#h.stepDelayMs)
+    if (task.status === 'running' && Number.isFinite(delay) && delay > 0) await this.#pause(task, delay)
+  }
+
   #callback(task, raw) {
     if (task.status !== 'running') return false
     if (this.#checkTimeout(task)) return true
@@ -320,7 +349,7 @@ export class BatchOAuthRunner {
       return true
     }
     task.callback = url.toString()
-    task.stage = 'callback'
+    this.#stage(task, 'callback_received')
     this.#stop(task, 'completed', '')
     return true
   }
@@ -344,8 +373,9 @@ export class BatchOAuthRunner {
     const inputs = await this.#h.verificationInputs(page)
     if (/check your (?:email|inbox)|code (?:we |was )?sent to (?:your )?email|verify your email|邮箱验证码/i.test(body)) return { kind: 'email_code' }
     if (inputs.length) {
-      if (isAuthenticatorChallenge(body, inputs)) return { kind: 'totp' }
-      if (/text message|\bsms\b|phone|mobile|短信/i.test(body)) return { kind: 'sms_code' }
+      const invalidCode = /incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)/i.test(body)
+      if (isAuthenticatorChallenge(body, inputs)) return { kind: invalidCode ? 'invalid_totp' : 'totp' }
+      if (/text message|\bsms\b|phone|mobile|短信/i.test(body)) return { kind: invalidCode ? 'invalid_sms_code' : 'sms_code' }
       return { kind: 'email_code' }
     }
     if (/phone.*(?:invalid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)/i.test(body)) return { kind: 'phone_rejected' }
@@ -427,6 +457,7 @@ export class BatchOAuthRunner {
       }
       page.on('request', requestListener)
       await page.goto(task.authURL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await this.#stepPause(task)
       while (task.status === 'running') {
         if (this.#checkTimeout(task)) break
         if (this.#callback(task, page.url())) break
@@ -436,12 +467,14 @@ export class BatchOAuthRunner {
         if (!this.#trustedPage(task)) { this.#stop(task, 'blocked', 'manual_challenge'); break }
         if (state.email && state.email.toLowerCase() !== task.email) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
         const manual = { captcha: 'captcha_required', email_code: 'email_code_required', account_blocked: 'account_blocked',
-          invalid_credentials: 'invalid_credentials', signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
+          invalid_credentials: 'invalid_credentials', invalid_totp: 'invalid_totp', invalid_sms_code: 'invalid_sms_code',
+          signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
         if (manual) { this.#stop(task, 'blocked', manual); break }
         if (state.kind === 'phone_rejected') {
           if (task.phone) task.rejected.add(task.phone)
           this.#stage(task, 'phone_required')
           task.reason = 'phone_rejected'
+          this.#report(task)
         } else if (state.kind === 'phone' && !task.phone) this.#stage(task, 'phone_required')
         else if (state.kind === 'sms_code') {
           if (!task.phone) { this.#stop(task, 'blocked', 'manual_challenge'); break }
@@ -453,13 +486,17 @@ export class BatchOAuthRunner {
           task.busy = true
           try {
             if (input.kind === 'phone' && ['phone', 'phone_rejected'].includes(state.kind)) {
+              this.#stage(task, 'phone_submitting')
               task.phone = input.value
               task.smsDeadline = 0
               task.reason = ''
               await this.#submitPhone(page, input.value)
+              await this.#stepPause(task)
               if (!this.#checkTimeout(task)) this.#stage(task, 'sms_waiting')
             } else if (input.kind === 'sms' && state.kind === 'sms_code') {
+              this.#stage(task, 'sms_submitting')
               await this.#code(page, input.value)
+              await this.#stepPause(task)
             } else throw fail('manual_challenge')
           } catch {
             if (task.status === 'running' && this.#trustedPage(task)
@@ -467,6 +504,7 @@ export class BatchOAuthRunner {
               task.rejected.add(task.phone)
               this.#stage(task, 'phone_required')
               task.reason = 'phone_rejected'
+              this.#report(task)
             } else throw fail('manual_challenge')
           } finally {
             input.value = ''
@@ -496,13 +534,15 @@ export class BatchOAuthRunner {
           if (state.kind === 'workspace') {
             if (!task.emailSubmitted) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
             await this.#workspace(page)
+            if (task.status === 'running') this.#stage(task, 'callback_waiting')
           }
+          await this.#stepPause(task)
           continue
         }
         await this.#pause(task)
       }
-    } catch {
-      this.#stop(task, 'failed', 'manual_challenge')
+    } catch (error) {
+      this.#stop(task, 'failed', automationFailureReason(error, task.stage))
     } finally {
       if (requestListener) task.page?.off('request', requestListener)
       // Acquisition is deliberately not raced against cancellation. A late

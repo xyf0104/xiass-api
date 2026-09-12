@@ -39,25 +39,55 @@
 
       <section v-if="rows.length" class="border-t border-gray-200 dark:border-dark-700">
         <header class="flex flex-wrap items-center justify-between gap-3 py-3">
-          <h3 class="text-sm font-semibold">授权任务</h3>
-          <span class="text-xs text-gray-600 dark:text-gray-300">进行中 {{ activeCount }}/3 · 待开始 {{ pendingCount }} · 已完成 {{ completedCount }}</span>
+          <div>
+            <h3 class="text-sm font-semibold">授权任务</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">共 {{ rows.length }} 个 · 进行中 {{ activeCount }}/3 · 待开始 {{ pendingCount }} · 成功 {{ completedCount }} · 失败 {{ failedCount }}</p>
+          </div>
+          <div v-if="retryableRows.length" class="flex flex-wrap items-center gap-3">
+            <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+              <input type="checkbox" class="h-4 w-4 accent-primary-600" :checked="allRetryableSelected" @change="toggleAllRetryable">
+              全选失败
+            </label>
+            <button class="btn btn-primary btn-sm" :disabled="selectedRetryCount === 0 || busyKeys.size > 0" @click="ask('retrySelected')">
+              <Icon name="refresh" size="sm" />重新授权所选<span v-if="selectedRetryCount">（{{ selectedRetryCount }}）</span>
+            </button>
+          </div>
         </header>
+        <div v-if="batchFinished" class="border-t border-gray-100 py-3 text-sm dark:border-dark-700" role="status">
+          <p class="font-medium" :class="failedCount ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'">
+            本批次已结束：成功 {{ completedCount }} 个，失败 {{ failedCount }} 个。
+          </p>
+          <p v-if="failedEmails.length" class="mt-1 break-words text-xs text-red-600 dark:text-red-300">失败账号：{{ failedEmails.join('、') }}</p>
+        </div>
         <div class="max-h-[48vh] overflow-y-auto">
-          <article v-for="row in rows" :key="row.key" class="grid gap-2 border-t border-gray-100 py-3 dark:border-dark-700 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" :data-testid="`oauth-row-${row.email}`">
+          <article v-for="row in rows" :key="row.key" class="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2 border-t border-gray-100 py-3 dark:border-dark-700 sm:grid-cols-[1.25rem_minmax(0,0.85fr)_minmax(0,1.4fr)_auto]" :data-testid="`oauth-row-${row.email}`">
+            <div class="pt-0.5">
+              <input v-if="canRetry(row)" type="checkbox" class="h-4 w-4 accent-primary-600" :aria-label="`选择重新授权 ${row.email}`" :checked="selectedRetryKeys.has(row.key)" @change="toggleRetry(row)">
+            </div>
             <div class="min-w-0">
               <div class="break-all text-sm font-medium">{{ row.email }}</div>
               <div v-if="row.task?.account_id" class="mt-1 text-xs text-gray-500">账号 #{{ row.task.account_id }}</div>
               <div v-if="row.number" class="mt-1 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ row.number }}</div>
             </div>
-            <div class="min-w-0 text-sm" :class="row.task?.status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
-              <div aria-live="polite">{{ statusText(row) }}</div>
-              <p v-if="row.error || row.task?.reason" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task?.reason) }}</p>
+            <div class="col-span-2 min-w-0 text-sm sm:col-span-1" :class="row.task?.status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span aria-live="polite">{{ statusText(row) }}</span>
+                <span class="shrink-0 text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ elapsedText(row) }}</span>
+              </div>
+              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600" aria-hidden="true">
+                <div class="h-full rounded-full transition-[width] duration-300" :class="progressClass(row)" :style="{ width: `${progressPercent(row)}%` }" />
+              </div>
+              <div class="mt-1 flex flex-wrap justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+                <span>第 {{ progressStep(row) }}/{{ flowStepCount }} 步 · {{ stageText(row) }}</span>
+                <span v-if="row.task?.restart_count">已重新授权 {{ row.task.restart_count }} 次</span>
+              </div>
+              <p v-if="row.error || row.task?.reason" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task) }}</p>
             </div>
-            <div class="flex flex-wrap items-start justify-end gap-2">
+            <div class="col-span-2 flex flex-wrap items-start justify-end gap-2 sm:col-span-1">
               <button v-if="row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
               <button v-if="row.task?.status === 'ready' && row.error" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="complete(row)">核验并添加</button>
-              <button v-if="canRetry(row)" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重试</button>
-              <button v-if="batchTaskActive(row.task) || row.localStatus === 'pending' || row.localStatus === 'uncertain'" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('stop', row)"><Icon name="x" size="sm" />停止</button>
+              <button v-if="canRetry(row)" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重新授权</button>
+              <button v-if="batchTaskActive(row.task) || row.localStatus === 'pending' || row.localStatus === 'uncertain' || row.retryPending" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('stop', row)"><Icon name="x" size="sm" />停止</button>
               <button v-else-if="row.task?.requires_sms_confirmation" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('cancel', row)">取消接码</button>
             </div>
           </article>
@@ -86,10 +116,10 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { apiClient } from '@/api/client'
 import type { AdminGroup, Proxy } from '@/types'
-import type { BatchOAuthConfig } from '@/api/admin/openaiBatchOAuth'
+import type { BatchOAuthConfig, BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
-import { useBatchOpenAIOAuth, batchTaskActive, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
+import { useBatchOpenAIOAuth, batchTaskActive, batchTaskWillAutoRestart, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
 
 defineProps<{ show: boolean; groups: AdminGroup[]; proxies: Proxy[] }>()
 const emit = defineEmits<{ close: []; created: [] }>()
@@ -127,15 +157,29 @@ const poolOptions = computed(() => [{ value: null, label: '不加入号池' }, .
 const effectiveProxy = computed(() => settings.pool_id === null ? settings.proxy_id : pools.value.find(p => p.id === settings.pool_id)?.proxy_id ?? null)
 const fingerprintOptions = [{ value: 'off', label: '关闭' }, { value: 'device', label: '设备' }, { value: 'session', label: '会话' }, { value: 'full', label: '完整' }]
 const completedCount = computed(() => rows.value.filter(row => row.task?.status === 'completed').length)
-type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry'
+const failedRows = computed(() => rows.value.filter(row => row.task && ['failed', 'blocked'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task) && !row.retryPending))
+const failedCount = computed(() => failedRows.value.length)
+const failedEmails = computed(() => failedRows.value.map(row => row.email))
+const batchFinished = computed(() => rows.value.length > 0 && !hasWork.value)
+const selectedRetryKeys = ref(new Set<string>())
+const retryableRows = computed(() => rows.value.filter(canRetry))
+const selectedRetryRows = computed(() => retryableRows.value.filter(row => selectedRetryKeys.value.has(row.key)))
+const selectedRetryCount = computed(() => selectedRetryRows.value.length)
+const allRetryableSelected = computed(() => retryableRows.value.length > 0 && selectedRetryCount.value === retryableRows.value.length)
+const flowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
+const flowStepCount = flowStages.length
+const now = ref(Date.now())
+let elapsedTimer: ReturnType<typeof setInterval> | undefined
+type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry' | 'retrySelected'
 const confirmation = ref<{ action: Action; row?: OAuthQueueRow }>()
-const confirmationTitle = computed(() => ({ acquire: '确认领取号码', change: '确认更换号码', cancel: '确认取消接码', stop: '确认停止授权', stopAll: '确认停止全部', close: '停止任务并关闭', retry: '重新授权' })[confirmation.value?.action || 'stop'])
+const confirmationTitle = computed(() => ({ acquire: '确认领取号码', change: '确认更换号码', cancel: '确认取消接码', stop: '确认停止授权', stopAll: '确认停止全部', close: '停止任务并关闭', retry: '重新授权', retrySelected: '批量重新授权' })[confirmation.value?.action || 'stop'])
 const confirmationMessage = computed(() => {
   const email = confirmation.value?.row?.email || ''
   switch (confirmation.value?.action) {
     case 'acquire': return `为 ${email} 领取独立接码号码？`
     case 'change': return `取消 ${email} 当前号码并领取新号码？`
     case 'retry': return `重新处理 ${email}。如有未结束的接码，将先取消；授权会在新的独立窗口中开始。`
+    case 'retrySelected': return `重新授权已选择的 ${selectedRetryCount.value} 个失败账号。每个账号继续使用独立隐私窗口，最多同时运行 3 个。`
     case 'cancel': return `取消 ${email} 当前接码？`
     case 'close': case 'stopAll': return '停止所有未完成的授权并取消对应接码。已添加成功的账号不受影响。'
     default: return `停止 ${email} 的授权并取消对应接码？`
@@ -156,27 +200,75 @@ async function confirmAction() {
   if (current.action === 'stopAll' || current.action === 'close') {
     await cancelAll()
     if (current.action === 'close' && !hasWork.value) emit('close')
+  } else if (current.action === 'retrySelected') {
+    for (const row of selectedRetryRows.value) await retry(row)
+    selectedRetryKeys.value = new Set()
   } else if (current.row) {
     if (current.action === 'stop') await cancel(current.row)
     else if (current.action === 'retry') await retry(current.row)
     else await sms(current.row, current.action)
   }
 }
-function canRetry(row: OAuthQueueRow) { return row.localStatus === 'uncertain' || (!!row.task && ['failed', 'blocked', 'canceled'].includes(row.task.status) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review') }
+function canRetry(row: OAuthQueueRow) { return !row.retryPending && (row.localStatus === 'uncertain' || (!!row.task && ['failed', 'blocked', 'canceled'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task) && !row.task.account_id && row.task.restart_count < 2 && row.task.reason !== 'account_creation_requires_review')) }
+function toggleRetry(row: OAuthQueueRow) {
+  const next = new Set(selectedRetryKeys.value)
+  if (next.has(row.key)) next.delete(row.key)
+  else next.add(row.key)
+  selectedRetryKeys.value = next
+}
+function toggleAllRetryable() {
+  selectedRetryKeys.value = allRetryableSelected.value ? new Set() : new Set(retryableRows.value.map(row => row.key))
+}
 function statusText(row: OAuthQueueRow) {
+  if (row.retryPending) return '等待重新授权'
   if (row.localStatus) return { pending: '待开始', starting: '正在启动', uncertain: '启动结果待核验', canceled: '已停止' }[row.localStatus]
   const task = row.task
   if (!task) return ''
-  if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加', failed: '未完成', blocked: '需要人工处理', canceled: '已停止' }[task.status] || task.status
-  return ({ login: '正在登录', email: '输入邮箱', password: '输入密码', totp: '验证 2FA', phone_required: '等待领取手机号', sms_waiting: '等待短信验证码', workspace: '确认工作空间', callback: '正在完成授权' } as Record<string, string>)[task.stage] || '正在授权'
+  if (batchTaskWillAutoRestart(task)) {
+    const seconds = Math.max(0, Math.ceil(((row.automaticAfter || now.value) - now.value) / 1000))
+    return seconds > 0 ? `将在 ${seconds} 秒后自动重新授权` : '正在重新启动授权'
+  }
+  if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加成功', failed: '授权失败', blocked: '授权失败', canceled: '已停止' }[task.status] || task.status
+  return ({ opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
 }
-function reasonText(reason?: string) {
-  return ({ sms_timeout: '短信等待超过 3 分钟，系统将取消旧号码并从头重新授权。', sms_confirmation_timeout: '领号阶段超时，系统将清理本次会话并重新授权。', oauth_identity_mismatch: '返回的账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '创建结果需要人工核对，已禁止重复创建。', account_readback_failed: '账号已创建，读取核验未成功，请刷新后核对。', account_configuration_mismatch: '已保存的配置与本次选择不一致，请核对原账号，勿重复添加。', account_login_credentials_mismatch: '登录信息保存核验未通过，请核对原账号。', automation_start_failed: '授权浏览器未确认启动。', invalid_configuration: '账号配置不可用，请核对分组与代理。', oauth_exchange_failed: '授权交换失败。', manual_challenge: '上游页面异常，系统会清理临时会话并重新尝试一次。', email_code_required: '上游要求邮件验证码，系统会使用新会话重新尝试一次。', captcha_required: '上游出现人机验证，系统会关闭当前会话并重新尝试一次。', account_blocked: '上游限制了当前账号，系统会以新会话复核一次。', authenticator_required: '上游要求 2FA，但未提供有效密钥。', invalid_credentials: '邮箱、密码或账号身份未通过验证。', phone_rejected: '上游拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权已超时，系统将重新创建授权会话。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
+function reasonText(task?: BatchOAuthTask) {
+  const reason = task?.reason
+  return ({ sms_timeout: '短信等待超过 3 分钟，已取消旧号码并准备从 OAuth 起点重新授权。', sms_confirmation_timeout: '领号阶段超时，已清理当前隐私会话。', oauth_identity_mismatch: 'OAuth 返回账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '账号创建结果不确定，已禁止重复创建，请核对账号列表。', account_readback_failed: '账号已创建，但读取核验失败。', account_configuration_mismatch: '账号已创建，但分组、代理、并发、优先级或指纹配置不一致。', account_login_credentials_mismatch: '账号已创建，但邮箱、密码或 2FA 的加密保存核验失败。', automation_start_failed: '授权浏览器没有确认启动。', invalid_configuration: '分组、号池或代理配置不可用。', oauth_exchange_failed: 'OAuth 回调已收到，但换取 Token 失败。', manual_challenge: 'OpenAI 页面结构无法识别，当前隐私会话已关闭。', email_code_required: 'OpenAI 要求邮件验证码，当前自动流程无法安全读取该验证码。', captcha_required: 'OpenAI 出现人机验证，当前隐私会话已关闭。', account_blocked: 'OpenAI 限制了当前账号。', authenticator_required: 'OpenAI 要求验证器验证码，但没有可用的 2FA 密钥。', invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。', invalid_totp: 'OpenAI 拒绝了当前 2FA 验证码，请检查密钥与服务器时间。', invalid_sms_code: 'OpenAI 拒绝了短信验证码。', proxy_unavailable: '所选出口代理无法从授权浏览器连接。', navigation_timeout: '打开 OpenAI OAuth 页面超时。', browser_context_lost: '独立隐私浏览器上下文意外关闭。', page_interaction_failed: 'OpenAI 页面控件操作失败或页面结构发生变化。', phone_rejected: 'OpenAI 拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权总时长已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
+}
+function normalizedStage(row: OAuthQueueRow) {
+  if (row.localStatus) return 'opening'
+  if (row.task?.status === 'ready') return 'verify'
+  if (row.task?.status === 'completed') return 'verify'
+  const stage = row.task?.stage || 'opening'
+  if (['login', 'email'].includes(stage)) return 'email'
+  if (['phone_required', 'phone_submitting'].includes(stage)) return 'phone'
+  if (['sms_waiting', 'sms_submitting'].includes(stage)) return 'sms'
+  if (['callback_waiting', 'callback_received'].includes(stage)) return 'callback'
+  return flowStages.includes(stage as typeof flowStages[number]) ? stage as typeof flowStages[number] : 'opening'
+}
+function progressStep(row: OAuthQueueRow) { return Math.max(1, flowStages.indexOf(normalizedStage(row)) + 1) }
+function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'completed' ? 100 : Math.round((progressStep(row) / flowStepCount) * 100) }
+function progressClass(row: OAuthQueueRow) {
+  if (row.task?.status === 'completed') return 'bg-emerald-500'
+  if (row.retryPending) return 'bg-primary-500'
+  if (row.task && ['failed', 'blocked'].includes(row.task.status) && !batchTaskWillAutoRestart(row.task)) return 'bg-red-500'
+  return 'bg-primary-500'
+}
+function stageText(row: OAuthQueueRow) {
+  return ({ opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
+}
+function elapsedText(row: OAuthQueueRow) {
+  const startedAt = Date.parse(row.task?.created_at || '')
+  if (!Number.isFinite(startedAt)) return '0 秒'
+  const finishedAt = Date.parse(row.task?.finished_at || '')
+  const end = Number.isFinite(finishedAt) ? finishedAt : now.value
+  return `${Math.max(0, Math.floor((end - startedAt) / 1000))} 秒`
 }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasWork.value) { event.preventDefault(); event.returnValue = '' } }
 onMounted(async () => {
   window.addEventListener('beforeunload', beforeUnload)
+  elapsedTimer = setInterval(() => { now.value = Date.now() }, 1000)
   try { pools.value = (await apiClient.get<{ items: typeof pools.value }>('/admin/account-pools')).data.items; poolsReady.value = true } catch { localError.value = '号池列表加载失败，请关闭后重新打开。' }
 })
-onUnmounted(() => { input.value = ''; window.removeEventListener('beforeunload', beforeUnload) })
+onUnmounted(() => { input.value = ''; if (elapsedTimer) clearInterval(elapsedTimer); window.removeEventListener('beforeunload', beforeUnload) })
 </script>

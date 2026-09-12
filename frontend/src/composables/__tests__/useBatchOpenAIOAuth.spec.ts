@@ -76,9 +76,12 @@ describe('batch OAuth orchestration', () => {
       return { task: result, sms: { status: 'waiting', number: id === 'first' ? '+12025550101' : '+12025550102', expires_at: '' } }
     })
     await setup()
-    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(1, 'first', 'check')
-    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(2, 'first', 'acquire')
-    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(3, 'second', 'check')
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['second', 'check'])
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).not.toContainEqual(['first', 'acquire'])
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['first', 'check'])
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['first', 'acquire'])
     expect(batchOAuthAPI.create).not.toHaveBeenCalled()
   })
   it('keeps ambiguous starts occupying slots and retries with the original idempotency key', async () => {
@@ -109,10 +112,14 @@ describe('batch OAuth orchestration', () => {
       return server[0]
     })
     const c = await setup()
-    expect(batchOAuthAPI.restart).toHaveBeenCalledExactlyOnceWith('blocked', undefined)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
     expect(c.rows.value).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(10000)
+    await vi.advanceTimersByTimeAsync(9999)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
     expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(1)
+    expect(batchOAuthAPI.restart).toHaveBeenCalledWith('blocked', undefined)
   })
   it('stops polling and clears secrets on dispose, including a late request result', async () => {
     const c = await setup()
@@ -125,6 +132,38 @@ describe('batch OAuth orchestration', () => {
     const calls = vi.mocked(batchOAuthAPI.list).mock.calls.length
     await vi.advanceTimersByTimeAsync(60000)
     expect(batchOAuthAPI.list).toHaveBeenCalledTimes(calls)
+  })
+  it('queues selected retries beyond the three-browser concurrency limit', async () => {
+    const server = Array.from({ length: 4 }, (_, index): BatchOAuthTask => ({
+      ...task(`retry-${index}`),
+      email: `retry-${index}@example.test`,
+      status: 'failed',
+      stage: 'opening',
+      reason: 'proxy_unavailable',
+      restart_count: 1,
+    }))
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: server, max_concurrency: 3, max_restarts: 2 })
+    vi.mocked(batchOAuthAPI.restart).mockImplementation(async id => {
+      const current = server.find(item => item.task_id === id)!
+      current.status = 'running'
+      current.reason = undefined
+      current.restart_count = 2
+      return { ...current }
+    })
+    const c = await setup()
+    for (const row of c.rows.value) c.retry(row)
+    await flushPromises()
+    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(3)
+    expect(c.pendingCount.value).toBe(1)
+    await c.cancelAll()
+    expect(c.pendingCount.value).toBe(0)
+    c.retry(c.rows.value[3])
+    expect(c.pendingCount.value).toBe(1)
+    server[0].status = 'completed'
+    server[0].account_id = 100
+    await c.refresh()
+    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(4)
+    expect(c.pendingCount.value).toBe(0)
   })
   it('does not start any accounts until the initial server status is known', async () => {
     vi.mocked(batchOAuthAPI.list).mockRejectedValueOnce(new Error('offline'))

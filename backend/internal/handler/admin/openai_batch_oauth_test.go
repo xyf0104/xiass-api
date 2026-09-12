@@ -402,6 +402,36 @@ func TestBatchOAuthConfigurationRejectsInvalidReferencesBeforeAutomation(t *test
 	require.Zero(t, f.sidecarCalls.Load())
 }
 
+func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress(t *testing.T) {
+	t.Run("local built-in execution node", func(t *testing.T) {
+		f := newBatchOAuthFixture(t)
+		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+		f.admin.proxies = []service.Proxy{{ID: 85, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+			Username: "api2", Password: strings.Repeat("a", 64), Status: service.StatusActive}}
+		proxyID := int64(85)
+		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 3, Priority: 1, FingerprintMode: "off"}
+		proxy, err := f.h.validateBatchConfig(context.Background(), &cfg)
+		require.NoError(t, err)
+		require.Nil(t, proxy)
+		require.NotNil(t, cfg.ProxyID)
+		require.Equal(t, int64(85), *cfg.ProxyID)
+	})
+
+	t.Run("ordinary proxy", func(t *testing.T) {
+		f := newBatchOAuthFixture(t)
+		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+		f.admin.proxies = []service.Proxy{{ID: 9, Name: "external", Protocol: "http", Host: "proxy.example.test", Port: 8080,
+			Username: "user", Password: "password", Status: service.StatusActive}}
+		proxyID := int64(9)
+		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 3, Priority: 1, FingerprintMode: "off"}
+		proxy, err := f.h.validateBatchConfig(context.Background(), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, "http://proxy.example.test:8080", proxy["server"])
+		require.Equal(t, "user", proxy["username"])
+		require.Equal(t, "password", proxy["password"])
+	})
+}
+
 func TestBatchOAuthExpiredWorkflowClosesContextWithoutCancellingSMS(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	r, id := startFixtureTask(t, f)

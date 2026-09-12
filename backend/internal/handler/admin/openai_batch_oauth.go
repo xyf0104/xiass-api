@@ -69,6 +69,7 @@ type batchOAuthTask struct {
 	RequiresSMSConfirmation bool              `json:"requires_sms_confirmation"`
 	CreatedAt               time.Time         `json:"created_at"`
 	ExpiresAt               time.Time         `json:"expires_at"`
+	FinishedAt              *time.Time        `json:"finished_at,omitempty"`
 	ownerID                 int64
 	config                  batchOAuthConfig
 	requestHash             [32]byte
@@ -272,6 +273,15 @@ func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batch
 	if p.Protocol != "http" && p.Protocol != "https" && p.Protocol != "socks5" {
 		return nil, errors.New("browser proxy protocol unsupported")
 	}
+	// The built-in execution-node proxy is loopback inside xiass-api. The
+	// browser sidecar runs on the same host but in a different container, so its
+	// equivalent local-node route is direct Docker egress from that same host.
+	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
+	if localNodeID != "" && p.Name == service.ExecutionNodeBuiltinProxyNamePrefix+localNodeID &&
+		p.Protocol == "socks5" && p.Host == "127.0.0.1" && p.Port == 19080 &&
+		p.Username == localNodeID && strings.TrimSpace(p.Password) != "" {
+		return nil, nil
+	}
 	u, err := url.Parse(p.URL())
 	if err != nil || u.Hostname() == "" || p.Port <= 0 || p.Port > 65535 {
 		return nil, errors.New("invalid proxy")
@@ -313,9 +323,30 @@ func (t *batchOAuthTask) terminal() bool {
 	return t.Status == "completed" || t.Status == "canceled" || t.Status == "failed" || t.Status == "blocked"
 }
 
+func (t *batchOAuthTask) markFinishedIfTerminal() {
+	if !t.terminal() || t.FinishedAt != nil {
+		return
+	}
+	now := time.Now().UTC()
+	t.FinishedAt = &now
+}
+
+func batchOAuthPublicStage(stage string) string {
+	switch stage {
+	case "queued", "opening", "login", "email", "password", "totp", "phone_required", "phone_submitting",
+		"sms_waiting", "sms_submitting", "workspace", "callback_waiting", "callback_received", "completed",
+		"failed", "blocked", "canceled":
+		return stage
+	default:
+		return "login"
+	}
+}
+
 func batchOAuthPublicReason(reason string) string {
 	switch reason {
 	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "captcha_required", "captcha", "account_blocked", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
+		return reason
+	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code":
 		return reason
 	case "":
 		return ""
@@ -350,12 +381,7 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 	default:
 		return nil, errors.New("invalid task status")
 	}
-	switch r.Stage {
-	case "queued", "login", "phone_required", "sms_waiting", "completed", "failed", "blocked", "canceled":
-		t.Stage = r.Stage
-	default:
-		t.Stage = "login"
-	}
+	t.Stage = batchOAuthPublicStage(r.Stage)
 	t.Reason = batchOAuthPublicReason(r.Reason)
 	if t.Reason == "phone_rejected" && t.submittedPhone != "" {
 		if t.rejectedPhones == nil {
@@ -364,6 +390,7 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 		t.rejectedPhones[t.submittedPhone] = true
 	}
 	t.RequiresSMSConfirmation = t.Stage == "phone_required" || t.Reason == "sms_timeout" || t.Reason == "sms_confirmation_timeout"
+	t.markFinishedIfTerminal()
 	return r, nil
 }
 
@@ -393,7 +420,8 @@ func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAut
 		h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
 		return errors.New("automation start failed; cancel before restarting")
 	}
-	t.Status, t.Stage, t.Reason = "running", "login", ""
+	t.Status, t.Stage, t.Reason = "running", batchOAuthPublicStage(r.Stage), ""
+	t.FinishedAt = nil
 	return nil
 }
 
@@ -472,6 +500,7 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	store.tasks[id] = t
 	store.mu.Unlock()
 	defer t.mu.Unlock()
+	defer t.markFinishedIfTerminal()
 	proxy, err := h.validateBatchConfig(c.Request.Context(), &t.config)
 	if err != nil {
 		t.Status, t.Stage, t.Reason = "failed", "failed", "invalid_configuration"
@@ -513,6 +542,7 @@ func (h *OpenAIOAuthHandler) ListBatchOAuthTasks(c *gin.Context) {
 			t.mu.Lock()
 			defer t.mu.Unlock()
 			_, _ = t.refresh(ctx)
+			t.markFinishedIfTerminal()
 			h.revokeTerminalBatchSession(t)
 			items[i], _ = json.Marshal(t)
 		}()
@@ -527,6 +557,7 @@ func (h *OpenAIOAuthHandler) GetBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	defer t.mu.Unlock()
+	defer t.markFinishedIfTerminal()
 	defer h.revokeTerminalBatchSession(t)
 	if _, err := t.refresh(c.Request.Context()); err != nil {
 		response.Error(c, 502, "Batch automation unavailable")
@@ -554,6 +585,7 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	defer t.mu.Unlock()
+	defer t.markFinishedIfTerminal()
 	defer h.revokeTerminalBatchSession(t)
 	if t.AccountID > 0 {
 		h.verifyBatchAccount(c.Request.Context(), t)
@@ -744,6 +776,7 @@ func (h *OpenAIOAuthHandler) CancelBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	defer t.mu.Unlock()
+	defer t.markFinishedIfTerminal()
 	var req struct {
 		Confirmed bool `json:"confirmed"`
 	}
@@ -778,6 +811,7 @@ func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	defer t.mu.Unlock()
+	defer t.markFinishedIfTerminal()
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var req struct {
 		Password   *string `json:"password"`
@@ -859,6 +893,7 @@ func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 	t.submittedPhone = ""
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false
+	t.FinishedAt = nil
 	t.loginPasswordEncrypted, t.loginTOTPEncrypted = passwordEncrypted, totpEncrypted
 	_ = h.startBatchAttempt(ctx, t, password, secret, proxy)
 	response.Success(c, t)

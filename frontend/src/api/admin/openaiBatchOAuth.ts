@@ -20,6 +20,7 @@ export interface BatchOAuthTask {
   requires_sms_confirmation: boolean
   created_at: string
   expires_at: string
+  finished_at?: string
 }
 
 export interface BatchOAuthLogin {

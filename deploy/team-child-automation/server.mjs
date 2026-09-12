@@ -3437,7 +3437,10 @@ const batchOAuth = new BatchOAuthRunner({
     const connected = await browser()
     return { newContext: options => createProxyContext(connected, options) }
   },
-  validateAuthURL: validateOpenAIAuthURL
+  validateAuthURL: validateOpenAIAuthURL,
+  helpers: {
+    onProgress: progress => console.log(JSON.stringify({ component: 'batch-oauth', ...progress }))
+  }
 })
 
 if (process.env.NODE_ENV !== 'test') {
