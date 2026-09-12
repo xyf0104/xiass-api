@@ -105,7 +105,7 @@ describe('batch OAuth orchestration', () => {
     expect(batchOAuthAPI.cancel).toHaveBeenCalledTimes(3)
     expect(c.hasWork.value).toBe(false)
   })
-  it('cleans and restarts a blocked temporary OAuth task once without adding another row', async () => {
+  it('does not restart a historical blocked task after its login material was cleared', async () => {
     server = [{ ...task('blocked', 'person@example.test', 'blocked'), reason: 'captcha_required' }]
     vi.mocked(batchOAuthAPI.restart).mockImplementation(async id => {
       server[0] = { ...server[0], task_id: id, restart_count: 1 }
@@ -118,8 +118,7 @@ describe('batch OAuth orchestration', () => {
     expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     await flushPromises()
-    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(1)
-    expect(batchOAuthAPI.restart).toHaveBeenCalledWith('blocked', undefined)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
   })
   it('stops polling and clears secrets on dispose, including a late request result', async () => {
     const c = await setup()
@@ -133,7 +132,7 @@ describe('batch OAuth orchestration', () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(batchOAuthAPI.list).toHaveBeenCalledTimes(calls)
   })
-  it('queues selected retries beyond the three-browser concurrency limit', async () => {
+  it('requires fresh login material before retrying historical tasks', async () => {
     const server = Array.from({ length: 4 }, (_, index): BatchOAuthTask => ({
       ...task(`retry-${index}`),
       email: `retry-${index}@example.test`,
@@ -153,16 +152,17 @@ describe('batch OAuth orchestration', () => {
     const c = await setup()
     for (const row of c.rows.value) c.retry(row)
     await flushPromises()
-    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(3)
-    expect(c.pendingCount.value).toBe(1)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
+    expect(c.pendingCount.value).toBe(0)
     await c.cancelAll()
     expect(c.pendingCount.value).toBe(0)
     c.retry(c.rows.value[3])
-    expect(c.pendingCount.value).toBe(1)
+    expect(c.pendingCount.value).toBe(0)
+    expect(c.rows.value[3].error).toContain('登录信息已从浏览器内存清除')
     server[0].status = 'completed'
     server[0].account_id = 100
     await c.refresh()
-    expect(batchOAuthAPI.restart).toHaveBeenCalledTimes(4)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
     expect(c.pendingCount.value).toBe(0)
   })
   it('does not start any accounts until the initial server status is known', async () => {
