@@ -64,6 +64,7 @@
               <Icon name="server" size="xs" class="shrink-0" :stroke-width="2" />
               <span>{{ accountExecutionNodeID(row) === executionNodeLocalId ? t('admin.accounts.executionNodeLocal') : accountExecutionNodeID(row) }}</span>
             </span>
+            <AccountPoolBadge v-if="accountPool(row)" class="mt-1" :pool="accountPool(row)!" />
           </div>
         </template>
 
@@ -573,9 +574,11 @@ import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AccountPoolBadge from '@/components/account/AccountPoolBadge.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
+import type { AccountPool, AccountPoolLookup } from '@/api/admin/accountPools'
 
 interface Props {
   data: AdminUsageLog[]
@@ -591,6 +594,7 @@ interface Props {
   showExecutionNode?: boolean
   executionNodeLocalId?: string
   executionNodeLegacyId?: string
+  accountPoolLookup?: AccountPoolLookup
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -603,7 +607,8 @@ const props = withDefaults(defineProps<Props>(), {
 	flat: false,
   showExecutionNode: false,
   executionNodeLocalId: 'api',
-  executionNodeLegacyId: 'api'
+  executionNodeLegacyId: 'api',
+  accountPoolLookup: () => ({})
 })
 const emit = defineEmits<{
   userClick: [userID: number, email?: string]
@@ -615,6 +620,7 @@ const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
 const accountExecutionNodeID = (row: AdminUsageLog): string => row.account?.execution_node_id?.trim() || props.executionNodeLegacyId
+const accountPool = (row: AdminUsageLog): AccountPool | undefined => row.account_id ? props.accountPoolLookup[String(row.account_id)] : undefined
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 

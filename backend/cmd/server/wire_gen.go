@@ -232,7 +232,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	backupHandler := admin.NewBackupHandler(backupService, userService, imageStorageSettingService, runtimeExportService)
 	oAuthHandler := admin.NewOAuthHandler(oAuthService)
 	pixlabSMSService := service.NewPixlabSMSService(db, secretEncryptor, billingCacheService)
-	openAIOAuthHandler := handler.ProvideOpenAIOAuthHandler(openAIOAuthService, adminServiceImpl, openAIQuotaService, rateLimitService, redisClient, secretEncryptor, settingRepository, pixlabSMSService)
+	openAIOAuthHandler := handler.ProvideOpenAIOAuthHandler(openAIOAuthService, adminServiceImpl, openAIQuotaService, rateLimitService, redisClient, secretEncryptor, settingRepository, pixlabSMSService, compositeTokenCacheInvalidator)
 	geminiOAuthHandler := admin.NewGeminiOAuthHandler(geminiOAuthService)
 	antigravityOAuthHandler := admin.NewAntigravityOAuthHandler(antigravityOAuthService)
 	tokenRefreshService := service.ProvideTokenRefreshService(accountRepository, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, compositeTokenCacheInvalidator, schedulerCache, configConfig, tempUnschedCache, privacyClientFactory, proxyRepository, oAuthRefreshAPI, openAIGatewayService)

@@ -22,6 +22,7 @@ const {
   createWorkflow,
   decryptWorkflowState,
   encryptWorkflowState,
+  fillOAuthInputValue,
   fillVerificationCode,
   markWorkflowInviteSubmitted,
   pauseWorkflowState,
@@ -31,6 +32,7 @@ const {
   isSignupAccountCreationRejectionText,
   registeredOAuthNextState,
   reauthorizationNextState,
+  waitForReauthorizationNextState,
   recoverOpenAIPhoneEntry,
   resetOAuthWorkflowSteps,
   reusableOAuthPage,
@@ -192,6 +194,7 @@ describe('Team child OAuth automation state', () => {
     })
     const input = (attributes = {}) => ({
       isVisible: async () => true,
+      isEditable: async () => attributes.editable !== false,
       getAttribute: async (name) => attributes[name] || null
     })
     const page = ({ url, body = '', inputs = [], verification = [] }) => ({
@@ -216,6 +219,19 @@ describe('Team child OAuth automation state', () => {
       inputs: [input({ type: 'password', autocomplete: 'current-password' })]
     }), workflow)).kind, 'password')
     assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/log-in/password',
+      body: 'Incorrect email address or password',
+      inputs: [input({ type: 'password', autocomplete: 'current-password' })]
+    }), workflow)).kind, 'invalid_credentials')
+    assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/mfa-challenge',
+      body: 'Your account has been restricted'
+    }), workflow)).kind, 'account_blocked')
+    assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/log-in/password',
+      inputs: [input({ type: 'text', placeholder: 'Email address', editable: false })]
+    }), workflow)).kind, 'unknown')
+    assert.equal((await reauthorizationNextState(page({
       url: 'https://auth.openai.com/verify',
       body: 'Check your inbox for the verification code',
       verification: [input({ autocomplete: 'one-time-code' })]
@@ -233,6 +249,40 @@ describe('Team child OAuth automation state', () => {
     }), workflow)).kind, 'external_provider')
   })
 
+  it('waits for the submitted login node to leave the old hydrated form', async () => {
+    let inputReads = 0
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const input = (attributes = {}) => ({
+      isVisible: async () => true,
+      isEditable: async () => true,
+      getAttribute: async (name) => attributes[name] || null
+    })
+    const password = input({ type: 'password', autocomplete: 'current-password' })
+    const verification = input({ autocomplete: 'one-time-code' })
+    const page = {
+      url: () => 'https://auth.openai.com/mfa-challenge',
+      locator: (selector) => {
+        if (selector === 'input') {
+          inputReads += 1
+          return collection(inputReads === 1 ? [password] : [])
+        }
+        if (selector === 'body') return { innerText: async () => inputReads > 1 ? 'Enter the code from your authenticator app' : 'Enter your password' }
+        if (selector.includes('one-time-code')) return collection(inputReads > 1 ? [verification] : [])
+        return collection([])
+      },
+      getByRole: () => collection([])
+    }
+    const workflow = createReauthorizationWorkflow(318, 'child@example.test', '', authURL, 'oauth-session-abcdefghijklmnop')
+
+    const state = await waitForReauthorizationNextState(page, workflow, 'password')
+
+    assert.equal(state.kind, 'totp')
+    assert.ok(inputReads > 1)
+  })
+
   it('recognizes the OAuth login and phone pages used by a newly registered private session', async () => {
     const collection = (items) => ({
       count: async () => items.length,
@@ -240,6 +290,7 @@ describe('Team child OAuth automation state', () => {
     })
     const input = (attributes = {}) => ({
       isVisible: async () => true,
+      isEditable: async () => attributes.editable !== false,
       getAttribute: async (name) => attributes[name] || null
     })
     const page = ({ url, body, inputs = [] }) => ({
@@ -258,6 +309,11 @@ describe('Team child OAuth automation state', () => {
       body: 'Welcome back Email address Continue',
       inputs: [input({ type: 'email', autocomplete: 'username' })]
     }), workflow)).kind, 'email')
+    assert.equal((await registeredOAuthNextState(page({
+      url: 'https://auth.openai.com/log-in/password',
+      body: 'Enter your password Email address Edit Password Continue',
+      inputs: [input({ type: 'text', placeholder: 'Email address', editable: false })]
+    }), workflow)).kind, 'unknown')
     assert.equal((await registeredOAuthNextState(page({
       url: 'https://auth.openai.com/add-phone',
       body: 'Phone number required Add your phone number to continue',
@@ -489,6 +545,40 @@ describe('Team child OAuth automation state', () => {
     assert.equal(workflow.status, 'manual_required')
     assert.equal(workflow.currentNodeKey, 'password')
     assert.match(workflow.nodes.find((node) => node.key === 'password')?.message || '', /未保存密码/)
+  })
+
+  it('reacquires a dynamic OpenAI input after the first locator becomes stale', async () => {
+    let locatorReads = 0
+    let submitted = ''
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const attributes = { type: 'email', name: 'email', autocomplete: 'email' }
+    const stale = {
+      isVisible: async () => true,
+      isEditable: async () => true,
+      getAttribute: async (name) => attributes[name] || null,
+      fill: async () => { throw new Error('locator detached during OpenAI form hydration') }
+    }
+    const fresh = {
+      isVisible: async () => true,
+      isEditable: async () => true,
+      getAttribute: async (name) => attributes[name] || null,
+      fill: async (value) => { submitted = value }
+    }
+    const page = {
+      locator: (selector) => {
+        assert.equal(selector, 'input')
+        locatorReads += 1
+        return collection([locatorReads === 1 ? stale : fresh])
+      }
+    }
+
+    await fillOAuthInputValue(page, (metadata) => /email/.test(metadata), 'target@example.test', 'email input unavailable')
+
+    assert.equal(submitted, 'target@example.test')
+    assert.equal(locatorReads, 2)
   })
 
   it('fills the native invite Email input and clicks Send invites', async () => {

@@ -8,7 +8,7 @@
           </span>
           <div class="min-w-0">
             <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">OpenAI OAuth 401 重新授权管理</h2>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">成功批量授权的账号会自动保留登录信息；既有账号仍可由管理员手动配置</p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">保存既有 OpenAI OAuth 账号的登录邮箱、密码和 2FA</p>
           </div>
         </div>
       </div>
@@ -42,8 +42,10 @@
         </div>
         <div class="min-w-0">
           <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400" for="openai-reauth-password">登录密码（可选）</label>
-          <input id="openai-reauth-password" v-model="loginPassword" type="password" autocomplete="current-password" class="input w-full" placeholder="仅在官方页面要求时使用" :disabled="!selectedAccount || saving" @keydown.enter.prevent="saveCredentials" />
-          <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">留空保存会清除旧密码；OpenAI 若出现密码框，自动化会在内嵌浏览器等待人工处理。</p>
+          <input id="openai-reauth-password" v-model="loginPassword" type="password" autocomplete="current-password" class="input w-full" :placeholder="passwordConfigured ? '已保存，留空保持不变' : '填写登录密码'" :disabled="!selectedAccount || saving" @keydown.enter.prevent="saveCredentials" />
+          <p class="mt-1 text-xs leading-5" :class="passwordConfigured ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'">
+            {{ passwordConfigured ? '登录密码已加密保存；留空保存会保留原密码。' : '未保存登录密码；填写后可用于自动 401 重新授权。' }}
+          </p>
         </div>
         <div class="min-w-0">
           <label class="mb-2 flex items-center gap-2 text-sm">
@@ -89,7 +91,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   refresh: []
-  'save-credentials': [payload: { account: Account; email: string; password: string; totp_secret?: string }]
+  'save-credentials': [payload: { account: Account; email: string; password?: string; totp_secret?: string }]
   reauthorize: [account: Account]
 }>()
 
@@ -109,6 +111,7 @@ const accountOptions = computed<SelectOption[]>(() => props.accounts.map((accoun
   label: accountOptionLabel(account)
 })))
 const credentialsConfigured = computed(() => Boolean(selectedAccount.value?.credentials_status?.has_xiass_openai_oauth_reauth_email))
+const passwordConfigured = computed(() => Boolean(selectedAccount.value?.credentials_status?.has_xiass_openai_oauth_reauth_password_encrypted))
 const reauthorizing = computed(() => selectedAccount.value?.id === props.reauthorizingAccountID)
 const canSaveCredentials = computed(() => Boolean(selectedAccount.value)
   && !props.saving
@@ -135,7 +138,7 @@ function saveCredentials() {
   emit('save-credentials', {
     account: selectedAccount.value,
     email: loginEmail.value,
-    password: loginPassword.value,
+    ...(loginPassword.value ? { password: loginPassword.value } : {}),
     ...(updateTOTP.value ? { totp_secret: loginTOTP.value ? normalizeBase32Secret(loginTOTP.value) : '' } : {})
   })
   // The parent sends the value directly to the dedicated encrypted endpoint.

@@ -10,6 +10,16 @@ export interface AccountPool {
   account_count: number
 }
 
+export type AccountPoolLookup = Record<string, AccountPool>
+
+export function buildAccountPoolLookup(pools: AccountPool[]): AccountPoolLookup {
+  const lookup: AccountPoolLookup = {}
+  for (const pool of pools) {
+    for (const accountID of pool.account_ids || []) lookup[String(accountID)] = pool
+  }
+  return lookup
+}
+
 const path = '/admin/account-pools'
 
 export const accountPoolsAPI = {

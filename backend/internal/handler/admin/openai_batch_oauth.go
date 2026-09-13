@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/redisclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -27,8 +29,21 @@ import (
 )
 
 const batchOAuthMaxRestarts = 2
+const batchOAuthAlreadyExistsReason = "account_already_exists"
+
+const (
+	batchOAuthModeCreate          = "create"
+	batchOAuthModeReauthorization = "reauthorization"
+)
 
 var errBatchOAuthMissing = errors.New("batch task unavailable")
+
+var releaseBatchOAuthLock = redisclient.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
 
 type batchOAuthSMS interface {
 	WorkflowAction(context.Context, int64, string, string, string, bool) (*service.PixlabSMSResult, error)
@@ -59,11 +74,13 @@ type batchOAuthStartRequest struct {
 type batchOAuthTask struct {
 	mu                      sync.Mutex
 	ID                      string            `json:"task_id"`
+	Mode                    string            `json:"mode"`
 	Email                   string            `json:"email"`
 	Status                  string            `json:"status"`
 	Stage                   string            `json:"stage"`
 	Reason                  string            `json:"reason,omitempty"`
 	AccountID               int64             `json:"account_id,omitempty"`
+	TargetAccountID         int64             `json:"target_account_id,omitempty"`
 	AccountConfig           *batchOAuthConfig `json:"account_config,omitempty"`
 	RestartCount            int               `json:"restart_count"`
 	RequiresSMSConfirmation bool              `json:"requires_sms_confirmation"`
@@ -83,15 +100,58 @@ type batchOAuthTask struct {
 	loginPasswordEncrypted  string `json:"-"`
 	loginTOTPEncrypted      string `json:"-"`
 	loginTOTPConfigured     bool
+	executionNodeID         string
 }
 
 type batchOAuthStore struct {
-	mu    sync.Mutex
-	tasks map[string]*batchOAuthTask
+	mu           sync.Mutex
+	poolNamingMu sync.Mutex
+	tasks        map[string]*batchOAuthTask
 }
 
 func newBatchOAuthStore() *batchOAuthStore {
 	return &batchOAuthStore{tasks: make(map[string]*batchOAuthTask)}
+}
+
+func (h *OpenAIOAuthHandler) acquireBatchOAuthLock(ctx context.Context, key string, wait time.Duration) (func(), error) {
+	if h == nil || h.teamMailboxStore == nil {
+		return func() {}, nil
+	}
+	client := h.teamMailboxStore.redisClient()
+	if client == nil {
+		return func() {}, nil
+	}
+	token, err := newTeamChildBrowserToken()
+	if err != nil {
+		return nil, errors.New("authorization lock unavailable")
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		acquired, err := client.SetNX(ctx, key, token, 2*time.Minute).Result()
+		if err != nil {
+			return nil, errors.New("authorization lock unavailable")
+		}
+		if acquired {
+			return func() {
+				releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_, _ = releaseBatchOAuthLock.Run(releaseCtx, client, []string{key}, token).Result()
+			}, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.New("authorization finalization is busy")
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.New("authorization finalization is busy")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func batchOAuthLockKey(kind, value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return "xiass:openai:batch-oauth:" + kind + ":" + hex.EncodeToString(sum[:16])
 }
 
 // Called with store.mu held. Never wait for a task lock while holding the store
@@ -129,7 +189,7 @@ func (s *batchOAuthStore) pruneTerminalDuplicatesLocked(owner int64) {
 		if task.ownerID != owner {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(task.Email))
+		key := task.duplicateKey()
 		if !task.mu.TryLock() {
 			// A concurrent refresh/restart owns this task. Defer pruning every
 			// record for the mailbox so the busy task cannot be misclassified.
@@ -149,7 +209,7 @@ func (s *batchOAuthStore) pruneTerminalDuplicatesLocked(owner int64) {
 		task.mu.Unlock()
 	}
 	for id, task := range s.tasks {
-		key := strings.ToLower(strings.TrimSpace(task.Email))
+		key := task.duplicateKey()
 		if task.ownerID != owner || busy[key] || keep[key].id == id || !task.mu.TryLock() {
 			continue
 		}
@@ -247,6 +307,24 @@ func validateBatchLogin(email, password, secret string) error {
 	return validateOpenAIReauthorizationTOTP(secret)
 }
 
+func (t *batchOAuthTask) normalizedMode() string {
+	if t != nil && t.Mode == batchOAuthModeReauthorization {
+		return batchOAuthModeReauthorization
+	}
+	return batchOAuthModeCreate
+}
+
+func (t *batchOAuthTask) duplicateKey() string {
+	if t.normalizedMode() == batchOAuthModeReauthorization && t.TargetAccountID > 0 {
+		return batchOAuthModeReauthorization + ":" + strconv.FormatInt(t.TargetAccountID, 10)
+	}
+	return batchOAuthModeCreate + ":" + strings.ToLower(strings.TrimSpace(t.Email))
+}
+
+func (t *batchOAuthTask) matchesMode(mode string) bool {
+	return t != nil && t.normalizedMode() == mode
+}
+
 func (h *OpenAIOAuthHandler) encryptBatchLogin(password, secret string) (string, string, error) {
 	if h.secretEncryptor == nil {
 		return "", "", errors.New("login encryption unavailable")
@@ -306,13 +384,17 @@ func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batch
 			cfg.ProxyID = &id
 		}
 	}
-	if cfg.ProxyID == nil {
+	return h.batchOAuthBrowserProxy(ctx, cfg.ProxyID)
+}
+
+func (h *OpenAIOAuthHandler) batchOAuthBrowserProxy(ctx context.Context, proxyID *int64) (map[string]string, error) {
+	if proxyID == nil {
 		return nil, nil
 	}
-	if *cfg.ProxyID <= 0 {
+	if *proxyID <= 0 {
 		return nil, errors.New("invalid proxy")
 	}
-	p, err := h.adminService.GetProxy(ctx, *cfg.ProxyID)
+	p, err := h.adminService.GetProxy(ctx, *proxyID)
 	if err != nil || p == nil || !p.IsActive() || p.IsExpired(time.Now()) {
 		return nil, errors.New("proxy unavailable")
 	}
@@ -323,9 +405,11 @@ func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batch
 	// browser sidecar runs on the same host but in a different container, so its
 	// equivalent local-node route is direct Docker egress from that same host.
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	if localNodeID != "" && p.Name == service.ExecutionNodeBuiltinProxyNamePrefix+localNodeID &&
-		p.Protocol == "socks5" && p.Host == "127.0.0.1" && p.Port == 19080 &&
-		p.Username == localNodeID && strings.TrimSpace(p.Password) != "" {
+	if strings.HasPrefix(p.Name, service.ExecutionNodeBuiltinProxyNamePrefix) &&
+		p.Protocol == "socks5" && p.Host == "127.0.0.1" && p.Port == 19080 && strings.TrimSpace(p.Password) != "" {
+		if localNodeID == "" || p.Name != service.ExecutionNodeBuiltinProxyNamePrefix+localNodeID || p.Username != localNodeID {
+			return nil, errors.New("proxy belongs to another execution node")
+		}
 		return nil, nil
 	}
 	u, err := url.Parse(p.URL())
@@ -345,7 +429,7 @@ func batchOAuthAuth(c *gin.Context) (int64, bool) {
 	return subject.UserID, true
 }
 
-func (h *OpenAIOAuthHandler) ownedBatchTask(c *gin.Context) (*batchOAuthTask, bool) {
+func (h *OpenAIOAuthHandler) ownedBatchTask(c *gin.Context, mode string) (*batchOAuthTask, bool) {
 	owner, ok := batchOAuthAuth(c)
 	if !ok {
 		return nil, false
@@ -357,7 +441,7 @@ func (h *OpenAIOAuthHandler) ownedBatchTask(c *gin.Context) (*batchOAuthTask, bo
 	h.batchOAuthStore.mu.Lock()
 	task := h.batchOAuthStore.tasks[c.Param("task_id")]
 	h.batchOAuthStore.mu.Unlock()
-	if task == nil || task.ownerID != owner {
+	if task == nil || task.ownerID != owner || !task.matchesMode(mode) {
 		response.NotFound(c, "Task not found")
 		return nil, false
 	}
@@ -367,6 +451,120 @@ func (h *OpenAIOAuthHandler) ownedBatchTask(c *gin.Context) (*batchOAuthTask, bo
 
 func (t *batchOAuthTask) terminal() bool {
 	return t.Status == "completed" || t.Status == "canceled" || t.Status == "failed" || t.Status == "blocked"
+}
+
+func batchOAuthAccountMatchesEmail(account *service.Account, email string) bool {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+		return false
+	}
+	for _, candidate := range []string{
+		account.Name,
+		account.GetCredential("email"),
+		account.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey),
+	} {
+		if strings.EqualFold(strings.TrimSpace(candidate), email) {
+			return true
+		}
+	}
+	if workflowEmail, ok := teamChildAccountWorkflowEmail(account); ok {
+		return strings.EqualFold(strings.TrimSpace(workflowEmail), email)
+	}
+	return false
+}
+
+func (h *OpenAIOAuthHandler) existingBatchOAuthAccount(ctx context.Context, email string) (*service.Account, error) {
+	const pageSize = 200
+	for page := 1; ; page++ {
+		accounts, total, err := h.adminService.ListAccounts(ctx, page, pageSize, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", 0, "", "id", "asc")
+		if err != nil {
+			return nil, err
+		}
+		for i := range accounts {
+			if batchOAuthAccountMatchesEmail(&accounts[i], email) {
+				account := accounts[i]
+				return &account, nil
+			}
+		}
+		if len(accounts) == 0 || int64(page*pageSize) >= total {
+			return nil, nil
+		}
+	}
+}
+
+func normalizeBatchOAuthPlanLabel(plan string) string {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "pro":
+		return "pro"
+	case "prolite", "pro_lite", "pro-lite", "pro lite":
+		return "prolite"
+	case "plus":
+		return "plus"
+	case "team", "business", "self_serve_business", "self_serve_business_usage_based":
+		return "team"
+	case "free":
+		return "free"
+	default:
+		return "oauth"
+	}
+}
+
+func batchOAuthGeneratedAccountName(poolName, plan string, sequence int) string {
+	suffix := normalizeBatchOAuthPlanLabel(plan) + strconv.Itoa(max(sequence, 1))
+	poolRunes := []rune(strings.TrimSpace(poolName))
+	maxPoolRunes := 100 - len([]rune(suffix))
+	if maxPoolRunes < 0 {
+		maxPoolRunes = 0
+	}
+	if len(poolRunes) > maxPoolRunes {
+		poolRunes = poolRunes[:maxPoolRunes]
+	}
+	return string(poolRunes) + suffix
+}
+
+func (h *OpenAIOAuthHandler) nextBatchOAuthPoolAccountName(ctx context.Context, poolID int64, credentials map[string]any) (string, error) {
+	pools, ok := h.adminService.(service.AccountPoolService)
+	if !ok {
+		return "", service.ErrAccountPoolUnavailable
+	}
+	pool, err := pools.GetAccountPool(ctx, poolID)
+	if err != nil {
+		return "", err
+	}
+	plan, _ := credentials["plan_type"].(string)
+	planLabel := normalizeBatchOAuthPlanLabel(plan)
+	prefix := strings.TrimSpace(pool.Name) + planLabel
+	maxSequence := 0
+	matchingPlanCount := 0
+	const pageSize = 200
+	for page := 1; ; page++ {
+		lister, ok := h.adminService.(activeConcurrencyAccountLister)
+		if !ok {
+			return "", errors.New("account pool member listing unavailable")
+		}
+		accounts, total, listErr := lister.ListAccountsByIDs(ctx, page, pageSize, pool.AccountIDs, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", 0, "", "id", "asc")
+		if listErr != nil {
+			return "", listErr
+		}
+		for i := range accounts {
+			account := &accounts[i]
+			if normalizeBatchOAuthPlanLabel(account.GetCredential("plan_type")) != planLabel {
+				continue
+			}
+			matchingPlanCount++
+			if suffix := strings.TrimPrefix(account.Name, prefix); suffix != account.Name {
+				if sequence, parseErr := strconv.Atoi(suffix); parseErr == nil && sequence > maxSequence {
+					maxSequence = sequence
+				}
+			}
+		}
+		if len(accounts) == 0 || int64(page*pageSize) >= total {
+			break
+		}
+	}
+	if matchingPlanCount > maxSequence {
+		maxSequence = matchingPlanCount
+	}
+	return batchOAuthGeneratedAccountName(pool.Name, planLabel, maxSequence+1), nil
 }
 
 func (t *batchOAuthTask) markFinishedIfTerminal() {
@@ -403,6 +601,10 @@ func batchOAuthPublicReason(reason string) string {
 	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "captcha_required", "captcha", "account_blocked", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
 	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code":
+		return reason
+	case "oauth_exchange_failed", "oauth_identity_mismatch", "account_update_failed", "account_configuration_changed", "account_state_recovery_failed", "invalid_configuration", "automation_start_failed", "oauth_session_failed":
+		return reason
+	case batchOAuthAlreadyExistsReason:
 		return reason
 	case "":
 		return ""
@@ -510,12 +712,7 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	if req.Concurrency == 0 {
-		req.Concurrency = 3
-	}
-	passwordEncrypted, totpEncrypted, err := h.encryptBatchLogin(req.Password, req.TOTPSecret)
-	if err != nil {
-		response.InternalError(c, "Login encryption failed")
-		return
+		req.Concurrency = 1
 	}
 	// Only non-secret configuration participates in the retry identity.
 	raw, _ := json.Marshal(struct {
@@ -523,6 +720,19 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		Config batchOAuthConfig
 	}{req.Email, req.batchOAuthConfig})
 	hash := sha256.Sum256(raw)
+	existingAccount, err := h.existingBatchOAuthAccount(c.Request.Context(), req.Email)
+	if err != nil {
+		response.InternalError(c, "Unable to check existing OpenAI accounts")
+		return
+	}
+	var passwordEncrypted, totpEncrypted string
+	if existingAccount == nil {
+		passwordEncrypted, totpEncrypted, err = h.encryptBatchLogin(req.Password, req.TOTPSecret)
+		if err != nil {
+			response.InternalError(c, "Login encryption failed")
+			return
+		}
+	}
 	store := h.batchOAuthStore
 	store.mu.Lock()
 	for _, task := range store.tasks {
@@ -539,10 +749,9 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		}
 	}
 	// One mailbox may have only one live workflow. Starting a new attempt also
-	// removes its older failed/canceled task rows; a completed account record is
-	// deliberately left untouched.
+	// removes older terminal task rows; the durable account remains untouched.
 	for id, task := range store.tasks {
-		if task.ownerID != owner || !strings.EqualFold(task.Email, req.Email) {
+		if task.ownerID != owner || !task.matchesMode(batchOAuthModeCreate) || !strings.EqualFold(task.Email, req.Email) {
 			continue
 		}
 		if !task.mu.TryLock() {
@@ -556,18 +765,11 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 			response.Error(c, 409, "An authorization task for this email is already running")
 			return
 		}
-		if task.AccountID == 0 {
-			task.clearLoginCredentials()
-			delete(store.tasks, id)
-		} else {
-			task.mu.Unlock()
-			store.mu.Unlock()
-			response.Error(c, 409, "An account for this email was already created")
-			return
-		}
+		task.clearLoginCredentials()
+		delete(store.tasks, id)
 		task.mu.Unlock()
 	}
-	if !store.hasCapacityLocked(nil) || len(store.tasks) >= 1000 {
+	if (existingAccount == nil && !store.hasCapacityLocked(nil)) || len(store.tasks) >= 1000 {
 		store.mu.Unlock()
 		response.Error(c, 409, "Batch task capacity reached")
 		return
@@ -578,14 +780,24 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		response.InternalError(c, "Task creation failed")
 		return
 	}
-	t := &batchOAuthTask{ID: id, sidecarID: id, ownerID: owner, Email: req.Email, config: req.batchOAuthConfig,
+	t := &batchOAuthTask{ID: id, Mode: batchOAuthModeCreate, sidecarID: id, ownerID: owner, Email: req.Email, config: req.batchOAuthConfig,
 		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
 		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
+	if existingAccount != nil {
+		now := time.Now().UTC()
+		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existingAccount.ID
+		t.FinishedAt = &now
+		t.ExpiresAt = now.Add(24 * time.Hour)
+	}
 	t.mu.Lock()
 	store.tasks[id] = t
 	store.mu.Unlock()
 	defer t.mu.Unlock()
 	defer t.markFinishedIfTerminal()
+	if existingAccount != nil {
+		response.Success(c, t)
+		return
+	}
 	proxy, err := h.validateBatchConfig(c.Request.Context(), &t.config)
 	if err != nil {
 		t.Status, t.Stage, t.Reason = "failed", "failed", "invalid_configuration"
@@ -599,6 +811,10 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 }
 
 func (h *OpenAIOAuthHandler) ListBatchOAuthTasks(c *gin.Context) {
+	h.listBatchOAuthTasks(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) listBatchOAuthTasks(c *gin.Context, mode string) {
 	owner, ok := batchOAuthAuth(c)
 	if !ok {
 		return
@@ -611,7 +827,7 @@ func (h *OpenAIOAuthHandler) ListBatchOAuthTasks(c *gin.Context) {
 	h.batchOAuthStore.pruneTerminalDuplicatesLocked(owner)
 	tasks := make([]*batchOAuthTask, 0)
 	for _, t := range h.batchOAuthStore.tasks {
-		if t.ownerID == owner {
+		if t.ownerID == owner && t.matchesMode(mode) {
 			tasks = append(tasks, t)
 		}
 	}
@@ -638,7 +854,11 @@ func (h *OpenAIOAuthHandler) ListBatchOAuthTasks(c *gin.Context) {
 }
 
 func (h *OpenAIOAuthHandler) GetBatchOAuthTask(c *gin.Context) {
-	t, ok := h.ownedBatchTask(c)
+	h.getBatchOAuthTask(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) getBatchOAuthTask(c *gin.Context, mode string) {
+	t, ok := h.ownedBatchTask(c, mode)
 	if !ok {
 		return
 	}
@@ -666,7 +886,7 @@ func validateBatchCallback(raw, expectedState string) (string, error) {
 }
 
 func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
-	t, ok := h.ownedBatchTask(c)
+	t, ok := h.ownedBatchTask(c, batchOAuthModeCreate)
 	if !ok {
 		return
 	}
@@ -674,6 +894,10 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	defer t.markFinishedIfTerminal()
 	defer h.revokeTerminalBatchSession(t)
 	if t.AccountID > 0 {
+		if t.Status == "completed" && t.Reason == batchOAuthAlreadyExistsReason {
+			response.Success(c, t)
+			return
+		}
 		h.verifyBatchAccount(c.Request.Context(), t)
 		response.Success(c, t)
 		return
@@ -687,6 +911,20 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Error(c, 409, "OAuth is not complete")
 		return
 	}
+	emailUnlock, err := h.acquireBatchOAuthLock(c.Request.Context(), batchOAuthLockKey("email", strings.ToLower(t.Email)), 15*time.Second)
+	if err != nil {
+		response.Error(c, 409, err.Error())
+		return
+	}
+	defer emailUnlock()
+	if t.config.PoolID != nil {
+		poolUnlock, lockErr := h.acquireBatchOAuthLock(c.Request.Context(), batchOAuthLockKey("pool", strconv.FormatInt(*t.config.PoolID, 10)), 15*time.Second)
+		if lockErr != nil {
+			response.Error(c, 409, lockErr.Error())
+			return
+		}
+		defer poolUnlock()
+	}
 	// Revalidate references BEFORE consuming the single-use code. A pool proxy
 	// changed mid-flight requires a fresh OAuth context, not silent reassignment.
 	cfg := t.config
@@ -696,6 +934,14 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	}
 	if !batchProxyEqual(cfg.ProxyID, t.config.ProxyID) {
 		response.Error(c, 409, "Pool proxy changed; restart OAuth")
+		return
+	}
+	if existing, err := h.existingBatchOAuthAccount(c.Request.Context(), t.Email); err != nil {
+		response.InternalError(c, "Unable to check existing OpenAI accounts")
+		return
+	} else if existing != nil {
+		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existing.ID
+		response.Success(c, t)
 		return
 	}
 	if t.loginPasswordEncrypted == "" {
@@ -722,9 +968,14 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Success(c, t)
 		return
 	}
-	name := strings.TrimSpace(t.config.Name)
-	if name == "" {
-		name = t.Email
+	if existing, lookupErr := h.existingBatchOAuthAccount(ctx, t.Email); lookupErr != nil {
+		t.Reason = "account_creation_requires_review"
+		response.Success(c, t)
+		return
+	} else if existing != nil {
+		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existing.ID
+		response.Success(c, t)
+		return
 	}
 	schedulable := true
 	credentials := h.openaiOAuthService.BuildAccountCredentials(token)
@@ -733,9 +984,24 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	if t.loginTOTPEncrypted != "" {
 		credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = t.loginTOTPEncrypted
 	}
+	if t.config.PoolID != nil {
+		h.batchOAuthStore.poolNamingMu.Lock()
+		defer h.batchOAuthStore.poolNamingMu.Unlock()
+		generatedName, nameErr := h.nextBatchOAuthPoolAccountName(ctx, *t.config.PoolID, credentials)
+		if nameErr != nil {
+			t.Reason = "account_creation_requires_review"
+			response.Success(c, t)
+			return
+		}
+		t.config.Name = generatedName
+	}
+	name := strings.TrimSpace(t.config.Name)
+	if name == "" {
+		name = t.Email
+	}
 	t.createAttempted = true
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
+		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, PreserveOAuthWorkflowProxy: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
 		GroupIDs: t.config.GroupIDs, ProxyID: t.config.ProxyID, Concurrency: t.config.Concurrency, Priority: t.config.Priority, SkipDefaultGroupBind: true, Schedulable: &schedulable})
 	token = nil
 	if err != nil || account == nil || account.ID <= 0 {
@@ -863,7 +1129,11 @@ func (h *OpenAIOAuthHandler) cancelBatchReservation(ctx context.Context, t *batc
 }
 
 func (h *OpenAIOAuthHandler) CancelBatchOAuthTask(c *gin.Context) {
-	t, ok := h.ownedBatchTask(c)
+	h.cancelBatchOAuthTask(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) cancelBatchOAuthTask(c *gin.Context, mode string) {
+	t, ok := h.ownedBatchTask(c, mode)
 	if !ok {
 		return
 	}
@@ -900,6 +1170,10 @@ func (h *OpenAIOAuthHandler) CancelBatchOAuthTask(c *gin.Context) {
 // DeleteBatchOAuthTask removes only a finished workflow record. A completed
 // account remains intact and keeps the login material copied during creation.
 func (h *OpenAIOAuthHandler) DeleteBatchOAuthTask(c *gin.Context) {
+	h.deleteBatchOAuthTask(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) deleteBatchOAuthTask(c *gin.Context, mode string) {
 	owner, ok := batchOAuthAuth(c)
 	if !ok {
 		return
@@ -912,7 +1186,7 @@ func (h *OpenAIOAuthHandler) DeleteBatchOAuthTask(c *gin.Context) {
 	store.mu.Lock()
 	t := store.tasks[c.Param("task_id")]
 	store.mu.Unlock()
-	if t == nil || t.ownerID != owner {
+	if t == nil || t.ownerID != owner || !t.matchesMode(mode) {
 		response.NotFound(c, "Task not found")
 		return
 	}
@@ -943,7 +1217,11 @@ func (h *OpenAIOAuthHandler) DeleteBatchOAuthTask(c *gin.Context) {
 }
 
 func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
-	t, ok := h.ownedBatchTask(c)
+	h.restartBatchOAuthTask(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) {
+	t, ok := h.ownedBatchTask(c, mode)
 	if !ok {
 		return
 	}
@@ -1033,7 +1311,11 @@ func (h *OpenAIOAuthHandler) RestartBatchOAuthTask(c *gin.Context) {
 }
 
 func (h *OpenAIOAuthHandler) BatchOAuthSMSAction(c *gin.Context) {
-	t, ok := h.ownedBatchTask(c)
+	h.batchOAuthSMSAction(c, batchOAuthModeCreate)
+}
+
+func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
+	t, ok := h.ownedBatchTask(c, mode)
 	if !ok {
 		return
 	}

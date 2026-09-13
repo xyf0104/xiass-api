@@ -606,6 +606,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/openai-reauthorization',
+    name: 'AdminOpenAIReauthorization',
+    component: () => import('@/views/admin/OpenAIReauthorizationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'OpenAI OAuth 401 重新授权'
+    }
+  },
+  {
     path: '/admin/token-converter',
     redirect: '/token-converter'
   },

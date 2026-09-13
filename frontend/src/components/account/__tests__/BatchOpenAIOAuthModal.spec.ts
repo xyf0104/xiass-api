@@ -33,9 +33,27 @@ describe('batch OAuth modal', () => {
     expect(wrapper.get('[data-testid="proxy"]').text()).toBe('9')
     await wrapper.get('[data-testid="batch-start"]').trigger('click')
     await flushPromises()
-    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'person@example.test', pool_id: 4, proxy_id: 9, concurrency: 3, priority: 1, codex_fingerprint_mode: 'off' }))
+    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'person@example.test', pool_id: 4, proxy_id: 9, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off' }))
     expect(wrapper.find('[data-testid="batch-credentials"]').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('MyPrivatePassword')
+  })
+  it('shows an existing account as skipped without announcing a new account', async () => {
+    vi.mocked(batchOAuthAPI.create).mockResolvedValue({
+      ...task(),
+      status: 'completed',
+      stage: 'completed',
+      reason: 'account_already_exists',
+      account_id: 77,
+    })
+    await render()
+    await wrapper.get('[data-testid="batch-credentials"]').setValue('existing@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-start"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已存在，已跳过')
+    expect(wrapper.text()).toContain('已存在跳过 1 个')
+    expect(wrapper.text()).not.toContain('失败 1')
+    expect(wrapper.emitted('created')).toBeUndefined()
   })
   it('automatically claims a number for the isolated batch workflow', async () => {
     vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [task('phone_required')], max_concurrency: 3, max_restarts: 2 })
@@ -60,7 +78,7 @@ describe('batch OAuth modal', () => {
     ], max_concurrency: 3, max_restarts: 2 })
     vi.mocked(batchOAuthAPI.remove).mockResolvedValue({ task_id: 'deleted' })
     await render()
-    expect(wrapper.text()).toContain('成功 0 · 失败 2')
+    expect(wrapper.text()).toContain('成功 0 · 已跳过 0 · 失败 2')
     expect(wrapper.text()).toContain('所选出口代理无法从授权浏览器连接')
     expect(wrapper.findAll('[data-testid="oauth-row-one@example.test"]')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('重新授权所选')
@@ -93,15 +111,21 @@ describe('batch OAuth modal', () => {
   it('shows the final success and failed-account summary', async () => {
     vi.mocked(batchOAuthAPI.list).mockResolvedValue({
       items: [
-        { ...task('completed'), task_id: 'completed-0000001', email: 'done@example.test', status: 'completed', account_id: 9 },
         { ...task('opening'), task_id: 'failed-0000000001', email: 'failed@example.test', status: 'failed', reason: 'proxy_unavailable', restart_count: 2 },
+        { ...task('completed'), task_id: 'skipped-000000001', email: 'existing@example.test', status: 'completed', reason: 'account_already_exists', account_id: 8 },
+        { ...task('completed'), task_id: 'completed-0000001', email: 'done@example.test', status: 'completed', account_id: 9 },
       ],
       max_concurrency: 3,
       max_restarts: 2,
     })
     await render()
-    expect(wrapper.text()).toContain('本批次已结束：成功 1 个，失败 1 个')
+    expect(wrapper.text()).toContain('本批次已结束：成功 1 个，已存在跳过 1 个，失败 1 个')
     expect(wrapper.text()).toContain('失败账号：failed@example.test')
+    expect(wrapper.findAll('[data-testid^="oauth-row-"]').map(row => row.attributes('data-testid'))).toEqual([
+      'oauth-row-done@example.test',
+      'oauth-row-existing@example.test',
+      'oauth-row-failed@example.test',
+    ])
   })
   it('disables start with invalid 2FA or malformed rows instead of partially importing', async () => {
     await render()

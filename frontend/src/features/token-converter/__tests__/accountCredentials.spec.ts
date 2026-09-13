@@ -52,11 +52,33 @@ describe('account credential parser', () => {
     expect(formatAccountCredential(result.rows[0])).toBe('account----part-one----part-two----2fa')
   })
 
+  it('treats each run of four or more hyphens as one separator', () => {
+    const result = parseAccountCredentials('account------------P@ss--word!--------JBSWY3DPEHPK3PXP')
+
+    expect(result.invalidRows).toEqual([])
+    expect(result.rows[0]).toMatchObject({
+      account: 'account',
+      password: 'P@ss--word!',
+      twoFactor: 'JBSWY3DPEHPK3PXP',
+    })
+  })
+
+  it('keeps two hyphens and symbols inside the password', () => {
+    const result = parseAccountCredentials('symbols.user@example.test----Demo$63+%--!3$----JBSWY3DPEHPK3PXP')
+
+    expect(result.invalidRows).toEqual([])
+    expect(result.rows[0]).toMatchObject({
+      account: 'symbols.user@example.test',
+      password: 'Demo$63+%--!3$',
+      twoFactor: 'JBSWY3DPEHPK3PXP',
+    })
+  })
+
   it('keeps invalid non-empty rows with precise reasons', () => {
     const result = parseAccountCredentials([
       'no separators',
       '----password----2fa',
-      'account--------2fa',
+      'account--------    ------------2fa',
       'account----password----',
       '',
     ].join('\n'))

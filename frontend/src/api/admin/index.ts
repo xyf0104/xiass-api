@@ -37,6 +37,8 @@ import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import teamChildAPI from './teamChild'
 import executionNodesAPI from './executionNodes'
+import { accountPoolsAPI } from './accountPools'
+import openAIReauthorizationAPI from './openaiReauthorization'
 
 /**
  * Unified admin API object for convenient access
@@ -75,7 +77,9 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   audit: auditAPI,
   teamChild: teamChildAPI,
-  executionNodes: executionNodesAPI
+  executionNodes: executionNodesAPI,
+  accountPools: accountPoolsAPI,
+  openAIReauthorization: openAIReauthorizationAPI
 }
 
 export {
@@ -112,7 +116,9 @@ export {
   adminComplianceAPI,
   auditAPI,
   teamChildAPI,
-  executionNodesAPI
+  executionNodesAPI,
+  accountPoolsAPI,
+  openAIReauthorizationAPI
 }
 
 export default adminAPI

@@ -92,11 +92,13 @@
         </template>
 
         <template #cell-account="{ row }">
-          <span
-            v-if="row.account_id"
-            class="text-sm text-gray-900 dark:text-white"
-            :title="t('admin.ops.errorLog.accountId') + ' ' + row.account_id"
-          >{{ row.account_name || '#' + row.account_id }}</span>
+          <div v-if="row.account_id" class="flex min-w-0 flex-col">
+            <span
+              class="text-sm text-gray-900 dark:text-white"
+              :title="t('admin.ops.errorLog.accountId') + ' ' + row.account_id"
+            >{{ row.account_name || '#' + row.account_id }}</span>
+            <AccountPoolBadge v-if="accountPool(row.account_id)" class="mt-1" :pool="accountPool(row.account_id)!" />
+          </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
@@ -186,7 +188,9 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
+import AccountPoolBadge from '@/components/account/AccountPoolBadge.vue'
 import type { OpsErrorLog } from '@/api/admin/ops'
+import type { AccountPool, AccountPoolLookup } from '@/api/admin/accountPools'
 import type { Column } from '@/components/common/types'
 import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
 import { mapErrorCategory } from '@/utils/errorCategory'
@@ -290,6 +294,7 @@ interface Props {
   visibleColumnKeys?: string[]
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  accountPoolLookup?: AccountPoolLookup
 }
 
 interface Emits {
@@ -303,6 +308,7 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const accountPool = (accountID: number): AccountPool | undefined => props.accountPoolLookup?.[String(accountID)]
 
 function onSort(key: string, order: 'asc' | 'desc') {
   emit('sort', mapErrorSortKey(key), order)

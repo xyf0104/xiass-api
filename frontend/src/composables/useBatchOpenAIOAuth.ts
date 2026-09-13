@@ -21,15 +21,20 @@ const automaticRestartLimits: Record<string, number> = {
   task_expired: 2,
   captcha_required: 1,
   email_code_required: 1,
-  account_blocked: 1,
   manual_challenge: 1,
   navigation_timeout: 1,
   browser_context_lost: 1,
   page_interaction_failed: 1,
 }
 
+const operationUnconfirmedMessage = '操作未确认，请刷新状态后重试。'
+
 export function batchTaskActive(task?: BatchOAuthTask) {
   return !!task && ['queued', 'running', 'ready'].includes(task.status)
+}
+
+export function batchTaskSkipped(task?: BatchOAuthTask) {
+  return task?.status === 'completed' && task.reason === 'account_already_exists'
 }
 
 export function batchTaskWillAutoRestart(task?: BatchOAuthTask) {
@@ -57,9 +62,13 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
 
   function update(row: OAuthQueueRow, task: BatchOAuthTask) {
     if (disposed) return
+    const previous = row.task
+    const progressed = !previous || previous.task_id !== task.task_id || previous.status !== task.status
+      || previous.stage !== task.stage || previous.restart_count !== task.restart_count
     row.task = task
     row.localStatus = undefined
-    if (task.account_id && !announced.has(task.account_id)) {
+    if (progressed && row.error === operationUnconfirmedMessage) row.error = ''
+    if (task.account_id && !batchTaskSkipped(task) && !announced.has(task.account_id)) {
       announced.add(task.account_id)
       onCreated()
     }
@@ -72,7 +81,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     row.error = ''
     try { await action() } catch {
       // Never surface an HTTP client's request payload or external login page.
-      row.error = '操作未确认，请刷新状态后重试。'
+      row.error = operationUnconfirmedMessage
     } finally { busyKeys.value.delete(row.key) }
   }
 

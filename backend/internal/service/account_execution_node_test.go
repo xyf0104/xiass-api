@@ -53,6 +53,24 @@ func TestApplyExecutionNodeForCreateOverridesImportedAccountProxy(t *testing.T) 
 	require.Equal(t, int64(84), *gotProxyID)
 }
 
+func TestApplyOAuthWorkflowNodeForCreatePreservesSelectedProxy(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
+		Enabled:        true,
+		ID:             "api2",
+		DefaultProxyID: 85,
+	}
+	selectedProxyID := int64(9)
+
+	extra, proxyID := applyOAuthWorkflowNodeForCreate(cfg, nil, &selectedProxyID)
+
+	require.Equal(t, "api2", extra[AccountExecutionNodeExtraKey])
+	require.Equal(t, "9", extra[AccountExecutionProxyExtraKey])
+	require.NotNil(t, proxyID)
+	require.Equal(t, int64(9), *proxyID)
+	require.NotSame(t, &selectedProxyID, proxyID)
+}
+
 func TestTeamChildCreateBelongsToTheNodeThatAcceptsOAuth(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{

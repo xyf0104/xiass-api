@@ -366,8 +366,10 @@ export class BatchOAuthRunner {
     const body = await this.#h.oauthBody(page)
     if (/captcha|verify (?:that )?you are human|checking your browser|验证您是人类|人机验证/i.test(body)) return { kind: 'captcha' }
     if (await firstVisible(page.locator('iframe[src*="captcha"], iframe[src*="challenges.cloudflare.com"]'))) return { kind: 'captcha' }
-    if (/(?:your |this )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned)|account_deactivated|账号.*(?:封禁|停用)/i.test(body)) return { kind: 'account_blocked' }
-    if (/incorrect password|invalid (?:email or password|credentials)|wrong password/i.test(body)) return { kind: 'invalid_credentials' }
+    if (/(?:your |this )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned|restricted|limited)|account_(?:deactivated|restricted|limited)|账号.*(?:封禁|停用|受限|限制)/i.test(body)) return { kind: 'account_blocked' }
+    if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
+      return { kind: 'invalid_credentials' }
+    }
     if (/\/create-account|\/signup|\/about-you/.test(new URL(page.url()).pathname)
       || /tell us about yourself|create (?:a |your )password/i.test(body)) return { kind: 'signup' }
     const inputs = await this.#h.verificationInputs(page)

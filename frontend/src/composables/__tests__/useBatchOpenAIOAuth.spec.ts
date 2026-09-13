@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, type EffectScope } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { batchOAuthAPI, type BatchOAuthTask, type BatchOAuthConfig } from '@/api/admin/openaiBatchOAuth'
-import { useBatchOpenAIOAuth } from '../useBatchOpenAIOAuth'
+import { batchTaskWillAutoRestart, useBatchOpenAIOAuth } from '../useBatchOpenAIOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 
 vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), sms: vi.fn() } }))
@@ -42,6 +42,14 @@ beforeEach(() => {
 afterEach(() => { scope?.stop(); vi.useRealTimers() })
 
 describe('batch OAuth orchestration', () => {
+  it('never automatically retries an account explicitly restricted by OpenAI', () => {
+    expect(batchTaskWillAutoRestart({
+      ...task('restricted', 'restricted@example.test', 'blocked'),
+      stage: 'totp',
+      reason: 'account_blocked',
+    })).toBe(false)
+  })
+
   it('starts only three accounts and advances one slot after completion', async () => {
     const c = await setup()
     c.start(credentials, settings)
@@ -95,6 +103,32 @@ describe('batch OAuth orchestration', () => {
     await c.retry(row)
     expect(vi.mocked(batchOAuthAPI.create).mock.calls[3][0].idempotency_key).toBe(key)
     expect(c.activeCount.value).toBe(3)
+  })
+  it('clears an ambiguous operation error after authoritative progress and completes the task', async () => {
+    const c = await setup()
+    c.start(credentials.slice(0, 1), settings)
+    await flushPromises()
+    const row = c.rows.value[0]
+    server[0] = { ...server[0], status: 'failed', stage: 'password', reason: 'page_interaction_failed' }
+    await c.refresh()
+    vi.mocked(batchOAuthAPI.restart).mockImplementationOnce(async () => {
+      server[0] = { ...server[0], status: 'running', stage: 'opening', reason: undefined, restart_count: 1 }
+      throw new Error('reply lost after the server accepted restart')
+    })
+    c.retry(row)
+    await flushPromises()
+    expect(row.error).toBe('操作未确认，请刷新状态后重试。')
+
+    server[0] = { ...server[0], status: 'ready', stage: 'callback_received' }
+    vi.mocked(batchOAuthAPI.complete).mockImplementationOnce(async () => {
+      server[0] = { ...server[0], status: 'completed', stage: 'completed', account_id: 777 }
+      return { ...server[0] }
+    })
+    await c.refresh()
+
+    expect(batchOAuthAPI.complete).toHaveBeenCalledWith(row.task?.task_id)
+    expect(row.error).toBe('')
+    expect(row.task?.status).toBe('completed')
   })
   it('stops pending work without creating it', async () => {
     const c = await setup()

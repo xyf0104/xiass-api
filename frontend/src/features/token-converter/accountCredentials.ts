@@ -37,23 +37,29 @@ export function parseAccountCredentials(input: string): AccountCredentialParseRe
     if (!source) return
 
     const lineNumber = lineIndex + 1
-    const firstSeparator = source.indexOf(ACCOUNT_CREDENTIAL_SEPARATOR)
-    const lastSeparator = source.lastIndexOf(ACCOUNT_CREDENTIAL_SEPARATOR)
-    if (firstSeparator < 0 || lastSeparator === firstSeparator) {
+    const separatorRuns = [...source.matchAll(/-{4,}/g)]
+    if (separatorRuns.length < 2) {
       invalidRows.push({ lineNumber, source, code: 'missing-separators' })
       return
     }
 
-    const account = source.slice(0, firstSeparator).trim()
-    const password = source.slice(firstSeparator + ACCOUNT_CREDENTIAL_SEPARATOR.length, lastSeparator)
-    const rawTwoFactor = source.slice(lastSeparator + ACCOUNT_CREDENTIAL_SEPARATOR.length).trim()
+    const firstSeparator = separatorRuns[0]
+    const lastSeparator = separatorRuns[separatorRuns.length - 1]
+    const firstSeparatorStart = firstSeparator.index ?? -1
+    const firstSeparatorEnd = firstSeparatorStart + firstSeparator[0].length
+    const lastSeparatorStart = lastSeparator.index ?? -1
+    const lastSeparatorEnd = lastSeparatorStart + lastSeparator[0].length
+
+    const account = source.slice(0, firstSeparatorStart).trim()
+    const password = source.slice(firstSeparatorEnd, lastSeparatorStart)
+    const rawTwoFactor = source.slice(lastSeparatorEnd).trim()
     const twoFactor = cleanTwoFactorValue(rawTwoFactor)
 
     if (!account) {
       invalidRows.push({ lineNumber, source, code: 'missing-account' })
       return
     }
-    if (!password) {
+    if (!password.trim()) {
       invalidRows.push({ lineNumber, source, code: 'missing-password' })
       return
     }

@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +79,32 @@ type activeConcurrencyAccountLister interface {
 type executionNodeAccountLister interface {
 	ListAccountsWithExecutionNode(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]service.Account, int64, error)
 	ListAccountsByIDsWithExecutionNode(ctx context.Context, page, pageSize int, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]service.Account, int64, error)
+}
+
+type accountPoolGetter interface {
+	GetAccountPool(context.Context, int64) (*service.AccountPool, error)
+}
+
+func intersectAccountIDFilters(current []int64, currentSet bool, next []int64) ([]int64, bool) {
+	if !currentSet {
+		result := slices.Clone(next)
+		slices.Sort(result)
+		return slices.Compact(result), true
+	}
+	allowed := make(map[int64]struct{}, len(current))
+	for _, id := range current {
+		if id > 0 {
+			allowed[id] = struct{}{}
+		}
+	}
+	result := make([]int64, 0, min(len(current), len(next)))
+	for _, id := range next {
+		if _, ok := allowed[id]; ok {
+			result = append(result, id)
+		}
+	}
+	slices.Sort(result)
+	return slices.Compact(result), true
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -190,6 +217,7 @@ type BulkUpdateAccountFilters struct {
 	Type            string `json:"type"`
 	Status          string `json:"status"`
 	Group           string `json:"group"`
+	AccountPool     string `json:"account_pool"`
 	Search          string `json:"search"`
 	PrivacyMode     string `json:"privacy_mode"`
 	ExecutionNodeID string `json:"execution_node_id"`
@@ -600,6 +628,28 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
+	var accountPoolIDs []int64
+	accountPoolFilterSet := false
+	if rawPoolID := strings.TrimSpace(c.Query("account_pool")); rawPoolID != "" {
+		poolID, parseErr := strconv.ParseInt(rawPoolID, 10, 64)
+		if parseErr != nil || poolID <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_ACCOUNT_POOL_FILTER", "invalid account pool filter"))
+			return
+		}
+		getter, ok := h.adminService.(accountPoolGetter)
+		if !ok {
+			response.ErrorFrom(c, service.ErrAccountPoolUnavailable)
+			return
+		}
+		pool, poolErr := getter.GetAccountPool(c.Request.Context(), poolID)
+		if poolErr != nil {
+			response.ErrorFrom(c, poolErr)
+			return
+		}
+		accountPoolIDs = slices.Clone(pool.AccountIDs)
+		accountPoolFilterSet = true
+	}
+
 	var activeConcurrencyGroupID int64
 	var groupConcurrencyCounts map[int64]int
 	var concurrencySnapshotAt time.Time
@@ -637,6 +687,31 @@ func (h *AccountHandler) List(c *gin.Context) {
 		concurrencySnapshotAt = snapshot.SnapshotAt
 	}
 
+	var filteredAccountIDs []int64
+	filterByAccountIDs := false
+	if focusedAccountID > 0 {
+		filteredAccountIDs, filterByAccountIDs = intersectAccountIDFilters(filteredAccountIDs, filterByAccountIDs, []int64{focusedAccountID})
+	}
+	if activeConcurrencyGroupID > 0 {
+		activeAccountIDs := make([]int64, 0, len(groupConcurrencyCounts))
+		for accountID, count := range groupConcurrencyCounts {
+			if accountID > 0 && count > 0 {
+				activeAccountIDs = append(activeAccountIDs, accountID)
+			}
+		}
+		filteredAccountIDs, filterByAccountIDs = intersectAccountIDFilters(filteredAccountIDs, filterByAccountIDs, activeAccountIDs)
+	}
+	if accountPoolFilterSet {
+		filteredAccountIDs, filterByAccountIDs = intersectAccountIDFilters(filteredAccountIDs, filterByAccountIDs, accountPoolIDs)
+	}
+
+	listGroupID := groupID
+	if activeConcurrencyGroupID > 0 {
+		// The live snapshot is authoritative. A matching group query must not
+		// hide an in-flight account removed from persistent membership later.
+		listGroupID = 0
+	}
+
 	var accounts []service.Account
 	var total int64
 	var err error
@@ -646,46 +721,20 @@ func (h *AccountHandler) List(c *gin.Context) {
 			response.ErrorFrom(c, infraerrors.ServiceUnavailable("ACCOUNT_NODE_FILTER_UNAVAILABLE", "account node filtering is temporarily unavailable"))
 			return
 		}
-		if focusedAccountID > 0 {
-			accounts, total, err = nodeLister.ListAccountsByIDsWithExecutionNode(c.Request.Context(), page, pageSize, []int64{focusedAccountID}, platform, accountType, status, search, groupID, privacyMode, executionNodeID, sortBy, sortOrder)
-		} else if activeConcurrencyGroupID > 0 {
-			accountIDs := make([]int64, 0, len(groupConcurrencyCounts))
-			for accountID, count := range groupConcurrencyCounts {
-				if accountID > 0 && count > 0 {
-					accountIDs = append(accountIDs, accountID)
-				}
-			}
-			sort.Slice(accountIDs, func(i, j int) bool { return accountIDs[i] < accountIDs[j] })
-			accounts, total, err = nodeLister.ListAccountsByIDsWithExecutionNode(c.Request.Context(), page, pageSize, accountIDs, platform, accountType, status, search, 0, privacyMode, executionNodeID, sortBy, sortOrder)
+		if filterByAccountIDs {
+			accounts, total, err = nodeLister.ListAccountsByIDsWithExecutionNode(c.Request.Context(), page, pageSize, filteredAccountIDs, platform, accountType, status, search, listGroupID, privacyMode, executionNodeID, sortBy, sortOrder)
 		} else {
-			accounts, total, err = nodeLister.ListAccountsWithExecutionNode(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, executionNodeID, sortBy, sortOrder)
+			accounts, total, err = nodeLister.ListAccountsWithExecutionNode(c.Request.Context(), page, pageSize, platform, accountType, status, search, listGroupID, privacyMode, executionNodeID, sortBy, sortOrder)
 		}
-	} else if focusedAccountID > 0 {
+	} else if filterByAccountIDs {
 		lister, ok := h.adminService.(activeConcurrencyAccountLister)
 		if !ok {
 			response.ErrorFrom(c, infraerrors.ServiceUnavailable("ACCOUNT_FILTER_UNAVAILABLE", "account filtering is temporarily unavailable"))
 			return
 		}
-		accounts, total, err = lister.ListAccountsByIDs(c.Request.Context(), page, pageSize, []int64{focusedAccountID}, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
-	} else if activeConcurrencyGroupID > 0 {
-		lister, ok := h.adminService.(activeConcurrencyAccountLister)
-		if !ok {
-			response.ErrorFrom(c, infraerrors.ServiceUnavailable("CONCURRENCY_SNAPSHOT_UNAVAILABLE", "group concurrency account filtering is temporarily unavailable"))
-			return
-		}
-		accountIDs := make([]int64, 0, len(groupConcurrencyCounts))
-		for accountID, count := range groupConcurrencyCounts {
-			if accountID > 0 && count > 0 {
-				accountIDs = append(accountIDs, accountID)
-			}
-		}
-		sort.Slice(accountIDs, func(i, j int) bool { return accountIDs[i] < accountIDs[j] })
-		// The live snapshot is authoritative. A matching `group` query is accepted
-		// for compatibility but must not hide an in-flight account removed from the
-		// persistent group membership after its request started.
-		accounts, total, err = lister.ListAccountsByIDs(c.Request.Context(), page, pageSize, accountIDs, platform, accountType, status, search, 0, privacyMode, sortBy, sortOrder)
+		accounts, total, err = lister.ListAccountsByIDs(c.Request.Context(), page, pageSize, filteredAccountIDs, platform, accountType, status, search, listGroupID, privacyMode, sortBy, sortOrder)
 	} else {
-		accounts, total, err = h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+		accounts, total, err = h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, listGroupID, privacyMode, sortBy, sortOrder)
 	}
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -2531,6 +2580,7 @@ func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *servi
 		Type:            filters.Type,
 		Status:          filters.Status,
 		Group:           filters.Group,
+		AccountPool:     filters.AccountPool,
 		Search:          filters.Search,
 		PrivacyMode:     filters.PrivacyMode,
 		ExecutionNodeID: filters.ExecutionNodeID,

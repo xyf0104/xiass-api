@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import i18n from '@/i18n'
 
-const { teamChildAPI, accountsAPI, groupsAPI, proxiesAPI, appStore, nativeGenerateAuthUrl } = vi.hoisted(() => ({
+const { teamChildAPI, accountsAPI, groupsAPI, proxiesAPI, appStore, nativeGenerateAuthUrl, appRouter } = vi.hoisted(() => ({
   teamChildAPI: {
     getMailboxStatus: vi.fn(),
     createMailbox: vi.fn(),
@@ -53,13 +53,15 @@ const { teamChildAPI, accountsAPI, groupsAPI, proxiesAPI, appStore, nativeGenera
     showError: vi.fn(),
     showInfo: vi.fn(),
     showSuccess: vi.fn()
-  }
+  },
+  appRouter: { push: vi.fn() }
 }))
 
 vi.mock('@/api/admin/teamChild', () => ({ teamChildAPI, default: teamChildAPI }))
 vi.mock('@/api/admin/accounts', () => ({ accountsAPI, default: accountsAPI }))
 vi.mock('@/api/admin/groups', () => ({ groupsAPI, default: groupsAPI }))
 vi.mock('@/api/admin/proxies', () => ({ proxiesAPI, default: proxiesAPI }))
+vi.mock('@/router', () => ({ default: appRouter }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div data-testid="step-up-dialog-stub" />' } }))
 vi.mock('@/composables/useOpenAIOAuth', async () => {
   const { ref } = await import('vue')
@@ -621,8 +623,9 @@ describe('TeamChildCreationView', () => {
     const reauthorizeButton = wrapper.findAll('button').find((button) => button.text().includes('一键重新授权'))
     await reauthorizeButton!.trigger('click')
     await flushPromises()
-    expect(nativeGenerateAuthUrl).toHaveBeenCalledTimes(1)
-    expect(teamChildAPI.reauthorizeOpenAIAccount).toHaveBeenCalledWith(415, testAuthURL, 'oauth-session')
+    expect(nativeGenerateAuthUrl).not.toHaveBeenCalled()
+    expect(teamChildAPI.reauthorizeOpenAIAccount).not.toHaveBeenCalled()
+    expect(appRouter.push).toHaveBeenCalledWith({ name: 'AdminOpenAIReauthorization', query: { account_ids: '415' } })
     wrapper.unmount()
   })
 
@@ -658,13 +661,13 @@ describe('TeamChildCreationView', () => {
     await flushPromises()
 
     expect(teamChildAPI.saveOpenAIAccountReauthorizationCredentials).toHaveBeenCalledWith(416, {
-      email: 'passwordless@example.test',
-      password: ''
+      email: 'passwordless@example.test'
     })
     const reauthorizeButton = wrapper.findAll('button').find((button) => button.text().includes('一键重新授权'))
     await reauthorizeButton!.trigger('click')
     await flushPromises()
-    expect(teamChildAPI.reauthorizeOpenAIAccount).toHaveBeenCalledWith(416, testAuthURL, 'oauth-session')
+    expect(teamChildAPI.reauthorizeOpenAIAccount).not.toHaveBeenCalled()
+    expect(appRouter.push).toHaveBeenCalledWith({ name: 'AdminOpenAIReauthorization', query: { account_ids: '416' } })
     wrapper.unmount()
   })
 

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,18 @@ func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts", handler.List)
 	return router, adminSvc
+}
+
+type accountPoolListStub struct {
+	*stubAdminService
+	pool *service.AccountPool
+}
+
+func (s *accountPoolListStub) GetAccountPool(_ context.Context, id int64) (*service.AccountPool, error) {
+	if s.pool == nil || s.pool.ID != id {
+		return nil, service.ErrAccountPoolNotFound
+	}
+	return s.pool, nil
 }
 
 func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {
@@ -87,6 +100,46 @@ func TestAccountHandlerListFiltersOneExactAccountID(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	require.Len(t, payload.Data.Items, 1)
 	require.Equal(t, []int64{17}, []int64{payload.Data.Items[0].ID})
+}
+
+func TestAccountHandlerListFiltersByAccountPoolBeforePagination(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	adminSvc.accounts = []service.Account{
+		{ID: 17, Name: "outside", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+		{ID: 18, Name: "pool-a", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+		{ID: 19, Name: "pool-b", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+	}
+	poolSvc := &accountPoolListStub{stubAdminService: adminSvc, pool: &service.AccountPool{ID: 8, Name: "Pro pool", AccountIDs: []int64{19, 18}}}
+	router := gin.New()
+	router.GET("/api/v1/admin/accounts", NewAccountHandler(poolSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).List)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=1&account_pool=8", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, []int64{18, 19}, adminSvc.lastListAccounts.accountIDs)
+	var payload struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, int64(2), payload.Data.Total)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, int64(18), payload.Data.Items[0].ID)
+}
+
+func TestAccountHandlerListRejectsInvalidAccountPoolFilter(t *testing.T) {
+	router, _ := setupAccountListRouter()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?account_pool=invalid", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestAccountHandlerListRejectsInvalidExactAccountID(t *testing.T) {

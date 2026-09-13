@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/redisclient"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +64,63 @@ type batchOAuthFixture struct {
 	status       string
 	stage        string
 	sidecarCalls atomic.Int32
+}
+
+func TestBatchOAuthExistingAccountIsSkippedBeforeAutomation(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	f.admin.accounts = []service.Account{{
+		ID: 777, Name: "Existing account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"email": "existing@example.test"},
+	}}
+	r := batchOAuthRouter(f.h, 42, "admin")
+	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"EXISTING@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","idempotency_key":"existing-account-0001"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"status":"completed"`)
+	require.Contains(t, w.Body.String(), `"reason":"account_already_exists"`)
+	require.Contains(t, w.Body.String(), `"account_id":777`)
+	require.Zero(t, f.sidecarCalls.Load())
+	require.Empty(t, f.requests)
+	require.Empty(t, f.admin.createdAccounts)
+}
+
+func TestBatchOAuthDefaultsAccountConcurrencyToOne(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, id := startFixtureTask(t, f)
+	require.NotNil(t, r)
+	require.Equal(t, 1, f.h.batchOAuthStore.tasks[id].config.Concurrency)
+}
+
+func TestBatchOAuthDistributedLockSerializesFinalizationAcrossNodes(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redisclient.NewClient(&redisclient.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	first := NewOpenAIOAuthHandler(nil, nil, nil, nil)
+	second := NewOpenAIOAuthHandler(nil, nil, nil, nil)
+	first.ConfigureTeamChildSessionStore(client)
+	second.ConfigureTeamChildSessionStore(client)
+	key := batchOAuthLockKey("email", "owner@example.test")
+	unlock, err := first.acquireBatchOAuthLock(context.Background(), key, time.Second)
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() {
+		secondUnlock, lockErr := second.acquireBatchOAuthLock(context.Background(), key, time.Second)
+		if lockErr == nil {
+			secondUnlock()
+		}
+		result <- lockErr
+	}()
+	select {
+	case err := <-result:
+		require.Failf(t, "second lock returned before release", "error: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "second lock did not acquire after release")
+	}
 }
 
 func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
@@ -290,6 +349,7 @@ func TestBatchOAuthIdentityAndValidationBeforeCodeConsumption(t *testing.T) {
 		require.Equal(t, 200, w.Code)
 		require.Contains(t, w.Body.String(), `"account_id":300`)
 		require.Len(t, f.admin.createdAccounts, 1)
+		require.True(t, f.admin.createdAccounts[0].PreserveOAuthWorkflowProxy)
 		require.Equal(t, "off", f.admin.createdAccounts[0].Extra["codex_fingerprint_mode"])
 		require.NotContains(t, f.admin.createdAccounts[0].Extra, "codex_fingerprint_seed")
 		require.NotContains(t, f.admin.createdAccounts[0].Credentials, "password")
@@ -437,10 +497,28 @@ func (s *batchPoolAdminStub) AssignAccountPool(_ context.Context, _ int64, ids [
 	return s.pool, s.assignErr
 }
 
+func TestBatchOAuthPoolAccountNameContinuesPlanSequence(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	f.admin.accounts = []service.Account{
+		{ID: 1, Name: "沐念云plus1", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"plan_type": "plus"}},
+		{ID: 2, Name: "legacy-plus", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"plan_type": "plus"}},
+		{ID: 3, Name: "沐念云pro7", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"plan_type": "pro"}},
+	}
+	f.h.adminService = &batchPoolAdminStub{stubAdminService: f.admin, pool: &service.AccountPool{ID: 7, Name: "沐念云", AccountIDs: []int64{1, 2, 3}}}
+
+	plusName, err := f.h.nextBatchOAuthPoolAccountName(context.Background(), 7, map[string]any{"plan_type": "plus"})
+	require.NoError(t, err)
+	require.Equal(t, "沐念云plus3", plusName)
+
+	proName, err := f.h.nextBatchOAuthPoolAccountName(context.Background(), 7, map[string]any{"plan_type": "pro"})
+	require.NoError(t, err)
+	require.Equal(t, "沐念云pro8", proName)
+}
+
 func TestBatchOAuthPoolValidationAndAssignmentFailureDoesNotDuplicate(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	poolID := int64(7)
-	pools := &batchPoolAdminStub{stubAdminService: f.admin, pool: &service.AccountPool{ID: 7}, assignErr: errors.New("pool removed during creation")}
+	pools := &batchPoolAdminStub{stubAdminService: f.admin, pool: &service.AccountPool{ID: 7, Name: "沐念云"}, assignErr: errors.New("pool removed during creation")}
 	f.h.adminService = pools
 	r, id := startFixtureTask(t, f)
 	f.h.batchOAuthStore.tasks[id].config.PoolID = &poolID
@@ -449,6 +527,7 @@ func TestBatchOAuthPoolValidationAndAssignmentFailureDoesNotDuplicate(t *testing
 	require.Contains(t, w.Body.String(), "pool_assignment_failed")
 	require.Contains(t, w.Body.String(), `"account_id":300`)
 	require.Equal(t, []int64{300}, pools.assigned)
+	require.Equal(t, "沐念云team1", f.admin.createdAccounts[0].Name)
 	require.Equal(t, 200, batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}").Code)
 	require.Len(t, f.admin.createdAccounts, 1)
 }
@@ -503,6 +582,17 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress
 		require.Equal(t, "http://proxy.example.test:8080", proxy["server"])
 		require.Equal(t, "user", proxy["username"])
 		require.Equal(t, "password", proxy["password"])
+	})
+
+	t.Run("remote built-in execution node", func(t *testing.T) {
+		f := newBatchOAuthFixture(t)
+		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
+		f.admin.proxies = []service.Proxy{{ID: 86, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+			Username: "api2", Password: strings.Repeat("b", 64), Status: service.StatusActive}}
+		proxyID := int64(86)
+		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 1, Priority: 1, FingerprintMode: "off"}
+		_, err := f.h.validateBatchConfig(context.Background(), &cfg)
+		require.ErrorContains(t, err, "another execution node")
 	})
 }
 

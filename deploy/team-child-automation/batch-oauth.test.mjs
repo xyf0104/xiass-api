@@ -174,6 +174,33 @@ test('three isolated contexts maximum, exact backend IDs, per-task proxy and cre
   assert.ok(h.contexts.every((context) => context.closes === 1))
 })
 
+test('password submit uses the OpenAI Continue button', async () => {
+  let stored = ''
+  let clicks = 0
+  const input = {
+    async fill(value) { stored = value },
+  }
+  const button = {
+    async click() {
+      clicks++
+      h.contexts[0].page.kind = 'phone'
+    },
+  }
+  const h = harness([{}], { helpers: {
+    fillLoginPassword: undefined,
+    async firstVisibleInput(_page, matcher) { return matcher('password') ? input : null },
+    async firstVisibleRole() { return button },
+  } })
+
+  await h.runner.start(body('slow-password'))
+  await flush()
+
+  assert.equal(h.runner.get('slow-password', 1).stage, 'phone_required')
+  assert.equal(clicks, 1)
+  assert.equal(stored, 'password-slow-password')
+  await stopAll(h, [['slow-password', 1]])
+})
+
 test('all methods enforce owner and snapshots contain no login, proxy or session secrets', async () => {
   const h = harness()
   const request = body()
@@ -533,7 +560,11 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
   const cases = [
     ['Enter code from your authenticator app', true, 'totp'],
     ['Check your inbox for a verification code', true, 'email_code'],
+    ['Incorrect email address or password', false, 'invalid_credentials'],
     ['Your account has been deactivated', false, 'account_blocked'],
+    ['Your account is restricted', false, 'account_blocked'],
+    ['Your account is limited', false, 'account_blocked'],
+    ['当前账号受到限制', false, 'account_blocked'],
     ['Verify you are human CAPTCHA', false, 'captcha'],
     ['Too many requests. Try later.', false, 'unknown'],
     ['Log in. Do not have an account? Create an account.', false, 'unknown']
@@ -551,7 +582,7 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     h.contexts[0].page.locator = () => empty
     await flush()
     const result = h.runner.get('task-1', 1)
-    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', account_blocked: 'account_blocked', captcha: 'captcha_required' }
+    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', captcha: 'captcha_required' }
     assert.equal(result.reason, reasons[expected] || '')
     assert.equal(result.status, expected === 'unknown' ? 'running' : 'blocked')
     await h.runner.cancel('task-1', 1)

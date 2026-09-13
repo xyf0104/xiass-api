@@ -7,6 +7,7 @@
             v-model:searchQuery="params.search"
             :filters="params"
             :groups="groups"
+            :pools="accountPools"
             :execution-node-options="executionNodeOptions"
             @update:filters="(newFilters) => Object.assign(params, newFilters)"
             @change="debouncedReload"
@@ -364,6 +365,7 @@
                   {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeManageableBadge') }}
                 </span>
               </span>
+              <AccountPoolBadge v-if="accountPoolForAccount(row.id)" class="mt-1" :pool="accountPoolForAccount(row.id)!" />
             </div>
           </template>
           <template #cell-notes="{ value }">
@@ -571,8 +573,8 @@
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
-    <BatchOpenAIOAuthModal v-if="showBatchOpenAIOAuth" :show="showBatchOpenAIOAuth" :groups="groups" :proxies="proxies" @close="showBatchOpenAIOAuth = false" @created="reload" />
-    <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="reload" />
+    <BatchOpenAIOAuthModal v-if="showBatchOpenAIOAuth" :show="showBatchOpenAIOAuth" :groups="groups" :proxies="proxies" @close="showBatchOpenAIOAuth = false" @created="handleAccountPoolsUpdated" />
+    <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="handleAccountPoolsUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <OAuthBillingBreakdownDialog
       :show="showOAuthBillingDetails"
@@ -682,6 +684,7 @@ import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
+import AccountPoolBadge from '@/components/account/AccountPoolBadge.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
@@ -701,6 +704,7 @@ import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
+import { buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 
 const loadCreateAccountModal = () => import('@/components/account/CreateAccountModal.vue')
 const loadEditAccountModal = () => import('@/components/account/EditAccountModal.vue')
@@ -727,9 +731,12 @@ function openTeamChildCreation() {
 
 function openOpenAIReauthorizationManagement() {
   if (!allowAccountWrite()) return
+  const accountIDs = openAI401Accounts.value.map(account => account.id).join(',')
   void router?.push({
-    name: 'AdminTeamChildCreation',
-    query: { openai_reauthorization: '1' }
+    name: 'AdminOpenAIReauthorization',
+    query: {
+      ...(accountIDs ? { account_ids: accountIDs } : {})
+    }
   })
 }
 
@@ -752,6 +759,9 @@ const initialFocusedAccountID = normalizeFocusedAccountID(route?.query.account_i
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
+const accountPools = ref<AccountPool[]>([])
+const accountPoolLookup = computed(() => buildAccountPoolLookup(accountPools.value))
+const accountPoolForAccount = (accountID: number): AccountPool | undefined => accountPoolLookup.value[String(accountID)]
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
 type AccountBulkEditTarget =
@@ -768,6 +778,7 @@ type AccountBulkEditTarget =
         type?: string
         status?: string
         group?: string
+        account_pool?: string
         execution_node_id?: string
         search?: string
         privacy_mode?: string
@@ -1185,6 +1196,7 @@ const {
     status: '',
     privacy_mode: '',
     group: '',
+    account_pool: '',
     execution_node_id: '',
     active_concurrency_group: initialActiveConcurrencyGroup,
     account_id: initialFocusedAccountID,
@@ -1690,7 +1702,7 @@ const refreshAccountsIncrementally = async () => {
 }
 
 const handleManualRefresh = async () => {
-  await Promise.all([load(), loadUpstreamBillingProbeGlobalState()])
+  await Promise.all([load(), loadAccountPools(), loadUpstreamBillingProbeGlobalState()])
   // Force usage cells to refetch /usage on explicit user refresh.
   usageManualRefreshToken.value += 1
 }
@@ -2247,6 +2259,7 @@ const buildBulkEditFilterSnapshot = () => {
     type: typeof rawParams.type === 'string' ? rawParams.type : '',
     status: typeof rawParams.status === 'string' ? rawParams.status : '',
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
+    account_pool: typeof rawParams.account_pool === 'string' ? rawParams.account_pool : '',
     execution_node_id: typeof rawParams.execution_node_id === 'string' ? rawParams.execution_node_id : '',
     search: typeof rawParams.search === 'string' ? rawParams.search : '',
     privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
@@ -2397,6 +2410,7 @@ const buildAccountQueryFilters = () => ({
   type: params.type || '',
   status: params.status || '',
   group: params.group || '',
+  account_pool: params.account_pool || '',
   execution_node_id: params.execution_node_id || '',
   privacy_mode: params.privacy_mode || '',
   search: params.search || '',
@@ -2436,6 +2450,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
       return false
     }
   }
+  if (filters.account_pool && accountPoolForAccount(account.id)?.id !== Number(filters.account_pool)) return false
   if (filters.execution_node_id) {
     const owner = accountExecutionNodeID(account)
     if (owner !== filters.execution_node_id) return false
@@ -2783,6 +2798,21 @@ const proxyExpiryText = (p: AccountProxy): string => {
   return params ? t(key, params) : t(key)
 }
 
+const loadAccountPools = async () => {
+  const poolsAPI = adminAPI.accountPools
+  if (!poolsAPI?.list) return
+  try {
+    accountPools.value = (await poolsAPI.list()).items
+  } catch (error) {
+    console.error('Failed to load account pools:', error)
+  }
+}
+
+const handleAccountPoolsUpdated = async () => {
+  await loadAccountPools()
+  reload()
+}
+
 // 表格滚动时关闭行操作菜单，并让顶部工具菜单继续贴紧触发按钮。
 const handleScroll = () => {
   menu.show = false
@@ -2806,6 +2836,7 @@ const handleClickOutside = (event: MouseEvent) => {
 
 onMounted(async () => {
   load()
+  void loadAccountPools()
   loadUpstreamBillingProbeGlobalState()
   try {
     const [p, g, settings, executionNodes] = await Promise.allSettled([

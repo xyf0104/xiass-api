@@ -12,6 +12,7 @@
     <Select :model-value="filters.status" class="w-40" :options="sOpts" @update:model-value="updateStatus" @change="$emit('change')" />
     <Select :model-value="filters.privacy_mode" class="w-40" :options="privacyOpts" @update:model-value="updatePrivacyMode" @change="$emit('change')" />
     <Select :model-value="filters.group" class="w-40" :options="gOpts" @update:model-value="updateGroup" @change="$emit('change')" />
+    <Select :model-value="filters.account_pool" class="w-40" :options="poolOpts" @update:model-value="updateAccountPool" @change="$emit('change')" />
     <Select v-if="executionNodeOptions.length > 0" :model-value="filters.execution_node_id" class="w-40" :options="executionNodeOptions" @update:model-value="updateExecutionNode" @change="$emit('change')" />
   </div>
 </template>
@@ -20,14 +21,16 @@
 import { computed } from 'vue'; import { useI18n } from 'vue-i18n'; import Select from '@/components/common/Select.vue'; import SearchInput from '@/components/common/SearchInput.vue'
 import type { AdminGroup } from '@/types'
 import type { SelectOption } from '@/components/common/Select.vue'
+import type { AccountPool } from '@/api/admin/accountPools'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
-const props = defineProps<{ searchQuery: string; filters: Record<string, any>; groups?: AdminGroup[]; executionNodeOptions?: SelectOption[] }>()
+const props = defineProps<{ searchQuery: string; filters: Record<string, any>; groups?: AdminGroup[]; pools?: AccountPool[]; executionNodeOptions?: SelectOption[] }>()
 const emit = defineEmits(['update:searchQuery', 'update:filters', 'change']); const { t } = useI18n()
 const updatePlatform = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, platform: value }) }
 const updateType = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, type: value }) }
 const updateStatus = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, status: value }) }
 const updatePrivacyMode = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, privacy_mode: value }) }
 const updateGroup = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, group: value }) }
+const updateAccountPool = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, account_pool: value }) }
 const updateExecutionNode = (value: string | number | boolean | null) => { emit('update:filters', { ...props.filters, execution_node_id: value }) }
 const pOpts = computed(() => [{ value: '', label: t('admin.accounts.allPlatforms') }, ...CONCRETE_PLATFORM_OPTIONS])
 const tOpts = computed(() => [{ value: '', label: t('admin.accounts.allTypes') }, { value: 'oauth', label: t('admin.accounts.oauthType') }, { value: 'setup-token', label: t('admin.accounts.setupToken') }, { value: 'apikey', label: t('admin.accounts.apiKey') }, { value: 'bedrock', label: 'AWS Bedrock' }])
@@ -43,6 +46,10 @@ const gOpts = computed(() => [
   { value: '', label: t('admin.accounts.allGroups') },
   { value: 'ungrouped', label: t('admin.accounts.ungroupedGroup') },
   ...(props.groups || []).map(g => ({ value: String(g.id), label: g.name }))
+])
+const poolOpts = computed(() => [
+  { value: '', label: '全部号池' },
+  ...(props.pools || []).map(pool => ({ value: String(pool.id), label: pool.name }))
 ])
 const executionNodeOptions = computed(() => props.executionNodeOptions || [])
 </script>

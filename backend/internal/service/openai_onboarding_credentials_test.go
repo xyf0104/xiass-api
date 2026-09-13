@@ -40,6 +40,7 @@ func TestOpenAIOnboardingTrustedCreatePersistsLoginWithAccount(t *testing.T) {
 
 func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testing.T) {
 	proxyID := int64(17)
+	const fingerprintSeed = "22222222-2222-4222-8222-222222222222"
 	credentials := map[string]any{
 		"email": "owner@example.test", "chatgpt_account_id": "same-account",
 		"access_token": "old-token", "refresh_token": "old-refresh",
@@ -51,7 +52,14 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 		ID: 209, Name: "saved account", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Status: StatusError, ErrorMessage: "401 unauthorized", Credentials: maps.Clone(credentials),
 		Concurrency: 7, Priority: 9, ProxyID: &proxyID, GroupIDs: []int64{4, 5}, Schedulable: true,
-		Extra: map[string]any{"codex_fingerprint_mode": "off", "custom_config": "preserved"},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey:  "device",
+			codexFingerprintSeedExtraKey:  fingerprintSeed,
+			AccountExecutionNodeExtraKey:  "api2",
+			AccountExecutionProxyExtraKey: "17",
+			AccountPoolExtraKey:           "23",
+			"custom_config":               "preserved",
+		},
 	}}
 	svc := &adminServiceImpl{accountRepo: repo}
 	updated, err := svc.UpdateAccount(context.Background(), 209, &UpdateAccountInput{
@@ -71,6 +79,11 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 	require.Equal(t, &proxyID, updated.ProxyID)
 	require.Equal(t, []int64{4, 5}, updated.GroupIDs)
 	require.True(t, updated.Schedulable)
+	require.Equal(t, "device", updated.Extra[codexFingerprintModeExtraKey])
+	require.Equal(t, fingerprintSeed, updated.Extra[codexFingerprintSeedExtraKey])
+	require.Equal(t, "api2", updated.Extra[AccountExecutionNodeExtraKey])
+	require.Equal(t, "17", updated.Extra[AccountExecutionProxyExtraKey])
+	require.Equal(t, "23", updated.Extra[AccountPoolExtraKey])
 	require.Equal(t, "preserved", updated.Extra["custom_config"])
 }
 

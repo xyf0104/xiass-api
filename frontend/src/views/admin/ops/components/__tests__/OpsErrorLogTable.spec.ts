@@ -16,7 +16,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 const TooltipStub = { template: '<div><slot /></div>' }
 const PaginationStub = { template: '<div class="pagination-stub" />' }
 
-function mountTable(row: Partial<OpsErrorLog>) {
+function mountTable(row: Partial<OpsErrorLog>, extraProps: Record<string, unknown> = {}) {
   const base = {
     id: 1,
     created_at: '2026-06-05T23:59:50Z',
@@ -39,7 +39,7 @@ function mountTable(row: Partial<OpsErrorLog>) {
   } as OpsErrorLog
 
   return mount(OpsErrorLogTable, {
-    props: { rows: [base], total: 1, loading: false, page: 1, pageSize: 20 },
+    props: { rows: [base], total: 1, loading: false, page: 1, pageSize: 20, ...extraProps },
     global: { stubs: { 'el-tooltip': TooltipStub, Pagination: PaginationStub } },
   })
 }
@@ -72,6 +72,16 @@ describe('OpsErrorLogTable user/api-key/account columns', () => {
 
     expect(wrapper.text()).toContain('old-key')
     expect(wrapper.text()).toContain('admin.ops.errorLog.keyDeletedBadge')
+  })
+
+  it('shows the account pool on historical error rows', () => {
+    const wrapper = mountTable({ account_id: 9, account_name: 'acct-A' }, {
+      accountPoolLookup: {
+        '9': { id: 4, name: '日本号池', proxy_id: null, account_ids: [9], account_count: 1 }
+      }
+    })
+
+    expect(wrapper.get('[title="号池：日本号池"]').text()).toBe('日本号池')
   })
 })
 

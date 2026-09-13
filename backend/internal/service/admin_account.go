@@ -623,6 +623,9 @@ func stripOpenAIReauthorizationCredentials(credentials map[string]any) map[strin
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input.PreserveOAuthWorkflowProxy && (!input.AllowOpenAIReauthorizationCredentials || input.Platform != PlatformOpenAI || input.Type != AccountTypeOAuth) {
+		return nil, infraerrors.BadRequest("INVALID_OAUTH_WORKFLOW_PROXY", "Proxy preservation requires a trusted OpenAI OAuth workflow")
+	}
 	if !input.AllowOpenAIReauthorizationCredentials && containsOpenAIReauthorizationCredentials(input.Credentials) {
 		return nil, infraerrors.BadRequest("OPENAI_REAUTH_CREDENTIALS_MANAGED", "OpenAI reauthorization credentials must be saved through the dedicated encrypted endpoint")
 	}
@@ -635,7 +638,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		return nil, err
 	}
 	if s.settingService != nil {
-		accountExtra, input.ProxyID = applyExecutionNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+		if input.PreserveOAuthWorkflowProxy {
+			accountExtra, input.ProxyID = applyOAuthWorkflowNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+		} else {
+			accountExtra, input.ProxyID = applyExecutionNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+		}
 	} else {
 		delete(accountExtra, AccountExecutionNodeExtraKey)
 		delete(accountExtra, AccountExecutionProxyExtraKey)
@@ -1620,6 +1627,20 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		}
 		groupID = parsedGroupID
 	}
+	var poolAccountIDs []int64
+	filterByPool := false
+	if rawPoolID := strings.TrimSpace(filters.AccountPool); rawPoolID != "" {
+		poolID, err := strconv.ParseInt(rawPoolID, 10, 64)
+		if err != nil || poolID <= 0 {
+			return nil, fmt.Errorf("invalid account pool filter")
+		}
+		pool, err := s.GetAccountPool(ctx, poolID)
+		if err != nil {
+			return nil, err
+		}
+		poolAccountIDs = append([]int64(nil), pool.AccountIDs...)
+		filterByPool = true
+	}
 
 	const pageSize = 500
 	page := 1
@@ -1630,9 +1651,21 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		var total int64
 		var err error
 		if strings.TrimSpace(filters.ExecutionNodeID) != "" {
-			accounts, total, err = s.ListAccountsWithExecutionNode(
-				ctx, page, pageSize, filters.Platform, filters.Type, filters.Status,
-				filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
+			if filterByPool {
+				accounts, total, err = s.ListAccountsByIDsWithExecutionNode(
+					ctx, page, pageSize, poolAccountIDs, filters.Platform, filters.Type, filters.Status,
+					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
+				)
+			} else {
+				accounts, total, err = s.ListAccountsWithExecutionNode(
+					ctx, page, pageSize, filters.Platform, filters.Type, filters.Status,
+					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
+				)
+			}
+		} else if filterByPool {
+			accounts, total, err = s.ListAccountsByIDs(
+				ctx, page, pageSize, poolAccountIDs, filters.Platform, filters.Type, filters.Status,
+				filters.Search, groupID, filters.PrivacyMode, "", "",
 			)
 		} else {
 			accounts, total, err = s.ListAccounts(

@@ -109,6 +109,7 @@
             :show-execution-node="showExecutionNodeLabels"
             :execution-node-local-id="executionNodeLocalID"
             :execution-node-legacy-id="executionNodeLegacyID"
+            :account-pool-lookup="accountPoolLookup"
             :server-side-sort="true"
             :default-sort-key="'created_at'"
             :default-sort-order="'desc'"
@@ -124,6 +125,7 @@
             :rows="errRows" :total="errTotal" :loading="errLoading"
             :page="errPage" :page-size="errPageSize"
             :visible-column-keys="errVisibleColumnKeys"
+            :account-pool-lookup="accountPoolLookup"
             user-clickable
             @userClick="handleUserClick"
             @openErrorDetail="openError"
@@ -213,10 +215,13 @@ import EndpointDistributionChart from '@/components/charts/EndpointDistributionC
 import Icon from '@/components/icons/Icon.vue'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
+import { buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
+const accountPools = ref<AccountPool[]>([])
+const accountPoolLookup = computed(() => buildAccountPoolLookup(accountPools.value))
 const executionNodeLocalID = computed(() => executionNodeStatus.value?.runtime.node_id || 'api')
 const executionNodeLegacyID = computed(() => executionNodeStatus.value?.runtime.legacy_unassigned_node_id || executionNodeLocalID.value)
 const executionNodeOptions = computed(() => {
@@ -559,6 +564,7 @@ const applyFilters = () => {
   }
 }
 const refreshData = () => {
+  void loadAccountPools()
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -586,6 +592,15 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 
 const handleIpGeoBatchFailed = () => {
   appStore.showError(t('usage.ipGeo.batchFailed'))
+}
+const loadAccountPools = async () => {
+  const poolsAPI = adminAPI.accountPools
+  if (!poolsAPI?.list) return
+  try {
+    accountPools.value = (await poolsAPI.list()).items
+  } catch (error) {
+    console.error('Failed to load account pools:', error)
+  }
 }
 const cancelExport = () => exportAbortController?.abort()
 const openCleanupDialog = () => { cleanupDialogVisible.value = true }
@@ -923,6 +938,7 @@ const handleColumnDropdownViewportChange = () => {
 }
 
 onMounted(() => {
+  void loadAccountPools()
   const executionNodeAPI = adminAPI.executionNodes
   if (executionNodeAPI?.getStatus) {
     void executionNodeAPI.getStatus().then((status) => {

@@ -33,6 +33,7 @@ type OpenAIOAuthHandler struct {
 	teamBrowserStore         *openAITeamBrowserStore
 	batchOAuthStore          *batchOAuthStore
 	batchSMSService          batchOAuthSMS
+	tokenCacheInvalidator    service.TokenCacheInvalidator
 }
 
 // ConfigureTeamChildSecrets attaches the application encryption boundary used
@@ -41,6 +42,12 @@ type OpenAIOAuthHandler struct {
 func (h *OpenAIOAuthHandler) ConfigureTeamChildSecrets(encryptor service.SecretEncryptor) {
 	if h != nil {
 		h.secretEncryptor = encryptor
+	}
+}
+
+func (h *OpenAIOAuthHandler) ConfigureTokenCacheInvalidator(invalidator service.TokenCacheInvalidator) {
+	if h != nil {
+		h.tokenCacheInvalidator = invalidator
 	}
 }
 

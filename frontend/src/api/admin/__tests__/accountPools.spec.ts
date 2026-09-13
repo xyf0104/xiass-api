@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { accountPoolsAPI, getAccountPoolAccounts } from '../accountPools'
+import { accountPoolsAPI, buildAccountPoolLookup, getAccountPoolAccounts } from '../accountPools'
 
 const { get, post, put, del, list } = vi.hoisted(() => ({
   get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn(), list: vi.fn()
@@ -10,6 +10,17 @@ vi.mock('@/api/admin/accounts', () => ({ list }))
 const pool = { id: 7, name: '混合号池', proxy_id: 9, account_ids: [1, 2], account_count: 2 }
 
 describe('account pools API contract', () => {
+  it('builds one shared account-to-pool lookup for account and history tables', () => {
+    const lookup = buildAccountPoolLookup([
+      { ...pool, id: 7, name: '日本号池', account_ids: [1, 2] },
+      { ...pool, id: 8, name: '美国号池', account_ids: [3] }
+    ])
+
+    expect(lookup['1']?.name).toBe('日本号池')
+    expect(lookup['2']?.id).toBe(7)
+    expect(lookup['3']?.name).toBe('美国号池')
+  })
+
   beforeEach(() => {
     vi.resetAllMocks()
     post.mockResolvedValue({ data: pool })

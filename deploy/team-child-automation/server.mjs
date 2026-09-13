@@ -1445,7 +1445,7 @@ async function firstVisibleRole(current, role, patterns) {
   return null
 }
 
-async function firstVisibleInput(current, matcher) {
+async function firstVisibleInput(current, matcher, { editable = false } = {}) {
   const inputs = current.locator('input')
   const count = await inputs.count().catch(() => 0)
   for (let index = 0; index < count; index += 1) {
@@ -1459,9 +1459,25 @@ async function firstVisibleInput(current, matcher) {
       await input.getAttribute('aria-label'),
       await input.getAttribute('placeholder')
     ].filter(Boolean).join(' ').toLowerCase()
-    if (matcher(metadata, input)) return input
+    if (!matcher(metadata, input)) continue
+    if (editable && typeof input.isEditable === 'function'
+      && !(await input.isEditable({ timeout: 1000 }).catch(() => false))) continue
+    return input
   }
   return null
+}
+
+async function fillOAuthInputValue(current, matcher, value, description) {
+  return waitForOAuthPage(description, async () => {
+    const input = await firstVisibleInput(current, matcher, { editable: true })
+    if (!input) return null
+    await input.fill(value, { timeout: 3000 })
+    if (typeof input.inputValue === 'function'
+      && await input.inputValue({ timeout: 1000 }).catch(() => value) !== value) {
+      throw new Error('OpenAI 输入框没有完整接收登录信息')
+    }
+    return input
+  })
 }
 
 async function clickOAuthContinue(current) {
@@ -1554,6 +1570,16 @@ function isReauthorizationEmailCodePage(body, inputs) {
   return /email|inbox|mail|check your inbox|verify your email|verification code|邮箱|验证邮件|邮箱验证码/i.test(body)
 }
 
+function reauthorizationFailureState(body) {
+  if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
+    return { kind: 'invalid_credentials' }
+  }
+  if (/(?:your |this |current )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned|restricted|limited)|account_(?:deactivated|disabled|suspended)|OpenAI\s*限制了当前账号|账号.*(?:受限|限制|封禁|停用)/i.test(body)) {
+    return { kind: 'account_blocked' }
+  }
+  return null
+}
+
 async function reauthorizationNextState(current, workflow) {
   const callbackURL = await workflowCallbackURLFromPage(current, workflow)
   if (callbackURL) return { kind: 'callback', callbackURL }
@@ -1561,16 +1587,19 @@ async function reauthorizationNextState(current, workflow) {
   const provider = thirdPartyIdentityProviderPage(current)
   if (provider) return { kind: 'external_provider', provider }
 
+  const body = await oauthBody(current)
+  const failure = reauthorizationFailureState(body)
+  if (failure) return failure
+
   const passwordInput = await firstVisibleInput(current, (metadata) => /password/.test(metadata))
   if (passwordInput) return { kind: 'password', input: passwordInput }
 
   const verification = await verificationInputs(current)
-  const body = await oauthBody(current)
   if (isAuthenticatorChallenge(body, verification)) return { kind: 'totp' }
   if (isReauthorizationEmailCodePage(body, verification)) return { kind: 'email_code' }
 
   if (isReauthorizationAccountChooserPage(body)) return { kind: 'account_chooser' }
-  const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
+  const emailInput = await firstVisibleInput(current, isEmailInputMetadata, { editable: true })
   if (emailInput) return { kind: 'email', input: emailInput }
   if (isReauthorizationWorkspacePage(body)) return { kind: 'workspace' }
   return { kind: 'unknown' }
@@ -1595,7 +1624,7 @@ async function registeredOAuthNextState(current, workflow) {
   if (passwordInput) return { kind: 'password', input: passwordInput }
   if (isReauthorizationAccountChooserPage(body)) return { kind: 'account_chooser' }
 
-  const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
+  const emailInput = await firstVisibleInput(current, isEmailInputMetadata, { editable: true })
   if (emailInput) return { kind: 'email', input: emailInput }
   if (isReauthorizationWorkspacePage(body)) return { kind: 'workspace' }
   return { kind: 'unknown' }
@@ -1676,10 +1705,8 @@ async function selectLoginForAnotherAccount(current, workflow) {
 }
 
 async function fillWorkflowEmail(current, email) {
-  const input = await waitForOAuthPage('OpenAI 页面中找不到邮箱输入框', () => (
-    firstVisibleInput(current, (metadata) => /email/.test(metadata))
-  ))
-  await input.fill(email)
+  await fillOAuthInputValue(current, (metadata) => /email/.test(metadata), email, 'OpenAI 页面中找不到可填写的邮箱输入框')
+  await sleep(1000)
   await clickOAuthContinue(current)
 }
 
@@ -1741,10 +1768,8 @@ async function waitForEmailVerificationChallenge(current, description) {
 }
 
 async function fillLoginPassword(current, password) {
-  const input = await waitForOAuthPage('OpenAI 登录页中找不到密码输入框', () => (
-    firstVisibleInput(current, (metadata) => /password/.test(metadata))
-  ))
-  await input.fill(password)
+  await fillOAuthInputValue(current, (metadata) => /password/.test(metadata), password, 'OpenAI 登录页中找不到可填写的密码输入框')
+  await sleep(1000)
   await clickOAuthContinue(current)
 }
 
@@ -2247,10 +2272,10 @@ async function finishOAuthReauthorization(workflow, current, state) {
   persistWorkflowState()
 }
 
-async function waitForReauthorizationNextState(current, workflow) {
+async function waitForReauthorizationNextState(current, workflow, previousKind = '') {
   return waitForOAuthPage('OpenAI 登录后未进入可识别的授权页面', async () => {
     const state = await reauthorizationNextState(current, workflow)
-    return state.kind === 'unknown' ? null : state
+    return state.kind === 'unknown' || state.kind === previousKind ? null : state
   })
 }
 
@@ -2315,6 +2340,12 @@ function requireManualReauthorizationLogin(workflow, state) {
 }
 
 async function advanceOAuthReauthorization(workflow, current, state, { operatorConfirmed = false } = {}) {
+  if (state.kind === 'invalid_credentials') {
+    throw new Error('OpenAI 拒绝了服务器保存的登录邮箱或密码，请更新该账号的登录密码后重新授权')
+  }
+  if (state.kind === 'account_blocked') {
+    throw new Error('OpenAI 限制了当前账号，已停止自动化且不会自动重试')
+  }
   if (state.kind === 'external_provider' || state.kind === 'external_provider_choice') {
     requireManualReauthorizationLogin(workflow, state)
     return
@@ -2325,10 +2356,9 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
       setWorkflowNode(workflow, 'signup', 'running', '正在进入已有账号登录路径')
       completeReauthorizationSignInNode(workflow, '已进入 OpenAI 已有账号登录路径')
       setWorkflowNode(workflow, 'email', 'running', '正在填入目标登录邮箱')
-      await state.input.fill(workflow.inviteEmail)
-      await clickOAuthContinue(current)
+      await fillWorkflowEmail(current, workflow.inviteEmail)
       completeReauthorizationEmailNode(workflow, '目标登录邮箱已提交')
-      return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow))
+      return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow, 'email'))
     }
     if (!operatorConfirmed) {
       requireManualReauthorizationLogin(workflow, state)
@@ -2344,10 +2374,9 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
 
   if (state.kind === 'email') {
     setWorkflowNode(workflow, 'email', 'running', '正在重新填入目标登录邮箱')
-    await state.input.fill(workflow.inviteEmail)
-    await clickOAuthContinue(current)
+    await fillWorkflowEmail(current, workflow.inviteEmail)
     completeReauthorizationEmailNode(workflow, '目标登录邮箱已提交')
-    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
+    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow, 'email'), { operatorConfirmed })
   }
 
   if (state.kind === 'password') {
@@ -2364,7 +2393,7 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
     setWorkflowNode(workflow, 'password', 'running', 'OpenAI 已要求密码，正在填入服务器保存的登录密码')
     await fillLoginPassword(current, password)
     completeReauthorizationPasswordNode(workflow, '登录密码已自动填入并提交')
-    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
+    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow, 'password'), { operatorConfirmed })
   }
 
   if (state.kind === 'totp') {
@@ -2379,7 +2408,7 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
     if (remaining < 3000) await sleep(remaining + 100)
     if (workflow.cancelRequested || workflow.pauseRequested) return
     await fillVerificationCode(current, generateTOTP(workflow.loginTOTPSecret))
-    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
+    return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow, 'totp'), { operatorConfirmed })
   }
 
   if (state.kind === 'email_code') {
@@ -3439,6 +3468,8 @@ const batchOAuth = new BatchOAuthRunner({
   },
   validateAuthURL: validateOpenAIAuthURL,
   helpers: {
+    fillWorkflowEmail,
+    fillLoginPassword,
     onProgress: progress => console.log(JSON.stringify({ component: 'batch-oauth', ...progress }))
   }
 })
@@ -3463,6 +3494,7 @@ export {
   createWorkflow,
   decryptWorkflowState,
   encryptWorkflowState,
+  fillOAuthInputValue,
   fillVerificationCode,
   advanceRegisteredOAuth,
   beginWorkflowEmailChallenge,
@@ -3474,6 +3506,7 @@ export {
   isSignupAccountCreationRejectionText,
   registeredOAuthNextState,
   reauthorizationNextState,
+  waitForReauthorizationNextState,
   advanceOAuthReauthorization,
   recoverOpenAIPhoneEntry,
   resetOAuthWorkflowSteps,

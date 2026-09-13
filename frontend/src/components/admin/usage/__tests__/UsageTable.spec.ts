@@ -161,6 +161,26 @@ describe('admin UsageTable execution-node badges', () => {
     expect(badges[1].classes()).toContain('shrink-0')
     expect(badges[1].text()).toContain('api2')
   })
+
+  it('shows the account pool used by a historical request', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, request_id: 'pooled', account_id: 12, account: { id: 12, name: 'Pool account' } }],
+        columns: [],
+        accountPoolLookup: {
+          '12': { id: 7, name: '沐念云', proxy_id: null, account_ids: [12], account_count: 1 }
+        }
+      },
+      global: {
+        stubs: {
+          DataTable: AccountCellDataTableStub,
+          Icon: { template: '<i />' }
+        }
+      }
+    })
+
+    expect(wrapper.get('[title="号池：沐念云"]').text()).toBe('沐念云')
+  })
 })
 
 describe('admin UsageTable tooltip', () => {
