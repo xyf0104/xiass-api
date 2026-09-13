@@ -553,7 +553,10 @@ func TestBatchOAuthCompletePassesTrustedProxyAndVerifiesBusinessSuccess(t *testi
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
 	require.NotEmpty(t, envelope.Data.ID)
-	require.Equal(t, "http://proxy.example.test:8080", f.requests[0]["proxy"].(map[string]any)["server"])
+	require.Len(t, f.requests, 1)
+	proxy, ok := f.requests[0]["proxy"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "http://proxy.example.test:8080", proxy["server"])
 	w = batchOAuthRequest(r, "POST", "/tasks/"+envelope.Data.ID+"/complete", "{}")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"status":"completed"`)
