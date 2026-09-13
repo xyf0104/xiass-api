@@ -49,7 +49,7 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 		return nil, "", "", "", nil, errors.New("OpenAI account not found")
 	}
 	if !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
-		return nil, "", "", "", nil, errors.New("Only OpenAI OAuth accounts can be reauthorized")
+		return nil, "", "", "", nil, errors.New("only OpenAI OAuth accounts can be reauthorized")
 	}
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
 	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
@@ -58,10 +58,10 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	}
 	email, ciphertext, _ := openAIAccountReauthorizationLogin(account)
 	if email == "" {
-		return nil, "", "", "", nil, errors.New("Saved OpenAI login email is unavailable")
+		return nil, "", "", "", nil, errors.New("saved OpenAI login email is unavailable")
 	}
 	if strings.TrimSpace(ciphertext) == "" {
-		return nil, "", "", "", nil, errors.New("Saved OpenAI login password is unavailable")
+		return nil, "", "", "", nil, errors.New("saved OpenAI login password is unavailable")
 	}
 	password, err := h.secretEncryptor.Decrypt(ciphertext)
 	if err != nil || len(password) == 0 || len(password) > 2048 {
