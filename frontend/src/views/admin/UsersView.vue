@@ -537,6 +537,7 @@
               :today="usageStats[row.id]?.today_actual_cost ?? 0"
               :total="usageStats[row.id]?.total_actual_cost ?? 0"
               :by-platform="usageStats[row.id]?.by_platform"
+              :title="t('admin.users.usageScopeHint')"
             />
           </template>
 
@@ -560,6 +561,7 @@
             <UserConcurrencyCell
               :current="row.current_concurrency ?? 0"
               :max="row.concurrency"
+              :title="t('admin.users.concurrencyScopeHint')"
             />
           </template>
 

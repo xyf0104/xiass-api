@@ -104,6 +104,21 @@ type userGroupAccountLeaseCacheForTest struct {
 	runtimeUserGroupLeases    map[int64]map[string]userGroupAccountLeaseIdentityForTest
 }
 
+type groupRequestLeaseCacheForTest struct {
+	userGroupAccountLeaseCacheForTest
+	groupRequestTrackErr      error
+	groupRequestReleaseErr    error
+	groupRequestSnapshotErr   error
+	groupRequestSnapshotAt    time.Time
+	runtimeGroupRequests      map[int64]map[string]int64
+	trackedRequestGroupIDs    []int64
+	trackedRequestUserIDs     []int64
+	trackedRequestIDs         []string
+	releasedRequestGroupIDs   []int64
+	releasedRequestUserIDs    []int64
+	releasedIngressRequestIDs []string
+}
+
 func (c *groupLeaseCacheForTest) TrackGroupSlot(_ context.Context, groupID, accountID int64, requestID string) error {
 	c.runtimeMu.Lock()
 	defer c.runtimeMu.Unlock()
@@ -218,6 +233,68 @@ func (c *userGroupAccountLeaseCacheForTest) GetUserGroupAccountConcurrency(_ con
 	return c.userGroupAccountCounts[groupID], c.userGroupSnapshotComplete, c.userGroupSnapshotAt, c.userGroupSnapshotErr
 }
 
+func (c *groupRequestLeaseCacheForTest) TrackGroupRequestSlot(_ context.Context, groupID, userID int64, requestID string) error {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
+	c.trackedRequestGroupIDs = append(c.trackedRequestGroupIDs, groupID)
+	c.trackedRequestUserIDs = append(c.trackedRequestUserIDs, userID)
+	c.trackedRequestIDs = append(c.trackedRequestIDs, requestID)
+	if c.groupRequestTrackErr != nil {
+		return c.groupRequestTrackErr
+	}
+	if c.runtimeGroupRequests != nil {
+		if c.runtimeGroupRequests[groupID] == nil {
+			c.runtimeGroupRequests[groupID] = make(map[string]int64)
+		}
+		c.runtimeGroupRequests[groupID][requestID] = userID
+	}
+	return nil
+}
+
+func (c *groupRequestLeaseCacheForTest) ReleaseGroupRequestSlot(_ context.Context, groupID, userID int64, requestID string) error {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
+	c.releasedRequestGroupIDs = append(c.releasedRequestGroupIDs, groupID)
+	c.releasedRequestUserIDs = append(c.releasedRequestUserIDs, userID)
+	c.releasedIngressRequestIDs = append(c.releasedIngressRequestIDs, requestID)
+	if c.groupRequestReleaseErr != nil {
+		return c.groupRequestReleaseErr
+	}
+	if requests := c.runtimeGroupRequests[groupID]; requests != nil {
+		delete(requests, requestID)
+		if len(requests) == 0 {
+			delete(c.runtimeGroupRequests, groupID)
+		}
+	}
+	return nil
+}
+
+func (c *groupRequestLeaseCacheForTest) GetGroupRequestConcurrencyBatch(_ context.Context, groupIDs []int64) (map[int64]int, error) {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
+	if c.groupRequestSnapshotErr != nil {
+		return nil, c.groupRequestSnapshotErr
+	}
+	counts := make(map[int64]int, len(groupIDs))
+	for _, groupID := range groupIDs {
+		counts[groupID] = len(c.runtimeGroupRequests[groupID])
+	}
+	return counts, nil
+}
+
+func (c *groupRequestLeaseCacheForTest) GetGroupUserRequestConcurrency(_ context.Context, groupID int64) (map[int64]int, time.Time, error) {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
+	if c.groupRequestSnapshotErr != nil {
+		return nil, time.Time{}, c.groupRequestSnapshotErr
+	}
+	counts := make(map[int64]int)
+	for _, userID := range c.runtimeGroupRequests[groupID] {
+		counts[userID]++
+	}
+	return counts, c.groupRequestSnapshotAt, nil
+}
+
 func (c *ingressLeaseCacheForTest) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {
 	c.acquireIngressCalls++
 	if c.acquireIngressFn != nil {
@@ -246,6 +323,7 @@ var _ ConcurrencyCache = (*stubConcurrencyCacheForTest)(nil)
 var _ OpenAIWSIngressLeaseCache = (*ingressLeaseCacheForTest)(nil)
 var _ GroupConcurrencyCache = (*groupLeaseCacheForTest)(nil)
 var _ UserGroupAccountConcurrencyCache = (*userGroupAccountLeaseCacheForTest)(nil)
+var _ GroupRequestConcurrencyCache = (*groupRequestLeaseCacheForTest)(nil)
 
 func (c *stubConcurrencyCacheForTest) AcquireAccountSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
 	c.acquireAccountCalls.Add(1)
@@ -405,6 +483,92 @@ func TestAcquireAccountSlot_TracksActualUserGroupAndAccount(t *testing.T) {
 	require.Equal(t, []int64{42}, cache.releasedUserGroupIDs)
 	require.Equal(t, []int64{99}, cache.releasedUserAccountIDs)
 	require.Equal(t, cache.trackedUserRequestIDs, cache.releasedUserRequestIDs)
+}
+
+func TestGroupRequestConcurrencyMatchesAcceptedUserRequestsWhileAccountSlotsStaySeparate(t *testing.T) {
+	cache := &groupRequestLeaseCacheForTest{
+		userGroupAccountLeaseCacheForTest: userGroupAccountLeaseCacheForTest{
+			groupLeaseCacheForTest: groupLeaseCacheForTest{
+				stubConcurrencyCacheForTest: stubConcurrencyCacheForTest{acquireResult: true},
+				groupSnapshotComplete:       true,
+				runtimeGroupLeases:          make(map[int64]map[string]int64),
+			},
+			userGroupSnapshotComplete: true,
+			runtimeUserGroupLeases:    make(map[int64]map[string]userGroupAccountLeaseIdentityForTest),
+		},
+		runtimeGroupRequests:   make(map[int64]map[string]int64),
+		groupRequestSnapshotAt: time.Unix(1_700_000_001, 0).UTC(),
+	}
+	svc := NewConcurrencyService(cache)
+	ctx := context.WithValue(context.Background(), ctxkey.Group, &Group{ID: 42})
+	ctx = context.WithValue(ctx, ctxkey.UserID, int64(18))
+
+	requestRelease := svc.TrackAPIKeySlot(ctx, 88)
+	accountResult, err := svc.AcquireAccountSlot(ctx, 99, 1)
+	require.NoError(t, err)
+	require.True(t, accountResult.Acquired)
+
+	groupCounts, supported, err := svc.GetGroupConcurrencyBatch(ctx, []int64{42})
+	require.NoError(t, err)
+	require.True(t, supported)
+	require.Equal(t, map[int64]int{42: 1}, groupCounts, "one request must not be counted again when it acquires an account")
+
+	snapshot, err := svc.GetUserGroupAccountConcurrencySnapshot(ctx, 42)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{18: 1}, snapshot.UserCounts)
+	require.Equal(t, map[int64]map[int64]int{18: {99: 1}}, snapshot.Counts)
+
+	accountResult.ReleaseFunc()
+	groupCounts, _, err = svc.GetGroupConcurrencyBatch(ctx, []int64{42})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{42: 1}, groupCounts, "a request waiting or between account selections remains active at group ingress")
+
+	snapshot, err = svc.GetUserGroupAccountConcurrencySnapshot(ctx, 42)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{18: 1}, snapshot.UserCounts)
+	require.Empty(t, snapshot.Counts)
+
+	requestRelease()
+	requestRelease()
+	groupCounts, _, err = svc.GetGroupConcurrencyBatch(ctx, []int64{42})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{42: 0}, groupCounts)
+	require.Equal(t, cache.trackedRequestIDs, cache.releasedIngressRequestIDs)
+}
+
+func TestLiveGroupRuntimeUsesTheSameGroupRequestAndAccountSnapshots(t *testing.T) {
+	cache := &groupRequestLeaseCacheForTest{
+		userGroupAccountLeaseCacheForTest: userGroupAccountLeaseCacheForTest{
+			groupLeaseCacheForTest: groupLeaseCacheForTest{
+				groupSnapshotComplete: true,
+				runtimeGroupLeases:    make(map[int64]map[string]int64),
+			},
+			userGroupSnapshotComplete: true,
+			runtimeUserGroupLeases:    make(map[int64]map[string]userGroupAccountLeaseIdentityForTest),
+		},
+		runtimeGroupRequests: make(map[int64]map[string]int64),
+	}
+	concurrencyService := NewConcurrencyService(cache)
+	svc := &OpenAIGatewayService{concurrencyService: concurrencyService}
+
+	svc.trackLiveGroupRuntime(context.Background(), 42, 18, 99, "live-lease")
+	groupCounts, supported, err := concurrencyService.GetGroupConcurrencyBatch(context.Background(), []int64{42})
+	require.NoError(t, err)
+	require.True(t, supported)
+	require.Equal(t, map[int64]int{42: 1}, groupCounts)
+	snapshot, err := concurrencyService.GetUserGroupAccountConcurrencySnapshot(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{18: 1}, snapshot.UserCounts)
+	require.Equal(t, map[int64]map[int64]int{18: {99: 1}}, snapshot.Counts)
+
+	svc.releaseLiveGroupRuntime(context.Background(), 42, 18, 99, "live-lease")
+	groupCounts, _, err = concurrencyService.GetGroupConcurrencyBatch(context.Background(), []int64{42})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int{42: 0}, groupCounts)
+	snapshot, err = concurrencyService.GetUserGroupAccountConcurrencySnapshot(context.Background(), 42)
+	require.NoError(t, err)
+	require.Empty(t, snapshot.UserCounts)
+	require.Empty(t, snapshot.Counts)
 }
 
 func TestGetGroupAccountConcurrencySnapshot(t *testing.T) {

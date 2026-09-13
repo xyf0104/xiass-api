@@ -132,6 +132,12 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
                       </button>
+                      <button class="account-tools-menu-item" data-testid="openai-credential-library" @click="openOpenAICredentialLibrary">
+                        <span class="account-tools-menu-icon bg-cyan-50 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-300">
+                          <Icon name="key" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">401 账号库</span>
+                      </button>
                       <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
                         <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
                           <Icon name="download" size="sm" />
@@ -349,23 +355,32 @@
               >
                 {{ accountDisplayEmail(row) }}
               </span>
-              <span
-                v-if="showExecutionNodeLabels"
-                :class="[
-                  'mt-1 inline-flex w-fit shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium leading-4',
-                  isAccountRemote(row)
-                    ? 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
-                    : 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-                ]"
-                :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : t('admin.accounts.columns.executionNodeHint')"
+              <div
+                v-if="showExecutionNodeLabels || accountPoolForAccount(row.id)"
+                class="mt-1 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden"
               >
-                <Icon :name="isAccountReadOnly(row) ? 'lock' : 'server'" size="xs" :stroke-width="2" />
-                <span>{{ executionNodeLabel(row) }}</span>
-                <span v-if="isAccountRemote(row)" class="border-l border-current/25 pl-1">
-                  {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeManageableBadge') }}
+                <span
+                  v-if="showExecutionNodeLabels"
+                  :class="[
+                    'inline-flex w-fit shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium leading-4',
+                    isAccountRemote(row)
+                      ? 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
+                      : 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                  ]"
+                  :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : t('admin.accounts.columns.executionNodeHint')"
+                >
+                  <Icon :name="isAccountReadOnly(row) ? 'lock' : 'server'" size="xs" :stroke-width="2" />
+                  <span>{{ executionNodeLabel(row) }}</span>
+                  <span v-if="isAccountRemote(row)" class="border-l border-current/25 pl-1">
+                    {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeManageableBadge') }}
+                  </span>
                 </span>
-              </span>
-              <AccountPoolBadge v-if="accountPoolForAccount(row.id)" class="mt-1" :pool="accountPoolForAccount(row.id)!" />
+                <AccountPoolBadge
+                  v-if="accountPoolForAccount(row.id)"
+                  class="min-w-0 shrink whitespace-nowrap"
+                  :pool="accountPoolForAccount(row.id)!"
+                />
+              </div>
             </div>
           </template>
           <template #cell-notes="{ value }">
@@ -619,6 +634,16 @@
     </BaseDialog>
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <OpenAIOAuthCredentialLibraryDialog
+      v-if="showOpenAICredentialLibrary"
+      :show="showOpenAICredentialLibrary"
+      :execution-node-enabled="executionNodeStatus?.runtime.enabled === true"
+      :local-execution-node-id="executionNodeStatus?.runtime.node_id || 'api'"
+      :legacy-unassigned-node-id="executionNodeStatus?.runtime.legacy_unassigned_node_id || 'api'"
+      :paired-full-access="pairedFullAccess"
+      @close="showOpenAICredentialLibrary = false"
+      @updated="reload"
+    />
     <BulkEditAccountModal
       v-if="showBulkEdit"
       :show="showBulkEdit"
@@ -713,6 +738,7 @@ const CreateAccountModal = defineAsyncComponent(loadCreateAccountModal)
 const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
 const BulkEditAccountModal = defineAsyncComponent(loadBulkEditAccountModal)
 const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
+const OpenAIOAuthCredentialLibraryDialog = defineAsyncComponent(() => import('@/components/admin/account/OpenAIOAuthCredentialLibraryDialog.vue'))
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -871,6 +897,7 @@ function allowAccountWrite(account?: Account): boolean {
 const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
+const showOpenAICredentialLibrary = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
@@ -1507,6 +1534,7 @@ const isAnyModalOpen = computed(() => {
     showEdit.value ||
     showSync.value ||
     showImportData.value ||
+    showOpenAICredentialLibrary.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
     showTempUnsched.value ||
@@ -1749,6 +1777,12 @@ const openImportData = () => {
   if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showImportData.value = true
+}
+
+const openOpenAICredentialLibrary = () => {
+  if (!allowAccountWrite()) return
+  closeAccountToolsDropdown()
+  showOpenAICredentialLibrary.value = true
 }
 
 const openExportDataDialogFromMenu = () => {

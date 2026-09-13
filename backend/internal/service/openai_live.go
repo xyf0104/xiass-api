@@ -194,11 +194,12 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			}
 			return nil, ErrLiveConcurrencyFull
 		}
+		s.trackLiveGroupRuntime(ctx, liveGroupID(identity.GroupID), identity.UserID, account.ID, leaseID)
 
 		created, createErr := s.createUpstreamLiveCall(ctx, account, request, attestation)
 		selection.ReleaseFunc()
 		if createErr != nil {
-			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
+			s.releaseLiveLease(liveGroupID(identity.GroupID), account.ID, identity.UserID, identity.APIKeyID, leaseID)
 			if !s.shouldFailoverLiveCreateError(createErr) {
 				return nil, createErr
 			}
@@ -232,7 +233,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 		mappingTTL := s.liveMaxSessionDuration() + 5*time.Minute
 		if saveErr := store.SaveLiveCall(ctx, record, mappingTTL); saveErr != nil {
-			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
+			s.releaseLiveLease(record.GroupID, account.ID, identity.UserID, identity.APIKeyID, leaseID)
 			return nil, fmt.Errorf("save live call mapping: %w", saveErr)
 		}
 		created.Account = account
@@ -781,17 +782,72 @@ func (s *OpenAIGatewayService) refreshLiveLease(record *LiveCallRecord) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
 	defer cancel()
 	refreshed, err := cache.RefreshLiveLease(ctx, record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
-	return err == nil && refreshed
+	if err != nil || !refreshed {
+		return false
+	}
+	s.trackLiveGroupRuntime(ctx, record.GroupID, record.UserID, record.AccountID, record.LeaseID)
+	return true
 }
 
-func (s *OpenAIGatewayService) releaseLiveLease(accountID, userID, apiKeyID int64, leaseID string) {
+func (s *OpenAIGatewayService) trackLiveGroupRuntime(ctx context.Context, groupID, userID, accountID int64, leaseID string) {
+	if s == nil || s.concurrencyService == nil || s.concurrencyService.cache == nil || groupID <= 0 || userID <= 0 || accountID <= 0 || leaseID == "" {
+		return
+	}
+	cache := s.concurrencyService.cache
+	if groupRequestCache, ok := cache.(GroupRequestConcurrencyCache); ok {
+		if err := groupRequestCache.TrackGroupRequestSlot(ctx, groupID, userID, leaseID); err != nil {
+			logger.L().Warn("openai_live_group_request_track_failed", zap.Int64("group_id", groupID), zap.Int64("user_id", userID), zap.Error(err))
+		}
+	}
+	if groupAccountCache, ok := cache.(GroupConcurrencyCache); ok {
+		if err := groupAccountCache.TrackGroupSlot(ctx, groupID, accountID, leaseID); err != nil {
+			logger.L().Warn("openai_live_group_account_track_failed", zap.Int64("group_id", groupID), zap.Int64("account_id", accountID), zap.Error(err))
+		}
+	}
+	if userGroupAccountCache, ok := cache.(UserGroupAccountConcurrencyCache); ok {
+		if err := userGroupAccountCache.TrackUserGroupAccountSlot(ctx, userID, groupID, accountID, leaseID); err != nil {
+			logger.L().Warn("openai_live_user_group_account_track_failed", zap.Int64("group_id", groupID), zap.Int64("user_id", userID), zap.Int64("account_id", accountID), zap.Error(err))
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) releaseLiveGroupRuntime(ctx context.Context, groupID, userID, accountID int64, leaseID string) {
+	if s == nil || s.concurrencyService == nil || s.concurrencyService.cache == nil || groupID <= 0 || userID <= 0 || accountID <= 0 || leaseID == "" {
+		return
+	}
+	cache := s.concurrencyService.cache
+	if groupRequestCache, ok := cache.(GroupRequestConcurrencyCache); ok {
+		if err := groupRequestCache.ReleaseGroupRequestSlot(ctx, groupID, userID, leaseID); err != nil {
+			logger.L().Warn("openai_live_group_request_release_failed", zap.Int64("group_id", groupID), zap.Int64("user_id", userID), zap.Error(err))
+			go retryGroupRequestSlotRelease(groupRequestCache, groupID, userID, leaseID)
+		}
+	}
+	if groupAccountCache, ok := cache.(GroupConcurrencyCache); ok {
+		if err := groupAccountCache.ReleaseGroupSlot(ctx, groupID, accountID, leaseID); err != nil {
+			logger.L().Warn("openai_live_group_account_release_failed", zap.Int64("group_id", groupID), zap.Int64("account_id", accountID), zap.Error(err))
+			go retryGroupSlotRelease(groupAccountCache, groupID, accountID, leaseID)
+		}
+	}
+	if userGroupAccountCache, ok := cache.(UserGroupAccountConcurrencyCache); ok {
+		if err := userGroupAccountCache.ReleaseUserGroupAccountSlot(ctx, userID, groupID, accountID, leaseID); err != nil {
+			logger.L().Warn("openai_live_user_group_account_release_failed", zap.Int64("group_id", groupID), zap.Int64("user_id", userID), zap.Int64("account_id", accountID), zap.Error(err))
+			go retryUserGroupAccountSlotRelease(userGroupAccountCache, userID, groupID, accountID, leaseID)
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) releaseLiveLease(groupID, accountID, userID, apiKeyID int64, leaseID string) {
 	cache, err := s.liveConcurrencyCache()
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
-	defer cancel()
-	_ = cache.ReleaseLiveLease(ctx, accountID, userID, apiKeyID, leaseID)
+	liveCtx, liveCancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
+	_ = cache.ReleaseLiveLease(liveCtx, accountID, userID, apiKeyID, leaseID)
+	liveCancel()
+
+	groupCtx, groupCancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
+	s.releaseLiveGroupRuntime(groupCtx, groupID, userID, accountID, leaseID)
+	groupCancel()
 }
 
 func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
@@ -808,7 +864,7 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 	if err != nil || !first {
 		return
 	}
-	s.releaseLiveLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
+	s.releaseLiveLease(record.GroupID, record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
 	if s.usageLogRepo == nil {
 		return
 	}

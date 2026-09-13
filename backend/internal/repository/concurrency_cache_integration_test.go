@@ -53,6 +53,28 @@ func (s *ConcurrencyCacheSuite) apiKeyConcurrencyCache() apiKeyConcurrencyCacheF
 	return cache
 }
 
+func (s *ConcurrencyCacheSuite) TestGroupRequestConcurrencyTracksUsersWithoutAccountSelection() {
+	require.NoError(s.T(), s.rawCache.TrackGroupRequestSlot(s.ctx, 71, 101, "request-a"))
+	require.NoError(s.T(), s.rawCache.TrackGroupRequestSlot(s.ctx, 71, 101, "request-b"))
+	require.NoError(s.T(), s.rawCache.TrackGroupRequestSlot(s.ctx, 71, 102, "request-c"))
+
+	groupCounts, err := s.rawCache.GetGroupRequestConcurrencyBatch(s.ctx, []int64{71, 72})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{71: 3, 72: 0}, groupCounts)
+	userCounts, snapshotAt, err := s.rawCache.GetGroupUserRequestConcurrency(s.ctx, 71)
+	require.NoError(s.T(), err)
+	require.False(s.T(), snapshotAt.IsZero())
+	require.Equal(s.T(), map[int64]int{101: 2, 102: 1}, userCounts)
+
+	require.NoError(s.T(), s.rawCache.ReleaseGroupRequestSlot(s.ctx, 71, 101, "request-a"))
+	groupCounts, err = s.rawCache.GetGroupRequestConcurrencyBatch(s.ctx, []int64{71})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{71: 2}, groupCounts)
+	userCounts, _, err = s.rawCache.GetGroupUserRequestConcurrency(s.ctx, 71)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[int64]int{101: 1, 102: 1}, userCounts)
+}
+
 func (s *ConcurrencyCacheSuite) TestOpenAIWSIngressAPIKeySlot_HardLimitRefreshAndRelease() {
 	apiKeyID := int64(9011)
 	firstLeaseID := "ingress-first"

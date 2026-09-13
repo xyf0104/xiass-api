@@ -1219,6 +1219,20 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 	if _, err := txClient.ExecContext(ctx, "DELETE FROM scheduled_test_plans WHERE account_id = $1", id); err != nil {
 		return err
 	}
+	if _, err := txClient.ExecContext(ctx, `
+		UPDATE accounts
+		SET credentials = COALESCE(credentials, '{}'::jsonb) - ARRAY[$2, $3, $4, $5]::text[],
+			updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`,
+		id,
+		service.OpenAITeamChildPasswordCredentialKey,
+		service.OpenAIOAuthReauthorizationEmailCredentialKey,
+		service.OpenAIOAuthReauthorizationPasswordCredentialKey,
+		service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+	); err != nil {
+		return err
+	}
 	if _, err := txClient.Account.Delete().Where(dbaccount.IDEQ(id)).Exec(ctx); err != nil {
 		return err
 	}

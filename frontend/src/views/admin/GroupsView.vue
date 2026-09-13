@@ -333,7 +333,11 @@
 
           <template #cell-usage="{ row }">
             <div v-if="usageLoading" class="text-xs text-gray-400">—</div>
-            <div v-else class="space-y-0.5 text-xs">
+            <div
+              v-else
+              class="space-y-0.5 text-xs"
+              :title="t('admin.groups.usageScopeHint')"
+            >
               <div class="text-gray-500 dark:text-gray-400">
                 <span class="text-gray-400 dark:text-gray-500">{{
                   t("admin.groups.usageToday")
@@ -4609,7 +4613,10 @@
                   <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
                     {{ t('admin.groups.userAccountAllowlist.currentAccounts') }}
                   </th>
-                  <th class="w-28 px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">
+                  <th
+                    class="w-32 px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400"
+                    :title="t('admin.groups.userAccountAllowlist.currentConcurrencyHint')"
+                  >
                     {{ t('admin.groups.userAccountAllowlist.currentConcurrency') }}
                   </th>
                   <th class="w-32 px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">

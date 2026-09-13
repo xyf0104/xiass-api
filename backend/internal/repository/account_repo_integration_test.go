@@ -11,7 +11,9 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -267,6 +269,38 @@ func (s *AccountRepoSuite) TestDelete() {
 
 	_, err = s.repo.GetByID(s.ctx, account.ID)
 	s.Require().Error(err, "expected error after delete")
+}
+
+func (s *AccountRepoSuite) TestDelete_ClearsSavedLoginCredentials() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "delete-saved-login",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "oauth-token-kept-for-existing-delete-semantics",
+			service.OpenAITeamChildPasswordCredentialKey:              "encrypted-team-password",
+			service.OpenAIOAuthReauthorizationEmailCredentialKey:      "owner@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted-password",
+			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted-totp",
+		},
+	})
+
+	s.Require().NoError(s.repo.Delete(s.ctx, account.ID))
+
+	deleted, err := s.client.Account.Query().
+		Where(dbaccount.IDEQ(account.ID)).
+		Only(mixins.SkipSoftDelete(s.ctx))
+	s.Require().NoError(err)
+	s.Require().NotNil(deleted.DeletedAt)
+	s.Require().Equal("oauth-token-kept-for-existing-delete-semantics", deleted.Credentials["access_token"])
+	for _, key := range []string{
+		service.OpenAITeamChildPasswordCredentialKey,
+		service.OpenAIOAuthReauthorizationEmailCredentialKey,
+		service.OpenAIOAuthReauthorizationPasswordCredentialKey,
+		service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+	} {
+		s.Require().NotContains(deleted.Credentials, key)
+	}
 }
 
 func (s *AccountRepoSuite) TestDelete_RemovesSchedulerAccountSnapshot() {

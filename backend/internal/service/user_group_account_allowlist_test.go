@@ -381,6 +381,34 @@ func TestAdminUserGroupAccountAllowlistRuntimeReportsActualUsersAccountsAndConcu
 	require.Equal(t, 1, admin.batchCalls)
 }
 
+func TestAdminUserGroupAccountAllowlistRuntimeKeepsIngressRequestsAndOccupiedAccountsDistinct(t *testing.T) {
+	admin := &userGroupAccountAllowlistAdminStub{
+		group: &Group{ID: 9},
+		users: map[int64]*User{
+			41: {ID: 41, Username: "member", Email: "member@example.com"},
+		},
+	}
+	candidates := &userGroupAccountAllowlistCandidateRepositoryStub{accounts: []Account{
+		{ID: 11, Name: "single-slot", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Priority: 1, Concurrency: 1, Status: StatusActive, Schedulable: true},
+	}}
+	runtimeReader := &userGroupAccountAllowlistRuntimeReaderStub{snapshot: &UserGroupAccountConcurrencySnapshot{
+		SnapshotAt: time.Unix(1_700_000_000, 0),
+		Counts: map[int64]map[int64]int{
+			41: {11: 1},
+		},
+		UserCounts: map[int64]int{41: 4},
+	}}
+	svc := NewAdminUserGroupAccountAllowlistService(admin, nil, candidates, runtimeReader)
+
+	runtime, err := svc.GetRuntime(context.Background(), 9)
+	require.NoError(t, err)
+	require.Len(t, runtime.Accounts, 1)
+	require.Equal(t, 1, runtime.Accounts[0].CurrentConcurrency)
+	require.Len(t, runtime.Users, 1)
+	require.Equal(t, 4, runtime.Users[0].CurrentConcurrency)
+	require.Equal(t, []int64{11}, runtime.Users[0].ActiveAccountIDs)
+}
+
 func TestAdminUserGroupAccountAllowlistRuntimeKeepsActiveAccountThatBecameUnavailable(t *testing.T) {
 	admin := &userGroupAccountAllowlistAdminStub{
 		group: &Group{ID: 9},

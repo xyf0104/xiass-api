@@ -123,6 +123,10 @@ func (s *AdminUserGroupAccountAllowlistService) GetRuntime(ctx context.Context, 
 	}
 
 	accountConcurrency := make(map[int64]int)
+	userConcurrency := snapshot.UserCounts
+	if userConcurrency == nil {
+		userConcurrency = make(map[int64]int, len(snapshot.Counts))
+	}
 	for _, counts := range snapshot.Counts {
 		for accountID, count := range counts {
 			if accountID > 0 && count > 0 {
@@ -130,11 +134,18 @@ func (s *AdminUserGroupAccountAllowlistService) GetRuntime(ctx context.Context, 
 			}
 		}
 	}
+	if snapshot.UserCounts == nil {
+		for userID, counts := range snapshot.Counts {
+			for _, count := range counts {
+				userConcurrency[userID] += count
+			}
+		}
+	}
 
 	runtime := &UserGroupAccountRuntime{
 		SnapshotAt: snapshot.SnapshotAt,
 		Accounts:   make([]UserGroupAccountRuntimeAccount, 0, len(accounts)+len(accountConcurrency)),
-		Users:      make([]UserGroupAccountRuntimeUser, 0, len(snapshot.Counts)),
+		Users:      make([]UserGroupAccountRuntimeUser, 0, len(userConcurrency)),
 	}
 	availableAccountIDs := make(map[int64]struct{}, len(accounts))
 	for _, account := range accounts {
@@ -192,8 +203,8 @@ func (s *AdminUserGroupAccountAllowlistService) GetRuntime(ctx context.Context, 
 	}
 	sort.Slice(runtime.Accounts, func(i, j int) bool { return runtime.Accounts[i].AccountID < runtime.Accounts[j].AccountID })
 
-	userIDs := make([]int64, 0, len(snapshot.Counts))
-	for userID := range snapshot.Counts {
+	userIDs := make([]int64, 0, len(userConcurrency))
+	for userID := range userConcurrency {
 		if userID > 0 {
 			userIDs = append(userIDs, userID)
 		}
@@ -230,17 +241,15 @@ func (s *AdminUserGroupAccountAllowlistService) GetRuntime(ctx context.Context, 
 			user = *loaded
 		}
 		activeAccountIDs := make([]int64, 0, len(snapshot.Counts[userID]))
-		currentConcurrency := 0
 		for accountID, count := range snapshot.Counts[userID] {
 			if accountID > 0 && count > 0 {
 				activeAccountIDs = append(activeAccountIDs, accountID)
-				currentConcurrency += count
 			}
 		}
 		sort.Slice(activeAccountIDs, func(i, j int) bool { return activeAccountIDs[i] < activeAccountIDs[j] })
 		runtime.Users = append(runtime.Users, UserGroupAccountRuntimeUser{
 			UserID: user.ID, Username: user.Username, Email: user.Email,
-			CurrentConcurrency: currentConcurrency, ActiveAccountIDs: activeAccountIDs,
+			CurrentConcurrency: userConcurrency[userID], ActiveAccountIDs: activeAccountIDs,
 		})
 	}
 	return runtime, nil
