@@ -54,7 +54,7 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
 	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
 	if localNodeID != "" && accountNodeID != "" && accountNodeID != localNodeID {
-		return nil, "", "", "", nil, errors.New("Open this account on its assigned XIASS server")
+		return nil, "", "", "", nil, errors.New("open this account on its assigned XIASS server")
 	}
 	email, ciphertext, _ := openAIAccountReauthorizationLogin(account)
 	if email == "" {
@@ -65,21 +65,21 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	}
 	password, err := h.secretEncryptor.Decrypt(ciphertext)
 	if err != nil || len(password) == 0 || len(password) > 2048 {
-		return nil, "", "", "", nil, errors.New("Saved OpenAI login password cannot be decrypted")
+		return nil, "", "", "", nil, errors.New("saved OpenAI login password cannot be decrypted")
 	}
 	var totpSecret string
 	if encrypted, _ := account.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey].(string); encrypted != "" {
 		totpSecret, err = h.secretEncryptor.Decrypt(encrypted)
 		if err != nil || validateOpenAIReauthorizationTOTP(totpSecret) != nil {
-			return nil, "", "", "", nil, errors.New("Saved OpenAI 2FA secret cannot be decrypted")
+			return nil, "", "", "", nil, errors.New("saved OpenAI 2FA secret cannot be decrypted")
 		}
 	}
 	if err := validateBatchLogin(email, password, totpSecret); err != nil {
-		return nil, "", "", "", nil, errors.New("Saved OpenAI login information is invalid")
+		return nil, "", "", "", nil, errors.New("saved OpenAI login information is invalid")
 	}
 	proxy, err := h.batchOAuthBrowserProxy(ctx, account.ProxyID)
 	if err != nil {
-		return nil, "", "", "", nil, errors.New("The account proxy is unavailable for browser authorization")
+		return nil, "", "", "", nil, errors.New("the account proxy is unavailable for browser authorization")
 	}
 	return account, email, password, totpSecret, proxy, nil
 }
