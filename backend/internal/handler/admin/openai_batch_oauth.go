@@ -27,7 +27,6 @@ import (
 )
 
 const batchOAuthMaxRestarts = 2
-const batchOAuthAlreadyExistsReason = "account_already_exists"
 
 var errBatchOAuthMissing = errors.New("batch task unavailable")
 
@@ -370,44 +369,6 @@ func (t *batchOAuthTask) terminal() bool {
 	return t.Status == "completed" || t.Status == "canceled" || t.Status == "failed" || t.Status == "blocked"
 }
 
-func batchOAuthAccountMatchesEmail(account *service.Account, email string) bool {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
-		return false
-	}
-	for _, candidate := range []string{
-		account.Name,
-		account.GetCredential("email"),
-		account.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey),
-	} {
-		if strings.EqualFold(strings.TrimSpace(candidate), email) {
-			return true
-		}
-	}
-	if workflowEmail, ok := teamChildAccountWorkflowEmail(account); ok {
-		return strings.EqualFold(strings.TrimSpace(workflowEmail), email)
-	}
-	return false
-}
-
-func (h *OpenAIOAuthHandler) existingBatchOAuthAccount(ctx context.Context, email string) (*service.Account, error) {
-	const pageSize = 200
-	for page := 1; ; page++ {
-		accounts, total, err := h.adminService.ListAccounts(ctx, page, pageSize, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", 0, "", "id", "asc")
-		if err != nil {
-			return nil, err
-		}
-		for i := range accounts {
-			if batchOAuthAccountMatchesEmail(&accounts[i], email) {
-				account := accounts[i]
-				return &account, nil
-			}
-		}
-		if len(accounts) == 0 || int64(page*pageSize) >= total {
-			return nil, nil
-		}
-	}
-}
-
 func (t *batchOAuthTask) markFinishedIfTerminal() {
 	if !t.terminal() {
 		return
@@ -442,8 +403,6 @@ func batchOAuthPublicReason(reason string) string {
 	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "captcha_required", "captcha", "account_blocked", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
 	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code":
-		return reason
-	case batchOAuthAlreadyExistsReason:
 		return reason
 	case "":
 		return ""
@@ -553,25 +512,17 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	if req.Concurrency == 0 {
 		req.Concurrency = 3
 	}
+	passwordEncrypted, totpEncrypted, err := h.encryptBatchLogin(req.Password, req.TOTPSecret)
+	if err != nil {
+		response.InternalError(c, "Login encryption failed")
+		return
+	}
 	// Only non-secret configuration participates in the retry identity.
 	raw, _ := json.Marshal(struct {
 		Email  string
 		Config batchOAuthConfig
 	}{req.Email, req.batchOAuthConfig})
 	hash := sha256.Sum256(raw)
-	existingAccount, err := h.existingBatchOAuthAccount(c.Request.Context(), req.Email)
-	if err != nil {
-		response.InternalError(c, "Unable to check existing OpenAI accounts")
-		return
-	}
-	var passwordEncrypted, totpEncrypted string
-	if existingAccount == nil {
-		passwordEncrypted, totpEncrypted, err = h.encryptBatchLogin(req.Password, req.TOTPSecret)
-		if err != nil {
-			response.InternalError(c, "Login encryption failed")
-			return
-		}
-	}
 	store := h.batchOAuthStore
 	store.mu.Lock()
 	for _, task := range store.tasks {
@@ -588,7 +539,8 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		}
 	}
 	// One mailbox may have only one live workflow. Starting a new attempt also
-	// removes older terminal task rows; the durable account remains untouched.
+	// removes its older failed/canceled task rows; a completed account record is
+	// deliberately left untouched.
 	for id, task := range store.tasks {
 		if task.ownerID != owner || !strings.EqualFold(task.Email, req.Email) {
 			continue
@@ -604,11 +556,18 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 			response.Error(c, 409, "An authorization task for this email is already running")
 			return
 		}
-		task.clearLoginCredentials()
-		delete(store.tasks, id)
+		if task.AccountID == 0 {
+			task.clearLoginCredentials()
+			delete(store.tasks, id)
+		} else {
+			task.mu.Unlock()
+			store.mu.Unlock()
+			response.Error(c, 409, "An account for this email was already created")
+			return
+		}
 		task.mu.Unlock()
 	}
-	if (existingAccount == nil && !store.hasCapacityLocked(nil)) || len(store.tasks) >= 1000 {
+	if !store.hasCapacityLocked(nil) || len(store.tasks) >= 1000 {
 		store.mu.Unlock()
 		response.Error(c, 409, "Batch task capacity reached")
 		return
@@ -622,21 +581,11 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	t := &batchOAuthTask{ID: id, sidecarID: id, ownerID: owner, Email: req.Email, config: req.batchOAuthConfig,
 		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
 		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
-	if existingAccount != nil {
-		now := time.Now().UTC()
-		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existingAccount.ID
-		t.FinishedAt = &now
-		t.ExpiresAt = now.Add(24 * time.Hour)
-	}
 	t.mu.Lock()
 	store.tasks[id] = t
 	store.mu.Unlock()
 	defer t.mu.Unlock()
 	defer t.markFinishedIfTerminal()
-	if existingAccount != nil {
-		response.Success(c, t)
-		return
-	}
 	proxy, err := h.validateBatchConfig(c.Request.Context(), &t.config)
 	if err != nil {
 		t.Status, t.Stage, t.Reason = "failed", "failed", "invalid_configuration"
@@ -725,10 +674,6 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	defer t.markFinishedIfTerminal()
 	defer h.revokeTerminalBatchSession(t)
 	if t.AccountID > 0 {
-		if t.Status == "completed" && t.Reason == batchOAuthAlreadyExistsReason {
-			response.Success(c, t)
-			return
-		}
 		h.verifyBatchAccount(c.Request.Context(), t)
 		response.Success(c, t)
 		return
@@ -751,14 +696,6 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	}
 	if !batchProxyEqual(cfg.ProxyID, t.config.ProxyID) {
 		response.Error(c, 409, "Pool proxy changed; restart OAuth")
-		return
-	}
-	if existing, err := h.existingBatchOAuthAccount(c.Request.Context(), t.Email); err != nil {
-		response.InternalError(c, "Unable to check existing OpenAI accounts")
-		return
-	} else if existing != nil {
-		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existing.ID
-		response.Success(c, t)
 		return
 	}
 	if t.loginPasswordEncrypted == "" {
@@ -785,15 +722,6 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Success(c, t)
 		return
 	}
-	if existing, lookupErr := h.existingBatchOAuthAccount(ctx, t.Email); lookupErr != nil {
-		t.Reason = "account_creation_requires_review"
-		response.Success(c, t)
-		return
-	} else if existing != nil {
-		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existing.ID
-		response.Success(c, t)
-		return
-	}
 	name := strings.TrimSpace(t.config.Name)
 	if name == "" {
 		name = t.Email
@@ -807,7 +735,7 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	}
 	t.createAttempted = true
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, PreserveOAuthWorkflowProxy: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
+		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
 		GroupIDs: t.config.GroupIDs, ProxyID: t.config.ProxyID, Concurrency: t.config.Concurrency, Priority: t.config.Priority, SkipDefaultGroupBind: true, Schedulable: &schedulable})
 	token = nil
 	if err != nil || account == nil || account.ID <= 0 {

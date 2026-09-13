@@ -41,7 +41,7 @@
         <header class="flex flex-wrap items-center justify-between gap-3 py-3">
           <div>
             <h3 class="text-sm font-semibold">授权任务</h3>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">共 {{ rows.length }} 个 · 进行中 {{ activeCount }}/3 · 待开始 {{ pendingCount }} · 成功 {{ completedCount }} · 已跳过 {{ skippedCount }} · 失败 {{ failedCount }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">共 {{ rows.length }} 个 · 进行中 {{ activeCount }}/3 · 待开始 {{ pendingCount }} · 成功 {{ completedCount }} · 失败 {{ failedCount }}</p>
           </div>
           <div v-if="retryableRows.length" class="flex flex-wrap items-center gap-3">
             <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
@@ -58,7 +58,7 @@
         </header>
         <div v-if="batchFinished" class="border-t border-gray-100 py-3 text-sm dark:border-dark-700" role="status">
           <p class="font-medium" :class="failedCount ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'">
-            本批次已结束：成功 {{ completedCount }} 个，已存在跳过 {{ skippedCount }} 个，失败 {{ failedCount }} 个。
+            本批次已结束：成功 {{ completedCount }} 个，失败 {{ failedCount }} 个。
           </p>
           <p v-if="failedEmails.length" class="mt-1 break-words text-xs text-red-600 dark:text-red-300">失败账号：{{ failedEmails.join('、') }}</p>
         </div>
@@ -84,7 +84,7 @@
                 <span>第 {{ progressStep(row) }}/{{ flowStepCount }} 步 · {{ stageText(row) }}</span>
                 <span v-if="row.task?.restart_count">已重新授权 {{ row.task.restart_count }} 次</span>
               </div>
-              <p v-if="row.error || (row.task?.reason && !isSkipped(row))" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task) }}</p>
+              <p v-if="row.error || row.task?.reason" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task) }}</p>
             </div>
             <div class="col-span-2 flex flex-wrap items-start justify-end gap-2 sm:col-span-1">
               <button v-if="row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
@@ -123,7 +123,7 @@ import type { AdminGroup, Proxy } from '@/types'
 import type { BatchOAuthConfig, BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
-import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
+import { useBatchOpenAIOAuth, batchTaskActive, batchTaskWillAutoRestart, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
 
 defineProps<{ show: boolean; groups: AdminGroup[]; proxies: Proxy[] }>()
 const emit = defineEmits<{ close: []; created: [] }>()
@@ -160,9 +160,7 @@ const canStart = computed(() => !loading.value && poolsReady.value && !error.val
 const poolOptions = computed(() => [{ value: null, label: '不加入号池' }, ...pools.value.map(pool => ({ value: pool.id, label: pool.name }))])
 const effectiveProxy = computed(() => settings.pool_id === null ? settings.proxy_id : pools.value.find(p => p.id === settings.pool_id)?.proxy_id ?? null)
 const fingerprintOptions = [{ value: 'off', label: '关闭' }, { value: 'device', label: '设备' }, { value: 'session', label: '会话' }, { value: 'full', label: '完整' }]
-const isSkipped = (row: OAuthQueueRow) => batchTaskSkipped(row.task)
-const completedCount = computed(() => rows.value.filter(row => row.task?.status === 'completed' && !isSkipped(row)).length)
-const skippedCount = computed(() => rows.value.filter(isSkipped).length)
+const completedCount = computed(() => rows.value.filter(row => row.task?.status === 'completed').length)
 const willAutoRestart = (row: OAuthQueueRow) => hasSecret(row) && batchTaskWillAutoRestart(row.task)
 const failedRows = computed(() => rows.value.filter(row => row.task && ['failed', 'blocked'].includes(row.task.status) && !willAutoRestart(row) && !row.retryPending))
 const failedCount = computed(() => failedRows.value.length)
@@ -244,7 +242,6 @@ function statusText(row: OAuthQueueRow) {
     const seconds = Math.max(0, Math.ceil(((row.automaticAfter || now.value) - now.value) / 1000))
     return seconds > 0 ? `将在 ${seconds} 秒后自动重新授权` : '正在重新启动授权'
   }
-  if (isSkipped(row)) return '已存在，已跳过'
   if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加成功', failed: '授权失败', blocked: '授权失败', canceled: '已停止' }[task.status] || task.status
   return ({ opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
 }

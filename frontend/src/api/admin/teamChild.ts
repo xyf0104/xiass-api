@@ -43,8 +43,8 @@ export interface TeamChildLoginSecret {
 
 export interface OpenAIAccountReauthorizationCredentialsRequest {
   email: string
-  /** Omitted preserves the saved password; empty explicitly clears it. */
-  password?: string
+  /** An empty value explicitly clears any saved password for passwordless/SSO accounts. */
+  password: string
   /** Omitted preserves the saved authenticator, empty explicitly clears it. */
   totp_secret?: string
 }

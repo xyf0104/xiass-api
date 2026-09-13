@@ -64,21 +64,6 @@ type batchOAuthFixture struct {
 	sidecarCalls atomic.Int32
 }
 
-type batchOAuthExistingAccountAdmin struct {
-	*stubAdminService
-	account     service.Account
-	listCalls   int
-	appearAfter int
-}
-
-func (s *batchOAuthExistingAccountAdmin) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error) {
-	s.listCalls++
-	if s.listCalls >= s.appearAfter {
-		return []service.Account{s.account}, 1, nil
-	}
-	return []service.Account{}, 0, nil
-}
-
 func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 	t.Helper()
 	f := &batchOAuthFixture{admin: newStubAdminService(), client: &batchOAuthClientStub{teamChildOAuthClientStub: teamChildOAuthClientStub{email: "owner@example.test"}}, states: map[string]string{}, status: "completed", stage: "completed"}
@@ -210,56 +195,6 @@ func TestBatchOAuthStartIdempotencyAndCapacity(t *testing.T) {
 	require.Len(t, f.requests, 3)
 	require.NotEqual(t, f.requests[0]["auth_url"], f.requests[1]["auth_url"])
 	require.NotEqual(t, f.requests[0]["oauth_session_id"], f.requests[1]["oauth_session_id"])
-}
-
-func TestBatchOAuthExistingAccountIsSkippedBeforeAutomation(t *testing.T) {
-	f := newBatchOAuthFixture(t)
-	f.admin.accounts = []service.Account{{
-		ID: 777, Name: "Existing account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: map[string]any{"email": "existing@example.test"},
-	}}
-	r := batchOAuthRouter(f.h, 42, "admin")
-	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"EXISTING@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","idempotency_key":"existing-account-0001"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var envelope struct {
-		Data struct {
-			ID        string `json:"task_id"`
-			Status    string `json:"status"`
-			Stage     string `json:"stage"`
-			Reason    string `json:"reason"`
-			AccountID int64  `json:"account_id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
-	require.NotEmpty(t, envelope.Data.ID)
-	require.Equal(t, "completed", envelope.Data.Status)
-	require.Equal(t, "completed", envelope.Data.Stage)
-	require.Equal(t, batchOAuthAlreadyExistsReason, envelope.Data.Reason)
-	require.Equal(t, int64(777), envelope.Data.AccountID)
-	require.Zero(t, f.sidecarCalls.Load())
-	require.Empty(t, f.requests)
-	require.Empty(t, f.admin.createdAccounts)
-	task := f.h.batchOAuthStore.tasks[envelope.Data.ID]
-	require.Empty(t, task.loginPasswordEncrypted)
-	require.Empty(t, task.loginTOTPEncrypted)
-}
-
-func TestBatchOAuthRechecksExistingAccountBeforeFinalCreate(t *testing.T) {
-	f := newBatchOAuthFixture(t)
-	race := &batchOAuthExistingAccountAdmin{
-		stubAdminService: f.admin,
-		appearAfter:      3,
-		account: service.Account{ID: 778, Name: "Another account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-			Credentials: map[string]any{"email": "owner@example.test"}},
-	}
-	f.h.adminService = race
-	r, id := startFixtureTask(t, f)
-	w := batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}")
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), `"reason":"`+batchOAuthAlreadyExistsReason+`"`)
-	require.Contains(t, w.Body.String(), `"account_id":778`)
-	require.Empty(t, f.admin.createdAccounts)
-	require.Equal(t, 3, race.listCalls)
 }
 
 func TestBatchOAuthTerminalTaskWipesLoginAndCanBeDeleted(t *testing.T) {
@@ -569,70 +504,6 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress
 		require.Equal(t, "user", proxy["username"])
 		require.Equal(t, "password", proxy["password"])
 	})
-}
-
-type batchConfigReadbackAdminStub struct {
-	*stubAdminService
-}
-
-type batchProxyRepoStub struct {
-	service.ProxyRepository
-	proxy service.Proxy
-}
-
-func (s *batchProxyRepoStub) GetByID(_ context.Context, id int64) (*service.Proxy, error) {
-	if id != s.proxy.ID {
-		return nil, errors.New("proxy not found")
-	}
-	return &s.proxy, nil
-}
-
-func (s *batchConfigReadbackAdminStub) CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error) {
-	account, err := s.stubAdminService.CreateAccount(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	account.Platform, account.Type = input.Platform, input.Type
-	account.Credentials, account.Extra = input.Credentials, input.Extra
-	account.ProxyID, account.GroupIDs = input.ProxyID, input.GroupIDs
-	account.Concurrency, account.Priority = input.Concurrency, input.Priority
-	account.Schedulable = true
-	s.getAccountResult = account
-	return account, nil
-}
-
-func TestBatchOAuthCompletePassesTrustedProxyAndVerifiesBusinessSuccess(t *testing.T) {
-	f := newBatchOAuthFixture(t)
-	f.h.adminService = &batchConfigReadbackAdminStub{f.admin}
-	f.admin.proxies = []service.Proxy{{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}}
-	f.h.openaiOAuthService.Stop()
-	f.h.openaiOAuthService = service.NewOpenAIOAuthService(&batchProxyRepoStub{proxy: f.admin.proxies[0]}, f.client)
-	t.Cleanup(f.h.openaiOAuthService.Stop)
-	r := batchOAuthRouter(f.h, 42, "admin")
-	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","proxy_id":9,"priority":1,"concurrency":3,"idempotency_key":"proxy-preserve-0001"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var envelope struct {
-		Data struct {
-			ID string `json:"task_id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
-	require.NotEmpty(t, envelope.Data.ID)
-	require.Len(t, f.requests, 1)
-	proxy, ok := f.requests[0]["proxy"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "http://proxy.example.test:8080", proxy["server"])
-	w = batchOAuthRequest(r, "POST", "/tasks/"+envelope.Data.ID+"/complete", "{}")
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), `"status":"completed"`)
-	require.NotContains(t, w.Body.String(), "account_configuration_mismatch")
-	require.Len(t, f.admin.createdAccounts, 1)
-	created := f.admin.createdAccounts[0]
-	require.True(t, created.PreserveOAuthWorkflowProxy)
-	require.True(t, created.AllowOpenAIReauthorizationCredentials)
-	require.Equal(t, int64(9), *created.ProxyID)
-	require.Equal(t, 1, created.Priority)
-	require.Equal(t, 3, created.Concurrency)
 }
 
 func TestBatchOAuthExpiredWorkflowClosesContextWithoutCancellingSMS(t *testing.T) {

@@ -32,10 +32,6 @@ export function batchTaskActive(task?: BatchOAuthTask) {
   return !!task && ['queued', 'running', 'ready'].includes(task.status)
 }
 
-export function batchTaskSkipped(task?: BatchOAuthTask) {
-  return task?.status === 'completed' && task.reason === 'account_already_exists'
-}
-
 export function batchTaskWillAutoRestart(task?: BatchOAuthTask) {
   return !!task && ['failed', 'blocked'].includes(task.status) && !task.account_id
     && task.restart_count < (automaticRestartLimits[task.reason || ''] || 0)
@@ -63,7 +59,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (disposed) return
     row.task = task
     row.localStatus = undefined
-    if (task.account_id && !batchTaskSkipped(task) && !announced.has(task.account_id)) {
+    if (task.account_id && !announced.has(task.account_id)) {
       announced.add(task.account_id)
       onCreated()
     }
