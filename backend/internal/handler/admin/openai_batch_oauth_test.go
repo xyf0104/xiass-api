@@ -506,6 +506,67 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress
 	})
 }
 
+type batchConfigReadbackAdminStub struct {
+	*stubAdminService
+}
+
+type batchProxyRepoStub struct {
+	service.ProxyRepository
+	proxy service.Proxy
+}
+
+func (s *batchProxyRepoStub) GetByID(_ context.Context, id int64) (*service.Proxy, error) {
+	if id != s.proxy.ID {
+		return nil, errors.New("proxy not found")
+	}
+	return &s.proxy, nil
+}
+
+func (s *batchConfigReadbackAdminStub) CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error) {
+	account, err := s.stubAdminService.CreateAccount(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	account.Platform, account.Type = input.Platform, input.Type
+	account.Credentials, account.Extra = input.Credentials, input.Extra
+	account.ProxyID, account.GroupIDs = input.ProxyID, input.GroupIDs
+	account.Concurrency, account.Priority = input.Concurrency, input.Priority
+	account.Schedulable = true
+	s.getAccountResult = account
+	return account, nil
+}
+
+func TestBatchOAuthCompletePassesTrustedProxyAndVerifiesBusinessSuccess(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	f.h.adminService = &batchConfigReadbackAdminStub{f.admin}
+	f.admin.proxies = []service.Proxy{{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}}
+	f.h.openaiOAuthService.Stop()
+	f.h.openaiOAuthService = service.NewOpenAIOAuthService(&batchProxyRepoStub{proxy: f.admin.proxies[0]}, f.client)
+	t.Cleanup(f.h.openaiOAuthService.Stop)
+	r := batchOAuthRouter(f.h, 42, "admin")
+	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"owner@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","proxy_id":9,"priority":1,"concurrency":3,"idempotency_key":"proxy-preserve-0001"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var envelope struct {
+		Data struct {
+			ID string `json:"task_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+	require.NotEmpty(t, envelope.Data.ID)
+	require.Equal(t, "http://proxy.example.test:8080", f.requests[0]["proxy"].(map[string]any)["server"])
+	w = batchOAuthRequest(r, "POST", "/tasks/"+envelope.Data.ID+"/complete", "{}")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"status":"completed"`)
+	require.NotContains(t, w.Body.String(), "account_configuration_mismatch")
+	require.Len(t, f.admin.createdAccounts, 1)
+	created := f.admin.createdAccounts[0]
+	require.True(t, created.PreserveOAuthWorkflowProxy)
+	require.True(t, created.AllowOpenAIReauthorizationCredentials)
+	require.Equal(t, int64(9), *created.ProxyID)
+	require.Equal(t, 1, created.Priority)
+	require.Equal(t, 3, created.Concurrency)
+}
+
 func TestBatchOAuthExpiredWorkflowClosesContextWithoutCancellingSMS(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	r, id := startFixtureTask(t, f)

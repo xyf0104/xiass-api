@@ -216,6 +216,16 @@ func applyExecutionNodeForCreate(cfg *config.Config, extra map[string]any, proxy
 	return extra, proxyID
 }
 
+func applyOAuthWorkflowNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
+	// Ownership stays local; an explicitly selected workflow proxy is independent
+	// of the node's default egress, just as with an administrator account edit.
+	extra, _ = applyExecutionNodeForCreate(cfg, extra, proxyID)
+	if cfg != nil && cfg.Gateway.ExecutionNode.Enabled && proxyID != nil && *proxyID > 0 {
+		extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*proxyID, 10)
+	}
+	return extra, cloneInt64Pointer(proxyID)
+}
+
 func preserveExecutionNodeOnUpdate(account *Account, extra map[string]any) map[string]any {
 	if extra == nil {
 		extra = make(map[string]any)

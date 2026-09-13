@@ -735,7 +735,7 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	}
 	t.createAttempted = true
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
+		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, PreserveOAuthWorkflowProxy: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
 		GroupIDs: t.config.GroupIDs, ProxyID: t.config.ProxyID, Concurrency: t.config.Concurrency, Priority: t.config.Priority, SkipDefaultGroupBind: true, Schedulable: &schedulable})
 	token = nil
 	if err != nil || account == nil || account.ID <= 0 {

@@ -392,6 +392,9 @@ type CreateAccountInput struct {
 	// by the state-bound Team OAuth import. Generic account creation must not
 	// accept private login-only credentials from arbitrary import payloads.
 	AllowOpenAIReauthorizationCredentials bool
+	// PreserveOAuthWorkflowProxy keeps the proxy already verified by a trusted
+	// OpenAI OAuth workflow. It is not exposed by generic creation/import APIs.
+	PreserveOAuthWorkflowProxy bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
