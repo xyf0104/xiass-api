@@ -128,21 +128,6 @@ func profileAppliesToWrappedModel(profile antigravityWrappedModelProfile, curren
 	return currentModel == "claude-sonnet-4-6" || currentModel == "claude-sonnet-4-6-thinking"
 }
 
-func isAntigravityGemini37FlashModel(model string) bool {
-	family, ok := antigravityGeminiFlashFamilyForModel(model)
-	return ok && family.baseModel == "gemini-3.7-flash"
-}
-
-func isAntigravityGemini37InternalModel(model string) bool {
-	family, ok := antigravityGeminiFlashFamilyForModel(model)
-	return ok && family.baseModel == "gemini-3.7-flash" && isAntigravityGeminiFlashInternalModel(model)
-}
-
-func isAntigravityGeminiFlashModel(model string) bool {
-	_, ok := antigravityGeminiFlashFamilyForModel(model)
-	return ok
-}
-
 func isAntigravityGeminiFlashInternalModel(model string) bool {
 	normalized := normalizeAntigravityCompatModel(model)
 	family, ok := antigravityGeminiFlashFamilyForModel(normalized)
