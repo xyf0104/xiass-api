@@ -658,8 +658,7 @@ describe('TeamChildCreationView', () => {
     await flushPromises()
 
     expect(teamChildAPI.saveOpenAIAccountReauthorizationCredentials).toHaveBeenCalledWith(416, {
-      email: 'passwordless@example.test',
-      password: ''
+      email: 'passwordless@example.test'
     })
     const reauthorizeButton = wrapper.findAll('button').find((button) => button.text().includes('一键重新授权'))
     await reauthorizeButton!.trigger('click')

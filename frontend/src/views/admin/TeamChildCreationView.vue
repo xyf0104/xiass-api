@@ -731,13 +731,13 @@ function replaceOpenAIOAuthAccount(updated: Account) {
     : entry)
 }
 
-async function saveOpenAIAccountReauthorizationCredentials(payload: { account: Account; email: string; password: string; totp_secret?: string }) {
+async function saveOpenAIAccountReauthorizationCredentials(payload: { account: Account; email: string; password?: string; totp_secret?: string }) {
   if (openAIReauthorizationSaving.value) return
   openAIReauthorizationSaving.value = true
   try {
     const updated = await teamChildAPI.saveOpenAIAccountReauthorizationCredentials(payload.account.id, {
       email: payload.email,
-      password: payload.password,
+      ...(payload.password !== undefined ? { password: payload.password } : {}),
       ...(payload.totp_secret !== undefined ? { totp_secret: payload.totp_secret } : {})
     })
     replaceOpenAIOAuthAccount(updated)

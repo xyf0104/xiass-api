@@ -64,6 +64,21 @@ type batchOAuthFixture struct {
 	sidecarCalls atomic.Int32
 }
 
+type batchOAuthExistingAccountAdmin struct {
+	*stubAdminService
+	account     service.Account
+	listCalls   int
+	appearAfter int
+}
+
+func (s *batchOAuthExistingAccountAdmin) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error) {
+	s.listCalls++
+	if s.listCalls >= s.appearAfter {
+		return []service.Account{s.account}, 1, nil
+	}
+	return []service.Account{}, 0, nil
+}
+
 func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 	t.Helper()
 	f := &batchOAuthFixture{admin: newStubAdminService(), client: &batchOAuthClientStub{teamChildOAuthClientStub: teamChildOAuthClientStub{email: "owner@example.test"}}, states: map[string]string{}, status: "completed", stage: "completed"}
@@ -195,6 +210,56 @@ func TestBatchOAuthStartIdempotencyAndCapacity(t *testing.T) {
 	require.Len(t, f.requests, 3)
 	require.NotEqual(t, f.requests[0]["auth_url"], f.requests[1]["auth_url"])
 	require.NotEqual(t, f.requests[0]["oauth_session_id"], f.requests[1]["oauth_session_id"])
+}
+
+func TestBatchOAuthExistingAccountIsSkippedBeforeAutomation(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	f.admin.accounts = []service.Account{{
+		ID: 777, Name: "Existing account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"email": "existing@example.test"},
+	}}
+	r := batchOAuthRouter(f.h, 42, "admin")
+	w := batchOAuthRequest(r, "POST", "/tasks", `{"email":"EXISTING@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","idempotency_key":"existing-account-0001"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var envelope struct {
+		Data struct {
+			ID        string `json:"task_id"`
+			Status    string `json:"status"`
+			Stage     string `json:"stage"`
+			Reason    string `json:"reason"`
+			AccountID int64  `json:"account_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+	require.NotEmpty(t, envelope.Data.ID)
+	require.Equal(t, "completed", envelope.Data.Status)
+	require.Equal(t, "completed", envelope.Data.Stage)
+	require.Equal(t, batchOAuthAlreadyExistsReason, envelope.Data.Reason)
+	require.Equal(t, int64(777), envelope.Data.AccountID)
+	require.Zero(t, f.sidecarCalls.Load())
+	require.Empty(t, f.requests)
+	require.Empty(t, f.admin.createdAccounts)
+	task := f.h.batchOAuthStore.tasks[envelope.Data.ID]
+	require.Empty(t, task.loginPasswordEncrypted)
+	require.Empty(t, task.loginTOTPEncrypted)
+}
+
+func TestBatchOAuthRechecksExistingAccountBeforeFinalCreate(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	race := &batchOAuthExistingAccountAdmin{
+		stubAdminService: f.admin,
+		appearAfter:      3,
+		account: service.Account{ID: 778, Name: "Another account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+			Credentials: map[string]any{"email": "owner@example.test"}},
+	}
+	f.h.adminService = race
+	r, id := startFixtureTask(t, f)
+	w := batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"reason":"`+batchOAuthAlreadyExistsReason+`"`)
+	require.Contains(t, w.Body.String(), `"account_id":778`)
+	require.Empty(t, f.admin.createdAccounts)
+	require.Equal(t, 3, race.listCalls)
 }
 
 func TestBatchOAuthTerminalTaskWipesLoginAndCanBeDeleted(t *testing.T) {

@@ -1464,10 +1464,39 @@ async function firstVisibleInput(current, matcher) {
   return null
 }
 
-async function clickOAuthContinue(current) {
-  const button = await firstVisibleRole(current, 'button', [/^continue$/i, /^next$/i, /^继续$/i, /^下一步$/i])
-  if (!button) throw new Error('OpenAI 页面中找不到继续按钮')
-  await button.click()
+const oauthControlAttemptTimeout = Math.max(500, Math.min(operationTimeout, 3000))
+
+async function useCurrentOAuthControl(description, resolve, action, completed) {
+  return waitForOAuthPage(description, async () => {
+    const control = await resolve()
+    if (!control) return completed && await completed() ? true : null
+    try {
+      await action(control)
+      return true
+    } catch (error) {
+      // OpenAI frequently replaces React form controls after classification.
+      // Re-resolve the live control instead of retaining a detached locator.
+      if (completed && await completed()) return true
+      throw error
+    }
+  })
+}
+
+async function fillCurrentOAuthInput(current, matcher, value, description) {
+  await useCurrentOAuthControl(
+    description,
+    () => firstVisibleInput(current, matcher),
+    input => input.fill(value, { timeout: oauthControlAttemptTimeout })
+  )
+}
+
+async function clickOAuthContinue(current, pageStillCurrent) {
+  await useCurrentOAuthControl(
+    'OpenAI 页面中找不到可用的继续按钮',
+    () => firstVisibleRole(current, 'button', [/^continue$/i, /^next$/i, /^继续$/i, /^下一步$/i]),
+    button => button.click({ timeout: oauthControlAttemptTimeout }),
+    pageStillCurrent
+  )
 }
 
 async function oauthBody(current) {
@@ -1531,7 +1560,7 @@ async function thirdPartyIdentityProviderOption(current) {
 }
 
 function isReauthorizationWorkspacePage(body) {
-  return /select\s+(?:a\s+)?(?:workspace|organization)|choose\s+(?:a\s+)?(?:workspace|organization)|continue\s+to\s+codex|authorize\s+codex|选择(?:工作空间|空间|组织)|(?:工作空间|空间|组织).*(?:继续|授权)/i.test(body)
+  return /select\s+(?:a\s+)?(?:workspace|organization)|choose\s+(?:a\s+)?(?:workspace|organization)|continue\s+to\s+codex|authorize\s+codex|(?:personal|default)\s+(?:workspace|space|organization)|选择(?:工作空间|空间|组织)|(?:个人|默认)(?:工作空间|空间|组织)|(?:工作空间|空间|组织).*(?:继续|授权)/i.test(body)
 }
 
 function isReauthorizationAccountChooserPage(body) {
@@ -1676,11 +1705,9 @@ async function selectLoginForAnotherAccount(current, workflow) {
 }
 
 async function fillWorkflowEmail(current, email) {
-  const input = await waitForOAuthPage('OpenAI 页面中找不到邮箱输入框', () => (
-    firstVisibleInput(current, (metadata) => /email/.test(metadata))
-  ))
-  await input.fill(email)
-  await clickOAuthContinue(current)
+  const matcher = (metadata) => /email/.test(metadata) && !/code|otp|one-time|验证码/.test(metadata)
+  await fillCurrentOAuthInput(current, matcher, email, 'OpenAI 页面中找不到可填写的邮箱输入框')
+  await clickOAuthContinue(current, async () => !(await firstVisibleInput(current, matcher)))
 }
 
 function isSignupAccountCreationRejectionText(value) {
@@ -1741,11 +1768,9 @@ async function waitForEmailVerificationChallenge(current, description) {
 }
 
 async function fillLoginPassword(current, password) {
-  const input = await waitForOAuthPage('OpenAI 登录页中找不到密码输入框', () => (
-    firstVisibleInput(current, (metadata) => /password/.test(metadata))
-  ))
-  await input.fill(password)
-  await clickOAuthContinue(current)
+  const matcher = (metadata) => /password/.test(metadata)
+  await fillCurrentOAuthInput(current, matcher, password, 'OpenAI 登录页中找不到可填写的密码输入框')
+  await clickOAuthContinue(current, async () => !(await firstVisibleInput(current, matcher)))
 }
 
 async function verificationInputs(current) {
@@ -1762,24 +1787,32 @@ async function verificationInputs(current) {
 async function fillVerificationCode(current, rawCode) {
   const code = String(rawCode || '').replace(/\s+/g, '')
   if (!/^\d{4,10}$/.test(code)) throw new Error('验证码格式无效')
-  const inputs = await waitForOAuthPage('OpenAI 页面中找不到验证码输入框', () => verificationInputs(current))
-  if (inputs.length === 1) {
-    await inputs[0].fill(code)
-  } else {
-    if (inputs.length < code.length) throw new Error('OpenAI 验证码输入框数量与验证码不一致')
-    for (let index = 0; index < code.length; index += 1) await inputs[index].fill(code[index])
-  }
+  await waitForOAuthPage('OpenAI 页面中找不到可填写的验证码输入框', async () => {
+    const inputs = await verificationInputs(current)
+    if (!inputs.length) return null
+    try {
+      if (inputs.length === 1) {
+        await inputs[0].fill(code, { timeout: oauthControlAttemptTimeout })
+      } else {
+        if (inputs.length < code.length) return null
+        for (let index = 0; index < code.length; index += 1) {
+          const currentInputs = await verificationInputs(current)
+          if (currentInputs.length < code.length) return null
+          await currentInputs[index].fill(code[index], { timeout: oauthControlAttemptTimeout })
+        }
+      }
+      return true
+    } catch (error) {
+      // A code can auto-submit while fill() is resolving. Once the challenge
+      // inputs disappear the intended action succeeded and must not be replayed.
+      if ((await verificationInputs(current)).length === 0) return true
+      throw error
+    }
+  })
   // Some OpenAI verification pages submit as soon as the final digit is
   // entered. In that case the Continue button disappears before Playwright
   // can resolve it; accept the navigation once the code fields are gone.
-  const continueButton = await firstVisibleRole(current, 'button', [/^continue$/i, /^next$/i, /^继续$/i, /^下一步$/i])
-  if (continueButton) {
-    await continueButton.click()
-    return
-  }
-  await waitForOAuthPage('OpenAI 验证码已填写但页面未继续', async () => (
-    (await verificationInputs(current)).length === 0
-  ))
+  await clickOAuthContinue(current, async () => (await verificationInputs(current)).length === 0)
 }
 
 function isPhoneInputMetadata(metadata) {
@@ -1954,19 +1987,23 @@ async function fillProfile(current) {
   await clickOAuthContinue(current)
 }
 
-async function chooseDefaultWorkspace(current) {
-  await sleep(10000)
+async function chooseDefaultWorkspace(current, { directContinue = false } = {}) {
+  if (!directContinue) await sleep(10000)
   await waitForOAuthPage('OpenAI 未进入默认工作空间页面', async () => {
     const body = await oauthBody(current)
-    return /workspace|工作空间|空间/i.test(body)
+    return isReauthorizationWorkspacePage(body) || /workspace|工作空间|空间/i.test(body)
       || /localhost:1455\/auth\/callback/.test(current.url())
   })
   if (/localhost:1455\/auth\/callback/.test(current.url())) return
 
-  const defaultChoice = await firstVisibleRole(current, 'radio', [/default|workspace|默认|工作空间/i])
-    || await firstVisibleRole(current, 'button', [/default workspace|默认工作空间/i])
-  if (defaultChoice) await defaultChoice.click().catch(() => undefined)
-  await clickOAuthContinue(current)
+  if (!directContinue) {
+    const defaultChoice = await firstVisibleRole(current, 'radio', [/default|workspace|默认|工作空间/i])
+      || await firstVisibleRole(current, 'button', [/default workspace|默认工作空间/i])
+    if (defaultChoice) await defaultChoice.click().catch(() => undefined)
+  }
+  await clickOAuthContinue(current, async () => {
+    return /localhost:1455\/auth\/callback/.test(current.url())
+  })
 }
 
 function callbackURLFromNavigationEntries(entries, expectedState) {
@@ -2164,8 +2201,7 @@ async function advanceRegisteredOAuth(workflow, current, state) {
 
   if (state.kind === 'email') {
     setWorkflowNode(workflow, 'password', 'running', 'OAuth 登录页已出现，正在填入新邮箱')
-    await state.input.fill(workflow.inviteEmail)
-    await clickOAuthContinue(current)
+    await fillWorkflowEmail(current, workflow.inviteEmail)
     workflow.oauthEmailSubmitted = true
     persistWorkflowState()
     return advanceRegisteredOAuth(workflow, current, await waitForRegisteredOAuthNextState(current, workflow))
@@ -2233,7 +2269,7 @@ async function finishOAuthReauthorization(workflow, current, state) {
     completeWorkflowNode(workflow, 'workspace', '本次授权未出现工作空间选择，已直接继续')
   } else {
     setWorkflowNode(workflow, 'workspace_wait', 'running', '正在等待默认工作空间页面')
-    await chooseDefaultWorkspace(active)
+    await chooseDefaultWorkspace(active, { directContinue: true })
     completeWorkflowNode(workflow, 'workspace_wait', '默认工作空间页面已出现')
     completeWorkflowNode(workflow, 'workspace', '已选择默认工作空间并继续')
   }
@@ -2325,8 +2361,7 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
       setWorkflowNode(workflow, 'signup', 'running', '正在进入已有账号登录路径')
       completeReauthorizationSignInNode(workflow, '已进入 OpenAI 已有账号登录路径')
       setWorkflowNode(workflow, 'email', 'running', '正在填入目标登录邮箱')
-      await state.input.fill(workflow.inviteEmail)
-      await clickOAuthContinue(current)
+      await fillWorkflowEmail(current, workflow.inviteEmail)
       completeReauthorizationEmailNode(workflow, '目标登录邮箱已提交')
       return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow))
     }
@@ -2344,8 +2379,7 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
 
   if (state.kind === 'email') {
     setWorkflowNode(workflow, 'email', 'running', '正在重新填入目标登录邮箱')
-    await state.input.fill(workflow.inviteEmail)
-    await clickOAuthContinue(current)
+    await fillWorkflowEmail(current, workflow.inviteEmail)
     completeReauthorizationEmailNode(workflow, '目标登录邮箱已提交')
     return advanceOAuthReauthorization(workflow, current, await waitForReauthorizationNextState(current, workflow), { operatorConfirmed })
   }
@@ -3461,9 +3495,12 @@ export {
   createPrivateBrowserSession,
   createReauthorizationWorkflow,
   createWorkflow,
+  clickOAuthContinue,
   decryptWorkflowState,
   encryptWorkflowState,
+  fillLoginPassword,
   fillVerificationCode,
+  fillWorkflowEmail,
   advanceRegisteredOAuth,
   beginWorkflowEmailChallenge,
   markWorkflowInviteSubmitted,

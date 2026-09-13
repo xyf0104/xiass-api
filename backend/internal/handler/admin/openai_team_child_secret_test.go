@@ -239,6 +239,29 @@ func TestSaveOpenAIAccountReauthorizationCredentialsAllowsPasswordlessLogin(t *t
 	require.True(t, adminService.lastUpdateAccountInput.AllowOpenAIReauthorizationCredentials)
 }
 
+func TestSaveOpenAIReauthorizationCredentialsOmittedPasswordPreservesExistingCiphertext(t *testing.T) {
+	adminService := newStubAdminService()
+	adminService.getAccountResult = &service.Account{
+		ID: 94, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"email": "ordinary@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey: "encrypted:old-password",
+		},
+	}
+	handler := &OpenAIOAuthHandler{adminService: adminService, secretEncryptor: teamChildTestEncryptor{}}
+	router := teamChildAdminTestRouter(handler)
+	router.POST("/accounts/:account_id/reauthorization-credentials", handler.SaveOpenAIAccountReauthorizationCredentials)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/accounts/94/reauthorization-credentials", strings.NewReader(`{"email":"ordinary@example.test"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	_, passwordProvided := adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey]
+	require.False(t, passwordProvided)
+}
+
 func TestReauthorizeOpenAIAccountUsesOnlyDedicatedEncryptedCredentials(t *testing.T) {
 	const password = "  Abc123456789!  "
 	const totpSecret = "JBSWY3DPEHPK3PXP"

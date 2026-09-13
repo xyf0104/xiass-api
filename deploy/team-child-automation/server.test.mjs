@@ -20,9 +20,12 @@ const {
   createPrivateBrowserSession,
   createReauthorizationWorkflow,
   createWorkflow,
+  clickOAuthContinue,
   decryptWorkflowState,
   encryptWorkflowState,
+  fillLoginPassword,
   fillVerificationCode,
+  fillWorkflowEmail,
   markWorkflowInviteSubmitted,
   pauseWorkflowState,
   pendingInviteEmailsFromTexts,
@@ -265,6 +268,20 @@ describe('Team child OAuth automation state', () => {
     }), workflow)).kind, 'phone')
   })
 
+  it('recognizes the personal workspace page used by ordinary 401 reauthorization', async () => {
+    const collection = (items) => ({ count: async () => items.length, nth: (index) => items[index] })
+    const page = {
+      url: () => 'https://auth.openai.com/oauth/authorize',
+      locator: (selector) => selector === 'body'
+        ? { innerText: async () => 'Personal workspace Continue' }
+        : collection([]),
+      getByRole: () => collection([])
+    }
+    const workflow = createReauthorizationWorkflow(317, 'child@example.test', 'SavedPassword!', authURL, 'oauth-session-abcdefghijklmnop')
+
+    assert.equal((await reauthorizationNextState(page, workflow)).kind, 'workspace')
+  })
+
   it('submits the same mailbox on OAuth login, verifies the second code, and reaches phone entry', async () => {
     let screen = 'email'
     let submittedEmail = ''
@@ -489,6 +506,136 @@ describe('Team child OAuth automation state', () => {
     assert.equal(workflow.status, 'manual_required')
     assert.equal(workflow.currentNodeKey, 'password')
     assert.match(workflow.nodes.find((node) => node.key === 'password')?.message || '', /未保存密码/)
+  })
+
+  it('reacquires replaced email, password and authenticator controls during 401 reauthorization', async () => {
+    let screen = 'email'
+    const filled = { email: '', password: '', totp: '' }
+    const inputAttempts = { email: 0, password: 0, totp: 0 }
+    const buttonAttempts = { email: 0, password: 0, totp: 0 }
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const input = (kind) => {
+      const stale = inputAttempts[kind]++ === 0
+      const attributes = kind === 'email'
+        ? { type: 'email', autocomplete: 'username' }
+        : kind === 'password' ? { type: 'password', autocomplete: 'current-password' } : { name: 'code', autocomplete: 'one-time-code' }
+      return {
+        isVisible: async () => true,
+        getAttribute: async (name) => attributes[name] || null,
+        fill: async (value) => {
+          if (stale) throw new Error('locator.fill: element was detached')
+          filled[kind] = value
+        }
+      }
+    }
+    const button = () => {
+      const stage = screen
+      const stale = buttonAttempts[stage]++ === 0
+      return {
+        isVisible: async () => true,
+        click: async () => {
+          if (stale) throw new Error('locator.click: element was detached')
+          screen = stage === 'email' ? 'password' : stage === 'password' ? 'totp' : 'callback'
+        }
+      }
+    }
+    const page = {
+      url: () => screen === 'callback'
+        ? 'http://localhost:1455/auth/callback?code=test-code&state=test-state'
+        : 'https://auth.openai.com/log-in',
+      locator: (selector) => {
+        if (selector === 'body') {
+          return { innerText: async () => ({ email: 'Log in', password: 'Enter your password', totp: 'Enter the code from your authenticator app', callback: '' })[screen] }
+        }
+        if (selector === 'input') return collection(['email', 'password'].includes(screen) ? [input(screen)] : [])
+        if (selector.includes('one-time-code')) return collection(screen === 'totp' ? [input('totp')] : [])
+        return collection([])
+      },
+      getByRole: (role, options) => collection(
+        role === 'button' && ['email', 'password', 'totp'].includes(screen) && options.name.test('Continue') ? [button()] : []
+      )
+    }
+    const workflow = createReauthorizationWorkflow(
+      317,
+      'child@example.test',
+      'SavedPassword!',
+      authURL,
+      'oauth-session-abcdefghijklmnop',
+      'JBSWY3DPEHPK3PXP'
+    )
+    const staleClassifiedInput = { fill: async () => { throw new Error('classified locator must not be reused') } }
+
+    await advanceOAuthReauthorization(workflow, page, { kind: 'email', input: staleClassifiedInput })
+
+    assert.equal(filled.email, 'child@example.test')
+    assert.equal(filled.password, 'SavedPassword!')
+    assert.match(filled.totp, /^\d{6}$/)
+    assert.equal(workflow.status, 'callback_ready')
+    assert.equal(workflow.callbackURL, 'http://localhost:1455/auth/callback?code=test-code&state=test-state')
+    assert.ok(inputAttempts.email >= 2)
+    assert.ok(inputAttempts.password >= 2)
+    assert.ok(inputAttempts.totp >= 2)
+  })
+
+  it('reacquires a replaced workspace Continue button without clicking the next page', async () => {
+    let screen = 'workspace'
+    let attempts = 0
+    const collection = (items) => ({ count: async () => items.length, nth: (index) => items[index] })
+    const page = {
+      getByRole: (role, options) => collection(role === 'button' && screen === 'workspace' && options.name.test('Continue') ? [{
+        isVisible: async () => true,
+        click: async () => {
+          attempts += 1
+          if (attempts === 1) throw new Error('locator.click: element was detached')
+          screen = 'callback'
+        }
+      }] : [])
+    }
+
+    await clickOAuthContinue(page, async () => screen === 'callback')
+
+    assert.equal(screen, 'callback')
+    assert.equal(attempts, 2)
+  })
+
+  it('reacquires replaced standalone email and password controls', async () => {
+    for (const kind of ['email', 'password']) {
+      let inputAttempts = 0
+      let buttonAttempts = 0
+      let value = ''
+      let advanced = false
+      const collection = (items) => ({ count: async () => items.length, nth: (index) => items[index] })
+      const page = {
+        locator: (selector) => collection(selector === 'input' && !advanced ? [{
+          isVisible: async () => true,
+          getAttribute: async (name) => name === 'type' ? kind : null,
+          fill: async (next) => {
+            inputAttempts += 1
+            if (inputAttempts === 1) throw new Error('locator.fill: element was detached')
+            value = next
+          }
+        }] : []),
+        getByRole: (role, options) => collection(role === 'button' && !advanced && options.name.test('Continue') ? [{
+          isVisible: async () => true,
+          click: async () => {
+            buttonAttempts += 1
+            if (buttonAttempts === 1) throw new Error('locator.click: element was detached')
+            advanced = true
+          }
+        }] : [])
+      }
+
+      if (kind === 'email') await fillWorkflowEmail(page, 'person@example.test')
+      else await fillLoginPassword(page, 'SavedPassword!')
+
+      assert.equal(value, kind === 'email' ? 'person@example.test' : 'SavedPassword!')
+      assert.equal(advanced, true)
+      assert.equal(inputAttempts, 2)
+      assert.equal(buttonAttempts, 2)
+    }
   })
 
   it('fills the native invite Email input and clicks Send invites', async () => {
