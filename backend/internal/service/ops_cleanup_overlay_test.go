@@ -45,7 +45,7 @@ func TestComputeEffective_FallbackToCfgWhenSettingsAbsent(t *testing.T) {
 
 	svc.computeEffectiveLocked(context.Background())
 
-	if svc.effective != base {
+	if svc.effective.OpsCleanupConfig != base {
 		t.Fatalf("expected effective == cfg base, got %#v", svc.effective)
 	}
 }
@@ -77,7 +77,7 @@ func TestComputeEffective_SettingsOverridesAll(t *testing.T) {
 		MinuteMetricsRetentionDays: 7,
 		HourlyMetricsRetentionDays: 14,
 	}
-	if svc.effective != want {
+	if svc.effective.OpsCleanupConfig != want {
 		t.Fatalf("effective mismatch:\nwant %#v\n got %#v", want, svc.effective)
 	}
 }
@@ -156,7 +156,7 @@ func TestComputeEffective_BadJSONFallsBackToCfg(t *testing.T) {
 
 	svc.computeEffectiveLocked(context.Background())
 
-	if svc.effective != base {
+	if svc.effective.OpsCleanupConfig != base {
 		t.Fatalf("expected fallback to cfg on bad JSON, got %#v", svc.effective)
 	}
 }
