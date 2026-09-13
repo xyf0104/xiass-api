@@ -70,7 +70,12 @@ func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
 		"gemini-3.7-flash-high",
 		"gemini-3.7-flash-medium",
 		"gemini-3.7-flash-low",
-	}, gemini37ModelIDsForTest(antigravityIDs))
+	}, geminiFlashModelIDsForTest(antigravityIDs, "3.7"))
+	require.ElementsMatch(t, []string{
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+	}, geminiFlashModelIDsForTest(antigravityIDs, "3.8"))
 
 	compositeIDs := defaultModelIDsForPlatform(service.PlatformComposite)
 	require.Contains(t, compositeIDs, antigravityIDs[0])
@@ -78,7 +83,12 @@ func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
 		"gemini-3.7-flash-high",
 		"gemini-3.7-flash-medium",
 		"gemini-3.7-flash-low",
-	}, gemini37ModelIDsForTest(compositeIDs))
+	}, geminiFlashModelIDsForTest(compositeIDs, "3.7"))
+	require.ElementsMatch(t, []string{
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+	}, geminiFlashModelIDsForTest(compositeIDs, "3.8"))
 }
 
 func TestGatewayModels_HidesAntigravityGemini37InternalRoutes(t *testing.T) {
@@ -123,7 +133,54 @@ func TestGatewayModels_HidesAntigravityGemini37InternalRoutes(t *testing.T) {
 				"gemini-3.7-flash-high",
 				"gemini-3.7-flash-medium",
 				"gemini-3.7-flash-low",
-			}, gemini37ModelIDsForTest(modelIDsForTest(got.Data)))
+			}, geminiFlashModelIDsForTest(modelIDsForTest(got.Data), "3.7"))
+		})
+	}
+}
+
+func TestGatewayModels_HidesAntigravityGemini38InternalRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, platform := range []string{service.PlatformAntigravity, service.PlatformComposite} {
+		platform := platform
+		t.Run(platform, func(t *testing.T) {
+			groupID := int64(38)
+			h := newGatewayModelsHandlerForTest(
+				&gatewayModelsAccountRepoStub{
+					byGroup: map[int64][]service.Account{
+						groupID: {
+							{
+								ID:       1,
+								Platform: service.PlatformAntigravity,
+								Credentials: map[string]any{
+									"model_mapping": map[string]any{
+										"gemini-3.8-flash":        "gemini-3.8-flash-tiered",
+										"gemini-3.8-flash-tiered": "gemini-3.8-flash-tiered",
+									},
+								},
+							},
+						},
+					},
+				},
+			)
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+				Group: &service.Group{ID: groupID, Platform: platform},
+			})
+
+			h.Models(c)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got gatewayModelsResponseForTest
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.ElementsMatch(t, []string{
+				"gemini-3.8-flash-high",
+				"gemini-3.8-flash-medium",
+				"gemini-3.8-flash-low",
+			}, geminiFlashModelIDsForTest(modelIDsForTest(got.Data), "3.8"))
 		})
 	}
 }
@@ -842,10 +899,11 @@ func modelIDsForTest(models []gatewayModelItemForTest) []string {
 	return ids
 }
 
-func gemini37ModelIDsForTest(modelIDs []string) []string {
+func geminiFlashModelIDsForTest(modelIDs []string, version string) []string {
 	ids := make([]string, 0, len(modelIDs))
+	prefix := "gemini-" + version + "-flash"
 	for _, modelID := range modelIDs {
-		if strings.HasPrefix(modelID, "gemini-3.7-flash") {
+		if strings.HasPrefix(modelID, prefix) {
 			ids = append(ids, modelID)
 		}
 	}

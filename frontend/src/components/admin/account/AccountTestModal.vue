@@ -253,7 +253,7 @@ import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
 import {
-  isAntigravityGemini37InternalModel,
+  isAntigravityGeminiFlashInternalModel,
   normalizeAntigravityModelsForDisplay
 } from '@/composables/useModelWhitelist'
 import type { Account, ClaudeModel } from '@/types'
@@ -300,6 +300,9 @@ const openAITestModeOptions = computed(() => [
 ])
 const prioritizedGeminiModels = [
   'gemini-3.1-flash-image',
+  'gemini-3.8-flash-high',
+  'gemini-3.8-flash-medium',
+  'gemini-3.8-flash-low',
   'gemini-3.7-flash-high',
   'gemini-3.7-flash-medium',
   'gemini-3.7-flash-low',
@@ -342,28 +345,35 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
-const antigravityGemini37DisplayNames: Record<string, string> = {
+const antigravityGeminiFlashDisplayNames: Record<string, string> = {
   'gemini-3.7-flash-high': 'Gemini 3.7 Flash High',
   'gemini-3.7-flash-medium': 'Gemini 3.7 Flash Medium',
-  'gemini-3.7-flash-low': 'Gemini 3.7 Flash Low'
+  'gemini-3.7-flash-low': 'Gemini 3.7 Flash Low',
+  'gemini-3.8-flash-high': 'Gemini 3.8 Flash High',
+  'gemini-3.8-flash-medium': 'Gemini 3.8 Flash Medium',
+  'gemini-3.8-flash-low': 'Gemini 3.8 Flash Low'
 }
 
 const normalizeAntigravityTestModels = (models: ClaudeModel[]): ClaudeModel[] => {
   const displayModels = new Map(
     models
-      .filter((model) => !isAntigravityGemini37InternalModel(model.id))
+      .filter((model) => !isAntigravityGeminiFlashInternalModel(model.id))
       .map((model) => [model.id, model])
   )
-  const internalTemplate = models.find((model) => isAntigravityGemini37InternalModel(model.id))
 
   return normalizeAntigravityModelsForDisplay(models.map((model) => model.id)).map((id) => {
     const existing = displayModels.get(id)
     if (existing) return existing
 
+    const familyBase = id.replace(/-(high|medium|low)$/, '')
+    const internalTemplate = models.find(
+      (model) => isAntigravityGeminiFlashInternalModel(model.id) && model.id.startsWith(familyBase)
+    )
+
     return {
       ...(internalTemplate || { type: 'model', created_at: '' }),
       id,
-      display_name: antigravityGemini37DisplayNames[id] || id
+      display_name: antigravityGeminiFlashDisplayNames[id] || id
     }
   })
 }

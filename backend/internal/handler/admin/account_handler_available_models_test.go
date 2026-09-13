@@ -283,6 +283,8 @@ func TestAccountHandlerGetAvailableModels_OpenAIDefaultsToCurrentTestModels(t *t
 		"gpt-5.4",
 		"gpt-5.4-mini",
 		"gpt-image-2",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-sunburst",
 	}, ids)
 }
 
@@ -332,6 +334,8 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefau
 		"gpt-5.4",
 		"gpt-5.4-mini",
 		"gpt-image-2",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-sunburst",
 	}, ids)
 }
 

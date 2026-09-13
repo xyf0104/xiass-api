@@ -117,6 +117,19 @@ func TestDefaultAntigravityModelMapping_Gemini37FlashModels(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMapping_Gemini38FlashModels(t *testing.T) {
+	for _, model := range []string{"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"} {
+		if got := DefaultAntigravityModelMapping[model]; got != model {
+			t.Fatalf("expected public model %s to remain externally self-mapped, got %q", model, got)
+		}
+	}
+	for _, internalModel := range []string{"gemini-3.8-flash", AntigravityGemini38FlashTieredModel} {
+		if _, exists := DefaultAntigravityModelMapping[internalModel]; exists {
+			t.Fatalf("internal compatibility model %s must not be advertised", internalModel)
+		}
+	}
+}
+
 func TestDefaultAntigravityModelMapping_VerifiedCompatibilityAliases(t *testing.T) {
 	cases := map[string]string{
 		"gemini-3.5-flash":           AntigravityGemini35FlashMediumModel,

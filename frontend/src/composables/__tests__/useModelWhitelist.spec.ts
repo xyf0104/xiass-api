@@ -31,6 +31,8 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.6-luna')
     expect(models).toContain('gpt-6')
     expect(models).toContain('gpt-6-astra')
+    expect(models).toContain('gpt-image-2.5-flare')
+    expect(models).toContain('gpt-image-2.5-sunburst')
 
 	const presets = getPresetMappingsByPlatform('openai')
 	expect(presets).toEqual(expect.arrayContaining([
@@ -167,6 +169,28 @@ describe('useModelWhitelist', () => {
     )
   })
 
+  it('Antigravity 对外只展示 Gemini 3.8 Flash 三档自映射', () => {
+    const models = [
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low'
+    ]
+    const whitelist = getModelsByPlatform('antigravity')
+    const presets = getPresetMappingsByPlatform('antigravity')
+
+    for (const model of models) {
+      expect(whitelist).toContain(model)
+      expect(presets).toEqual(expect.arrayContaining([
+        expect.objectContaining({ from: model, to: model })
+      ]))
+    }
+    expect(whitelist).not.toContain('gemini-3.8-flash')
+    expect(whitelist).not.toContain('gemini-3.8-flash-tiered')
+    expect(allModels.map((model) => model.value)).toEqual(expect.arrayContaining(models))
+    expect(allModels.map((model) => model.value)).not.toContain('gemini-3.8-flash')
+    expect(allModels.map((model) => model.value)).not.toContain('gemini-3.8-flash-tiered')
+  })
+
   it('把 Antigravity 3.7 内部模型名规范化为不重复的三档外部模型', () => {
     expect(normalizeAntigravityModelsForDisplay([
       'gemini-2.5-flash',
@@ -181,6 +205,20 @@ describe('useModelWhitelist', () => {
     ])
   })
 
+  it('把 Antigravity 3.8 内部模型名规范化为不重复的三档外部模型', () => {
+    expect(normalizeAntigravityModelsForDisplay([
+      'gemini-2.5-flash',
+      'gemini-3.8-flash-tiered',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash'
+    ])).toEqual([
+      'gemini-2.5-flash',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low'
+    ])
+  })
+
   it('旧 Antigravity 3.7 映射只回显三档自映射', () => {
     expect(normalizeAntigravityMappingsForDisplay({
       'gemini-3.7-flash': 'gemini-3.7-flash-tiered',
@@ -192,6 +230,18 @@ describe('useModelWhitelist', () => {
       { from: 'gemini-3.7-flash-medium', to: 'gemini-3.7-flash-medium' },
       { from: 'gemini-3.7-flash-low', to: 'gemini-3.7-flash-low' },
       { from: 'gemini-2.5-flash', to: 'gemini-2.5-flash' }
+    ])
+  })
+
+  it('旧 Antigravity 3.8 映射只回显三档自映射', () => {
+    expect(normalizeAntigravityMappingsForDisplay({
+      'gemini-3.8-flash': 'gemini-3.8-flash-tiered',
+      'gemini-3.8-flash-tiered': 'gemini-3.8-flash-tiered',
+      'gemini-3.8-flash-high': 'gemini-3.8-flash-tiered'
+    })).toEqual([
+      { from: 'gemini-3.8-flash-high', to: 'gemini-3.8-flash-high' },
+      { from: 'gemini-3.8-flash-medium', to: 'gemini-3.8-flash-medium' },
+      { from: 'gemini-3.8-flash-low', to: 'gemini-3.8-flash-low' }
     ])
   })
 

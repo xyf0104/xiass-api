@@ -177,6 +177,9 @@ var geminiModels = []modelDef{
 	{ID: "gemini-3.7-flash-high", DisplayName: "Gemini 3.7 Flash High", CreatedAt: "2026-08-18T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.7-flash-medium", DisplayName: "Gemini 3.7 Flash Medium", CreatedAt: "2026-08-18T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.7-flash-low", DisplayName: "Gemini 3.7 Flash Low", CreatedAt: "2026-08-18T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash High", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash Medium", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-3.8-flash-low", DisplayName: "Gemini 3.8 Flash Low", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash Medium", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash Low", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
@@ -249,7 +252,7 @@ func IsGeminiReasoningModel(modelID string) bool {
 	lowerID := strings.ToLower(modelID)
 	// Gemini 3.7 exposes public tiers, but requests are routed through this
 	// internal model ID after account mapping.
-	if strings.Contains(lowerID, "gemini-3.7-flash-tiered") {
+	if strings.Contains(lowerID, "gemini-3.7-flash-tiered") || strings.Contains(lowerID, "gemini-3.8-flash-tiered") {
 		return true
 	}
 	for _, m := range geminiModels {

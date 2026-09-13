@@ -174,9 +174,11 @@ describe('ModelWhitelistSelector', () => {
     expect(copyToClipboard).not.toHaveBeenCalled()
   })
 
-  it('Antigravity 上游同步把内部 3.7 模型转换成三档外部模型', async () => {
+  it('Antigravity 上游同步把内部 3.7/3.8 模型转换成各自三档外部模型', async () => {
     vi.spyOn(accountsAPI, 'syncUpstreamModels').mockResolvedValue({
       models: [
+        'gemini-3.8-flash-tiered',
+        'gemini-3.8-flash',
         'gemini-3.7-flash-tiered',
         'gemini-3.7-flash',
         'gemini-3.7-flash-high'
@@ -193,11 +195,15 @@ describe('ModelWhitelistSelector', () => {
 
     const updates = selector.emitted('update:modelValue') || []
     expect(updates[updates.length - 1]).toEqual([[
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
       'gemini-3.7-flash-high',
       'gemini-3.7-flash-medium',
       'gemini-3.7-flash-low'
     ]])
     expect(JSON.stringify(updates)).not.toContain('gemini-3.7-flash-tiered')
+    expect(JSON.stringify(updates)).not.toContain('gemini-3.8-flash-tiered')
   })
 
   it('uses the larger upper space and constrains max-height near the viewport bottom', async () => {

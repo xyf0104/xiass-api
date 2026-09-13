@@ -758,6 +758,9 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 				"gemini-3.6-flash-low",
 				"gemini-3.6-flash-medium",
 				"gemini-3.6-flash-tiered",
+				"gemini-3.8-flash-high",
+				"gemini-3.8-flash-low",
+				"gemini-3.8-flash-medium",
 			})
 			applyAntigravityVerifiedAliases(result)
 			applyAntigravityGemini31ProAliases(result)
@@ -859,6 +862,11 @@ func applyAntigravityVerifiedAliases(mapping map[string]string) {
 		{model: "gemini-3.7-flash-medium", target: domain.AntigravityGemini37FlashTieredModel},
 		{model: "gemini-3.7-flash-low", target: domain.AntigravityGemini37FlashTieredModel},
 		{model: "gemini-3.7-flash-tiered", target: domain.AntigravityGemini37FlashTieredModel},
+		{model: "gemini-3.8-flash", target: domain.AntigravityGemini38FlashTieredModel},
+		{model: "gemini-3.8-flash-high", target: domain.AntigravityGemini38FlashTieredModel},
+		{model: "gemini-3.8-flash-medium", target: domain.AntigravityGemini38FlashTieredModel},
+		{model: "gemini-3.8-flash-low", target: domain.AntigravityGemini38FlashTieredModel},
+		{model: "gemini-3.8-flash-tiered", target: domain.AntigravityGemini38FlashTieredModel},
 	}
 
 	for _, alias := range aliases {

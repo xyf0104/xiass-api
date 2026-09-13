@@ -43,6 +43,32 @@ func TestResolveAntigravityWrappedModelProfile_Gemini37PublicTiers(t *testing.T)
 	}
 }
 
+func TestResolveAntigravityWrappedModelProfile_Gemini38PublicTiers(t *testing.T) {
+	tests := []struct {
+		requested  string
+		wantBudget *int
+	}{
+		{requested: "gemini-3.8-flash-high", wantBudget: antigravityIntPtr(-1)},
+		{requested: "gemini-3.8-flash-medium", wantBudget: antigravityIntPtr(4000)},
+		{requested: "gemini-3.8-flash-low", wantBudget: antigravityIntPtr(1000)},
+		{requested: "gemini-3.8-flash", wantBudget: antigravityIntPtr(4000)},
+		{requested: domain.AntigravityGemini38FlashTieredModel},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.requested, func(t *testing.T) {
+			profile := resolveAntigravityWrappedModelProfile(tt.requested, domain.AntigravityGemini38FlashTieredModel)
+			require.Equal(t, domain.AntigravityGemini38FlashTieredModel, profile.upstreamModel)
+			if tt.wantBudget == nil {
+				require.Nil(t, profile.thinkingBudget)
+				return
+			}
+			require.NotNil(t, profile.thinkingBudget)
+			require.Equal(t, *tt.wantBudget, *profile.thinkingBudget)
+		})
+	}
+}
+
 func TestPublicAntigravityModelIDs_HidesGemini37InternalRoutes(t *testing.T) {
 	models := publicAntigravityModelIDs([]string{
 		"gemini-2.5-pro",
@@ -59,6 +85,43 @@ func TestPublicAntigravityModelIDs_HidesGemini37InternalRoutes(t *testing.T) {
 	}, models)
 	require.NotContains(t, models, "gemini-3.7-flash")
 	require.NotContains(t, models, domain.AntigravityGemini37FlashTieredModel)
+}
+
+func TestPublicAntigravityModelIDs_HidesGemini38InternalRoutes(t *testing.T) {
+	models := publicAntigravityModelIDs([]string{
+		"gemini-2.5-pro",
+		"gemini-3.8-flash",
+		domain.AntigravityGemini38FlashTieredModel,
+		"gemini-3.8-flash-high",
+	})
+
+	require.Equal(t, []string{
+		"gemini-2.5-pro",
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-low",
+		"gemini-3.8-flash-medium",
+	}, models)
+	require.NotContains(t, models, "gemini-3.8-flash")
+	require.NotContains(t, models, domain.AntigravityGemini38FlashTieredModel)
+}
+
+func TestAntigravityGateway_Gemini38ResponsesUsesPublicIdentityAndTieredRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
+	svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, upstream)
+	body := []byte(`{"model":"gemini-3.8-flash-medium","input":"ok","stream":true}`)
+	c := newAntigravityTierContext("/v1/responses", body)
+
+	result, err := svc.ForwardAsResponses(context.Background(), c, newAntigravityTierAccount(), body, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "gemini-3.8-flash-medium", result.Model)
+	require.Equal(t, domain.AntigravityGemini38FlashTieredModel, result.UpstreamModel)
+	require.Len(t, upstream.requestBodies, 1)
+	written := upstream.requestBodies[0]
+	require.Equal(t, domain.AntigravityGemini38FlashTieredModel, gjson.GetBytes(written, "model").String())
+	require.Equal(t, int64(4000), gjson.GetBytes(written, "request.generationConfig.thinkingConfig.thinkingBudget").Int())
 }
 
 func TestApplyAntigravityWrappedModelProfile_Gemini37PreservesUnknownFields(t *testing.T) {

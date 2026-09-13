@@ -1,6 +1,9 @@
 package antigravity
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 	t.Parallel()
@@ -34,6 +37,9 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 		"gemini-3.7-flash-high",
 		"gemini-3.7-flash-medium",
 		"gemini-3.7-flash-low",
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
 	}
 
 	for _, id := range requiredIDs {
@@ -118,6 +124,38 @@ func TestGeminiModels_Gemini37FlashMetadata(t *testing.T) {
 	}
 	if !IsGeminiReasoningModel("gemini-3.7-flash-tiered") {
 		t.Fatal("internal Gemini 3.7 tiered route must retain reasoning-model request semantics")
+	}
+}
+
+func TestGeminiModels_Gemini38FlashMetadata(t *testing.T) {
+	t.Parallel()
+
+	models := make(map[string]modelDef, len(geminiModels))
+	for _, model := range geminiModels {
+		models[model.ID] = model
+	}
+
+	for _, tier := range []string{"high", "medium", "low"} {
+		id := "gemini-3.8-flash-" + tier
+		got, ok := models[id]
+		if !ok {
+			t.Fatalf("expected model %q to exist", id)
+		}
+		if got.DisplayName != "Gemini 3.8 Flash "+strings.ToUpper(tier[:1])+tier[1:] {
+			t.Errorf("unexpected display name for %q: %q", id, got.DisplayName)
+		}
+		if got.CreatedAt != "2026-09-02T00:00:00Z" || !got.IsReasoning {
+			t.Errorf("unexpected Gemini 3.8 metadata for %q: %#v", id, got)
+		}
+	}
+	if _, exists := models["gemini-3.8-flash"]; exists {
+		t.Fatal("Gemini 3.8 base alias is compatibility-only and must not be advertised")
+	}
+	if _, exists := models["gemini-3.8-flash-tiered"]; exists {
+		t.Fatal("raw Gemini 3.8 tiered model must not replace the three public tiers")
+	}
+	if !IsGeminiReasoningModel("gemini-3.8-flash-tiered") {
+		t.Fatal("internal Gemini 3.8 tiered route must retain reasoning-model request semantics")
 	}
 }
 

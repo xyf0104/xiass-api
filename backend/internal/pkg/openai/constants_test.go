@@ -34,6 +34,8 @@ func TestDefaultAccountTestModelsOnlyIncludeCurrentRunnableModels(t *testing.T) 
 		"gpt-5.4",
 		"gpt-5.4-mini",
 		"gpt-image-2",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-sunburst",
 	}, ids)
 	require.NotContains(t, ids, "gpt-5.6")
 	require.NotContains(t, ids, "gpt-6")

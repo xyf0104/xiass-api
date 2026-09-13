@@ -886,6 +886,40 @@ func TestApplyAccountStatsCost_Gemini37TieredUsesPublicTierCustomPricing(t *test
 	require.InDelta(t, 0.5, *usageLog.AccountStatsCost, 1e-12)
 }
 
+func TestApplyAccountStatsCost_Gemini38TieredUsesPublicTierCustomPricing(t *testing.T) {
+	channel := &Channel{
+		ID:                         1,
+		Status:                     StatusActive,
+		ApplyPricingToAccountStats: false,
+		AccountStatsPricingRules: []AccountStatsPricingRule{
+			{
+				AccountIDs: []int64{1},
+				Pricing: []ChannelModelPricing{
+					{
+						Platform:       PlatformAntigravity,
+						Models:         []string{"gemini-3.8-flash-high"},
+						BillingMode:    BillingModeToken,
+						InputPrice:     testPtrFloat64(0.002),
+						OutputPrice:    testPtrFloat64(0.004),
+						CacheReadPrice: testPtrFloat64(0.0005),
+					},
+				},
+			},
+		},
+	}
+	cs := newTestChannelServiceForStats(t, channel, 10, PlatformAntigravity)
+	usageLog := &UsageLog{}
+
+	applyAccountStatsCost(
+		context.Background(), usageLog, cs, NewBillingService(&config.Config{}, nil),
+		1, 10, "gemini-3.8-flash-tiered", "gemini-3.8-flash-high",
+		UsageTokens{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 200}, 999,
+	)
+
+	require.NotNil(t, usageLog.AccountStatsCost)
+	require.InDelta(t, 0.5, *usageLog.AccountStatsCost, 1e-12)
+}
+
 func TestApplyAccountStatsCost_DoesNotUseRequestedModelForOtherPlatforms(t *testing.T) {
 	channel := &Channel{
 		ID:     1,

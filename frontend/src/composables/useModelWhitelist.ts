@@ -19,7 +19,8 @@ const openaiModels = [
   'gpt-5.3-codex-spark', 'codex-auto-review',
   'gpt-4o-audio-preview', 'gpt-4o-realtime-preview',
   // GPT Image 系列
-  'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'
+  'gpt-image-1', 'gpt-image-1.5', 'gpt-image-2',
+  'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'
 ]
 
 // Anthropic Claude
@@ -82,7 +83,7 @@ const antigravityModels = [
   'gemini-3.1-flash-lite',
   'gemini-3.1-pro-high',
   'gemini-3.1-pro-low',
-  // Gemini 3.5/3.6/3.7 分档（基础别名仅后端兼容，不作为主要选项）
+  // Gemini 3.5/3.6/3.7/3.8 分档（基础别名仅后端兼容，不作为主要选项）
   'gemini-3.5-flash-medium',
   'gemini-3.5-flash-low',
   'gemini-3.6-flash-high',
@@ -92,6 +93,9 @@ const antigravityModels = [
   'gemini-3.7-flash-high',
   'gemini-3.7-flash-medium',
   'gemini-3.7-flash-low',
+  'gemini-3.8-flash-high',
+  'gemini-3.8-flash-medium',
+  'gemini-3.8-flash-low',
   // 其他
   'gpt-oss-120b-medium'
 ]
@@ -102,15 +106,52 @@ export const ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS = [
   'gemini-3.7-flash-low'
 ] as const
 
-const antigravityGemini37InternalModels = new Set([
-  'gemini-3.7-flash',
-  'gemini-3.7-flash-tiered'
-])
+export const ANTIGRAVITY_GEMINI_38_PUBLIC_MODELS = [
+  'gemini-3.8-flash-high',
+  'gemini-3.8-flash-medium',
+  'gemini-3.8-flash-low'
+] as const
 
-const antigravityGemini37PublicModelSet = new Set<string>(ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS)
+type AntigravityGeminiFlashFamily = {
+  base: string
+  tiered: string
+  publicModels: readonly string[]
+  publicModelSet: Set<string>
+}
+
+const antigravityGeminiFlashFamilies: AntigravityGeminiFlashFamily[] = [
+  {
+    base: 'gemini-3.7-flash',
+    tiered: 'gemini-3.7-flash-tiered',
+    publicModels: ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS,
+    publicModelSet: new Set<string>(ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS)
+  },
+  {
+    base: 'gemini-3.8-flash',
+    tiered: 'gemini-3.8-flash-tiered',
+    publicModels: ANTIGRAVITY_GEMINI_38_PUBLIC_MODELS,
+    publicModelSet: new Set<string>(ANTIGRAVITY_GEMINI_38_PUBLIC_MODELS)
+  }
+]
+
+function antigravityGeminiFlashFamilyForModel(model: string): AntigravityGeminiFlashFamily | undefined {
+  const normalized = model.trim()
+  return antigravityGeminiFlashFamilies.find((family) =>
+    normalized === family.base ||
+    normalized === family.tiered ||
+    family.publicModelSet.has(normalized)
+  )
+}
+
+export function isAntigravityGeminiFlashInternalModel(model: string): boolean {
+  const normalized = model.trim()
+  const family = antigravityGeminiFlashFamilyForModel(normalized)
+  return Boolean(family && (normalized === family.base || normalized === family.tiered))
+}
 
 export function isAntigravityGemini37InternalModel(model: string): boolean {
-  return antigravityGemini37InternalModels.has(model.trim())
+  const family = antigravityGeminiFlashFamilyForModel(model)
+  return family?.base === 'gemini-3.7-flash' && isAntigravityGeminiFlashInternalModel(model)
 }
 
 export function normalizeAntigravityModelsForDisplay(models: string[]): string[] {
@@ -127,8 +168,9 @@ export function normalizeAntigravityModelsForDisplay(models: string[]): string[]
     const model = rawModel.trim()
     if (!model) continue
 
-    if (isAntigravityGemini37InternalModel(model)) {
-      ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS.forEach(append)
+    const family = antigravityGeminiFlashFamilyForModel(model)
+    if (family && isAntigravityGeminiFlashInternalModel(model)) {
+      family.publicModels.forEach(append)
       continue
     }
 
@@ -152,20 +194,25 @@ export function normalizeAntigravityMappingsForDisplay(
     const to = rawTo.trim()
     if (!from || !to) continue
 
-    if (isAntigravityGemini37InternalModel(from)) {
-      for (const publicModel of ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS) {
+    const fromFamily = antigravityGeminiFlashFamilyForModel(from)
+    const toFamily = antigravityGeminiFlashFamilyForModel(to)
+
+    if (fromFamily && isAntigravityGeminiFlashInternalModel(from)) {
+      for (const publicModel of fromFamily.publicModels) {
         if (!normalized.has(publicModel)) {
           normalized.set(
             publicModel,
-            isAntigravityGemini37InternalModel(to) ? publicModel : to
+            toFamily?.base === fromFamily.base && isAntigravityGeminiFlashInternalModel(to)
+              ? publicModel
+              : to
           )
         }
       }
       continue
     }
 
-    if (isAntigravityGemini37InternalModel(to)) {
-      if (antigravityGemini37PublicModelSet.has(from)) {
+    if (toFamily && isAntigravityGeminiFlashInternalModel(to)) {
+      if (toFamily.publicModelSet.has(from)) {
         normalized.set(from, from)
       }
       continue
@@ -445,6 +492,9 @@ const antigravityPresetMappings = [
   { label: '3.7 Flash High', from: 'gemini-3.7-flash-high', to: 'gemini-3.7-flash-high', color: 'bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400' },
   { label: '3.7 Flash Medium', from: 'gemini-3.7-flash-medium', to: 'gemini-3.7-flash-medium', color: 'bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400' },
   { label: '3.7 Flash Low', from: 'gemini-3.7-flash-low', to: 'gemini-3.7-flash-low', color: 'bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400' },
+  { label: '3.8 Flash High', from: 'gemini-3.8-flash-high', to: 'gemini-3.8-flash-high', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
+  { label: '3.8 Flash Medium', from: 'gemini-3.8-flash-medium', to: 'gemini-3.8-flash-medium', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
+  { label: '3.8 Flash Low', from: 'gemini-3.8-flash-low', to: 'gemini-3.8-flash-low', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
   { label: '2.5-Flash-Lite透传', from: 'gemini-2.5-flash-lite', to: 'gemini-2.5-flash-lite', color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400' },
   // 精确映射
   { label: 'Sonnet 4.6', from: 'claude-sonnet-4-6', to: 'claude-sonnet-4-6', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },

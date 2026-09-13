@@ -16,23 +16,50 @@ type antigravityWrappedModelProfile struct {
 	ensureThinking bool
 }
 
+type antigravityGeminiFlashFamily struct {
+	baseModel    string
+	tieredModel  string
+	publicModels []string
+}
+
+var antigravityGeminiFlashFamilies = []antigravityGeminiFlashFamily{
+	{
+		baseModel:   "gemini-3.7-flash",
+		tieredModel: domain.AntigravityGemini37FlashTieredModel,
+		publicModels: []string{
+			"gemini-3.7-flash-high",
+			"gemini-3.7-flash-medium",
+			"gemini-3.7-flash-low",
+		},
+	},
+	{
+		baseModel:   "gemini-3.8-flash",
+		tieredModel: domain.AntigravityGemini38FlashTieredModel,
+		publicModels: []string{
+			"gemini-3.8-flash-high",
+			"gemini-3.8-flash-medium",
+			"gemini-3.8-flash-low",
+		},
+	},
+}
+
 func resolveAntigravityWrappedModelProfile(requestedModel, mappedModel string) antigravityWrappedModelProfile {
 	requested := normalizeAntigravityCompatModel(requestedModel)
 	mapped := normalizeAntigravityCompatModel(mappedModel)
 
-	if isAntigravityGemini37FlashModel(mapped) {
+	if family, ok := antigravityGeminiFlashFamilyForModel(mapped); ok {
 		tier := mapped
-		if isAntigravityGemini37FlashModel(requested) {
+		if _, requestedOK := antigravityGeminiFlashFamilyForModel(requested); requestedOK {
 			tier = requested
 		}
 
-		profile := antigravityWrappedModelProfile{upstreamModel: domain.AntigravityGemini37FlashTieredModel}
-		switch tier {
-		case "gemini-3.7-flash-high":
+		profile := antigravityWrappedModelProfile{upstreamModel: family.tieredModel}
+		switch {
+		case strings.HasSuffix(tier, "-high"):
 			profile.thinkingBudget = antigravityIntPtr(-1)
-		case "gemini-3.7-flash-low":
+		case strings.HasSuffix(tier, "-low"):
 			profile.thinkingBudget = antigravityIntPtr(1000)
-		case "gemini-3.7-flash", "gemini-3.7-flash-medium":
+		case tier == family.baseModel, strings.HasSuffix(tier, "-medium"):
 			profile.thinkingBudget = antigravityIntPtr(4000)
 		}
 		return profile
@@ -94,43 +121,58 @@ func applyAntigravityWrappedModelProfile(body []byte, profile antigravityWrapped
 }
 
 func profileAppliesToWrappedModel(profile antigravityWrappedModelProfile, currentModel string) bool {
-	if profile.upstreamModel == domain.AntigravityGemini37FlashTieredModel {
-		return isAntigravityGemini37FlashModel(currentModel)
+	if family, ok := antigravityGeminiFlashFamilyForModel(profile.upstreamModel); ok {
+		currentFamily, currentOK := antigravityGeminiFlashFamilyForModel(currentModel)
+		return currentOK && currentFamily.baseModel == family.baseModel
 	}
 	return currentModel == "claude-sonnet-4-6" || currentModel == "claude-sonnet-4-6-thinking"
 }
 
 func isAntigravityGemini37FlashModel(model string) bool {
-	switch normalizeAntigravityCompatModel(model) {
-	case "gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low", domain.AntigravityGemini37FlashTieredModel:
-		return true
-	default:
-		return false
-	}
+	family, ok := antigravityGeminiFlashFamilyForModel(model)
+	return ok && family.baseModel == "gemini-3.7-flash"
 }
 
 func isAntigravityGemini37InternalModel(model string) bool {
-	switch normalizeAntigravityCompatModel(model) {
-	case "gemini-3.7-flash", domain.AntigravityGemini37FlashTieredModel:
-		return true
-	default:
-		return false
+	family, ok := antigravityGeminiFlashFamilyForModel(model)
+	return ok && family.baseModel == "gemini-3.7-flash" && isAntigravityGeminiFlashInternalModel(model)
+}
+
+func isAntigravityGeminiFlashModel(model string) bool {
+	_, ok := antigravityGeminiFlashFamilyForModel(model)
+	return ok
+}
+
+func isAntigravityGeminiFlashInternalModel(model string) bool {
+	normalized := normalizeAntigravityCompatModel(model)
+	family, ok := antigravityGeminiFlashFamilyForModel(normalized)
+	return ok && (normalized == family.baseModel || normalized == family.tieredModel)
+}
+
+func antigravityGeminiFlashFamilyForModel(model string) (antigravityGeminiFlashFamily, bool) {
+	normalized := normalizeAntigravityCompatModel(model)
+	for _, family := range antigravityGeminiFlashFamilies {
+		if normalized == family.baseModel || normalized == family.tieredModel {
+			return family, true
+		}
+		for _, publicModel := range family.publicModels {
+			if normalized == publicModel {
+				return family, true
+			}
+		}
 	}
+	return antigravityGeminiFlashFamily{}, false
 }
 
 func publicAntigravityModelIDs(models []string) []string {
-	publicModels := make([]string, 0, len(models)+2)
+	publicModels := make([]string, 0, len(models)+4)
 	for _, model := range models {
 		model = strings.TrimSpace(model)
 		if model == "" {
 			continue
 		}
-		if isAntigravityGemini37InternalModel(model) {
-			publicModels = append(publicModels,
-				"gemini-3.7-flash-high",
-				"gemini-3.7-flash-medium",
-				"gemini-3.7-flash-low",
-			)
+		if family, ok := antigravityGeminiFlashFamilyForModel(model); ok && isAntigravityGeminiFlashInternalModel(model) {
+			publicModels = append(publicModels, family.publicModels...)
 			continue
 		}
 		publicModels = append(publicModels, model)

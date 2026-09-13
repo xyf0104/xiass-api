@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"strings"
-
-	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
 // resolveAccountStatsCostForModels 计算账号统计定价费用。
@@ -17,7 +15,7 @@ import (
 //  4. nil → 使用 total_cost 作为基础价
 //
 // upstreamModel 是最终发往上游的模型 ID。
-// requestedModel 仅用于 Antigravity Gemini 3.7 公共档位的自定义计价回退。
+// requestedModel 仅用于 Antigravity Gemini 3.7/3.8 公共档位的自定义计价回退。
 // totalCost 是本次请求的客户计费（倍率前），用于优先级 2。
 // serviceTier 是最终参与用户计费的 OpenAI 服务层级，用于优先级 3。
 func resolveAccountStatsCostForModels(
@@ -46,11 +44,15 @@ func resolveAccountStatsCostForModels(
 	// 优先级 1：自定义规则（始终尝试）
 	pricingModels := []string{upstreamModel}
 	requestedModel = strings.TrimSpace(requestedModel)
-	if platform == PlatformAntigravity &&
-		upstreamModel == domain.AntigravityGemini37FlashTieredModel &&
-		isAntigravityGemini37FlashModel(requestedModel) &&
-		!isAntigravityGemini37InternalModel(requestedModel) {
-		pricingModels = append(pricingModels, requestedModel)
+	if platform == PlatformAntigravity {
+		upstreamFamily, upstreamOK := antigravityGeminiFlashFamilyForModel(upstreamModel)
+		requestedFamily, requestedOK := antigravityGeminiFlashFamilyForModel(requestedModel)
+		if upstreamOK && requestedOK &&
+			upstreamModel == upstreamFamily.tieredModel &&
+			upstreamFamily.baseModel == requestedFamily.baseModel &&
+			!isAntigravityGeminiFlashInternalModel(requestedModel) {
+			pricingModels = append(pricingModels, requestedModel)
+		}
 	}
 	if cost := tryCustomRulesForModels(channel, accountID, groupID, platform, pricingModels, tokens, requestCount); cost != nil {
 		return cost
