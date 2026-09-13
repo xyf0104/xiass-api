@@ -27,7 +27,6 @@ test('three real isolated Chromium contexts complete the fixture login and callb
           email = new URLSearchParams(route.request().postData()).get('email')
           content = form('/fixture/totp', 'Enter your password', '<input type="password" name="password" />')
         } else if (url.pathname === '/fixture/totp') {
-          if (state === 'fixture-task-00001') await new Promise(resolve => setTimeout(resolve, 10_500))
           content = form('/fixture/phone', 'Enter the code from your authenticator app', '<input name="code" autocomplete="one-time-code" />')
         } else if (url.pathname === '/fixture/phone') {
           assert.match(new URLSearchParams(route.request().postData()).get('code'), /^\d{6}$/)
