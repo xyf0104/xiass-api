@@ -473,33 +473,6 @@ jobs:
                 disable_web_page_preview: true
               }')"
 
-  mirror-codex-helper-assets:
-    needs: [release]
-    if: ${{ needs.release.result == 'success' && (github.event_name == 'push' || github.event.inputs.simple_release != 'true') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download independently published helper assets
-        run: |
-          mkdir -p helper-assets
-          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/codex-helper-latest"
-          curl --fail --location --retry 3 --output helper-assets/xiass-codex-helper-macos-universal.zip "${BASE_URL}/xiass-codex-helper-macos-universal.zip"
-          curl --fail --location --retry 3 --output helper-assets/xiass-codex-helper-windows-x64.exe "${BASE_URL}/xiass-codex-helper-windows-x64.exe"
-
-      - name: Mirror helper assets for legacy XIASS clients
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME="${{ github.event.inputs.tag }}"
-          else
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-          fi
-          gh release upload "$TAG_NAME" helper-assets/xiass-codex-helper-macos-universal.zip helper-assets/xiass-codex-helper-windows-x64.exe --clobber
-          ASSETS=$(gh release view "$TAG_NAME" --json assets --jq '[.assets[].name]')
-          echo "$ASSETS" | grep -q 'xiass-codex-helper-macos-universal.zip'
-          echo "$ASSETS" | grep -q 'xiass-codex-helper-windows-x64.exe'
-
   sync-version-file:
     needs: [release]
     if: ${{ needs.release.result == 'success' }}
