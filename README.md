@@ -119,6 +119,8 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh |
 curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh | bash
 ```
 
+从 GitHub Release 下载压缩包时，解压后请在压缩包根目录运行 `sudo bash install.sh`，它会完成 XIASS 主服务、Chromium 和 Team 自动化组件的 Docker 安装。`deploy/install.sh` 仅用于已有独立 PostgreSQL、Redis 的 systemd 二进制部署，不包含浏览器与批量授权组件。
+
 安装向导会依次询问：
 
 1. 使用正式镜像还是源码构建，amd64 默认选择正式镜像。

@@ -47,6 +47,7 @@ archives:
     files:
       - LICENSE*
       - README*
+      - install.sh
       # Ship runtime inputs only, never a developer's entire deploy directory.
       - deploy/.env.example
       - deploy/config.example.yaml
@@ -79,6 +80,7 @@ archives:
       - deploy/team-child-automation/package-lock.json
       - deploy/team-child-automation/server.mjs
       - deploy/team-child-automation/batch-oauth.mjs
+      - deploy/team-child-automation/email-code.mjs
       - deploy/team-child-automation/totp.mjs
       - deploy/team-child-automation/browser-proxy.mjs
       - deploy/xiass-updater/Dockerfile

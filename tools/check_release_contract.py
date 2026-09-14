@@ -264,6 +264,8 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         [
             "project_name: xiass-api",
             "binary: sub2api",
+            "      - install.sh",
+            "      - deploy/team-child-automation/email-code.mjs",
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-amd64',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}-arm64',
             'name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}"',
@@ -277,6 +279,8 @@ def check_release_branding_and_compatibility(errors: list[str]) -> None:
         [
             "project_name: xiass-api",
             "binary: sub2api",
+            "      - install.sh",
+            "      - deploy/team-child-automation/email-code.mjs",
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:{{ .Version }}',
             'ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/xiass-api:latest',
             'name_template: "XIASS API {{.Version}}"',
