@@ -1089,6 +1089,13 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, PreserveOAuthWorkflowProxy: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
 		GroupIDs: t.config.GroupIDs, ProxyID: t.config.ProxyID, Concurrency: t.config.Concurrency, Priority: t.config.Priority, SkipDefaultGroupBind: true, Schedulable: &schedulable})
 	token = nil
+	if errors.Is(err, service.ErrOpenAIOAuthEmailExists) {
+		if existing, lookupErr := h.existingBatchOAuthAccount(ctx, t.Email); lookupErr == nil && existing != nil {
+			t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existing.ID
+			response.Success(c, t)
+			return
+		}
+	}
 	if err != nil || account == nil || account.ID <= 0 {
 		t.Reason = "account_creation_requires_review"
 		response.Success(c, t)

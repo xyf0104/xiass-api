@@ -182,10 +182,124 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
+	if email := normalizedOpenAIOAuthEmail(account); email != "" {
+		return r.createOpenAIOAuthAccountWithEmailGuard(ctx, account, email)
+	}
 	if err := createAccountRecord(ctx, r.client, account); err != nil {
 		return err
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account create failed: account=%d err=%v", account.ID, err)
+	}
+	return nil
+}
+
+func normalizedOpenAIOAuthEmail(account *service.Account) string {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+		return ""
+	}
+	for _, key := range []string{"email", service.OpenAIOAuthReauthorizationEmailCredentialKey} {
+		if value, ok := account.Credentials[key].(string); ok {
+			if email := strings.ToLower(strings.TrimSpace(value)); email != "" {
+				return email
+			}
+		}
+	}
+	return ""
+}
+
+func openAIOAuthEmailExists(ctx context.Context, exec sqlQueryExecutor, email string) (bool, error) {
+	rows, err := exec.QueryContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM accounts
+			WHERE deleted_at IS NULL
+				AND parent_account_id IS NULL
+				AND platform = $2
+				AND type = $3
+				AND (
+					LOWER(BTRIM(COALESCE(credentials ->> 'email', ''))) = $1
+					OR LOWER(BTRIM(COALESCE(credentials ->> $4, ''))) = $1
+				)
+		)
+	`, email, service.PlatformOpenAI, service.AccountTypeOAuth, service.OpenAIOAuthReauthorizationEmailCredentialKey)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		return false, errors.New("OpenAI OAuth email uniqueness query returned no result")
+	}
+	var exists bool
+	if err := rows.Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// createOpenAIOAuthAccountWithEmailGuard serializes one normalized login
+// identity across application instances, then checks the live database inside
+// the same transaction. This protects the batch flow, manual OAuth creation,
+// imports, and retries even when an older frontend submits the create twice.
+func (r *accountRepository) createOpenAIOAuthAccountWithEmailGuard(ctx context.Context, account *service.Account, email string) error {
+	baseCtx := ctx
+	client := r.client
+	var ownedTx *dbent.Tx
+	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
+		client = contextTx.Client()
+	} else {
+		tx, err := r.client.Tx(ctx)
+		if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+			return err
+		}
+		if tx != nil {
+			ownedTx = tx
+			defer func() { _ = ownedTx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, ownedTx)
+			client = ownedTx.Client()
+		}
+	}
+
+	exec := txAwareSQLExecutor(ctx, r.sql, client)
+	if exec == nil {
+		return errors.New("account repository SQL executor is not configured")
+	}
+	release, err := lockRepositoryScopedKeys(
+		ctx,
+		client,
+		exec,
+		"account:openai-oauth-email:"+email,
+	)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	exists, err := openAIOAuthEmailExists(ctx, exec, email)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return service.ErrOpenAIOAuthEmailExists
+	}
+	if err := createAccountRecord(ctx, client, account); err != nil {
+		return err
+	}
+
+	if ownedTx != nil {
+		if err := ownedTx.Commit(); err != nil {
+			return err
+		}
+		if err := enqueueSchedulerOutbox(baseCtx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
+			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account create failed: account=%d err=%v", account.ID, err)
+		}
+		return nil
+	}
+
+	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account create failed: account=%d err=%v", account.ID, err)
 	}
 	return nil

@@ -30,6 +30,7 @@ type stubAdminService struct {
 	testedProxyIDs                      []int64
 	getUserErr                          error
 	createAccountErr                    error
+	createAccountErrExisting            *service.Account
 	createSparkShadowErr                error
 	updateAccountErr                    error
 	lastUpdateAccountInput              *service.UpdateAccountInput
@@ -506,6 +507,9 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 	s.createdAccounts = append(s.createdAccounts, input)
 	s.mu.Unlock()
 	if s.createAccountErr != nil {
+		if s.createAccountErrExisting != nil {
+			s.accounts = append(s.accounts, *s.createAccountErrExisting)
+		}
 		return nil, s.createAccountErr
 	}
 	account := service.Account{ID: 300, Name: input.Name, Status: service.StatusActive}

@@ -22,6 +22,26 @@ const parameterLimitTestDriverName = "sub2api_param_limit_test"
 
 var registerParameterLimitTestDriverOnce sync.Once
 
+func TestNormalizedOpenAIOAuthEmail(t *testing.T) {
+	account := &service.Account{
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Credentials: map[string]any{"email": "  Owner@Example.Test  "},
+	}
+	require.Equal(t, "owner@example.test", normalizedOpenAIOAuthEmail(account))
+
+	account.Credentials = map[string]any{service.OpenAIOAuthReauthorizationEmailCredentialKey: " Recovery@Example.Test "}
+	require.Equal(t, "recovery@example.test", normalizedOpenAIOAuthEmail(account))
+
+	parentID := int64(9)
+	account.ParentAccountID = &parentID
+	require.Empty(t, normalizedOpenAIOAuthEmail(account))
+
+	account.ParentAccountID = nil
+	account.Type = service.AccountTypeAPIKey
+	require.Empty(t, normalizedOpenAIOAuthEmail(account))
+}
+
 func TestAccountsToService_LargeActiveAccountSetDoesNotExceedPostgresParameterLimit(t *testing.T) {
 	repo := newParameterLimitAccountRepo(t)
 

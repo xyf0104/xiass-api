@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +172,60 @@ func (s *AccountRepoSuite) TestCreate() {
 	got, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err, "GetByID")
 	s.Require().Equal("test-create", got.Name)
+}
+
+func (s *AccountRepoSuite) TestCreateRejectsDuplicateOpenAIOAuthEmail() {
+	email := fmt.Sprintf("oauth-duplicate-%d@example.test", time.Now().UnixNano())
+	first := &service.Account{
+		Name:        "openai-email-first",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"email": email},
+		Extra:       map[string]any{},
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, first))
+
+	duplicate := &service.Account{
+		Name:        "openai-email-duplicate",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"email": "  " + strings.ToUpper(email) + "  "},
+		Extra:       map[string]any{},
+	}
+	err := s.repo.Create(s.ctx, duplicate)
+	s.Require().ErrorIs(err, service.ErrOpenAIOAuthEmailExists)
+	s.Require().Zero(duplicate.ID)
+}
+
+func (s *AccountRepoSuite) TestCreateAllowsOpenAIOAuthEmailAfterDelete() {
+	email := fmt.Sprintf("oauth-recreated-%d@example.test", time.Now().UnixNano())
+	first := &service.Account{
+		Name:        "openai-email-deleted",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"email": email},
+		Extra:       map[string]any{},
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, first))
+	s.Require().NoError(s.repo.Delete(s.ctx, first.ID))
+
+	recreated := &service.Account{
+		Name:        "openai-email-recreated",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"email": email},
+		Extra:       map[string]any{},
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, recreated))
+	s.Require().NotZero(recreated.ID)
 }
 
 func (s *AccountRepoSuite) TestGetByID_NotFound() {

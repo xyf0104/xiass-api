@@ -422,6 +422,21 @@ func TestBatchOAuthAmbiguousCreateCannotReplay(t *testing.T) {
 	require.Equal(t, 409, batchOAuthRequest(r, "POST", "/tasks/"+id+"/restart", `{"password":"secret","confirmed":true}`).Code)
 }
 
+func TestBatchOAuthConcurrentEmailCreateResolvesToExistingAccount(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, id := startFixtureTask(t, f)
+	f.admin.createAccountErr = service.ErrOpenAIOAuthEmailExists
+	f.admin.createAccountErrExisting = &service.Account{
+		ID: 778, Name: "concurrent winner", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"email": "owner@example.test"},
+	}
+	w := batchOAuthRequest(r, "POST", "/tasks/"+id+"/complete", "{}")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"reason":"account_already_exists"`)
+	require.Contains(t, w.Body.String(), `"account_id":778`)
+	require.Len(t, f.admin.createdAccounts, 1)
+}
+
 func TestBatchOAuthCallbackStateAndRedirect(t *testing.T) {
 	valid := openai.DefaultRedirectURI + "?code=code&state=state"
 	code, err := validateBatchCallback(valid, "state")
