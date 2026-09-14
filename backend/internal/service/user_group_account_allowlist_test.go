@@ -378,6 +378,7 @@ func TestAdminUserGroupAccountAllowlistRuntimeReportsActualUsersAccountsAndConcu
 	require.Len(t, runtime.Users, 1)
 	require.Equal(t, 3, runtime.Users[0].CurrentConcurrency)
 	require.Equal(t, []int64{11, 12}, runtime.Users[0].ActiveAccountIDs)
+	require.Equal(t, map[int64]int{11: 2, 12: 1}, runtime.Users[0].ActiveAccountConcurrency)
 	require.Equal(t, 1, admin.batchCalls)
 }
 
@@ -407,6 +408,7 @@ func TestAdminUserGroupAccountAllowlistRuntimeKeepsIngressRequestsAndOccupiedAcc
 	require.Len(t, runtime.Users, 1)
 	require.Equal(t, 4, runtime.Users[0].CurrentConcurrency)
 	require.Equal(t, []int64{11}, runtime.Users[0].ActiveAccountIDs)
+	require.Equal(t, map[int64]int{11: 1}, runtime.Users[0].ActiveAccountConcurrency)
 }
 
 func TestAdminUserGroupAccountAllowlistRuntimeKeepsActiveAccountThatBecameUnavailable(t *testing.T) {

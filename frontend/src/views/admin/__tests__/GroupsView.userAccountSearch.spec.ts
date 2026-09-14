@@ -152,10 +152,17 @@ const runtimeUser = (
   username: string,
   currentConcurrency: number,
   activeAccountIDs: number[],
+  activeAccountConcurrency: Record<string, number> = Object.fromEntries(
+    activeAccountIDs.map((accountID, index) => [
+      String(accountID),
+      index === 0 ? Math.max(1, currentConcurrency - activeAccountIDs.length + 1) : 1,
+    ]),
+  ),
 ): UserGroupAccountRuntimeUser => ({
   ...adminUser(id, username),
   current_concurrency: currentConcurrency,
   active_account_ids: activeAccountIDs,
+  active_account_concurrency: activeAccountConcurrency,
 });
 
 const userPage = (items: AdminUser[]): PaginatedResponse<AdminUser> => ({
@@ -367,6 +374,19 @@ describe("GroupsView group user account search", () => {
     await mountView();
 
     expect(wrapper!.get('[data-test="runtime-user-row-1"]').text()).toContain("disabled-while-running");
+  });
+
+  it("shows occupied account slots and waiting requests without hiding either", async () => {
+    delete routeQuery.user_account_allowlist_account;
+    getUserAccountRuntime.mockResolvedValueOnce({
+      users: [runtimeUser(1, "selected-live", 4, [101], { "101": 2 })],
+      accounts: [{ ...account, current_concurrency: 2, available: true }],
+    });
+
+    await mountView();
+
+    expect(wrapper!.get('[data-test="runtime-user-account-1-101"]').text()).toContain("×2");
+    expect(wrapper!.get('[data-test="runtime-user-waiting-1"]').text()).toContain("×2");
   });
 
   it("ignores stale responses and aborts an in-flight search when the dialog closes", async () => {

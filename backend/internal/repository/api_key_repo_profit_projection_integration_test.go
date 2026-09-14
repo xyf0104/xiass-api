@@ -25,6 +25,9 @@ func TestGetByKeyForAuthCarriesProfitControlProjection(t *testing.T) {
 		Name:                 fmt.Sprintf("profit-proj-group-%d", suffix),
 		Platform:             service.PlatformOpenAI,
 		RateMultiplier:       0.06,
+		ModelRoutingEnabled:  true,
+		ModelRouting:         map[string][]int64{"gpt-5.6-sol": {31}},
+		ModelRoutingPools:    map[string][]int64{"gpt-5.6-luna": {7}},
 		ProfitControlEnabled: true,
 		ProfitMinMargin:      0.2,
 		ProfitSafetyBuffer:   0.05,
@@ -57,4 +60,6 @@ func TestGetByKeyForAuthCarriesProfitControlProjection(t *testing.T) {
 	require.True(t, got.Group.ProfitControlEnabled, "profit_control_enabled 必须进入认证投影（投影漏列会让门静默失效）")
 	require.InDelta(t, 0.2, got.Group.ProfitMinMargin, 1e-9)
 	require.InDelta(t, 0.05, got.Group.ProfitSafetyBuffer, 1e-9)
+	require.Equal(t, map[string][]int64{"gpt-5.6-sol": {31}}, got.Group.ModelRouting)
+	require.Equal(t, map[string][]int64{"gpt-5.6-luna": {7}}, got.Group.ModelRoutingPools)
 }

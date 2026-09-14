@@ -566,6 +566,8 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     ['Your account is limited', false, 'account_blocked'],
     ['当前账号受到限制', false, 'account_blocked'],
     ['Verify you are human CAPTCHA', false, 'captcha'],
+    ['Oops, an error occurred! Route Error (400 Invalid content type: text/html; charset=UTF-8)', false, 'openai_route_error'],
+    ['Authentication Error Your sign-in session is no longer valid. error_code: invalid_state', false, 'oauth_session_expired'],
     ['Too many requests. Try later.', false, 'unknown'],
     ['Log in. Do not have an account? Create an account.', false, 'unknown']
   ]
@@ -582,9 +584,10 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     h.contexts[0].page.locator = () => empty
     await flush()
     const result = h.runner.get('task-1', 1)
-    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', captcha: 'captcha_required' }
+    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', captcha: 'captcha_required', openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }
     assert.equal(result.reason, reasons[expected] || '')
-    assert.equal(result.status, expected === 'unknown' ? 'running' : 'blocked')
+    const retryable = ['openai_route_error', 'oauth_session_expired'].includes(expected)
+    assert.equal(result.status, expected === 'unknown' ? 'running' : retryable ? 'failed' : 'blocked')
     await h.runner.cancel('task-1', 1)
     await flush()
   })

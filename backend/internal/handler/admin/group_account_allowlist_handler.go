@@ -44,8 +44,9 @@ func (h *GroupHandler) GetUserAccountRuntime(c *gin.Context) {
 	for _, user := range runtime.Users {
 		users = append(users, gin.H{
 			"id": user.UserID, "username": user.Username, "email": user.Email,
-			"current_concurrency": user.CurrentConcurrency,
-			"active_account_ids":  user.ActiveAccountIDs,
+			"current_concurrency":        user.CurrentConcurrency,
+			"active_account_ids":         user.ActiveAccountIDs,
+			"active_account_concurrency": user.ActiveAccountConcurrency,
 		})
 	}
 	response.Success(c, gin.H{"snapshot_at": runtime.SnapshotAt, "accounts": accounts, "users": users})

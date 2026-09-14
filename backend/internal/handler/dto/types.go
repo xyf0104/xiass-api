@@ -172,8 +172,9 @@ type AdminGroup struct {
 	// prices without introducing upstream time-pricing behavior.
 	ModelPricing []service.ChannelModelPricing `json:"model_pricing"`
 
-	// 模型路由配置（仅 anthropic 平台使用）
+	// 模型优先路由配置（anthropic/openai 平台使用）
 	ModelRouting        map[string][]int64 `json:"model_routing"`
+	ModelRoutingPools   map[string][]int64 `json:"model_routing_pools"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
 
 	// MCP XML 协议注入（仅 antigravity 平台使用）

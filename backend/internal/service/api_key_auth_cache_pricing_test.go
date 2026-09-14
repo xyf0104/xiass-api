@@ -128,7 +128,7 @@ func TestAPIKeyAuthPricingRejectsV19AndReloads(t *testing.T) {
 			require.Equal(t, 1, calls)
 			entry, err := cache.GetAuthCache(context.Background(), "key")
 			require.NoError(t, err)
-			require.Equal(t, 20, entry.Snapshot.Version)
+			require.Equal(t, apiKeyAuthSnapshotVersion, entry.Snapshot.Version)
 		})
 	}
 }

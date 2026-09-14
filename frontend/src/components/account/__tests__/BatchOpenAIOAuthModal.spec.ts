@@ -87,6 +87,15 @@ describe('batch OAuth modal', () => {
     await flushPromises()
     expect(batchOAuthAPI.remove).toHaveBeenCalledTimes(2)
   })
+  it('shows precise retry reasons for OpenAI route and expired-session failures', async () => {
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [
+      { ...task('totp'), task_id: 'route-error-000001', email: 'route@example.test', status: 'failed', reason: 'openai_route_error', restart_count: 1 },
+      { ...task('callback_waiting'), task_id: 'expired-state-0001', email: 'state@example.test', status: 'failed', reason: 'oauth_session_expired', restart_count: 1 },
+    ], max_concurrency: 3, max_restarts: 2 })
+    await render()
+    expect(wrapper.text()).toContain('OpenAI 登录页临时返回 Route Error')
+    expect(wrapper.text()).toContain('OpenAI 登录会话已失效（invalid_state）')
+  })
   it('resends only the current modal memory credentials when retrying', async () => {
     const failed: BatchOAuthTask = { ...task('opening'), status: 'failed', reason: 'proxy_unavailable', restart_count: 1 }
     vi.mocked(batchOAuthAPI.list)

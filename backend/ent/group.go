@@ -99,6 +99,8 @@ type Group struct {
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request,omitempty"`
 	// 模型路由配置：模型模式 -> 优先账号ID列表
 	ModelRouting map[string][]int64 `json:"model_routing,omitempty"`
+	// 模型路由配置：模型模式 -> 优先号池ID列表
+	ModelRoutingPools map[string][]int64 `json:"model_routing_pools,omitempty"`
 	// 是否启用模型路由配置
 	ModelRoutingEnabled bool `json:"model_routing_enabled,omitempty"`
 	// 是否注入 MCP XML 调用协议提示词（仅 antigravity 平台）
@@ -241,7 +243,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig, group.FieldReasoningEffortMappings:
+		case group.FieldModelPricing, group.FieldModelRouting, group.FieldModelRoutingPools, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
 		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
@@ -531,6 +533,14 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.ModelRouting); err != nil {
 					return fmt.Errorf("unmarshal field model_routing: %w", err)
+				}
+			}
+		case group.FieldModelRoutingPools:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field model_routing_pools", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ModelRoutingPools); err != nil {
+					return fmt.Errorf("unmarshal field model_routing_pools: %w", err)
 				}
 			}
 		case group.FieldModelRoutingEnabled:
@@ -875,6 +885,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("model_routing=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ModelRouting))
+	builder.WriteString(", ")
+	builder.WriteString("model_routing_pools=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ModelRoutingPools))
 	builder.WriteString(", ")
 	builder.WriteString("model_routing_enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ModelRoutingEnabled))

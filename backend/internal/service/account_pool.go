@@ -13,7 +13,8 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-// AccountPoolExtraKey is administrative organization only, never a scheduling group.
+// AccountPoolExtraKey is administrative organization. Membership only affects
+// scheduling when a group explicitly references the pool in model routing.
 const AccountPoolExtraKey = "xiass_account_pool"
 
 var (

@@ -45,11 +45,12 @@ type UserGroupAccountRuntimeAccount struct {
 }
 
 type UserGroupAccountRuntimeUser struct {
-	UserID             int64
-	Username           string
-	Email              string
-	CurrentConcurrency int
-	ActiveAccountIDs   []int64
+	UserID                   int64
+	Username                 string
+	Email                    string
+	CurrentConcurrency       int
+	ActiveAccountIDs         []int64
+	ActiveAccountConcurrency map[int64]int
 }
 
 type UserGroupAccountRuntime struct {
@@ -241,15 +242,18 @@ func (s *AdminUserGroupAccountAllowlistService) GetRuntime(ctx context.Context, 
 			user = *loaded
 		}
 		activeAccountIDs := make([]int64, 0, len(snapshot.Counts[userID]))
+		activeAccountConcurrency := make(map[int64]int, len(snapshot.Counts[userID]))
 		for accountID, count := range snapshot.Counts[userID] {
 			if accountID > 0 && count > 0 {
 				activeAccountIDs = append(activeAccountIDs, accountID)
+				activeAccountConcurrency[accountID] = count
 			}
 		}
 		sort.Slice(activeAccountIDs, func(i, j int) bool { return activeAccountIDs[i] < activeAccountIDs[j] })
 		runtime.Users = append(runtime.Users, UserGroupAccountRuntimeUser{
 			UserID: user.ID, Username: user.Username, Email: user.Email,
 			CurrentConcurrency: userConcurrency[userID], ActiveAccountIDs: activeAccountIDs,
+			ActiveAccountConcurrency: activeAccountConcurrency,
 		})
 	}
 	return runtime, nil

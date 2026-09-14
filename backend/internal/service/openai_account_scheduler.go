@@ -85,6 +85,7 @@ type OpenAIAccountScheduleRequest struct {
 	RequiredImageCapability OpenAIImagesCapability
 	RequireCompact          bool
 	ExcludedIDs             map[int64]struct{}
+	modelRoutingPreference  openAIModelRoutingPreference
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -383,6 +384,14 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		decision.LatencyMs = time.Since(start).Milliseconds()
 		s.metrics.recordSelect(decision)
 	}()
+	if s != nil && s.service != nil && !req.modelRoutingPreference.configured() {
+		req.modelRoutingPreference = s.service.resolveOpenAIModelRoutingPreference(
+			ctx,
+			req.GroupID,
+			req.Platform,
+			req.RequestedModel,
+		)
+	}
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
 	if previousResponseID != "" && normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
@@ -1591,7 +1600,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// subscription preference and sticky weights are evaluated only inside one
 	// tier; lower tiers are attempted only after no account in a higher tier can
 	// acquire a slot for this request.
-	priorityTiers := partitionOpenAIAccountsByPriority(filtered)
+	preferred, fallback := partitionOpenAIAccountsByModelPreference(filtered, req.modelRoutingPreference)
+	priorityTiers := make([][]*Account, 0)
+	priorityTiers = append(priorityTiers, partitionOpenAIAccountsByPriority(preferred)...)
+	priorityTiers = append(priorityTiers, partitionOpenAIAccountsByPriority(fallback)...)
 
 	var firstWaitable []openAIAccountLoadSelectionAttempt
 	var firstWaitableBudget *openAISelectionProbeBudget

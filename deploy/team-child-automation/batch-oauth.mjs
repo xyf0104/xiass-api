@@ -12,7 +12,8 @@ export const BATCH_OAUTH_REASONS = Object.freeze([
   'captcha_required', 'account_blocked', 'manual_challenge', 'task_expired',
   'invalid_credentials', 'authenticator_required', 'phone_rejected',
   'proxy_unavailable', 'navigation_timeout', 'browser_context_lost',
-  'page_interaction_failed', 'invalid_totp', 'invalid_sms_code'
+  'page_interaction_failed', 'invalid_totp', 'invalid_sms_code',
+  'openai_route_error', 'oauth_session_expired'
 ])
 const reasons = new Set(BATCH_OAUTH_REASONS)
 
@@ -364,6 +365,12 @@ export class BatchOAuthRunner {
   async #inspect(page) {
     if (this.#h.inspectPage) return this.#h.inspectPage(page)
     const body = await this.#h.oauthBody(page)
+    if (/error_code:\s*invalid_state|sign-in session is no longer valid|session ended/i.test(body)) {
+      return { kind: 'oauth_session_expired' }
+    }
+    if (/oops, an error occurred!.*route error\s*\(400\s+invalid content type:\s*text\/html/i.test(body)) {
+      return { kind: 'openai_route_error' }
+    }
     if (/captcha|verify (?:that )?you are human|checking your browser|验证您是人类|人机验证/i.test(body)) return { kind: 'captcha' }
     if (await firstVisible(page.locator('iframe[src*="captcha"], iframe[src*="challenges.cloudflare.com"]'))) return { kind: 'captcha' }
     if (/(?:your |this )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned|restricted|limited)|account_(?:deactivated|restricted|limited)|账号.*(?:封禁|停用|受限|限制)/i.test(body)) return { kind: 'account_blocked' }
@@ -469,6 +476,8 @@ export class BatchOAuthRunner {
           invalid_credentials: 'invalid_credentials', invalid_totp: 'invalid_totp', invalid_sms_code: 'invalid_sms_code',
           signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
         if (manual) { this.#stop(task, 'blocked', manual); break }
+        const retryable = { openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }[state.kind]
+        if (retryable) { this.#stop(task, 'failed', retryable); break }
         if (state.kind === 'phone_rejected') {
           if (task.phone) task.rejected.add(task.phone)
           this.#stage(task, 'phone_required')

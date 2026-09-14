@@ -566,6 +566,12 @@ func (_c *GroupCreate) SetModelRouting(v map[string][]int64) *GroupCreate {
 	return _c
 }
 
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (_c *GroupCreate) SetModelRoutingPools(v map[string][]int64) *GroupCreate {
+	_c.mutation.SetModelRoutingPools(v)
+	return _c
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_c *GroupCreate) SetModelRoutingEnabled(v bool) *GroupCreate {
 	_c.mutation.SetModelRoutingEnabled(v)
@@ -1455,6 +1461,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldModelRouting, field.TypeJSON, value)
 		_node.ModelRouting = value
 	}
+	if value, ok := _c.mutation.ModelRoutingPools(); ok {
+		_spec.SetField(group.FieldModelRoutingPools, field.TypeJSON, value)
+		_node.ModelRoutingPools = value
+	}
 	if value, ok := _c.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)
 		_node.ModelRoutingEnabled = value
@@ -2340,6 +2350,24 @@ func (u *GroupUpsert) UpdateModelRouting() *GroupUpsert {
 // ClearModelRouting clears the value of the "model_routing" field.
 func (u *GroupUpsert) ClearModelRouting() *GroupUpsert {
 	u.SetNull(group.FieldModelRouting)
+	return u
+}
+
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (u *GroupUpsert) SetModelRoutingPools(v map[string][]int64) *GroupUpsert {
+	u.Set(group.FieldModelRoutingPools, v)
+	return u
+}
+
+// UpdateModelRoutingPools sets the "model_routing_pools" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelRoutingPools() *GroupUpsert {
+	u.SetExcluded(group.FieldModelRoutingPools)
+	return u
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (u *GroupUpsert) ClearModelRoutingPools() *GroupUpsert {
+	u.SetNull(group.FieldModelRoutingPools)
 	return u
 }
 
@@ -3410,6 +3438,27 @@ func (u *GroupUpsertOne) UpdateModelRouting() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearModelRouting() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelRouting()
+	})
+}
+
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (u *GroupUpsertOne) SetModelRoutingPools(v map[string][]int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelRoutingPools(v)
+	})
+}
+
+// UpdateModelRoutingPools sets the "model_routing_pools" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelRoutingPools() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelRoutingPools()
+	})
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (u *GroupUpsertOne) ClearModelRoutingPools() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearModelRoutingPools()
 	})
 }
 
@@ -4688,6 +4737,27 @@ func (u *GroupUpsertBulk) UpdateModelRouting() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearModelRouting() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelRouting()
+	})
+}
+
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (u *GroupUpsertBulk) SetModelRoutingPools(v map[string][]int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelRoutingPools(v)
+	})
+}
+
+// UpdateModelRoutingPools sets the "model_routing_pools" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelRoutingPools() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelRoutingPools()
+	})
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (u *GroupUpsertBulk) ClearModelRoutingPools() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearModelRoutingPools()
 	})
 }
 

@@ -126,9 +126,10 @@ func TestGroupHandlerGetUserAccountRuntimeReturnsFrontendContractWithoutCredenti
 				Available          bool  `json:"available"`
 			} `json:"accounts"`
 			Users []struct {
-				ID                 int64   `json:"id"`
-				CurrentConcurrency int     `json:"current_concurrency"`
-				ActiveAccountIDs   []int64 `json:"active_account_ids"`
+				ID                       int64         `json:"id"`
+				CurrentConcurrency       int           `json:"current_concurrency"`
+				ActiveAccountIDs         []int64       `json:"active_account_ids"`
+				ActiveAccountConcurrency map[int64]int `json:"active_account_concurrency"`
 			} `json:"users"`
 		} `json:"data"`
 	}
@@ -139,6 +140,7 @@ func TestGroupHandlerGetUserAccountRuntimeReturnsFrontendContractWithoutCredenti
 	require.Equal(t, int64(41), response.Data.Users[0].ID)
 	require.Equal(t, 2, response.Data.Users[0].CurrentConcurrency)
 	require.Equal(t, []int64{11}, response.Data.Users[0].ActiveAccountIDs)
+	require.Equal(t, map[int64]int{11: 2}, response.Data.Users[0].ActiveAccountConcurrency)
 }
 
 func TestGroupHandlerGetUserAccountAllowlistMarksCandidateAvailability(t *testing.T) {

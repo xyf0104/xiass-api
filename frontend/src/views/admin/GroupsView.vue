@@ -2017,8 +2017,8 @@
           </p>
         </div>
 
-        <!-- 模型路由配置（仅 anthropic 平台） -->
-        <div v-if="createForm.platform === 'anthropic'" class="border-t pt-4">
+        <!-- 模型优先路由（anthropic/openai） -->
+        <div v-if="supportsModelRoutingPlatform(createForm.platform)" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.modelRouting.title") }}
@@ -2185,6 +2185,48 @@
                     </div>
                     <p class="text-xs text-gray-400 mt-1">
                       {{ t("admin.groups.modelRouting.accountsHint") }}
+                    </p>
+                  </div>
+                  <div v-if="createForm.platform === 'openai'" class="pt-1">
+                    <label class="input-label text-xs">{{
+                      t("admin.groups.modelRouting.pools")
+                    }}</label>
+                    <p
+                      v-if="modelRoutingPoolsLoading"
+                      class="text-xs text-gray-400"
+                    >
+                      {{ t("admin.groups.modelRouting.loadingPools") }}
+                    </p>
+                    <p
+                      v-else-if="modelRoutingPoolsError"
+                      class="text-xs text-red-600 dark:text-red-300"
+                    >
+                      {{ modelRoutingPoolsError }}
+                    </p>
+                    <div
+                      v-else-if="modelRoutingPools.length > 0"
+                      class="grid max-h-36 grid-cols-1 gap-1 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-dark-600 sm:grid-cols-2"
+                      data-test="create-model-routing-pools"
+                    >
+                      <label
+                        v-for="pool in modelRoutingPools"
+                        :key="pool.id"
+                        class="flex min-w-0 items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="rule.pools.some((item) => item.id === pool.id)"
+                          @change="toggleSelectedPool(rule, pool)"
+                        />
+                        <span class="min-w-0 flex-1 truncate text-sm">{{ pool.name }}</span>
+                        <span class="shrink-0 text-xs text-gray-400">{{ pool.account_count }}</span>
+                      </label>
+                    </div>
+                    <p v-else class="text-xs text-gray-400">
+                      {{ t("admin.groups.modelRouting.noPools") }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-400">
+                      {{ t("admin.groups.modelRouting.poolsHint") }}
                     </p>
                   </div>
                 </div>
@@ -3802,8 +3844,8 @@
           </p>
         </div>
 
-        <!-- 模型路由配置（仅 anthropic 平台） -->
-        <div v-if="editForm.platform === 'anthropic'" class="border-t pt-4">
+        <!-- 模型优先路由（anthropic/openai） -->
+        <div v-if="supportsModelRoutingPlatform(editForm.platform)" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.modelRouting.title") }}
@@ -3969,6 +4011,48 @@
                     </div>
                     <p class="text-xs text-gray-400 mt-1">
                       {{ t("admin.groups.modelRouting.accountsHint") }}
+                    </p>
+                  </div>
+                  <div v-if="editForm.platform === 'openai'" class="pt-1">
+                    <label class="input-label text-xs">{{
+                      t("admin.groups.modelRouting.pools")
+                    }}</label>
+                    <p
+                      v-if="modelRoutingPoolsLoading"
+                      class="text-xs text-gray-400"
+                    >
+                      {{ t("admin.groups.modelRouting.loadingPools") }}
+                    </p>
+                    <p
+                      v-else-if="modelRoutingPoolsError"
+                      class="text-xs text-red-600 dark:text-red-300"
+                    >
+                      {{ modelRoutingPoolsError }}
+                    </p>
+                    <div
+                      v-else-if="modelRoutingPools.length > 0"
+                      class="grid max-h-36 grid-cols-1 gap-1 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-dark-600 sm:grid-cols-2"
+                      data-test="edit-model-routing-pools"
+                    >
+                      <label
+                        v-for="pool in modelRoutingPools"
+                        :key="pool.id"
+                        class="flex min-w-0 items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="rule.pools.some((item) => item.id === pool.id)"
+                          @change="toggleSelectedPool(rule, pool)"
+                        />
+                        <span class="min-w-0 flex-1 truncate text-sm">{{ pool.name }}</span>
+                        <span class="shrink-0 text-xs text-gray-400">{{ pool.account_count }}</span>
+                      </label>
+                    </div>
+                    <p v-else class="text-xs text-gray-400">
+                      {{ t("admin.groups.modelRouting.noPools") }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-400">
+                      {{ t("admin.groups.modelRouting.poolsHint") }}
                     </p>
                   </div>
                 </div>
@@ -4636,15 +4720,29 @@
                     <div class="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500">{{ user.email }}</div>
                   </td>
                   <td class="px-4 py-3">
-                    <div v-if="activeAccountsForUser(user).length > 0" class="flex flex-wrap gap-1.5">
+                    <div
+                      v-if="activeAccountsForUser(user).length > 0 || waitingConcurrencyForUser(user) > 0"
+                      class="flex flex-wrap gap-1.5"
+                    >
                       <span
                         v-for="account in activeAccountsForUser(user)"
                         :key="account.id"
                         class="inline-flex max-w-[180px] items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                        :title="account.name"
+                        :title="`${account.name} ×${account.userConcurrency}`"
+                        :data-test="`runtime-user-account-${user.id}-${account.id}`"
                       >
                         <Icon name="bolt" size="xs" />
                         <span class="truncate">{{ account.name }}</span>
+                        <span class="shrink-0 font-mono text-current/70">×{{ account.userConcurrency }}</span>
+                      </span>
+                      <span
+                        v-if="waitingConcurrencyForUser(user) > 0"
+                        class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+                        :data-test="`runtime-user-waiting-${user.id}`"
+                      >
+                        <Icon name="clock" size="xs" />
+                        {{ t('admin.groups.userAccountAllowlist.waitingForAccount') }}
+                        <span class="font-mono text-current/70">×{{ waitingConcurrencyForUser(user) }}</span>
                       </span>
                     </div>
                     <span v-else class="text-xs text-gray-400 dark:text-gray-500">
@@ -4696,6 +4794,7 @@
       :user="allowlistUser"
       :candidates="allowlistCandidates"
       :active-account-ids="allowlistUser?.active_account_ids ?? []"
+      :active-account-concurrency="allowlistUser?.active_account_concurrency ?? {}"
       :restricted="allowlistRestricted"
       :allowed-account-ids="allowlistAccountIDs"
       :loading="allowlistLoading"
@@ -4730,6 +4829,10 @@ import type {
   UserGroupAccountRuntimeAccount,
   UserGroupAccountRuntimeUser,
 } from "@/api/admin/groups";
+import {
+  accountPoolsAPI,
+  type AccountPool,
+} from "@/api/admin/accountPools";
 import {
   CONCRETE_PLATFORM_OPTIONS,
   GROUP_PLATFORM_OPTIONS,
@@ -5258,6 +5361,7 @@ const runtimeGroup = ref<AdminGroup | null>(null);
 const runtimeUsers = ref<UserGroupAccountRuntimeUser[]>([]);
 const runtimeAccounts = ref<UserGroupAccountRuntimeAccount[]>([]);
 const runtimeLoading = ref(false);
+const runtimeSnapshotGroupID = ref<number | null>(null);
 const runtimeAccountFilterID = ref<number | null>(null);
 const runtimeUserSearchQuery = ref("");
 const runtimeUserSearchResults = ref<UserGroupAccountRuntimeUser[]>([]);
@@ -5302,8 +5406,43 @@ const runtimeAvailableAccountCount = computed(() =>
 
 const activeAccountsForUser = (user: UserGroupAccountRuntimeUser) => {
   const activeAccountIDs = new Set(user.active_account_ids);
-  return runtimeAccounts.value.filter((account) => activeAccountIDs.has(account.id));
+  return runtimeAccounts.value
+    .filter((account) => activeAccountIDs.has(account.id))
+    .map((account) => ({
+      ...account,
+      userConcurrency: activeAccountConcurrencyForUser(user, account.id),
+    }));
 };
+
+const activeAccountConcurrencyForUser = (
+  user: UserGroupAccountRuntimeUser,
+  accountID: number,
+): number => {
+  const counts = user.active_account_concurrency;
+  if (counts && Object.prototype.hasOwnProperty.call(counts, String(accountID))) {
+    return Math.max(0, Number(counts[String(accountID)]) || 0);
+  }
+  return user.active_account_ids.includes(accountID) ? 1 : 0;
+};
+
+const assignedConcurrencyForUser = (user: UserGroupAccountRuntimeUser): number => {
+  if (user.active_account_concurrency) {
+    return Object.values(user.active_account_concurrency).reduce(
+      (sum, value) => sum + Math.max(0, Number(value) || 0),
+      0,
+    );
+  }
+  return user.active_account_ids.length;
+};
+
+const waitingConcurrencyForUser = (user: UserGroupAccountRuntimeUser): number =>
+  Math.max(0, (Number(user.current_concurrency) || 0) - assignedConcurrencyForUser(user));
+
+const runtimeCurrentRequestCount = (): number =>
+  runtimeUsers.value.reduce(
+    (sum, user) => sum + Math.max(0, Number(user.current_concurrency) || 0),
+    0,
+  );
 
 const cancelRuntimeUserSearchRequest = () => {
   if (runtimeUserSearchTimer !== null) {
@@ -5335,13 +5474,16 @@ const applyRuntimeConcurrencySnapshot = (
   if (!showUserAccountRuntimeDialog.value || runtimeGroup.value?.id !== groupID) return;
   runtimeUsers.value = runtime.users || [];
   runtimeAccounts.value = runtime.accounts || [];
+  runtimeSnapshotGroupID.value = groupID;
+
+  if (allowlistUser.value) {
+    const refreshedUser = runtimeUsers.value.find((user) => user.id === allowlistUser.value?.id);
+    if (refreshedUser) allowlistUser.value = refreshedUser;
+  }
 
   const current = capacityMap.value.get(groupID);
   if (current) {
-    const concurrencyUsed = runtimeUsers.value.reduce(
-      (sum, user) => sum + Math.max(0, Number(user.current_concurrency) || 0),
-      0,
-    );
+    const concurrencyUsed = runtimeCurrentRequestCount();
     if (current.concurrencyUsed !== concurrencyUsed) {
       const next = new Map(capacityMap.value);
       next.set(groupID, { ...current, concurrencyUsed });
@@ -5393,6 +5535,7 @@ const normalizeRuntimeSearchUser = (user: AdminUser): UserGroupAccountRuntimeUse
   ...user,
   current_concurrency: 0,
   active_account_ids: [],
+  active_account_concurrency: {},
 });
 
 const loadRuntimeUserSearch = async (
@@ -5461,6 +5604,7 @@ const closeUserAccountRuntimeDialog = () => {
   clearRuntimeUserSearch();
   showUserAccountRuntimeDialog.value = false;
   runtimeLoading.value = false;
+  runtimeSnapshotGroupID.value = null;
   runtimeAccountFilterID.value = null;
 };
 
@@ -5491,6 +5635,7 @@ const openUserAccountRuntime = async (
   clearRuntimeUserSearch();
   runtimeUsers.value = [];
   runtimeAccounts.value = [];
+  runtimeSnapshotGroupID.value = null;
   runtimeAccountFilterID.value = accountID;
   showUserAccountRuntimeDialog.value = true;
   runtimeLoading.value = true;
@@ -5770,10 +5915,17 @@ interface SimpleAccount {
   name: string;
 }
 
+interface SimpleAccountPool {
+  id: number;
+  name: string;
+  account_count: number;
+}
+
 // 模型路由规则类型
 interface ModelRoutingRule {
   pattern: string;
   accounts: SimpleAccount[]; // 选中的账号对象数组
+  pools: SimpleAccountPool[];
 }
 
 // 创建表单的模型路由规则
@@ -5781,6 +5933,31 @@ const createModelRoutingRules = ref<ModelRoutingRule[]>([]);
 
 // 编辑表单的模型路由规则
 const editModelRoutingRules = ref<ModelRoutingRule[]>([]);
+const modelRoutingPools = ref<AccountPool[]>([]);
+const modelRoutingPoolsLoading = ref(false);
+const modelRoutingPoolsError = ref("");
+let modelRoutingPoolsRequest: Promise<void> | null = null;
+
+const supportsModelRoutingPlatform = (platform: GroupPlatform) =>
+  platform === "anthropic" || platform === "openai";
+
+const loadModelRoutingPools = (): Promise<void> => {
+  if (modelRoutingPoolsRequest) return modelRoutingPoolsRequest;
+  modelRoutingPoolsRequest = (async () => {
+    modelRoutingPoolsLoading.value = true;
+    modelRoutingPoolsError.value = "";
+    try {
+      const response = await accountPoolsAPI.list();
+      modelRoutingPools.value = response.items;
+    } catch (error) {
+      modelRoutingPoolsError.value = extractApiErrorMessage(error);
+    } finally {
+      modelRoutingPoolsLoading.value = false;
+      modelRoutingPoolsRequest = null;
+    }
+  })();
+  return modelRoutingPoolsRequest;
+};
 
 // 规则对象稳定 key（避免使用 index 导致状态错位）
 const resolveCreateRuleKey =
@@ -5833,13 +6010,17 @@ const clearAllAccountSearchState = () => {
 
 const accountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
   delay: 300,
-  search: async (keyword, { signal }) => {
+  search: async (keyword, { key, signal }) => {
+    const isEdit = key.startsWith("edit-");
+    const platform = isEdit ? editForm.platform : createForm.platform;
+    if (!supportsModelRoutingPlatform(platform)) return [];
     const res = await adminAPI.accounts.list(
       1,
       20,
       {
         search: keyword,
-        platform: "anthropic",
+        platform,
+        group: isEdit && editingGroup.value ? String(editingGroup.value.id) : undefined,
       },
       { signal },
     );
@@ -5853,7 +6034,7 @@ const accountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
   },
 });
 
-// 搜索账号（仅限 anthropic 平台）
+// 搜索当前模型路由平台下的账号
 const searchAccounts = (key: string) => {
   accountSearchRunner.trigger(key, accountSearchKeyword.value[key] || "");
 };
@@ -5895,6 +6076,16 @@ const removeSelectedAccount = (
   rule.accounts = rule.accounts.filter((a) => a.id !== accountId);
 };
 
+const toggleSelectedPool = (rule: ModelRoutingRule, pool: AccountPool) => {
+  const selected = rule.pools.some((item) => item.id === pool.id);
+  rule.pools = selected
+    ? rule.pools.filter((item) => item.id !== pool.id)
+    : [
+        ...rule.pools,
+        { id: pool.id, name: pool.name, account_count: pool.account_count },
+      ];
+};
+
 // 切换创建表单的模型系列选择
 const toggleCreateScope = (scope: string) => {
   const idx = createForm.supported_model_scopes.indexOf(scope);
@@ -5930,7 +6121,7 @@ const onAccountSearchFocus = (
 
 // 添加创建表单的路由规则
 const addCreateRoutingRule = () => {
-  createModelRoutingRules.value.push({ pattern: "", accounts: [] });
+  createModelRoutingRules.value.push({ pattern: "", accounts: [], pools: [] });
 };
 
 // 删除创建表单的路由规则
@@ -5946,7 +6137,7 @@ const removeCreateRoutingRule = (rule: ModelRoutingRule) => {
 
 // 添加编辑表单的路由规则
 const addEditRoutingRule = () => {
-  editModelRoutingRules.value.push({ pattern: "", accounts: [] });
+  editModelRoutingRules.value.push({ pattern: "", accounts: [], pools: [] });
 };
 
 // 删除编辑表单的路由规则
@@ -6028,14 +6219,33 @@ const convertRoutingRulesToApiFormat = (
   return hasValidRules ? result : null;
 };
 
+const convertRoutingPoolRulesToApiFormat = (
+  rules: ModelRoutingRule[],
+): Record<string, number[]> | null => {
+  const result: Record<string, number[]> = {};
+  for (const rule of rules) {
+    const pattern = rule.pattern.trim();
+    if (!pattern) continue;
+    const poolIds = rule.pools.map((pool) => pool.id).filter((id) => id > 0);
+    if (poolIds.length > 0) result[pattern] = poolIds;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+};
+
 // 将 API 格式的路由规则转换为 UI 格式（需要加载账号名称）
 const convertApiFormatToRoutingRules = async (
-  apiFormat: Record<string, number[]> | null,
+  apiFormat: Record<string, number[]> | null | undefined,
+  poolApiFormat: Record<string, number[]> | null | undefined = null,
 ): Promise<ModelRoutingRule[]> => {
-  if (!apiFormat) return [];
+  if (!apiFormat && !poolApiFormat) return [];
 
   const rules: ModelRoutingRule[] = [];
-  for (const [pattern, accountIds] of Object.entries(apiFormat)) {
+  const patterns = new Set([
+    ...Object.keys(apiFormat || {}),
+    ...Object.keys(poolApiFormat || {}),
+  ]);
+  for (const pattern of patterns) {
+    const accountIds = apiFormat?.[pattern] || [];
     // 加载账号信息
     const accounts: SimpleAccount[] = [];
     for (const id of accountIds) {
@@ -6047,7 +6257,15 @@ const convertApiFormatToRoutingRules = async (
         accounts.push({ id, name: `#${id}` });
       }
     }
-    rules.push({ pattern, accounts });
+    const pools = (poolApiFormat?.[pattern] || []).map((id) => {
+      const pool = modelRoutingPools.value.find((item) => item.id === id);
+      return {
+        id,
+        name: pool?.name || `#${id}`,
+        account_count: pool?.account_count || 0,
+      };
+    });
+    rules.push({ pattern, accounts, pools });
   }
   return rules;
 };
@@ -6480,6 +6698,20 @@ const loadCapacitySummary = (): Promise<void> => {
           rpmMax: item.rpm_max,
         });
       }
+      const runtimeGroupID = runtimeGroup.value?.id;
+      if (
+        showUserAccountRuntimeDialog.value &&
+        runtimeGroupID &&
+        runtimeSnapshotGroupID.value === runtimeGroupID
+      ) {
+        const current = map.get(runtimeGroupID);
+        if (current) {
+          map.set(runtimeGroupID, {
+            ...current,
+            concurrencyUsed: runtimeCurrentRequestCount(),
+          });
+        }
+      }
       capacityMap.value = map;
     } catch (error) {
       console.error("Error loading group capacity summary:", error);
@@ -6540,6 +6772,9 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 
 const openCreateModal = () => {
   showCreateModal.value = true;
+  if (createForm.platform === "openai" && createForm.model_routing_enabled) {
+    void loadModelRoutingPools();
+  }
   loadModelsListCandidates("create", 0, createForm.platform);
 };
 
@@ -6692,9 +6927,16 @@ const handleCreateGroup = async () => {
       ...(Object.keys(videoModelPrices).length > 0
         ? { video_model_prices: videoModelPrices }
         : {}),
-      model_routing: convertRoutingRulesToApiFormat(
-        createModelRoutingRules.value,
-      ),
+      model_routing: supportsModelRoutingPlatform(createForm.platform)
+        ? convertRoutingRulesToApiFormat(createModelRoutingRules.value)
+        : null,
+      model_routing_pools:
+        createForm.platform === "openai"
+          ? convertRoutingPoolRulesToApiFormat(createModelRoutingRules.value)
+          : null,
+      model_routing_enabled:
+        supportsModelRoutingPlatform(createForm.platform) &&
+        createForm.model_routing_enabled,
       models_list_config: buildModelsListConfig(createModelsListState),
       supported_model_scopes: normalizeSupportedModelScopesForPlatform(
         createForm.platform,
@@ -6879,9 +7121,13 @@ const handleEdit = async (group: AdminGroup) => {
     group.platform,
   );
   resetModelsListState(editModelsListState, group.models_list_config);
+  if (group.platform === "openai" && group.model_routing_enabled) {
+    void loadModelRoutingPools();
+  }
   // 加载模型路由规则（异步加载账号名称）
   editModelRoutingRules.value = await convertApiFormatToRoutingRules(
     group.model_routing,
+    group.model_routing_pools,
   );
   loadModelsListCandidates("edit", group.id, group.platform);
   showEditModal.value = true;
@@ -6969,9 +7215,16 @@ const handleUpdateGroup = async () => {
         editForm.fallback_group_id_on_invalid_request === null
           ? 0
           : editForm.fallback_group_id_on_invalid_request,
-      model_routing: convertRoutingRulesToApiFormat(
-        editModelRoutingRules.value,
-      ),
+      model_routing: supportsModelRoutingPlatform(editForm.platform)
+        ? convertRoutingRulesToApiFormat(editModelRoutingRules.value) || {}
+        : null,
+      model_routing_pools:
+        editForm.platform === "openai"
+          ? convertRoutingPoolRulesToApiFormat(editModelRoutingRules.value) || {}
+          : null,
+      model_routing_enabled:
+        supportsModelRoutingPlatform(editForm.platform) &&
+        editForm.model_routing_enabled,
       models_list_config: buildModelsListConfig(editModelsListState),
       supported_model_scopes: normalizeSupportedModelScopesForPlatform(
         editForm.platform,
@@ -7389,6 +7642,9 @@ watch(
     }
     resetDisabledBatchImagePricing(createForm);
     resetModelsListState(createModelsListState);
+    if (newVal === "openai" && createForm.model_routing_enabled) {
+      void loadModelRoutingPools();
+    }
     loadModelsListCandidates("create", 0, newVal);
   },
 );
@@ -7438,10 +7694,27 @@ watch(
       editForm.require_privacy_set = false;
     }
     resetDisabledBatchImagePricing(editForm);
+    if (newVal === "openai" && editForm.model_routing_enabled) {
+      void loadModelRoutingPools();
+    }
     if (editingGroup.value) {
       resetModelsListState(editModelsListState, editForm.platform === editingGroup.value.platform ? editingGroup.value.models_list_config : undefined);
       loadModelsListCandidates("edit", editingGroup.value.id, newVal);
     }
+  },
+);
+
+watch(
+  () => createForm.model_routing_enabled,
+  (enabled) => {
+    if (enabled && createForm.platform === "openai") void loadModelRoutingPools();
+  },
+);
+
+watch(
+  () => editForm.model_routing_enabled,
+  (enabled) => {
+    if (enabled && editForm.platform === "openai") void loadModelRoutingPools();
   },
 );
 

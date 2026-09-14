@@ -35,15 +35,26 @@
             {{ text('admin.groups.userAccountAllowlist.activeAccounts', '当前调用账号') }}
           </div>
           <div class="mt-1 min-h-6">
-            <div v-if="activeAccountNames.length > 0" class="flex flex-wrap gap-1.5">
+            <div v-if="activeAccountNames.length > 0 || waitingConcurrency > 0" class="flex flex-wrap gap-1.5">
               <span
                 v-for="account in activeAccountNames"
                 :key="account.id"
                 class="inline-flex max-w-full items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                :title="account.name"
+                :title="`${account.name} ×${account.userConcurrency}`"
+                :data-test="`allowlist-active-account-${account.id}`"
               >
                 <Icon name="bolt" size="xs" />
                 <span class="truncate">{{ account.name }}</span>
+                <span class="shrink-0 font-mono text-current/70">×{{ account.userConcurrency }}</span>
+              </span>
+              <span
+                v-if="waitingConcurrency > 0"
+                class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+                data-test="allowlist-waiting-account"
+              >
+                <Icon name="clock" size="xs" />
+                {{ text('admin.groups.userAccountAllowlist.waitingForAccount', '等待账号槽位') }}
+                <span class="font-mono text-current/70">×{{ waitingConcurrency }}</span>
               </span>
             </div>
             <span v-else class="text-sm text-gray-400 dark:text-gray-500">{{ text('admin.groups.userAccountAllowlist.noActiveAccounts', '暂无活跃调用') }}</span>
@@ -226,6 +237,8 @@ interface Props {
   candidates: UserGroupAccountAllowlistCandidate[]
   /** Accounts that currently hold one or more live requests for this user. */
   activeAccountIds: number[]
+  /** Occupied request slots per active account for this user. */
+  activeAccountConcurrency: Record<string, number>
   /** False means original scheduling; true may intentionally have zero selected accounts. */
   restricted: boolean
   allowedAccountIds: number[]
@@ -253,11 +266,33 @@ const activeAccountIdSet = computed(() => new Set(props.activeAccountIds))
 const selectedAccountIdSet = computed(() => new Set(selectedAccountIds.value))
 
 const activeAccountNames = computed(() =>
-  props.candidates.filter((account) => activeAccountIdSet.value.has(account.id))
+  props.candidates
+    .filter((account) => activeAccountIdSet.value.has(account.id))
+    .map((account) => ({
+      ...account,
+      userConcurrency: Math.max(
+        0,
+        Number(props.activeAccountConcurrency[String(account.id)]) || 1,
+      ),
+    }))
 )
 
 const currentUserConcurrency = computed(() =>
   props.user?.current_concurrency ?? props.activeAccountIds.length
+)
+
+const assignedConcurrency = computed(() => {
+  if (Object.keys(props.activeAccountConcurrency).length > 0) {
+    return Object.values(props.activeAccountConcurrency).reduce(
+      (sum, value) => sum + Math.max(0, Number(value) || 0),
+      0,
+    )
+  }
+  return props.activeAccountIds.length
+})
+
+const waitingConcurrency = computed(() =>
+  Math.max(0, currentUserConcurrency.value - assignedConcurrency.value)
 )
 
 const allSelected = computed(() =>

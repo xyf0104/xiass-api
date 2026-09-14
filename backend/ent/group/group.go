@@ -97,6 +97,8 @@ const (
 	FieldFallbackGroupIDOnInvalidRequest = "fallback_group_id_on_invalid_request"
 	// FieldModelRouting holds the string denoting the model_routing field in the database.
 	FieldModelRouting = "model_routing"
+	// FieldModelRoutingPools holds the string denoting the model_routing_pools field in the database.
+	FieldModelRoutingPools = "model_routing_pools"
 	// FieldModelRoutingEnabled holds the string denoting the model_routing_enabled field in the database.
 	FieldModelRoutingEnabled = "model_routing_enabled"
 	// FieldMcpXMLInject holds the string denoting the mcp_xml_inject field in the database.
@@ -248,6 +250,7 @@ var Columns = []string{
 	FieldFallbackGroupID,
 	FieldFallbackGroupIDOnInvalidRequest,
 	FieldModelRouting,
+	FieldModelRoutingPools,
 	FieldModelRoutingEnabled,
 	FieldMcpXMLInject,
 	FieldSupportedModelScopes,

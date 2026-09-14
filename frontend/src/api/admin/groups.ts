@@ -31,6 +31,8 @@ export interface LiveCapability {
 export interface UserGroupAccountRuntimeUser extends AdminUser {
   current_concurrency: number
   active_account_ids: number[]
+  /** Per-account occupied slots for this user. Optional for rolling-upgrade peers. */
+  active_account_concurrency?: Record<string, number>
 }
 
 export interface UserGroupAccountRuntimeAccount {

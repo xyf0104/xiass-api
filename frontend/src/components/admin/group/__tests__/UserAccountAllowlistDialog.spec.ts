@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import UserAccountAllowlistDialog from '../UserAccountAllowlistDialog.vue'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key, te: () => false }),
+  useI18n: () => ({
+    t: (key: string) => key,
+    te: () => false,
+  }),
 }))
 
 const BaseDialogStub = {
@@ -31,6 +34,7 @@ function mountDialog(
       user,
       candidates: accountCandidates,
       activeAccountIds: [101],
+      activeAccountConcurrency: { '101': 1 },
       restricted,
       allowedAccountIds,
       loading: false,
@@ -113,5 +117,17 @@ describe('UserAccountAllowlistDialog', () => {
 
     expect(wrapper.emitted('restore')).toHaveLength(1)
     expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
+  it('shows occupied slots separately from requests waiting for an account', async () => {
+    const wrapper = mountDialog([], false)
+    await wrapper.setProps({
+      user: { ...user, current_concurrency: 3 },
+      activeAccountConcurrency: { '101': 1 },
+    })
+
+    expect(wrapper.get('[data-test="allowlist-active-account-101"]').text()).toContain('×1')
+    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('等待账号槽位')
+    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('×2')
   })
 })

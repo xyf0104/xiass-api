@@ -90,6 +90,7 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 		SetSubscriptionType(g.SubscriptionType).
 		SetRateMultiplier(g.RateMultiplier).
 		SetIsExclusive(g.IsExclusive).
+		SetModelRoutingEnabled(g.ModelRoutingEnabled).
 		SetProfitControlEnabled(g.ProfitControlEnabled).
 		SetProfitMinMargin(g.ProfitMinMargin).
 		SetProfitSafetyBuffer(g.ProfitSafetyBuffer)
@@ -104,6 +105,12 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 	}
 	if g.MonthlyLimitUSD != nil {
 		create.SetMonthlyLimitUsd(*g.MonthlyLimitUSD)
+	}
+	if g.ModelRouting != nil {
+		create.SetModelRouting(g.ModelRouting)
+	}
+	if g.ModelRoutingPools != nil {
+		create.SetModelRoutingPools(g.ModelRoutingPools)
 	}
 	if !g.CreatedAt.IsZero() {
 		create.SetCreatedAt(g.CreatedAt)

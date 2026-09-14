@@ -87,7 +87,7 @@ describe('DateRangePicker', () => {
     expect(wrapper.text()).toContain('Last 24 Hours')
   })
 
-  it('emits range updates with last24Hours preset when applied', async () => {
+  it('applies a quick preset immediately', async () => {
     const now = new Date()
     const today = formatLocalDate(now)
 
@@ -116,8 +116,6 @@ describe('DateRangePicker', () => {
 
     presetButton!.click()
     await nextTick()
-    document.body.querySelector<HTMLButtonElement>('.date-picker-apply')!.click()
-    await nextTick()
 
     const nowAfterClick = new Date()
     const yesterdayAfterClick = new Date(nowAfterClick.getTime() - 24 * 60 * 60 * 1000)
@@ -133,6 +131,9 @@ describe('DateRangePicker', () => {
         preset: 'last24Hours'
       }
     ])
+    expect(
+      document.body.querySelector('.date-picker-dropdown')?.classList.contains('date-picker-dropdown-leave-active')
+    ).toBe(true)
   })
 
   it('fits a 320px viewport and keeps the panel reachable above a reduced visual viewport', async () => {

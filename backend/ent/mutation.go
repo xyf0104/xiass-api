@@ -22141,6 +22141,7 @@ type GroupMutation struct {
 	fallback_group_id_on_invalid_request    *int64
 	addfallback_group_id_on_invalid_request *int64
 	model_routing                           *map[string][]int64
+	model_routing_pools                     *map[string][]int64
 	model_routing_enabled                   *bool
 	mcp_xml_inject                          *bool
 	supported_model_scopes                  *[]string
@@ -24099,7 +24100,7 @@ func (m *GroupMutation) OldModelPricing(ctx context.Context) (v json.RawMessage,
 	return oldValue.ModelPricing, nil
 }
 
-// AppendModelPricing adds jm to the "model_pricing" field.
+// AppendModelPricing adds j to the "model_pricing" field.
 func (m *GroupMutation) AppendModelPricing(jm json.RawMessage) {
 	m.appendmodel_pricing = append(m.appendmodel_pricing, jm...)
 }
@@ -24341,6 +24342,55 @@ func (m *GroupMutation) ModelRoutingCleared() bool {
 func (m *GroupMutation) ResetModelRouting() {
 	m.model_routing = nil
 	delete(m.clearedFields, group.FieldModelRouting)
+}
+
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (m *GroupMutation) SetModelRoutingPools(value map[string][]int64) {
+	m.model_routing_pools = &value
+}
+
+// ModelRoutingPools returns the value of the "model_routing_pools" field in the mutation.
+func (m *GroupMutation) ModelRoutingPools() (r map[string][]int64, exists bool) {
+	v := m.model_routing_pools
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelRoutingPools returns the old "model_routing_pools" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldModelRoutingPools(ctx context.Context) (v map[string][]int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelRoutingPools is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelRoutingPools requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelRoutingPools: %w", err)
+	}
+	return oldValue.ModelRoutingPools, nil
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (m *GroupMutation) ClearModelRoutingPools() {
+	m.model_routing_pools = nil
+	m.clearedFields[group.FieldModelRoutingPools] = struct{}{}
+}
+
+// ModelRoutingPoolsCleared returns if the "model_routing_pools" field was cleared in this mutation.
+func (m *GroupMutation) ModelRoutingPoolsCleared() bool {
+	_, ok := m.clearedFields[group.FieldModelRoutingPools]
+	return ok
+}
+
+// ResetModelRoutingPools resets all changes to the "model_routing_pools" field.
+func (m *GroupMutation) ResetModelRoutingPools() {
+	m.model_routing_pools = nil
+	delete(m.clearedFields, group.FieldModelRoutingPools)
 }
 
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
@@ -25493,7 +25543,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 58)
+	fields := make([]string, 0, 59)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -25613,6 +25663,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.model_routing != nil {
 		fields = append(fields, group.FieldModelRouting)
+	}
+	if m.model_routing_pools != nil {
+		fields = append(fields, group.FieldModelRoutingPools)
 	}
 	if m.model_routing_enabled != nil {
 		fields = append(fields, group.FieldModelRoutingEnabled)
@@ -25756,6 +25809,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.FallbackGroupIDOnInvalidRequest()
 	case group.FieldModelRouting:
 		return m.ModelRouting()
+	case group.FieldModelRoutingPools:
+		return m.ModelRoutingPools()
 	case group.FieldModelRoutingEnabled:
 		return m.ModelRoutingEnabled()
 	case group.FieldMcpXMLInject:
@@ -25881,6 +25936,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldFallbackGroupIDOnInvalidRequest(ctx)
 	case group.FieldModelRouting:
 		return m.OldModelRouting(ctx)
+	case group.FieldModelRoutingPools:
+		return m.OldModelRoutingPools(ctx)
 	case group.FieldModelRoutingEnabled:
 		return m.OldModelRoutingEnabled(ctx)
 	case group.FieldMcpXMLInject:
@@ -26205,6 +26262,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModelRouting(v)
+		return nil
+	case group.FieldModelRoutingPools:
+		v, ok := value.(map[string][]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelRoutingPools(v)
 		return nil
 	case group.FieldModelRoutingEnabled:
 		v, ok := value.(bool)
@@ -26701,6 +26765,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
+	if m.FieldCleared(group.FieldModelRoutingPools) {
+		fields = append(fields, group.FieldModelRoutingPools)
+	}
 	if m.FieldCleared(group.FieldCostRatio) {
 		fields = append(fields, group.FieldCostRatio)
 	}
@@ -26765,6 +26832,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldModelRoutingPools:
+		m.ClearModelRoutingPools()
 		return nil
 	case group.FieldCostRatio:
 		m.ClearCostRatio()
@@ -26896,6 +26966,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ResetModelRouting()
+		return nil
+	case group.FieldModelRoutingPools:
+		m.ResetModelRoutingPools()
 		return nil
 	case group.FieldModelRoutingEnabled:
 		m.ResetModelRoutingEnabled()
@@ -42993,7 +43066,7 @@ func (m *UsageCleanupTaskMutation) OldFilters(ctx context.Context) (v json.RawMe
 	return oldValue.Filters, nil
 }
 
-// AppendFilters adds jm to the "filters" field.
+// AppendFilters adds j to the "filters" field.
 func (m *UsageCleanupTaskMutation) AppendFilters(jm json.RawMessage) {
 	m.appendfilters = append(m.appendfilters, jm...)
 }

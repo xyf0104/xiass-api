@@ -37,6 +37,9 @@ func profitAuthTestAPIKey() *APIKey {
 			RateMultiplier:       0.06,
 			SubscriptionType:     SubscriptionTypeStandard,
 			PeakRateEnabled:      false,
+			ModelRoutingEnabled:  true,
+			ModelRouting:         map[string][]int64{"gpt-5.6-sol": {31}},
+			ModelRoutingPools:    map[string][]int64{"gpt-5.6-luna": {7}},
 			ProfitControlEnabled: true,
 			ProfitMinMargin:      0.2,
 			ProfitSafetyBuffer:   0.05,
@@ -70,6 +73,8 @@ func TestAPIKeyAuthSnapshotProfitControlRoundtrip(t *testing.T) {
 	require.InDelta(t, 0.2, materialized.Group.ProfitMinMargin, 1e-12)
 	require.InDelta(t, 0.05, materialized.Group.ProfitSafetyBuffer, 1e-12)
 	require.InDelta(t, 0.06, materialized.Group.RateMultiplier, 1e-12)
+	require.Equal(t, map[string][]int64{"gpt-5.6-sol": {31}}, materialized.Group.ModelRouting)
+	require.Equal(t, map[string][]int64{"gpt-5.6-luna": {7}}, materialized.Group.ModelRoutingPools)
 
 	// 中间件语义：materialized.Group 进请求 ctx → 门必须按快照配置装上。
 	ctx := context.WithValue(context.Background(), ctxkey.Group, materialized.Group)
@@ -77,6 +82,8 @@ func TestAPIKeyAuthSnapshotProfitControlRoundtrip(t *testing.T) {
 	gate := gwSvc.resolveOpenAIProfitControlGate(ctx, materialized.GroupID)
 	require.NotNil(t, gate, "还原后的认证分组必须能装门（投影漏列时本断言最先失败）")
 	require.InDelta(t, 0.06*(1-0.25), gate.threshold, 1e-12)
+	routing := gwSvc.resolveOpenAIModelRoutingPreference(ctx, materialized.GroupID, PlatformOpenAI, "gpt-5.6-luna")
+	require.True(t, routing.matches(&Account{ID: 41, Extra: map[string]any{AccountPoolExtraKey: "7"}}))
 }
 
 func TestAPIKeyAuthSnapshotPublicGroupRestrictionRoundtrip(t *testing.T) {

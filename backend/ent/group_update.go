@@ -774,6 +774,18 @@ func (_u *GroupUpdate) ClearModelRouting() *GroupUpdate {
 	return _u
 }
 
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (_u *GroupUpdate) SetModelRoutingPools(v map[string][]int64) *GroupUpdate {
+	_u.mutation.SetModelRoutingPools(v)
+	return _u
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (_u *GroupUpdate) ClearModelRoutingPools() *GroupUpdate {
+	_u.mutation.ClearModelRoutingPools()
+	return _u
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_u *GroupUpdate) SetModelRoutingEnabled(v bool) *GroupUpdate {
 	_u.mutation.SetModelRoutingEnabled(v)
@@ -1606,6 +1618,12 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ModelRoutingCleared() {
 		_spec.ClearField(group.FieldModelRouting, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ModelRoutingPools(); ok {
+		_spec.SetField(group.FieldModelRoutingPools, field.TypeJSON, value)
+	}
+	if _u.mutation.ModelRoutingPoolsCleared() {
+		_spec.ClearField(group.FieldModelRoutingPools, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)
@@ -2740,6 +2758,18 @@ func (_u *GroupUpdateOne) ClearModelRouting() *GroupUpdateOne {
 	return _u
 }
 
+// SetModelRoutingPools sets the "model_routing_pools" field.
+func (_u *GroupUpdateOne) SetModelRoutingPools(v map[string][]int64) *GroupUpdateOne {
+	_u.mutation.SetModelRoutingPools(v)
+	return _u
+}
+
+// ClearModelRoutingPools clears the value of the "model_routing_pools" field.
+func (_u *GroupUpdateOne) ClearModelRoutingPools() *GroupUpdateOne {
+	_u.mutation.ClearModelRoutingPools()
+	return _u
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_u *GroupUpdateOne) SetModelRoutingEnabled(v bool) *GroupUpdateOne {
 	_u.mutation.SetModelRoutingEnabled(v)
@@ -3602,6 +3632,12 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.ModelRoutingCleared() {
 		_spec.ClearField(group.FieldModelRouting, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ModelRoutingPools(); ok {
+		_spec.SetField(group.FieldModelRoutingPools, field.TypeJSON, value)
+	}
+	if _u.mutation.ModelRoutingPoolsCleared() {
+		_spec.ClearField(group.FieldModelRoutingPools, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)

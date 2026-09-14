@@ -118,6 +118,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		FallbackGroupID:                 cloneGroupValuePointer(source.FallbackGroupID),
 		FallbackGroupIDOnInvalidRequest: cloneGroupValuePointer(source.FallbackGroupIDOnInvalidRequest),
 		ModelRouting:                    cloneGroupModelRouting(source.ModelRouting),
+		ModelRoutingPools:               cloneGroupModelRouting(source.ModelRoutingPools),
 		ModelRoutingEnabled:             source.ModelRoutingEnabled,
 		MCPXMLInject:                    source.MCPXMLInject,
 		SupportedModelScopes:            append([]string(nil), source.SupportedModelScopes...),

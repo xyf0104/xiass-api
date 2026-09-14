@@ -754,7 +754,6 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	if err != nil {
 		return nil
 	}
-
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
 	if shouldClearStickySession(account, requestedModel) {
@@ -847,6 +846,13 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if len(eligible) == 0 {
 		return nil, compactBlocked
 	}
+	preference := s.resolveOpenAIModelRoutingPreference(ctx, groupID, platform, requestedModel)
+	preferred, fallback := partitionOpenAIAccountsByModelPreference(eligible, preference)
+	if len(preferred) > 0 {
+		eligible = preferred
+	} else {
+		eligible = fallback
+	}
 	eligible = partitionOpenAIAccountsByPriority(eligible)[0]
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {
@@ -926,6 +932,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	cfg := s.schedulingConfig()
+	preference := s.resolveOpenAIModelRoutingPreference(ctx, groupID, platform, requestedModel)
 	preferLowUpstreamRate := useUpstreamTokenCost && s.isOpenAILowUpstreamRatePriorityEnabled(ctx)
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	var stickyAccountID int64
@@ -935,28 +942,52 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 	}
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
-		account, err := s.selectAccountForModelWithExclusions(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
-		if err != nil {
-			return nil, err
+		selectionExcluded := make(map[int64]struct{}, len(excludedIDs)+1)
+		for accountID := range excludedIDs {
+			selectionExcluded[accountID] = struct{}{}
 		}
-		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-		if err == nil && result != nil && result.Acquired {
-			return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
-		}
-		if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
-			waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
-			if waitingCount < cfg.StickySessionMaxWaiting {
-				return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				})
+		selectionSessionHash := sessionHash
+		selectionStickyAccountID := stickyAccountID
+		var firstWaitAccount *Account
+		for {
+			account, selectErr := s.selectAccountForModelWithExclusions(ctx, groupID, platform, selectionSessionHash, requestedModel, selectionExcluded, requireCompact, selectionStickyAccountID, requiredCapability, preferLowUpstreamRate)
+			if selectErr != nil {
+				if firstWaitAccount != nil && (errors.Is(selectErr, ErrNoAvailableAccounts) || errors.Is(selectErr, ErrNoAvailableCompactAccounts)) {
+					break
+				}
+				return nil, selectErr
 			}
+			if firstWaitAccount == nil {
+				firstWaitAccount = account
+			}
+			result, acquireErr := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+			if acquireErr == nil && result != nil && result.Acquired {
+				if selectionSessionHash == "" && sessionHash != "" && !gatewayProfitControlGateActive(ctx) {
+					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, account.ID, s.openAIWSSessionStickyTTL())
+				}
+				return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+			}
+			if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
+				waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
+				if waitingCount < cfg.StickySessionMaxWaiting {
+					return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+						AccountID:      account.ID,
+						MaxConcurrency: account.Concurrency,
+						Timeout:        cfg.StickySessionWaitTimeout,
+						MaxWaiting:     cfg.StickySessionMaxWaiting,
+					})
+				}
+			}
+			if !preference.configured() || !preference.matches(account) {
+				break
+			}
+			selectionExcluded[account.ID] = struct{}{}
+			selectionSessionHash = ""
+			selectionStickyAccountID = 0
 		}
-		return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
-			AccountID:      account.ID,
-			MaxConcurrency: account.Concurrency,
+		return s.newSelectionResult(ctx, firstWaitAccount, false, nil, &AccountWaitPlan{
+			AccountID:      firstWaitAccount.ID,
+			MaxConcurrency: firstWaitAccount.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 		})
@@ -1118,6 +1149,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 		sort.SliceStable(available, func(i, j int) bool {
 			a, b := available[i], available[j]
+			if preferred, decided := modelRoutingPreferenceFirst(preference, a.account, b.account); decided {
+				return preferred
+			}
 			if a.account.Priority != b.account.Priority {
 				return a.account.Priority < b.account.Priority
 			}
@@ -1138,6 +1172,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		shuffleWithinSortGroups(available)
 		if rateOrder.enabled {
 			sort.SliceStable(available, func(i, j int) bool {
+				if preferred, decided := modelRoutingPreferenceFirst(preference, available[i].account, available[j].account); decided {
+					return preferred
+				}
 				if available[i].account.Priority != available[j].account.Priority {
 					return available[i].account.Priority < available[j].account.Priority
 				}
@@ -1148,16 +1185,19 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		selectionOrder := append([]accountWithLoad(nil), available...)
 		if requireCompact {
 			sort.SliceStable(selectionOrder, func(i, j int) bool {
+				if preferred, decided := modelRoutingPreferenceFirst(preference, selectionOrder[i].account, selectionOrder[j].account); decided {
+					return preferred
+				}
 				if selectionOrder[i].account.Priority != selectionOrder[j].account.Priority {
 					return selectionOrder[i].account.Priority < selectionOrder[j].account.Priority
 				}
 				return openAICompactSupportTier(selectionOrder[i].account) > openAICompactSupportTier(selectionOrder[j].account)
 			})
 		}
-		selectionOrder = orderExecutionNodeCandidatesWithinPriorities(
+		selectionOrder = orderOpenAIExecutionNodeCandidatesByModelPreference(
 			selectionOrder,
 			func(item accountWithLoad) *Account { return item.account },
-			func(item accountWithLoad) int { return item.account.Priority },
+			preference,
 			executionNodePolicy,
 			executionNodeSelectionAnchor(sessionHash),
 		)
@@ -1192,9 +1232,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	loadMap, err := s.concurrencyService.GetAccountsLoadBatch(ctx, accountLoads)
 	if err != nil {
 		ordered := append([]*Account(nil), candidates...)
-		sortAccountsByPriorityAndLastUsed(ordered, false)
+		sortOpenAIAccountsByModelPreference(ordered, preference)
 		if rateOrder.enabled {
 			sort.SliceStable(ordered, func(i, j int) bool {
+				if preferred, decided := modelRoutingPreferenceFirst(preference, ordered[i], ordered[j]); decided {
+					return preferred
+				}
 				if ordered[i].Priority != ordered[j].Priority {
 					return ordered[i].Priority < ordered[j].Priority
 				}
@@ -1203,16 +1246,19 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 		if requireCompact {
 			sort.SliceStable(ordered, func(i, j int) bool {
+				if preferred, decided := modelRoutingPreferenceFirst(preference, ordered[i], ordered[j]); decided {
+					return preferred
+				}
 				if ordered[i].Priority != ordered[j].Priority {
 					return ordered[i].Priority < ordered[j].Priority
 				}
 				return openAICompactSupportTier(ordered[i]) > openAICompactSupportTier(ordered[j])
 			})
 		}
-		ordered = orderExecutionNodeCandidatesWithinPriorities(
+		ordered = orderOpenAIExecutionNodeCandidatesByModelPreference(
 			ordered,
 			func(account *Account) *Account { return account },
-			func(account *Account) int { return account.Priority },
+			preference,
 			executionNodePolicy,
 			executionNodeSelectionAnchor(sessionHash),
 		)
@@ -1257,9 +1303,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	// ============ Layer 4: Fallback wait ============
-	sortAccountsByPriorityAndLastUsed(candidates, false)
+	sortOpenAIAccountsByModelPreference(candidates, preference)
 	if rateOrder.enabled {
 		sort.SliceStable(candidates, func(i, j int) bool {
+			if preferred, decided := modelRoutingPreferenceFirst(preference, candidates[i], candidates[j]); decided {
+				return preferred
+			}
 			if candidates[i].Priority != candidates[j].Priority {
 				return candidates[i].Priority < candidates[j].Priority
 			}
@@ -1268,16 +1317,19 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 	if requireCompact {
 		sort.SliceStable(candidates, func(i, j int) bool {
+			if preferred, decided := modelRoutingPreferenceFirst(preference, candidates[i], candidates[j]); decided {
+				return preferred
+			}
 			if candidates[i].Priority != candidates[j].Priority {
 				return candidates[i].Priority < candidates[j].Priority
 			}
 			return openAICompactSupportTier(candidates[i]) > openAICompactSupportTier(candidates[j])
 		})
 	}
-	candidates = orderExecutionNodeCandidatesWithinPriorities(
+	candidates = orderOpenAIExecutionNodeCandidatesByModelPreference(
 		candidates,
 		func(account *Account) *Account { return account },
-		func(account *Account) int { return account.Priority },
+		preference,
 		executionNodePolicy,
 		executionNodeSelectionAnchor(sessionHash),
 	)

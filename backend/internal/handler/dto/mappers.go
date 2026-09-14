@@ -153,6 +153,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		ProfitSafetyBuffer:          g.ProfitSafetyBuffer,
 		ModelPricing:                g.ModelPricing,
 		ModelRouting:                g.ModelRouting,
+		ModelRoutingPools:           g.ModelRoutingPools,
 		ModelRoutingEnabled:         g.ModelRoutingEnabled,
 		MCPXMLInject:                g.MCPXMLInject,
 		DefaultMappedModel:          g.DefaultMappedModel,

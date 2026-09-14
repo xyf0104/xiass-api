@@ -59,6 +59,7 @@ func cloneGroupForDuplicateTest(group *Group) *Group {
 	cloned.FallbackGroupID = cloneGroupValuePointer(group.FallbackGroupID)
 	cloned.FallbackGroupIDOnInvalidRequest = cloneGroupValuePointer(group.FallbackGroupIDOnInvalidRequest)
 	cloned.ModelRouting = cloneGroupModelRouting(group.ModelRouting)
+	cloned.ModelRoutingPools = cloneGroupModelRouting(group.ModelRoutingPools)
 	cloned.SupportedModelScopes = append([]string(nil), group.SupportedModelScopes...)
 	cloned.MessagesDispatchModelConfig = cloneGroupMessagesDispatchModelConfig(group.MessagesDispatchModelConfig)
 	cloned.ModelsListConfig.Models = append([]string(nil), group.ModelsListConfig.Models...)
@@ -157,6 +158,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		FallbackGroupID:                 groupDuplicateTestPointer(int64(7)),
 		FallbackGroupIDOnInvalidRequest: groupDuplicateTestPointer(int64(8)),
 		ModelRouting:                    map[string][]int64{"gpt-*": {13, 17}},
+		ModelRoutingPools:               map[string][]int64{"gpt-5.6-luna": {7, 8}},
 		ModelRoutingEnabled:             true,
 		MCPXMLInject:                    true,
 		SupportedModelScopes:            []string{"claude", "gemini_text"},
@@ -207,6 +209,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.WebSearchPricePerCall, duplicate.WebSearchPricePerCall)
 	require.Equal(t, source.FallbackGroupID, duplicate.FallbackGroupID)
 	require.Equal(t, source.ModelRouting, duplicate.ModelRouting)
+	require.Equal(t, source.ModelRoutingPools, duplicate.ModelRoutingPools)
 	require.Equal(t, source.MessagesDispatchModelConfig, duplicate.MessagesDispatchModelConfig)
 	require.Equal(t, source.ModelsListConfig, duplicate.ModelsListConfig)
 	require.Equal(t, source.RPMLimit, duplicate.RPMLimit)
@@ -222,12 +225,14 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	}, repo.createdBindings[duplicate.ID])
 
 	duplicate.ModelRouting["gpt-*"][0] = 999
+	duplicate.ModelRoutingPools["gpt-5.6-luna"][0] = 999
 	duplicate.SupportedModelScopes[0] = "changed"
 	duplicate.MessagesDispatchModelConfig.ExactModelMappings["claude-special"] = "changed"
 	duplicate.ModelsListConfig.Models[0] = "changed"
 	duplicate.ReasoningEffortMappings[0].To = "changed"
 	*duplicate.DailyLimitUSD = 999
 	require.Equal(t, int64(13), source.ModelRouting["gpt-*"][0])
+	require.Equal(t, int64(7), source.ModelRoutingPools["gpt-5.6-luna"][0])
 	require.Equal(t, "claude", source.SupportedModelScopes[0])
 	require.Equal(t, "gpt-special", source.MessagesDispatchModelConfig.ExactModelMappings["claude-special"])
 	require.Equal(t, "gpt-5.4", source.ModelsListConfig.Models[0])

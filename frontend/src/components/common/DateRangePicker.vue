@@ -278,6 +278,7 @@ const selectPreset = (preset: DatePreset) => {
   localStartDate.value = range.start
   localEndDate.value = range.end
   activePreset.value = preset.value
+  apply()
 }
 
 const onDateChange = () => {

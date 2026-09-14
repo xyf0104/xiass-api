@@ -122,6 +122,9 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 	if groupIn.ModelRouting != nil {
 		builder = builder.SetModelRouting(groupIn.ModelRouting)
 	}
+	if groupIn.ModelRoutingPools != nil {
+		builder = builder.SetModelRoutingPools(groupIn.ModelRoutingPools)
+	}
 
 	// 设置支持的模型系列（始终设置，空数组表示不限制）
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
@@ -365,6 +368,11 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetModelRouting(groupIn.ModelRouting)
 	} else {
 		builder = builder.ClearModelRouting()
+	}
+	if groupIn.ModelRoutingPools != nil {
+		builder = builder.SetModelRoutingPools(groupIn.ModelRoutingPools)
+	} else {
+		builder = builder.ClearModelRoutingPools()
 	}
 
 	// 处理 SupportedModelScopes（始终设置，空数组表示不限制）
