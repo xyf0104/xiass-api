@@ -325,7 +325,7 @@ func validateBatchEmailCodeLogin(email, token string) error {
 		return errors.New("valid account email and email-code token are required")
 	}
 	for _, char := range token {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
 			return errors.New("valid account email and email-code token are required")
 		}
 	}
