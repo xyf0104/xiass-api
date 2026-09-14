@@ -62,6 +62,15 @@ describe('batch OAuth orchestration', () => {
     })).toBe(false)
   })
 
+  it('retries a transient OpenAI route failure for an email-code account', () => {
+    expect(batchTaskWillAutoRestart({
+      ...task('email-code-route', 'mail@example.test', 'failed'),
+      login_method: 'email_code',
+      stage: 'sms_submitting',
+      reason: 'openai_route_error',
+    })).toBe(true)
+  })
+
   it('starts only three accounts and advances one slot after completion', async () => {
     const c = await setup()
     c.start(credentials, settings)

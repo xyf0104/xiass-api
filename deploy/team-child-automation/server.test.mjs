@@ -30,6 +30,7 @@ const {
   pendingInviteRecord,
   pendingInvitesTabSelected,
   isSignupAccountCreationRejectionText,
+  openAIPhoneSubmissionFailure,
   registeredOAuthNextState,
   reauthorizationNextState,
   waitForReauthorizationNextState,
@@ -53,6 +54,20 @@ const automationDirectory = path.dirname(fileURLToPath(import.meta.url))
 const deployDirectory = path.dirname(automationDirectory)
 
 describe('Team child OAuth automation state', () => {
+  it('classifies current OpenAI phone rejection and transient error copy', () => {
+    for (const text of [
+      'This phone number is already associated with another account.',
+      'Please use a different phone number.',
+      'This phone number is not supported.',
+      '该电话号码已使用，请更换其他号码。',
+    ]) {
+      assert.equal(openAIPhoneSubmissionFailure(text), 'phone_rejected')
+    }
+    assert.equal(openAIPhoneSubmissionFailure('Oops, an error occurred! Route Error (400 Invalid content type: text/html; charset=UTF-8)'), 'openai_route_error')
+    assert.equal(openAIPhoneSubmissionFailure('Authentication Error error_code: invalid_state'), 'oauth_session_expired')
+    assert.equal(openAIPhoneSubmissionFailure('Enter the code sent to your phone'), '')
+  })
+
   it('keeps the 401 authenticator secret out of snapshots and preserves it only until completion or cancel', () => {
     const workflow = createReauthorizationWorkflow(91, 'account@example.test', 'synthetic-password', authURL, 'oauth-session-abcdefghijklmnop', 'JBSWY3DPEHPK3PXP')
     assert.equal(workflow.loginTOTPSecret, 'JBSWY3DPEHPK3PXP')

@@ -334,6 +334,26 @@ func TestBatchOAuthDuplicatePruneDefersBusyMailbox(t *testing.T) {
 	require.NotContains(t, store.tasks, failed.ID)
 }
 
+func TestBatchOAuthListReturnsCachedTaskWhileMutationOwnsLock(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r, id := startFixtureTask(t, f)
+	task := f.h.batchOAuthStore.tasks[id]
+	task.mu.Lock()
+	defer task.mu.Unlock()
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- batchOAuthRequest(r, http.MethodGet, "/tasks", "") }()
+
+	select {
+	case response := <-done:
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Contains(t, response.Body.String(), id)
+		require.Contains(t, response.Body.String(), "owner@example.test")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("task list blocked behind an unrelated task mutation")
+	}
+}
+
 func TestBatchOAuthIdentityAndValidationBeforeCodeConsumption(t *testing.T) {
 	t.Run("wrong identity", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)

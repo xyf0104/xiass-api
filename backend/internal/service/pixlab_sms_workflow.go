@@ -34,9 +34,11 @@ func (s *PixlabSMSService) WorkflowAction(ctx context.Context, ownerID int64, sc
 		return nil, infraerrors.BadRequest("SMS_CONFIRMATION_REQUIRED", "Confirm the SMS action in XIASS first")
 	}
 	ctx = context.WithValue(ctx, pixlabWorkflowContextKey{}, scope)
-	lock := s.sessionLock("workflow:" + scope)
-	lock.Lock()
-	defer lock.Unlock()
+	unlock, err := s.workflowLock(scope).lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	switch action {
 	case "acquire":
 		return s.redeemWorkflow(ctx, ownerID, scope)

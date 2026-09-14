@@ -170,10 +170,12 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		executionNodeID: strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)),
 		Status:          "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
 	}
+	task.snapshotJSONLocked()
 	task.mu.Lock()
 	store.tasks[id] = task
 	store.mu.Unlock()
 	defer task.mu.Unlock()
+	defer task.snapshotJSONLocked()
 	defer task.markFinishedIfTerminal()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 35*time.Second)
 	defer cancel()

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -107,6 +108,7 @@ type batchOAuthTask struct {
 	loginEmailCodeEncrypted string `json:"-"`
 	loginTOTPConfigured     bool
 	executionNodeID         string
+	publicSnapshot          atomic.Pointer[[]byte]
 }
 
 type batchOAuthStore struct {
@@ -629,6 +631,24 @@ func (t *batchOAuthTask) markFinishedIfTerminal() {
 	t.clearLoginCredentials()
 }
 
+func (t *batchOAuthTask) snapshotJSONLocked() json.RawMessage {
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return nil
+	}
+	stored := append([]byte(nil), raw...)
+	t.publicSnapshot.Store(&stored)
+	return json.RawMessage(stored)
+}
+
+func (t *batchOAuthTask) cachedSnapshotJSON() json.RawMessage {
+	stored := t.publicSnapshot.Load()
+	if stored == nil {
+		return nil
+	}
+	return json.RawMessage(append([]byte(nil), (*stored)...))
+}
+
 func (t *batchOAuthTask) clearLoginCredentials() {
 	t.loginPasswordEncrypted = ""
 	t.loginTOTPEncrypted = ""
@@ -843,10 +863,12 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		t.FinishedAt = &now
 		t.ExpiresAt = now.Add(24 * time.Hour)
 	}
+	t.snapshotJSONLocked()
 	t.mu.Lock()
 	store.tasks[id] = t
 	store.mu.Unlock()
 	defer t.mu.Unlock()
+	defer t.snapshotJSONLocked()
 	defer t.markFinishedIfTerminal()
 	if existingAccount != nil {
 		response.Success(c, t)
@@ -895,15 +917,19 @@ func (h *OpenAIOAuthHandler) listBatchOAuthTasks(c *gin.Context, mode string) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			t.mu.Lock()
+			if !t.mu.TryLock() {
+				items[i] = t.cachedSnapshotJSON()
+				return
+			}
 			defer t.mu.Unlock()
 			_, _ = t.refresh(ctx)
 			t.markFinishedIfTerminal()
 			h.revokeTerminalBatchSession(t)
-			items[i], _ = json.Marshal(t)
+			items[i] = t.snapshotJSONLocked()
 		}()
 	}
 	wg.Wait()
+	items = slices.DeleteFunc(items, func(item json.RawMessage) bool { return len(item) == 0 })
 	response.Success(c, gin.H{"items": items, "max_concurrency": 3, "max_restarts": batchOAuthMaxRestarts})
 }
 

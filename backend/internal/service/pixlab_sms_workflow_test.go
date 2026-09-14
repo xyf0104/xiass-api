@@ -25,6 +25,32 @@ func TestPixlabWorkflowRequiresConfirmationBeforeAnyProviderOrDBAction(t *testin
 	}
 }
 
+func TestPixlabWorkflowAndSessionLocksUseIndependentPools(t *testing.T) {
+	s := &PixlabSMSService{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	unlockWorkflow, err := s.workflowLock("same-lock-key").lock(ctx)
+	require.NoError(t, err)
+	defer unlockWorkflow()
+
+	unlockSession, err := s.sessionLock("same-lock-key").lock(ctx)
+	require.NoError(t, err)
+	unlockSession()
+}
+
+func TestPixlabContextLockStopsWaitingWhenRequestExpires(t *testing.T) {
+	var lock pixlabSMSContextLock
+	unlock, err := lock.lock(context.Background())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err = lock.lock(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	unlock()
+}
+
 func TestPixlabWorkflowCannotReachAnotherScopeOrNormalReceiver(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

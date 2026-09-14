@@ -389,6 +389,40 @@ test('phone and SMS are external inputs; reject duplicate actions and previously
   assert.equal(h.live(), 0)
 })
 
+test('typed phone rejection replaces the number even if the page still exposes the phone form', async () => {
+  const h = harness([], { helpers: {
+    async submitPhoneOnOpenAI(page, value) {
+      page.calls.push(['phone', value])
+      throw Object.assign(new Error('number rejected'), { code: 'phone_rejected' })
+    }
+  } })
+  await h.runner.start(body())
+  await flush()
+  h.runner.phone('task-1', 1, '+15555550101')
+  await flush()
+  const result = h.runner.get('task-1', 1)
+  assert.equal(result.status, 'running')
+  assert.equal(result.stage, 'phone_required')
+  assert.equal(result.reason, 'phone_rejected')
+  await h.runner.cancel('task-1', 1)
+})
+
+test('typed route error at phone submission remains a retryable route failure', async () => {
+  const h = harness([], { helpers: {
+    async submitPhoneOnOpenAI(page, value) {
+      page.calls.push(['phone', value])
+      throw Object.assign(new Error('route error'), { code: 'openai_route_error' })
+    }
+  } })
+  await h.runner.start(body())
+  await flush()
+  h.runner.phone('task-1', 1, '+15555550101')
+  await flush()
+  const result = h.runner.get('task-1', 1)
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'openai_route_error')
+})
+
 test('manual challenges, explicit bans, identity mismatch, signup and missing TOTP close context', async (t) => {
   for (const [plan, reason] of [
     [{ afterPassword: 'captcha' }, 'captcha_required'], [{ afterPassword: 'email_code' }, 'email_code_required'],

@@ -28,6 +28,8 @@ const automaticRestartLimits: Record<string, number> = {
   navigation_timeout: 1,
   browser_context_lost: 1,
   page_interaction_failed: 1,
+  openai_route_error: 1,
+  oauth_session_expired: 1,
 }
 
 const operationUnconfirmedMessage = '操作未确认，请刷新状态后重试。'
@@ -41,7 +43,6 @@ export function batchTaskSkipped(task?: BatchOAuthTask) {
 }
 
 export function batchTaskWillAutoRestart(task?: BatchOAuthTask) {
-  if (task?.login_method === 'email_code') return false
   return !!task && ['failed', 'blocked'].includes(task.status) && !task.account_id
     && task.restart_count < (automaticRestartLimits[task.reason || ''] || 0)
 }

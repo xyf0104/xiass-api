@@ -63,7 +63,7 @@ function ownerKey(owner) {
 }
 
 function automationFailureReason(error, stage) {
-  if (['email_code_timeout', 'email_code_access_denied', 'email_code_unavailable'].includes(error?.code)) {
+  if (reasons.has(error?.code) && error.code) {
     return error.code
   }
   const message = error instanceof Error ? error.message : String(error || '')
@@ -587,14 +587,18 @@ export class BatchOAuthRunner {
               await this.#code(page, input.value)
               await this.#stepPause(task)
             } else throw fail('manual_challenge')
-          } catch {
-            if (task.status === 'running' && this.#trustedPage(task)
-              && (await this.#inspect(page)).kind === 'phone_rejected') {
+          } catch (error) {
+            const afterSubmit = task.status === 'running' && this.#trustedPage(task)
+              ? await this.#inspect(page)
+              : { kind: 'unknown' }
+            if (error?.code === 'phone_rejected' || afterSubmit.kind === 'phone_rejected') {
               task.rejected.add(task.phone)
               this.#stage(task, 'phone_required')
               task.reason = 'phone_rejected'
               this.#report(task)
-            } else throw fail('manual_challenge')
+            } else {
+              throw error
+            }
           } finally {
             input.value = ''
             task.busy = false

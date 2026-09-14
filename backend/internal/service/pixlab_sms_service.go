@@ -120,15 +120,34 @@ type PixlabSMSMemberResult struct {
 // Card keys remain encrypted at rest and are only decrypted for the explicit
 // administrator-only queue-management API.
 type PixlabSMSService struct {
-	db           *sql.DB
-	encryptor    SecretEncryptor
-	billingCache *BillingCacheService
-	client       *http.Client
-	baseURL      string
-	sessionLocks [64]sync.Mutex
-	cleanupMu    sync.Mutex
-	cleanupStop  context.CancelFunc
-	cleanupDone  chan struct{}
+	db            *sql.DB
+	encryptor     SecretEncryptor
+	billingCache  *BillingCacheService
+	client        *http.Client
+	baseURL       string
+	sessionLocks  [64]pixlabSMSContextLock
+	workflowLocks [64]pixlabSMSContextLock
+	cleanupMu     sync.Mutex
+	cleanupStop   context.CancelFunc
+	cleanupDone   chan struct{}
+}
+
+type pixlabSMSContextLock struct {
+	once sync.Once
+	gate chan struct{}
+}
+
+func (l *pixlabSMSContextLock) lock(ctx context.Context) (func(), error) {
+	l.once.Do(func() {
+		l.gate = make(chan struct{}, 1)
+		l.gate <- struct{}{}
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-l.gate:
+		return func() { l.gate <- struct{}{} }, nil
+	}
 }
 
 func NewPixlabSMSService(db *sql.DB, encryptor SecretEncryptor, billingCache *BillingCacheService) *PixlabSMSService {
@@ -405,18 +424,20 @@ func (s *PixlabSMSService) DeleteCardKey(ctx context.Context, cardKeyID int64) (
 		}
 
 		lockedSessionID := ""
-		var sessionLock *sync.Mutex
+		var unlockSession func()
 		if preflightStatus == "active" && preflightSession.Valid {
 			lockedSessionID = strings.TrimSpace(preflightSession.String)
 			if lockedSessionID != "" {
-				sessionLock = s.sessionLock(lockedSessionID)
-				sessionLock.Lock()
+				unlockSession, err = s.sessionLock(lockedSessionID).lock(ctx)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 
 		status, retry, err := s.deleteCardKey(ctx, cardKeyID, lockedSessionID)
-		if sessionLock != nil {
-			sessionLock.Unlock()
+		if unlockSession != nil {
+			unlockSession()
 		}
 		if err != nil {
 			return nil, err
@@ -947,9 +968,11 @@ func (s *PixlabSMSService) cancel(ctx context.Context, ownerUserID int64, sessio
 	if sessionID == "" || len(sessionID) > 64 {
 		return nil, ErrPixlabSMSSession
 	}
-	lock := s.sessionLock(sessionID)
-	lock.Lock()
-	defer lock.Unlock()
+	unlock, err := s.sessionLock(sessionID).lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	result, err := s.withActiveSessionLocked(ctx, ownerUserID, sessionID, "cancel", settleMemberFee, false)
 	if err != nil {
@@ -1040,9 +1063,11 @@ func (s *PixlabSMSService) withActiveSessionMode(ctx context.Context, ownerUserI
 	if sessionID == "" || len(sessionID) > 64 {
 		return nil, ErrPixlabSMSSession
 	}
-	lock := s.sessionLock(sessionID)
-	lock.Lock()
-	defer lock.Unlock()
+	unlock, err := s.sessionLock(sessionID).lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	return s.withActiveSessionLocked(ctx, ownerUserID, sessionID, action, settleMemberFee, persistTerminal)
 }
 
@@ -1273,10 +1298,16 @@ func (s *PixlabSMSService) releaseCleanupLease(ctx context.Context, leaseToken s
 	return nil
 }
 
-func (s *PixlabSMSService) sessionLock(sessionID string) *sync.Mutex {
+func (s *PixlabSMSService) sessionLock(sessionID string) *pixlabSMSContextLock {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(sessionID))
 	return &s.sessionLocks[hash.Sum32()%uint32(len(s.sessionLocks))]
+}
+
+func (s *PixlabSMSService) workflowLock(scope string) *pixlabSMSContextLock {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(scope))
+	return &s.workflowLocks[hash.Sum32()%uint32(len(s.workflowLocks))]
 }
 
 func (s *PixlabSMSService) finishProviderResponse(ctx context.Context, sessionID string, ownerUserID int64, provider *pixlabSMSProviderResponse, settleMemberFee, persistTerminal bool) (*PixlabSMSResult, error) {

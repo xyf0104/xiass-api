@@ -1812,6 +1812,27 @@ function isPhoneInputMetadata(metadata) {
     && !/code|otp|one-time|验证码/.test(metadata)
 }
 
+function batchOAuthPageError(code, message) {
+  return Object.assign(new Error(message), { code })
+}
+
+function openAIPhoneSubmissionFailure(body) {
+  if (/oops, an error occurred!.*route error\s*\(400\s+invalid content type:\s*text\/html/i.test(body)) {
+    return 'openai_route_error'
+  }
+  if (/error_code:\s*invalid_state|sign-in session is no longer valid|session ended/i.test(body)) {
+    return 'oauth_session_expired'
+  }
+  if (
+    /phone.*(?:invalid|unavailable|used too many|already (?:used|linked|associated)|maximum|max(?:imum)? number|not supported|cannot be used|can't be used)/i.test(body)
+    || /(?:try|use) (?:a )?(?:different|another) phone number|too many (?:accounts|verification attempts)|unable to (?:send|verify).*phone/i.test(body)
+    || /无法使用.*号码|(?:手机号|电话号码).*(?:不可用|无效|次数过多|已使用|已绑定|不受支持)|请.*(?:更换|其他).*号码/i.test(body)
+  ) {
+    return 'phone_rejected'
+  }
+  return ''
+}
+
 function isEmailInputMetadata(metadata) {
   return /email|邮箱/.test(metadata)
     && !/code|otp|one-time|验证码/.test(metadata)
@@ -1921,17 +1942,20 @@ async function submitPhoneOnOpenAI(current, rawPhone) {
 
   const verificationState = await waitForOAuthPage('OpenAI 未进入短信验证码页面', async () => {
     const body = await oauthBody(current)
-    if (/invalid authorization step|invalid_auth_step|授权步骤无效/i.test(body)) {
-      return 'invalid_auth_step'
-    }
-    if (/phone.*(?:invalid|unavailable|used too many)|too many.*phone|无法使用.*号码|手机号.*(?:不可用|次数过多)/i.test(body)) {
-      return 'phone_rejected'
-    }
+    const failure = openAIPhoneSubmissionFailure(body)
+    if (failure) return failure
+    if (/invalid authorization step|invalid_auth_step|授权步骤无效/i.test(body)) return 'invalid_auth_step'
     return (await verificationInputs(current)).length > 0
       && /phone|text message|sms|mobile|短信|手机/i.test(body)
   })
   if (verificationState === 'phone_rejected') {
-    throw new Error('当前手机号不可用或使用次数过多，请确认换号后继续')
+    throw batchOAuthPageError('phone_rejected', '当前手机号不可用或使用次数过多，请确认换号后继续')
+  }
+  if (verificationState === 'openai_route_error') {
+    throw batchOAuthPageError('openai_route_error', 'OpenAI 登录页临时返回 Route Error')
+  }
+  if (verificationState === 'oauth_session_expired') {
+    throw batchOAuthPageError('oauth_session_expired', 'OpenAI 登录会话已失效')
   }
   if (verificationState === 'invalid_auth_step') {
     throw new Error('OpenAI 授权步骤已失效，将从 XIASS 官方 OAuth 链接重新进入手机号步骤')
@@ -3507,6 +3531,7 @@ export {
   pendingInviteRecord,
   pendingInvitesTabSelected,
   isSignupAccountCreationRejectionText,
+  openAIPhoneSubmissionFailure,
   registeredOAuthNextState,
   reauthorizationNextState,
   waitForReauthorizationNextState,
