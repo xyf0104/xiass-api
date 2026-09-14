@@ -612,7 +612,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'OpenAI OAuth 401 重新授权'
+      title: '批量添加账号'
     }
   },
   {

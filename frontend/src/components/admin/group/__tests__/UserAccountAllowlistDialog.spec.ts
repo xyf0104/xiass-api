@@ -119,7 +119,7 @@ describe('UserAccountAllowlistDialog', () => {
     expect(wrapper.emitted('save')).toBeUndefined()
   })
 
-  it('shows occupied slots separately from requests waiting for an account', async () => {
+  it('shows occupied slots separately from requests switching accounts or finishing', async () => {
     const wrapper = mountDialog([], false)
     await wrapper.setProps({
       user: { ...user, current_concurrency: 3 },
@@ -127,7 +127,7 @@ describe('UserAccountAllowlistDialog', () => {
     })
 
     expect(wrapper.get('[data-test="allowlist-active-account-101"]').text()).toContain('×1')
-    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('等待账号槽位')
+    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('换号或处理中')
     expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('×2')
   })
 })

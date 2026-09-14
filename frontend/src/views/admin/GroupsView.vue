@@ -4721,7 +4721,7 @@
                   </td>
                   <td class="px-4 py-3">
                     <div
-                      v-if="activeAccountsForUser(user).length > 0 || waitingConcurrencyForUser(user) > 0"
+                      v-if="activeAccountsForUser(user).length > 0 || unassignedConcurrencyForUser(user) > 0"
                       class="flex flex-wrap gap-1.5"
                     >
                       <span
@@ -4736,13 +4736,13 @@
                         <span class="shrink-0 font-mono text-current/70">×{{ account.userConcurrency }}</span>
                       </span>
                       <span
-                        v-if="waitingConcurrencyForUser(user) > 0"
+                        v-if="unassignedConcurrencyForUser(user) > 0"
                         class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                         :data-test="`runtime-user-waiting-${user.id}`"
                       >
                         <Icon name="clock" size="xs" />
                         {{ t('admin.groups.userAccountAllowlist.waitingForAccount') }}
-                        <span class="font-mono text-current/70">×{{ waitingConcurrencyForUser(user) }}</span>
+                        <span class="font-mono text-current/70">×{{ unassignedConcurrencyForUser(user) }}</span>
                       </span>
                     </div>
                     <span v-else class="text-xs text-gray-400 dark:text-gray-500">
@@ -5435,7 +5435,7 @@ const assignedConcurrencyForUser = (user: UserGroupAccountRuntimeUser): number =
   return user.active_account_ids.length;
 };
 
-const waitingConcurrencyForUser = (user: UserGroupAccountRuntimeUser): number =>
+const unassignedConcurrencyForUser = (user: UserGroupAccountRuntimeUser): number =>
   Math.max(0, (Number(user.current_concurrency) || 0) - assignedConcurrencyForUser(user));
 
 const runtimeCurrentRequestCount = (): number =>

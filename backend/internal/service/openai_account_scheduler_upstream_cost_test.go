@@ -761,7 +761,7 @@ func TestOpenAIFreshUpstreamBillingRateUsesFreshCachedSuccessOnly(t *testing.T) 
 	}
 }
 
-func TestBuildOpenAISelectionOrderIncludesOverflowOnlyForCostScheduling(t *testing.T) {
+func TestBuildOpenAISelectionOrderAlwaysKeepsOverflowAsCapacityFallback(t *testing.T) {
 	scheduler := &defaultOpenAIAccountScheduler{}
 	candidates := []openAIAccountCandidateScore{
 		{account: &Account{ID: 1}, loadInfo: &AccountLoadInfo{}, score: 3},
@@ -769,11 +769,15 @@ func TestBuildOpenAISelectionOrderIncludesOverflowOnlyForCostScheduling(t *testi
 		{account: &Account{ID: 3}, loadInfo: &AccountLoadInfo{}, score: 1},
 	}
 
-	legacy := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
+	ordinary := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
 		candidates: candidates,
 		topK:       1,
 	})
-	require.Len(t, legacy, 1)
+	require.Equal(t, []int64{1, 2, 3}, []int64{
+		ordinary[0].account.ID,
+		ordinary[1].account.ID,
+		ordinary[2].account.ID,
+	})
 
 	costAware := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
 		candidates:              candidates,

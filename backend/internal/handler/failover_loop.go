@@ -101,6 +101,22 @@ func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCo
 	return retryLimit > 0 && retryCount < retryLimit
 }
 
+// sameAccountRetryAllowedForRequest keeps retry policy consistent across the
+// shared and native OpenAI handlers. A non-sticky OpenAI request gets one
+// attempt per account, while an existing sticky binding keeps the historical
+// same-account retry behavior.
+func sameAccountRetryAllowedForRequest(
+	failoverErr *service.UpstreamFailoverError,
+	retryCount, retryLimit int,
+	platform string,
+	hasBoundSession bool,
+) bool {
+	if platform == service.PlatformOpenAI && !hasBoundSession {
+		return false
+	}
+	return sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
+}
+
 func sameAccountRetryDeadlineAllows(failoverErr *service.UpstreamFailoverError) bool {
 	return failoverErr == nil || failoverErr.SameAccountRetryDeadline.IsZero() || time.Now().Before(failoverErr.SameAccountRetryDeadline)
 }
@@ -125,6 +141,7 @@ type FailoverState struct {
 	LastFailoverErr       *service.UpstreamFailoverError
 	ForceCacheBilling     bool
 	hasBoundSession       bool
+	lastFailedPlatform    string
 
 	// profitVetoedAccountIDs 记录被分组利润门终检否决的账号，是 FailedAccountIDs
 	// 的子集。之所以单独维护：HandleSelectionExhausted 的 503 退避分支会清空
@@ -199,12 +216,19 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverCanceled
 	}
 	s.LastFailoverErr = failoverErr
+	s.lastFailedPlatform = platform
 	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
 		return FailoverExhausted
 	}
 
 	// 同账号重试不算切换账号，粘性会话仅在实际切换时强制缓存计费。
-	sameAccountRetry := sameAccountRetryAllowed(failoverErr, s.SameAccountRetryCount[accountID], retryLimit)
+	sameAccountRetry := sameAccountRetryAllowedForRequest(
+		failoverErr,
+		s.SameAccountRetryCount[accountID],
+		retryLimit,
+		platform,
+		s.hasBoundSession,
+	)
 	if needForceCacheBilling(s.hasBoundSession, failoverErr, sameAccountRetry) {
 		s.ForceCacheBilling = true
 	}
@@ -272,6 +296,11 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 	// 不代表账号耗尽，直接按取消终止。
 	if ctx.Err() != nil {
 		return FailoverCanceled
+	}
+	// 非粘性 OpenAI 请求只遍历当前候选账号一轮。所有已尝试账号都被排除后，
+	// 不再清空排除集并等待 2 秒重跑同一批账号。
+	if !s.hasBoundSession && s.lastFailedPlatform == service.PlatformOpenAI {
+		return FailoverExhausted
 	}
 
 	if s.LastFailoverErr != nil &&

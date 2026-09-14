@@ -159,10 +159,16 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if groupPlatform == service.PlatformGemini && selectionSessionHash != "" {
 		selectionSessionHash = "gemini:" + selectionSessionHash
 	}
+	hasBoundSession := false
+	if selectionSessionHash != "" {
+		if accountID, cacheErr := h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, selectionSessionHash); cacheErr == nil {
+			hasBoundSession = accountID > 0
+		}
+	}
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
 	if groupPlatform == service.PlatformGemini {
-		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+		fs = NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 	}
 
 	for {

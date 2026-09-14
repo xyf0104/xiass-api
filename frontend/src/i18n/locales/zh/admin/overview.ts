@@ -853,7 +853,7 @@ export default {
         requests: '个请求',
         activeAccounts: '当前调用账号',
         noActiveAccounts: '暂无活跃调用',
-        waitingForAccount: '等待账号槽位',
+        waitingForAccount: '换号或处理中',
         availableAccounts: '个正常可调度账号',
         originalScheduling: '原版调度',
         restrictedScheduling: '已指定账号',

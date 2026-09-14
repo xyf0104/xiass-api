@@ -299,6 +299,12 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     })
   }
 
+  function prepareNextBatch() {
+    if (hasWork.value) return
+    started.value = false
+    config = undefined
+  }
+
   function dispose() {
     disposed = true
     clearTimeout(timer)
@@ -307,6 +313,6 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   }
   onScopeDispose(dispose)
   void sync()
-  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove,
+  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch,
     hasSecret: (row: OAuthQueueRow) => secrets.has(row.key), refresh: async () => { clearTimeout(timer); await sync() } }
 }

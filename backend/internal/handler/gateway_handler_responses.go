@@ -163,9 +163,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		APIKeyID:  apiKey.ID,
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	hasBoundSession := false
+	if sessionHash != "" {
+		if accountID, cacheErr := h.gatewayService.GetCachedSessionAccountID(requestCtx, apiKey.GroupID, sessionHash); cacheErr == nil {
+			hasBoundSession = accountID > 0
+		}
+	}
 
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
 
 	for {
 		if requestCtx.Err() != nil {

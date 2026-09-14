@@ -114,6 +114,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	hasBoundSession := false
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
@@ -125,7 +126,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	c.Request = c.Request.WithContext(asPricingCtx)
 
 	for {
-		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
 			apiKey.GroupID,
 			"",
@@ -161,6 +162,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		}
 
 		account := selection.Account
+		hasBoundSession = hasBoundSession || scheduleDecision.StickySessionHit
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 		accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
 		if slotResult == openAISlotAcquireProfitVetoed {
@@ -218,7 +220,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		}
 		if failoverErr.RetryableOnSameAccount {
 			retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-			if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+			if sameAccountRetryAllowedForRequest(failoverErr, sameAccountRetryCount[account.ID], retryLimit, account.Platform, hasBoundSession) {
 				sameAccountRetryCount[account.ID]++
 				retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 				reqLog.Warn("openai_alpha_search.pool_mode_same_account_retry",

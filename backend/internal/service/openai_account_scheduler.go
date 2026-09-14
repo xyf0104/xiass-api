@@ -1150,7 +1150,11 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(primary) == 0 {
 			primary = buildOpenAIWeightedSelectionOrder(ranked, req)
 		}
-		if !plan.includeOverflowFallback || groupTopK >= len(pool) {
+		// Top-K controls which accounts are tried first; it must not become a
+		// capacity ceiling. Concurrent requests can race for the same preferred
+		// accounts, so keep the remaining accounts in the probe order and only
+		// create a wait plan after the whole eligible pool has been checked.
+		if groupTopK >= len(pool) {
 			return primary
 		}
 

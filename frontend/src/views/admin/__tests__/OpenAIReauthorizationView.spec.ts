@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
   accountsAPI: {
     getById: vi.fn(),
     list: vi.fn(),
+    delete: vi.fn(),
   },
+  groupsAPI: { getAll: vi.fn() },
+  proxiesAPI: { getAll: vi.fn() },
   executionNodesAPI: {
     getStatus: vi.fn(),
   },
@@ -28,6 +31,8 @@ const { accountsAPI, openAIReauthorizationAPI } = mocks
 vi.mock('@/api/admin', () => ({
   accountsAPI: mocks.accountsAPI,
   executionNodesAPI: mocks.executionNodesAPI,
+  groupsAPI: mocks.groupsAPI,
+  proxiesAPI: mocks.proxiesAPI,
 }))
 vi.mock('@/api/admin/openaiReauthorization', () => ({ openAIReauthorizationAPI: mocks.openAIReauthorizationAPI }))
 vi.mock('vue-router', () => ({
@@ -77,6 +82,12 @@ async function mountView() {
     global: {
       stubs: {
         Icon: { template: '<span />' },
+        BatchOpenAIOAuthModal: { template: '<div data-testid="batch-oauth" />' },
+        ConfirmDialog: {
+          props: ['show', 'title', 'message'],
+          emits: ['confirm', 'cancel'],
+          template: '<div v-if="show" data-testid="delete-confirmation"><p>{{ message }}</p><button data-testid="confirm-delete" @click="$emit(\'confirm\')">确认</button></div>',
+        },
       },
     },
   })
@@ -87,10 +98,13 @@ async function mountView() {
 describe('OpenAIReauthorizationView', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    mocks.route.query = {}
+    mocks.route.query = { workspace: 'reauthorization' }
     mocks.routerPush.mockReset()
     accountsAPI.getById.mockReset()
     accountsAPI.list.mockReset().mockResolvedValue(emptyAccountPage())
+    accountsAPI.delete.mockReset().mockResolvedValue({ message: 'deleted' })
+    mocks.groupsAPI.getAll.mockReset().mockResolvedValue([])
+    mocks.proxiesAPI.getAll.mockReset().mockResolvedValue([])
     mocks.executionNodesAPI.getStatus.mockReset().mockResolvedValue({
       admin_write_allowed: true,
       admin_write_mode: 'single_node',
@@ -116,13 +130,24 @@ describe('OpenAIReauthorizationView', () => {
     accountsAPI.getById.mockResolvedValue(account(448))
     const wrapper = await mountView()
 
-    expect(wrapper.text()).toContain('OpenAI OAuth 401 重新授权')
+    expect(wrapper.text()).toContain('OpenAI OAuth 工作台')
+    expect(wrapper.get('[data-testid="reauthorization-workspace-tab"]').text()).toContain('401 重新授权')
     expect(wrapper.text()).toContain('#448 account-448')
     expect(wrapper.text()).toContain('尚未启动')
     expect(wrapper.text()).not.toContain('Team 子号创建')
     expect(wrapper.text()).not.toContain('覆盖导入原 Team 账号')
     expect(wrapper.text()).not.toContain('等待工作空间 10 秒')
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+    wrapper.unmount()
+  })
+
+  it('opens the native workbench on batch add by default', async () => {
+    mocks.route.query = {}
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="batch-workspace-tab"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="batch-oauth"]').isVisible()).toBe(true)
+    expect(wrapper.text()).toContain('批量添加账号')
     wrapper.unmount()
   })
 
@@ -220,6 +245,26 @@ describe('OpenAIReauthorizationView', () => {
 
     expect(wrapper.text()).toContain('账号受限，不再重试')
     expect(wrapper.find('[data-testid="start-reauthorization-10"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('fully deletes a 401 account and its saved-login task after confirmation', async () => {
+    mocks.route.query = { account_ids: '11', workspace: 'reauthorization' }
+    accountsAPI.getById.mockResolvedValue(account(11))
+    const failedTask = task(11, 'failed', 'failed', 'invalid_credentials')
+    openAIReauthorizationAPI.list.mockResolvedValue({ items: [failedTask], max_concurrency: 3, max_restarts: 2 })
+    openAIReauthorizationAPI.remove.mockResolvedValue({ task_id: failedTask.task_id })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="delete-reauthorization-account-11"]').trigger('click')
+    expect(wrapper.get('[data-testid="delete-confirmation"]').text()).toContain('密码库中的邮箱、密码和 2FA 会同时删除')
+    await wrapper.get('[data-testid="confirm-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(accountsAPI.delete).toHaveBeenCalledWith(11)
+    expect(openAIReauthorizationAPI.remove).toHaveBeenCalledWith(failedTask.task_id)
+    expect(wrapper.find('[data-testid="reauthorization-account-11"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已从账号管理和密码库删除')
     wrapper.unmount()
   })
 })

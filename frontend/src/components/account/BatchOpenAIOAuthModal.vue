@@ -1,5 +1,14 @@
 <template>
-  <BaseDialog :show="show" title="批量添加账号" width="full" :close-on-escape="!hasWork" @close="requestClose">
+  <component
+    :is="embedded ? 'section' : BaseDialog"
+    v-if="embedded || show"
+    :show="embedded ? undefined : show"
+    :title="embedded ? undefined : '批量添加账号'"
+    :width="embedded ? undefined : 'full'"
+    :close-on-escape="embedded ? undefined : !hasWork"
+    :class="embedded ? 'min-w-0' : undefined"
+    @close="requestClose"
+  >
     <div class="space-y-4" data-testid="batch-oauth">
       <p v-if="error || localError" role="alert" class="text-sm text-red-600 dark:text-red-300">{{ error || localError }}</p>
       <fieldset v-if="!started" :disabled="loading || hasWork" class="space-y-4">
@@ -98,15 +107,14 @@
         </div>
       </section>
     </div>
-    <template #footer>
-      <div class="flex flex-wrap justify-end gap-3">
-        <button class="btn btn-secondary" :disabled="loading" @click="refresh"><Icon name="refresh" size="sm" />刷新状态</button>
-        <button v-if="hasWork" class="btn btn-secondary text-red-600 dark:text-red-300" :disabled="busyKeys.size > 0" @click="ask('stopAll')">停止全部</button>
-        <button v-if="!started" class="btn btn-primary" :disabled="!canStart" data-testid="batch-start" @click="begin"><Icon name="play" size="sm" />开始授权</button>
-        <button v-else class="btn btn-secondary" @click="requestClose">关闭</button>
-      </div>
-    </template>
-  </BaseDialog>
+    <div class="mt-4 flex flex-wrap justify-end gap-3 border-t border-gray-200 pt-4 dark:border-dark-700">
+      <button class="btn btn-secondary" :disabled="loading" @click="refresh"><Icon name="refresh" size="sm" />刷新状态</button>
+      <button v-if="hasWork" class="btn btn-secondary text-red-600 dark:text-red-300" :disabled="busyKeys.size > 0" @click="ask('stopAll')">停止全部</button>
+      <button v-if="!started" class="btn btn-primary" :disabled="!canStart" data-testid="batch-start" @click="begin"><Icon name="play" size="sm" />开始授权</button>
+      <button v-else-if="embedded && batchFinished" class="btn btn-primary" @click="prepareNextBatch"><Icon name="userPlus" size="sm" />添加下一批</button>
+      <button v-else-if="!embedded" class="btn btn-secondary" @click="requestClose">关闭</button>
+    </div>
+  </component>
   <ConfirmDialog :show="!!confirmation" :title="confirmationTitle" :message="confirmationMessage" :danger="confirmation?.action === 'stop' || confirmation?.action === 'stopAll' || confirmation?.action === 'close'" @cancel="dismiss" @confirm="confirmAction" />
 </template>
 
@@ -125,9 +133,12 @@ import { parseAccountCredentials } from '@/features/token-converter/accountCrede
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
 import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
 
-defineProps<{ show: boolean; groups: AdminGroup[]; proxies: Proxy[] }>()
+withDefaults(defineProps<{ show?: boolean; embedded?: boolean; groups: AdminGroup[]; proxies: Proxy[] }>(), {
+  show: true,
+  embedded: false,
+})
 const emit = defineEmits<{ close: []; created: [] }>()
-const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, hasSecret, refresh } = useBatchOpenAIOAuth(() => emit('created'))
+const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, hasSecret, refresh } = useBatchOpenAIOAuth(() => emit('created'))
 const input = ref('')
 const localError = ref('')
 const pools = ref<{ id: number; name: string; proxy_id: number | null }[]>([])

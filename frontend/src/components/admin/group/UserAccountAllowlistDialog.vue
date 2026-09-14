@@ -35,7 +35,7 @@
             {{ text('admin.groups.userAccountAllowlist.activeAccounts', '当前调用账号') }}
           </div>
           <div class="mt-1 min-h-6">
-            <div v-if="activeAccountNames.length > 0 || waitingConcurrency > 0" class="flex flex-wrap gap-1.5">
+            <div v-if="activeAccountNames.length > 0 || unassignedConcurrency > 0" class="flex flex-wrap gap-1.5">
               <span
                 v-for="account in activeAccountNames"
                 :key="account.id"
@@ -48,13 +48,13 @@
                 <span class="shrink-0 font-mono text-current/70">×{{ account.userConcurrency }}</span>
               </span>
               <span
-                v-if="waitingConcurrency > 0"
+                v-if="unassignedConcurrency > 0"
                 class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                 data-test="allowlist-waiting-account"
               >
                 <Icon name="clock" size="xs" />
-                {{ text('admin.groups.userAccountAllowlist.waitingForAccount', '等待账号槽位') }}
-                <span class="font-mono text-current/70">×{{ waitingConcurrency }}</span>
+                {{ text('admin.groups.userAccountAllowlist.waitingForAccount', '换号或处理中') }}
+                <span class="font-mono text-current/70">×{{ unassignedConcurrency }}</span>
               </span>
             </div>
             <span v-else class="text-sm text-gray-400 dark:text-gray-500">{{ text('admin.groups.userAccountAllowlist.noActiveAccounts', '暂无活跃调用') }}</span>
@@ -291,7 +291,7 @@ const assignedConcurrency = computed(() => {
   return props.activeAccountIds.length
 })
 
-const waitingConcurrency = computed(() =>
+const unassignedConcurrency = computed(() =>
   Math.max(0, currentUserConcurrency.value - assignedConcurrency.value)
 )
 

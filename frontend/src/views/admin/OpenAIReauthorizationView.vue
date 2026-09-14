@@ -1,16 +1,20 @@
 <template>
-  <div class="space-y-4" data-testid="openai-reauthorization-view">
-    <header class="flex flex-wrap items-start justify-between gap-3">
+  <div class="openai-account-workbench mx-auto w-full max-w-[1200px] min-w-0 space-y-5 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
+    <header class="mx-auto flex w-full max-w-[1120px] min-w-0 flex-col gap-3 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between">
       <div class="flex min-w-0 items-start gap-3">
         <button type="button" class="btn btn-secondary flex h-9 w-9 shrink-0 items-center justify-center p-0" title="返回账号管理" aria-label="返回账号管理" @click="backToAccounts">
           <Icon name="arrowLeft" size="sm" :stroke-width="2" />
         </button>
         <div class="min-w-0">
-          <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">OpenAI OAuth 401 重新授权管理</h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">待授权账号与账号密码库统一管理；每个账号使用独立隐私上下文。</p>
+          <div class="mb-2 flex items-center gap-2 text-xs font-semibold text-primary-600 dark:text-primary-400">
+            <Icon name="userPlus" size="sm" :stroke-width="2" />
+            <span>OpenAI OAuth 工作台</span>
+          </div>
+          <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100">批量添加账号</h1>
+          <p class="mt-1 max-w-2xl text-sm text-gray-500 dark:text-gray-400">批量添加、401 重新授权和账号登录信息在同一工作台处理。</p>
         </div>
       </div>
-      <div v-if="activeWorkspace === 'reauthorization'" class="flex flex-wrap items-center gap-2">
+      <div v-if="activeWorkspace === 'reauthorization'" class="flex flex-wrap items-center justify-end gap-2">
         <button type="button" class="btn btn-secondary flex items-center gap-2" :disabled="loading || refreshing" @click="refreshAll">
           <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
           <span>刷新状态</span>
@@ -22,27 +26,39 @@
       </div>
     </header>
 
-    <section class="overflow-hidden border-y border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-      <nav class="flex min-w-0 overflow-x-auto border-b border-gray-200 px-4 dark:border-dark-700" role="tablist" aria-label="401 重新授权管理">
+    <section class="mx-auto w-full max-w-[1120px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
+      <nav class="flex min-w-0 overflow-x-auto border-b border-gray-200 px-3 dark:border-dark-700 sm:px-4" role="tablist" aria-label="OpenAI OAuth 账号工作台">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeWorkspace === 'batch'"
+          class="workbench-tab"
+          :class="activeWorkspace === 'batch' ? 'workbench-tab-active' : 'workbench-tab-idle'"
+          data-testid="batch-workspace-tab"
+          @click="activeWorkspace = 'batch'"
+        >
+          <Icon name="userPlus" size="sm" :stroke-width="2" />
+          <span>批量添加</span>
+        </button>
         <button
           type="button"
           role="tab"
           :aria-selected="activeWorkspace === 'reauthorization'"
-          class="-mb-px flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors"
-          :class="activeWorkspace === 'reauthorization' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          class="workbench-tab"
+          :class="activeWorkspace === 'reauthorization' ? 'workbench-tab-active' : 'workbench-tab-idle'"
           data-testid="reauthorization-workspace-tab"
           @click="activeWorkspace = 'reauthorization'"
         >
           <Icon name="refresh" size="sm" :stroke-width="2" />
-          <span>待重新授权</span>
+          <span>401 重新授权</span>
           <span class="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-dark-700">{{ accounts.length }}</span>
         </button>
         <button
           type="button"
           role="tab"
           :aria-selected="activeWorkspace === 'credentials'"
-          class="-mb-px flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors"
-          :class="activeWorkspace === 'credentials' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          class="workbench-tab"
+          :class="activeWorkspace === 'credentials' ? 'workbench-tab-active' : 'workbench-tab-idle'"
           data-testid="credential-library-workspace-tab"
           @click="activeWorkspace = 'credentials'"
         >
@@ -51,64 +67,87 @@
         </button>
       </nav>
 
+      <div v-show="activeWorkspace === 'batch'" class="min-w-0">
+        <div class="border-b border-gray-200 px-4 py-4 dark:border-dark-700 sm:px-5">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">批量添加 OpenAI OAuth 账号</h2>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">账号按当前号池、代理、分组、并发数和优先级保存。</p>
+        </div>
+        <div v-if="batchOptionsError" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300" role="alert">{{ batchOptionsError }}</div>
+        <div v-if="batchOptionsLoading" class="flex min-h-48 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <Icon name="refresh" size="sm" class="animate-spin" />
+          正在读取账号配置
+        </div>
+        <div v-else class="px-4 py-5 sm:px-5">
+          <BatchOpenAIOAuthModal
+            embedded
+            :groups="groups"
+            :proxies="proxies"
+            @created="handleBatchAccountCreated"
+          />
+        </div>
+      </div>
+
       <template v-if="activeWorkspace === 'reauthorization'">
-        <div class="grid gap-3 border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:grid-cols-5">
-          <div v-for="item in summary" :key="item.label" class="min-w-0">
+        <div class="grid grid-cols-2 gap-px border-b border-gray-200 bg-gray-200 dark:border-dark-700 dark:bg-dark-700 sm:grid-cols-5">
+          <div v-for="item in summary" :key="item.label" class="min-w-0 bg-white px-4 py-3 dark:bg-dark-800">
             <p class="text-xs text-gray-500 dark:text-gray-400">{{ item.label }}</p>
             <p class="mt-0.5 text-lg font-semibold" :class="item.className">{{ item.value }}</p>
           </div>
         </div>
 
-        <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">
-          {{ loadError }}
-        </div>
+        <div v-if="operationNotice" class="border-b border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900/60 dark:bg-green-950/20 dark:text-green-300" role="status">{{ operationNotice }}</div>
+        <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">{{ loadError }}</div>
 
-        <div v-if="loading" class="flex min-h-40 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <div v-if="loading" class="flex min-h-48 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
           <Icon name="refresh" size="sm" class="animate-spin" />
           正在读取待授权账号
         </div>
 
-        <div v-else-if="!orderedAccounts.length" class="flex min-h-40 flex-col items-center justify-center px-4 text-center">
+        <div v-else-if="!orderedAccounts.length" class="flex min-h-48 flex-col items-center justify-center px-4 text-center">
           <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
           <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有待处理的 OpenAI OAuth 401 账号</p>
         </div>
 
         <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
-          <article v-for="account in orderedAccounts" :key="account.id" class="grid min-w-0 gap-3 px-4 py-4 xl:grid-cols-[minmax(230px,0.8fr)_minmax(360px,1.6fr)_auto] xl:items-center" :data-testid="`reauthorization-account-${account.id}`">
-          <div class="min-w-0">
-            <div class="flex min-w-0 flex-wrap items-center gap-2">
-              <p class="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">#{{ account.id }} {{ account.name }}</p>
-              <span v-if="account.execution_node_id" class="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-500 dark:border-dark-600 dark:text-gray-400">{{ account.execution_node_id }}</span>
+          <article v-for="account in orderedAccounts" :key="account.id" class="grid min-w-0 gap-4 px-4 py-4 sm:px-5 xl:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.6fr)_auto] xl:items-center" :data-testid="`reauthorization-account-${account.id}`">
+            <div class="min-w-0">
+              <div class="flex min-w-0 flex-wrap items-center gap-2">
+                <p class="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">#{{ account.id }} {{ account.name }}</p>
+                <span v-if="account.execution_node_id" class="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-500 dark:border-dark-600 dark:text-gray-400">{{ account.execution_node_id }}</span>
+              </div>
+              <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(account) }}</p>
             </div>
-            <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(account) }}</p>
-          </div>
 
-          <div class="min-w-0">
-            <div class="flex min-w-0 items-center justify-between gap-3">
-              <p class="truncate text-sm font-medium" :class="statusClass(account)">{{ statusLabel(account) }}</p>
-              <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ elapsedText(account) }}</span>
+            <div class="min-w-0">
+              <div class="flex min-w-0 items-center justify-between gap-3">
+                <p class="truncate text-sm font-medium" :class="statusClass(account)">{{ statusLabel(account) }}</p>
+                <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ elapsedText(account) }}</span>
+              </div>
+              <div class="mt-2 h-1.5 overflow-hidden rounded bg-gray-200 dark:bg-dark-700">
+                <div class="h-full transition-[width] duration-300" :class="progressClass(account)" :style="{ width: `${progressPercent(account)}%` }" />
+              </div>
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ stepLabel(account) }}</p>
+              <p v-if="failureText(account)" class="mt-1 break-words text-sm text-red-600 dark:text-red-400" role="alert">{{ failureText(account) }}</p>
             </div>
-            <div class="mt-2 h-1.5 overflow-hidden rounded bg-gray-200 dark:bg-dark-700">
-              <div class="h-full transition-[width] duration-300" :class="progressClass(account)" :style="{ width: `${progressPercent(account)}%` }" />
-            </div>
-            <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ stepLabel(account) }}</p>
-            <p v-if="failureText(account)" class="mt-1 break-words text-sm text-red-600 dark:text-red-400" role="alert">{{ failureText(account) }}</p>
-          </div>
 
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <button v-if="isActive(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" @click="stopAccount(account)">
-              <Icon name="x" size="sm" :stroke-width="2" />
-              <span>停止</span>
-            </button>
-            <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="startAccount(account)">
-              <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
-              <span>{{ retryLabel(account) }}</span>
-            </button>
-            <span v-else-if="taskFor(account)?.reason === 'account_blocked'" class="text-xs font-medium text-red-600 dark:text-red-400">账号受限，不再重试</span>
-            <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
-              <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
-            </span>
-          </div>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <button v-if="isActive(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" @click="stopAccount(account)">
+                <Icon name="x" size="sm" :stroke-width="2" />
+                <span>停止</span>
+              </button>
+              <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="startAccount(account)">
+                <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
+                <span>{{ retryLabel(account) }}</span>
+              </button>
+              <span v-else-if="taskFor(account)?.reason === 'account_blocked'" class="text-xs font-medium text-red-600 dark:text-red-400">账号受限，不再重试</span>
+              <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
+                <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5 text-red-600 dark:text-red-300" :disabled="deletingAccountIDs.has(account.id)" :data-testid="`delete-reauthorization-account-${account.id}`" @click="requestDeleteAccount(account)">
+                <Icon name="trash" size="sm" :class="deletingAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
+                <span>{{ deletingAccountIDs.has(account.id) ? '正在删除' : '删除账号' }}</span>
+              </button>
+            </div>
           </article>
         </div>
       </template>
@@ -119,6 +158,17 @@
         @updated="handleCredentialLibraryUpdated"
       />
     </section>
+
+    <ConfirmDialog
+      :show="Boolean(pendingDeleteAccount)"
+      title="删除 401 账号"
+      :message="deleteConfirmationMessage"
+      confirm-text="删除账号"
+      cancel-text="取消"
+      danger
+      @confirm="confirmDeleteAccount"
+      @cancel="pendingDeleteAccount = null"
+    />
   </div>
 </template>
 
@@ -126,10 +176,12 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from '@/components/icons'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
 import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
-import { accountsAPI } from '@/api/admin'
+import { accountsAPI, groupsAPI, proxiesAPI } from '@/api/admin'
 import { openAIReauthorizationAPI, type OpenAIReauthorizationTask } from '@/api/admin/openaiReauthorization'
-import type { Account } from '@/types'
+import type { Account, AdminGroup, Proxy } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const route = useRoute()
@@ -145,8 +197,16 @@ const maxRestarts = ref(2)
 const now = ref(Date.now())
 const queuedAccountIDs = ref<number[]>([])
 const busyAccountIDs = ref(new Set<number>())
+const deletingAccountIDs = ref(new Set<number>())
 const localErrors = ref(new Map<number, string>())
-const activeWorkspace = ref<'reauthorization' | 'credentials'>('reauthorization')
+const groups = ref<AdminGroup[]>([])
+const proxies = ref<Proxy[]>([])
+const batchOptionsLoading = ref(true)
+const batchOptionsError = ref('')
+const operationNotice = ref('')
+const pendingDeleteAccount = ref<Account | null>(null)
+type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'credentials'
+const activeWorkspace = ref<WorkbenchWorkspace>(initialWorkspace())
 const completingTaskIDs = new Set<string>()
 const smsTaskIDs = new Set<string>()
 let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -155,6 +215,12 @@ let disposed = false
 const activeStatuses = new Set(['queued', 'running', 'ready'])
 const terminalFailureStatuses = new Set(['failed', 'blocked', 'canceled'])
 const restrictedReasons = new Set(['account_blocked'])
+
+function initialWorkspace(): WorkbenchWorkspace {
+  const raw = Array.isArray(route.query.workspace) ? route.query.workspace[0] : route.query.workspace
+  if (raw === 'batch' || raw === 'reauthorization' || raw === 'credentials') return raw
+  return queryAccountIDs().length ? 'reauthorization' : 'batch'
+}
 
 const taskByAccountID = computed(() => {
   const result = new Map<number, OpenAIReauthorizationTask>()
@@ -179,6 +245,12 @@ const summary = computed(() => [
   { label: '成功', value: completedCount.value, className: 'text-green-600 dark:text-green-400' },
   { label: '失败', value: failedCount.value, className: 'text-red-600 dark:text-red-400' }
 ])
+
+const deleteConfirmationMessage = computed(() => {
+  const account = pendingDeleteAccount.value
+  if (!account) return ''
+  return `#${account.id} ${account.name} 将从账号管理中完整删除。所属分组、密码库中的邮箱、密码和 2FA 会同时删除，此操作不可撤销。`
+})
 
 const orderedAccounts = computed(() => [...accounts.value].sort((a, b) => {
   const rank = (account: Account) => {
@@ -221,6 +293,23 @@ async function loadAccounts() {
     page++
   }
   accounts.value = [...found.values()].filter(account => accountNeedsReauthorization(account, requested)).sort((a, b) => a.id - b.id)
+}
+
+async function loadBatchOptions() {
+  batchOptionsLoading.value = true
+  batchOptionsError.value = ''
+  try {
+    const [availableGroups, availableProxies] = await Promise.all([
+      groupsAPI.getAll('openai'),
+      proxiesAPI.getAll(),
+    ])
+    groups.value = availableGroups
+    proxies.value = availableProxies
+  } catch (error) {
+    batchOptionsError.value = extractApiErrorMessage(error, '读取分组或代理配置失败。')
+  } finally {
+    batchOptionsLoading.value = false
+  }
 }
 
 function taskFor(account: Account): OpenAIReauthorizationTask | undefined {
@@ -359,6 +448,49 @@ function setBusy(accountID: number, busy: boolean) {
   busyAccountIDs.value = next
 }
 
+function setDeleting(accountID: number, deleting: boolean) {
+  const next = new Set(deletingAccountIDs.value)
+  if (deleting) next.add(accountID)
+  else next.delete(accountID)
+  deletingAccountIDs.value = next
+}
+
+function requestDeleteAccount(account: Account) {
+  operationNotice.value = ''
+  pendingDeleteAccount.value = account
+}
+
+async function confirmDeleteAccount() {
+  const account = pendingDeleteAccount.value
+  if (!account || deletingAccountIDs.value.has(account.id)) return
+  pendingDeleteAccount.value = null
+  setDeleting(account.id, true)
+  loadError.value = ''
+  operationNotice.value = ''
+  try {
+    const task = taskFor(account)
+    if (task && activeStatuses.has(task.status)) {
+      mergeTask(await openAIReauthorizationAPI.cancel(task.task_id))
+    }
+    await accountsAPI.delete(account.id)
+    accounts.value = accounts.value.filter(candidate => candidate.id !== account.id)
+    queuedAccountIDs.value = queuedAccountIDs.value.filter(id => id !== account.id)
+    tasks.value = tasks.value.filter(candidate => candidate.target_account_id !== account.id)
+    if (task) {
+      try {
+        await openAIReauthorizationAPI.remove(task.task_id)
+      } catch {
+        // The account and saved login information are already deleted.
+      }
+    }
+    operationNotice.value = `#${account.id} ${account.name} 已从账号管理和密码库删除。`
+  } catch (error) {
+    loadError.value = extractApiErrorMessage(error, `删除 #${account.id} ${account.name} 失败。`)
+  } finally {
+    setDeleting(account.id, false)
+  }
+}
+
 async function startAccount(account: Account) {
   if (!canStart(account)) return
   setBusy(account.id, true)
@@ -471,6 +603,10 @@ async function handleCredentialLibraryUpdated() {
   await loadAccounts()
 }
 
+async function handleBatchAccountCreated() {
+  await loadAccounts()
+}
+
 function schedulePoll() {
   if (disposed) return
   pollTimer = setTimeout(async () => {
@@ -487,7 +623,7 @@ function backToAccounts() {
 onMounted(async () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
   try {
-    await Promise.all([loadAccounts(), syncTasks()])
+    await Promise.all([loadAccounts(), syncTasks(), loadBatchOptions()])
   } catch (error) {
     loadError.value = extractApiErrorMessage(error, '读取待授权账号失败。')
   } finally {
@@ -501,3 +637,41 @@ onBeforeUnmount(() => {
   if (pollTimer) clearTimeout(pollTimer)
 })
 </script>
+
+<style scoped>
+.openai-account-workbench {
+  overflow-x: clip;
+}
+
+.workbench-tab {
+  margin-bottom: -1px;
+  display: flex;
+  height: 3rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom-width: 2px;
+  padding-inline: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.workbench-tab-active {
+  @apply border-primary-500 text-primary-700 dark:text-primary-300;
+}
+
+.workbench-tab-idle {
+  @apply border-transparent text-gray-500 dark:text-gray-400;
+}
+
+.workbench-tab-idle:hover {
+  @apply text-gray-800 dark:text-gray-200;
+}
+
+@media (max-width: 639px) {
+  .openai-account-workbench :deep(.btn) {
+    max-width: 100%;
+  }
+}
+</style>

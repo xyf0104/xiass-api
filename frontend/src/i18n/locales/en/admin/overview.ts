@@ -863,7 +863,7 @@ export default {
         requests: 'requests',
         activeAccounts: 'Accounts in Use',
         noActiveAccounts: 'No active calls',
-        waitingForAccount: 'Waiting for slot',
+        waitingForAccount: 'Switching or processing',
         availableAccounts: 'normal schedulable accounts',
         originalScheduling: 'Original Scheduling',
         restrictedScheduling: 'Selected Accounts',
