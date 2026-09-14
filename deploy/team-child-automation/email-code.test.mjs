@@ -25,6 +25,7 @@ test('extracts a single contextual OpenAI code', () => {
 test('baselines old messages and returns only a new OpenAI code with pinned requests', async () => {
   let current = 10_000
   let listCount = 0
+  const listTimes = []
   const calls = []
   const fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options })
@@ -32,6 +33,7 @@ test('baselines old messages and returns only a new OpenAI code with pinned requ
     if (String(url).endsWith('/authorize')) return json({ accessProof: 'proof', accessProofExpiresAt: 9999999999 })
     if (String(url).includes('/items?')) {
       listCount++
+      listTimes.push(current)
       return json({ messages: listCount < 3
         ? [{ id: 'old', from: 'OpenAI', subject: 'Old code', snippet: 'Verification code: 111111', date: new Date(1_000).toISOString() }]
         : [
@@ -57,6 +59,7 @@ test('baselines old messages and returns only a new OpenAI code with pinned requ
   assert.equal(list.options.headers['X-Public-Email'], email)
   assert.equal(list.options.headers['X-Public-Email-Token'], token)
   assert.equal(list.options.headers['X-Mail-Access-Proof'], 'proof')
+  assert.deepEqual(listTimes, [10_000, 20_000, 25_000])
   session.close()
 })
 

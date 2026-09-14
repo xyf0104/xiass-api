@@ -1,6 +1,7 @@
 const PROVIDER_ORIGIN = 'https://ic.g-c.cc'
 const DEFAULT_TIMEOUT_MS = 60_000
 const DEFAULT_INTERVAL_MS = 5_000
+const DEFAULT_INITIAL_DELAY_MS = 10_000
 const MAX_RESPONSE_BYTES = 256 * 1024
 
 function emailCodeError(code) {
@@ -210,8 +211,14 @@ export async function createICGCEmailCodeSession({ email, token, signal }, depen
   const processed = new Set(baseline)
 
   return {
-    async waitForCode({ notBefore = now(), timeoutMs = DEFAULT_TIMEOUT_MS, intervalMs = DEFAULT_INTERVAL_MS } = {}) {
+    async waitForCode({ notBefore = now(), timeoutMs = DEFAULT_TIMEOUT_MS, intervalMs = DEFAULT_INTERVAL_MS, initialDelayMs = DEFAULT_INITIAL_DELAY_MS } = {}) {
       const deadline = now() + timeoutMs
+      // The provider inbox commonly needs several seconds after OpenAI sends
+      // the message. Avoid an early empty query and begin from the requested
+      // time, while keeping the original one-minute overall deadline.
+      const firstQueryAt = Number(notBefore) + Math.max(0, Number(initialDelayMs) || 0)
+      const initialWait = Math.min(Math.max(0, firstQueryAt - now()), Math.max(0, deadline - now()))
+      if (initialWait > 0) await wait(initialWait, signal, setTimeoutImpl, clearTimeoutImpl)
       let successfulQuery = false
       while (!closed && !signal?.aborted && now() < deadline) {
         try {
