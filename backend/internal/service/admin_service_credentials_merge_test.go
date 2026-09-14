@@ -125,6 +125,7 @@ func TestCreateAccount_RejectsManagedOpenAIReauthorizationCredentials(t *testing
 		OpenAIOAuthReauthorizationEmailCredentialKey,
 		OpenAIOAuthReauthorizationPasswordCredentialKey,
 		OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+		OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
 	} {
 		t.Run(key, func(t *testing.T) {
 			account, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
@@ -195,10 +196,11 @@ func TestUpdateAccount_ManagedOpenAIReauthorizationCredentialsRequireDedicatedCa
 
 func TestStripOpenAIReauthorizationCredentials_RemovesAllManagedKeys(t *testing.T) {
 	credentials := stripOpenAIReauthorizationCredentials(map[string]any{
-		OpenAITeamChildPasswordCredentialKey:              "encrypted:team-password",
-		OpenAIOAuthReauthorizationEmailCredentialKey:      "ordinary@example.test",
-		OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted:ordinary-password",
-		OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted:ordinary-totp",
+		OpenAITeamChildPasswordCredentialKey:                  "encrypted:team-password",
+		OpenAIOAuthReauthorizationEmailCredentialKey:          "ordinary@example.test",
+		OpenAIOAuthReauthorizationPasswordCredentialKey:       "encrypted:ordinary-password",
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey:     "encrypted:ordinary-totp",
+		OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted:email-code-token",
 		"base_url": "https://api.example.test",
 	})
 
@@ -206,6 +208,7 @@ func TestStripOpenAIReauthorizationCredentials_RemovesAllManagedKeys(t *testing.
 	require.NotContains(t, credentials, OpenAIOAuthReauthorizationEmailCredentialKey)
 	require.NotContains(t, credentials, OpenAIOAuthReauthorizationPasswordCredentialKey)
 	require.NotContains(t, credentials, OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
+	require.NotContains(t, credentials, OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	require.Equal(t, "https://api.example.test", credentials["base_url"])
 }
 

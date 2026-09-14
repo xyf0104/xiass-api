@@ -278,10 +278,11 @@ func (s *AccountRepoSuite) TestDelete_ClearsSavedLoginCredentials() {
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"access_token": "oauth-token-kept-for-existing-delete-semantics",
-			service.OpenAITeamChildPasswordCredentialKey:              "encrypted-team-password",
-			service.OpenAIOAuthReauthorizationEmailCredentialKey:      "owner@example.test",
-			service.OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted-password",
-			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted-totp",
+			service.OpenAITeamChildPasswordCredentialKey:                  "encrypted-team-password",
+			service.OpenAIOAuthReauthorizationEmailCredentialKey:          "owner@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey:       "encrypted-password",
+			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey:     "encrypted-totp",
+			service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted-email-code-token",
 		},
 	})
 
@@ -298,6 +299,7 @@ func (s *AccountRepoSuite) TestDelete_ClearsSavedLoginCredentials() {
 		service.OpenAIOAuthReauthorizationEmailCredentialKey,
 		service.OpenAIOAuthReauthorizationPasswordCredentialKey,
 		service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+		service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
 	} {
 		s.Require().NotContains(deleted.Credentials, key)
 	}

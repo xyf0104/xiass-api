@@ -506,6 +506,7 @@ func exportableAccountCredentials(credentials map[string]any) map[string]any {
 		if key == service.OpenAITeamChildPasswordCredentialKey ||
 			key == service.OpenAIOAuthReauthorizationPasswordCredentialKey ||
 			key == service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey ||
+			key == service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey ||
 			key == service.OpenAIOAuthReauthorizationEmailCredentialKey {
 			continue
 		}

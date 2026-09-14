@@ -193,6 +193,7 @@ func TestSaveOpenAIAccountReauthorizationCredentialsEncryptsAndRedactsPassword(t
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"email": "ordinary@example.test",
+			service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted:old-email-code-token",
 		},
 	}
 	handler := &OpenAIOAuthHandler{adminService: adminService, secretEncryptor: teamChildTestEncryptor{}}
@@ -207,8 +208,56 @@ func TestSaveOpenAIAccountReauthorizationCredentialsEncryptsAndRedactsPassword(t
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	require.Equal(t, "ordinary@example.test", adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey])
 	require.Equal(t, "encrypted:"+password, adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey])
+	require.Nil(t, adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey])
 	require.NotContains(t, recorder.Body.String(), password)
 	require.NotContains(t, recorder.Body.String(), "encrypted:"+password)
+}
+
+func TestSaveOpenAIAccountReauthorizationCredentialsEncryptsSeparateEmailCodeToken(t *testing.T) {
+	token := strings.Repeat("c", 64)
+	adminService := newStubAdminService()
+	adminService.getAccountResult = &service.Account{
+		ID:       95,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"email": "ordinary@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted:old-password",
+			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted:old-totp",
+		},
+	}
+	handler := &OpenAIOAuthHandler{adminService: adminService, secretEncryptor: teamChildTestEncryptor{}}
+	router := teamChildAdminTestRouter(handler)
+	router.POST("/accounts/:account_id/reauthorization-credentials", handler.SaveOpenAIAccountReauthorizationCredentials)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/accounts/95/reauthorization-credentials", strings.NewReader(`{"email":"ordinary@example.test","email_code_token":"`+token+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "encrypted:"+token, adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey])
+	require.Nil(t, adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey])
+	require.Nil(t, adminService.lastUpdateAccountInput.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey])
+	require.NotContains(t, recorder.Body.String(), token)
+	require.NotContains(t, recorder.Body.String(), "encrypted:"+token)
+}
+
+func TestSaveOpenAIAccountReauthorizationCredentialsRejectsMixedLoginMethods(t *testing.T) {
+	adminService := newStubAdminService()
+	adminService.getAccountResult = &service.Account{ID: 96, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"email": "ordinary@example.test"}}
+	handler := &OpenAIOAuthHandler{adminService: adminService, secretEncryptor: teamChildTestEncryptor{}}
+	router := teamChildAdminTestRouter(handler)
+	router.POST("/accounts/:account_id/reauthorization-credentials", handler.SaveOpenAIAccountReauthorizationCredentials)
+
+	recorder := httptest.NewRecorder()
+	body := `{"email":"ordinary@example.test","password":"secret-password","totp_secret":"JBSWY3DPEHPK3PXP","email_code_token":"` + strings.Repeat("d", 64) + `"}`
+	request := httptest.NewRequest(http.MethodPost, "/accounts/96/reauthorization-credentials", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Nil(t, adminService.lastUpdateAccountInput)
 }
 
 func TestSaveOpenAIAccountReauthorizationCredentialsAllowsPasswordlessLogin(t *testing.T) {

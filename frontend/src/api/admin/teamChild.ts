@@ -47,6 +47,8 @@ export interface OpenAIAccountReauthorizationCredentialsRequest {
   password?: string
   /** Omitted preserves the saved authenticator, empty explicitly clears it. */
   totp_secret?: string
+  /** Omitted preserves the email-code token, empty explicitly clears it. */
+  email_code_token?: string
 }
 
 export interface TeamChildMailboxCode {

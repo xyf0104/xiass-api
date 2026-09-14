@@ -12,9 +12,23 @@
     <div class="space-y-4" data-testid="batch-oauth">
       <p v-if="error || localError" role="alert" class="text-sm text-red-600 dark:text-red-300">{{ error || localError }}</p>
       <fieldset v-if="!started" :disabled="loading || hasWork" class="space-y-4">
-        <label class="block text-sm text-gray-700 dark:text-gray-200">
+        <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="tablist" aria-label="批量登录方式">
+          <button type="button" role="tab" class="batch-mode-tab" :class="loginMode === 'password' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-selected="loginMode === 'password'" data-testid="batch-mode-password" @click="loginMode = 'password'">
+            <Icon name="key" size="sm" />密码 + 2FA
+          </button>
+          <button type="button" role="tab" class="batch-mode-tab" :class="loginMode === 'email_code' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-selected="loginMode === 'email_code'" data-testid="batch-mode-email-code" @click="loginMode = 'email_code'">
+            <Icon name="mail" size="sm" />邮箱验证码
+          </button>
+        </div>
+
+        <label v-if="loginMode === 'password'" class="block text-sm text-gray-700 dark:text-gray-200">
           邮箱、密码、2FA
-          <textarea v-model="input" class="input mt-2 min-h-28 resize-y font-mono" rows="4" autocomplete="off" autocapitalize="off" :spellcheck="false" placeholder="邮箱----密码----2FA，每行一个账号" data-testid="batch-credentials" />
+          <textarea v-model="passwordInput" class="input mt-2 min-h-28 resize-y font-mono" rows="4" autocomplete="off" autocapitalize="off" :spellcheck="false" placeholder="邮箱----密码----2FA，每行一个账号" data-testid="batch-credentials-password" />
+        </label>
+        <label v-else class="block text-sm text-gray-700 dark:text-gray-200">
+          邮箱验证码账号
+          <textarea v-model="emailCodeInput" class="input mt-2 min-h-36 resize-y font-mono" rows="5" autocomplete="off" autocapitalize="off" :spellcheck="false" placeholder="粘贴包含邮箱和 64 位 Token 的账号资料，每行一个账号" data-testid="batch-credentials-email-code" />
+          <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">验证码来源固定为 {{ emailCodeProvider }}，其余套餐、地区、日期和浏览器字段会被忽略。</span>
         </label>
         <div class="flex flex-wrap gap-3 text-sm text-gray-600 dark:text-gray-300">
           <span>已识别 {{ credentials.length }} 个账号</span>
@@ -24,7 +38,7 @@
         <div v-if="credentials.length" class="max-h-28 overflow-y-auto border-y border-gray-200 py-2 dark:border-dark-700">
           <div v-for="row in credentials" :key="row.account" class="flex gap-3 py-1 text-sm">
             <span class="min-w-0 flex-1 break-all">{{ row.account }}</span>
-            <span class="shrink-0 text-emerald-700 dark:text-emerald-300">密码与 2FA 已识别</span>
+            <span class="shrink-0 text-emerald-700 dark:text-emerald-300">{{ loginMode === 'email_code' ? '邮箱 Token 已识别' : '密码与 2FA 已识别' }}</span>
           </div>
         </div>
         <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -70,6 +84,15 @@
             本批次已结束：成功 {{ completedCount }} 个，已存在跳过 {{ skippedCount }} 个，失败 {{ failedCount }} 个。
           </p>
           <p v-if="failedEmails.length" class="mt-1 break-words text-xs text-red-600 dark:text-red-300">失败账号：{{ failedEmails.join('、') }}</p>
+          <div v-if="failedEmailCodeLines.length" class="mt-3 border-y border-amber-200 py-3 dark:border-amber-900/60">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-medium text-amber-800 dark:text-amber-200">邮箱验证码失败账号（邮箱 + Token）</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-testid="copy-failed-email-code-credentials" @click="copyFailedEmailCodeCredentials">
+                <Icon :name="failedCredentialsCopied ? 'check' : 'copy'" size="sm" />{{ failedCredentialsCopied ? '已复制' : '复制全部' }}
+              </button>
+            </div>
+            <textarea class="input mt-2 min-h-24 resize-y font-mono text-xs" readonly :value="failedEmailCodeLines.join('\n')" aria-label="失败邮箱验证码账号" />
+          </div>
         </div>
         <div class="max-h-[48vh] overflow-y-auto">
           <article v-for="row in displayRows" :key="row.key" class="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2 border-t border-gray-100 py-3 dark:border-dark-700 sm:grid-cols-[1.25rem_minmax(0,0.85fr)_minmax(0,1.4fr)_auto]" :data-testid="`oauth-row-${row.email}`">
@@ -78,6 +101,7 @@
             </div>
             <div class="min-w-0">
               <div class="break-all text-sm font-medium">{{ row.email }}</div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ row.task?.login_method === 'email_code' ? '邮箱验证码登录' : '密码 + 2FA 登录' }}</div>
               <div v-if="row.task?.account_id" class="mt-1 text-xs text-gray-500">账号 #{{ row.task.account_id }}</div>
               <div v-if="row.number" class="mt-1 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ row.number }}</div>
             </div>
@@ -90,7 +114,7 @@
                 <div class="h-full rounded-full transition-[width] duration-300" :class="progressClass(row)" :style="{ width: `${progressPercent(row)}%` }" />
               </div>
               <div class="mt-1 flex flex-wrap justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
-                <span>第 {{ progressStep(row) }}/{{ flowStepCount }} 步 · {{ stageText(row) }}</span>
+                <span>第 {{ progressStep(row) }}/{{ flowStepCount(row) }} 步 · {{ stageText(row) }}</span>
                 <span v-if="row.task?.restart_count">已重新授权 {{ row.task.restart_count }} 次</span>
               </div>
               <p v-if="row.error || (row.task?.reason && !isSkipped(row))" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task) }}</p>
@@ -130,34 +154,64 @@ import { apiClient } from '@/api/client'
 import type { AdminGroup, Proxy } from '@/types'
 import type { BatchOAuthConfig, BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
+import { OPENAI_EMAIL_CODE_PROVIDER, parseOpenAIEmailCodeCredentials } from '@/features/token-converter/openAIEmailCodeCredentials'
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
-import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
+import { useClipboard } from '@/composables/useClipboard'
+import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type BatchOAuthQueueCredential, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
 
 withDefaults(defineProps<{ show?: boolean; embedded?: boolean; groups: AdminGroup[]; proxies: Proxy[] }>(), {
   show: true,
   embedded: false,
 })
 const emit = defineEmits<{ close: []; created: [] }>()
-const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, hasSecret, refresh } = useBatchOpenAIOAuth(() => emit('created'))
-const input = ref('')
+const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
+const { copied: failedCredentialsCopied, copyToClipboard } = useClipboard()
+const loginMode = ref<'password' | 'email_code'>('password')
+const passwordInput = ref('')
+const emailCodeInput = ref('')
+const emailCodeProvider = OPENAI_EMAIL_CODE_PROVIDER
 const localError = ref('')
 const pools = ref<{ id: number; name: string; proxy_id: number | null }[]>([])
 const poolsReady = ref(false)
 const settings = reactive<BatchOAuthConfig>({ group_ids: [], proxy_id: null, pool_id: null, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off' })
-const parsed = computed(() => parseAccountCredentials(input.value))
-const credentials = computed(() => {
+const passwordParsed = computed(() => parseAccountCredentials(passwordInput.value))
+const emailCodeParsed = computed(() => parseOpenAIEmailCodeCredentials(emailCodeInput.value))
+const passwordRows = computed(() => {
   const seen = new Set<string>()
-  return parsed.value.rows.filter(row => {
+  return passwordParsed.value.rows.filter(row => {
     const email = row.account.toLowerCase()
     if (seen.has(email)) return false
     seen.add(email)
     return true
   })
 })
-const duplicates = computed(() => parsed.value.rows.length - credentials.value.length)
+const emailCodeRows = computed(() => {
+  const seen = new Set<string>()
+  return emailCodeParsed.value.rows.filter(row => {
+    const email = row.account.toLowerCase()
+    if (seen.has(email)) return false
+    seen.add(email)
+    return true
+  })
+})
+const credentials = computed<BatchOAuthQueueCredential[]>(() => loginMode.value === 'email_code'
+  ? emailCodeRows.value.map(row => ({
+      account: row.account,
+      login: { login_method: 'email_code', email_code_token: row.emailCodeToken },
+    }))
+  : passwordRows.value.map(row => ({
+      account: row.account,
+      login: { login_method: 'password', password: row.password, totp_secret: normalizeBase32Secret(row.twoFactor) },
+    })))
+const duplicates = computed(() => loginMode.value === 'email_code'
+  ? emailCodeParsed.value.rows.length - emailCodeRows.value.length
+  : passwordParsed.value.rows.length - passwordRows.value.length)
 const invalidLines = computed(() => {
-  const invalid = parsed.value.invalidRows.map(row => row.lineNumber)
-  for (const row of credentials.value) {
+  if (loginMode.value === 'email_code') {
+    return [...new Set(emailCodeParsed.value.invalidRows.map(row => row.lineNumber))].sort((a, b) => a - b)
+  }
+  const invalid = passwordParsed.value.invalidRows.map(row => row.lineNumber)
+  for (const row of passwordRows.value) {
     try {
       const secret = normalizeBase32Secret(row.twoFactor)
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.account) || !/^[A-Z2-7]{16,256}$/.test(secret)) invalid.push(row.lineNumber)
@@ -178,6 +232,10 @@ const willAutoRestart = (row: OAuthQueueRow) => hasSecret(row) && batchTaskWillA
 const failedRows = computed(() => rows.value.filter(row => row.task && ['failed', 'blocked'].includes(row.task.status) && !willAutoRestart(row) && !row.retryPending))
 const failedCount = computed(() => failedRows.value.length)
 const failedEmails = computed(() => failedRows.value.map(row => row.email))
+const failedEmailCodeLines = computed(() => failedRows.value.flatMap(row => {
+  const token = emailCodeToken(row)
+  return token ? [`${row.email}\t${token}`] : []
+}))
 const batchFinished = computed(() => rows.value.length > 0 && !hasWork.value)
 const displayRows = computed(() => {
   if (!batchFinished.value) return rows.value
@@ -194,8 +252,8 @@ const retryableRows = computed(() => rows.value.filter(canRetry))
 const selectedRetryRows = computed(() => retryableRows.value.filter(row => selectedRetryKeys.value.has(row.key)))
 const selectedRetryCount = computed(() => selectedRetryRows.value.length)
 const allRetryableSelected = computed(() => retryableRows.value.length > 0 && selectedRetryCount.value === retryableRows.value.length)
-const flowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
-const flowStepCount = flowStages.length
+const passwordFlowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
+const emailCodeFlowStages = ['opening', 'email', 'email_code', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
 const now = ref(Date.now())
 let elapsedTimer: ReturnType<typeof setInterval> | undefined
 type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry' | 'retrySelected' | 'delete' | 'clearFailed'
@@ -217,11 +275,17 @@ const confirmationMessage = computed(() => {
 })
 function ask(action: Action, row?: OAuthQueueRow) { confirmation.value = { action, row } }
 function dismiss() { confirmation.value = undefined }
-function requestClose() { if (hasWork.value) ask('close'); else { input.value = ''; emit('close') } }
+function requestClose() { if (hasWork.value) ask('close'); else { passwordInput.value = ''; emailCodeInput.value = ''; emit('close') } }
 function begin() {
   if (!canStart.value) return
   start(credentials.value, { ...settings, proxy_id: effectiveProxy.value })
-  if (started.value) input.value = ''
+  if (started.value) {
+    if (loginMode.value === 'email_code') emailCodeInput.value = ''
+    else passwordInput.value = ''
+  }
+}
+async function copyFailedEmailCodeCredentials() {
+  await copyToClipboard(failedEmailCodeLines.value.join('\n'), '失败账号邮箱和 Token 已复制')
 }
 async function confirmAction() {
   const current = confirmation.value
@@ -267,11 +331,11 @@ function statusText(row: OAuthQueueRow) {
   }
   if (isSkipped(row)) return '已存在，已跳过'
   if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加成功', failed: '授权失败', blocked: '授权失败', canceled: '已停止' }[task.status] || task.status
-  return ({ opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
+  return ({ opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', email_code_waiting: '正在查询邮箱验证码', email_code_submitting: '正在填写邮箱验证码', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
 }
 function reasonText(task?: BatchOAuthTask) {
   const reason = task?.reason
-  return ({ sms_timeout: '短信等待超过 3 分钟，已取消旧号码并准备从 OAuth 起点重新授权。', sms_confirmation_timeout: '领号阶段超时，已清理当前隐私会话。', oauth_identity_mismatch: 'OAuth 返回账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '账号创建结果不确定，已禁止重复创建，请核对账号列表。', account_readback_failed: '账号已创建，但读取核验失败。', account_configuration_mismatch: '账号已创建，但分组、代理、并发、优先级或指纹配置不一致。', account_login_credentials_mismatch: '账号已创建，但邮箱、密码或 2FA 的加密保存核验失败。', automation_start_failed: '授权浏览器没有确认启动。', invalid_configuration: '分组、号池或代理配置不可用。', oauth_exchange_failed: 'OAuth 回调已收到，但换取 Token 失败。', manual_challenge: 'OpenAI 页面结构无法识别，当前隐私会话已关闭。', email_code_required: 'OpenAI 要求邮件验证码，当前自动流程无法安全读取该验证码。', captcha_required: 'OpenAI 出现人机验证，当前隐私会话已关闭。', account_blocked: 'OpenAI 限制了当前账号。', authenticator_required: 'OpenAI 要求验证器验证码，但没有可用的 2FA 密钥。', invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。', invalid_totp: 'OpenAI 拒绝了当前 2FA 验证码，请检查密钥与服务器时间。', invalid_sms_code: 'OpenAI 拒绝了短信验证码。', proxy_unavailable: '所选出口代理无法从授权浏览器连接。', navigation_timeout: '打开 OpenAI OAuth 页面超时。', browser_context_lost: '独立隐私浏览器上下文意外关闭。', page_interaction_failed: 'OpenAI 页面控件操作失败或页面结构发生变化。', openai_route_error: 'OpenAI 登录页临时返回 Route Error，当前隐私会话已关闭，请重新授权。', oauth_session_expired: 'OpenAI 登录会话已失效（invalid_state），当前隐私会话已关闭，请重新授权。', phone_rejected: 'OpenAI 拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权总时长已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
+  return ({ sms_timeout: '短信等待超过 3 分钟，已取消旧号码并准备从 OAuth 起点重新授权。', sms_confirmation_timeout: '领号阶段超时，已清理当前隐私会话。', oauth_identity_mismatch: 'OAuth 返回账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '账号创建结果不确定，已禁止重复创建，请核对账号列表。', account_readback_failed: '账号已创建，但读取核验失败。', account_configuration_mismatch: '账号已创建，但分组、代理、并发、优先级或指纹配置不一致。', account_login_credentials_mismatch: '账号已创建，但登录信息的加密保存核验失败。', automation_start_failed: '授权浏览器没有确认启动。', invalid_configuration: '分组、号池或代理配置不可用。', oauth_exchange_failed: 'OAuth 回调已收到，但换取 Token 失败。', manual_challenge: 'OpenAI 页面结构无法识别，当前隐私会话已关闭。', email_code_required: '当前是密码 + 2FA 模式，不能处理 OpenAI 邮箱验证码页面。', email_code_timeout: '等待邮箱验证码超过 60 秒，已停止该账号。', email_code_access_denied: '邮箱与 64 位 Token 不匹配或 Token 已失效，已停止该账号。', email_code_unavailable: '邮箱验证码服务暂时不可用，已停止该账号。', invalid_email_code: 'OpenAI 拒绝了邮箱验证码，已停止该账号。', captcha_required: 'OpenAI 出现人机验证，当前隐私会话已关闭。', account_blocked: 'OpenAI 限制了当前账号。', authenticator_required: 'OpenAI 要求验证器验证码，但没有可用的 2FA 密钥。', invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。', invalid_totp: 'OpenAI 拒绝了当前 2FA 验证码，请检查密钥与服务器时间。', invalid_sms_code: 'OpenAI 拒绝了短信验证码。', proxy_unavailable: '所选出口代理无法从授权浏览器连接。', navigation_timeout: '打开 OpenAI OAuth 页面超时。', browser_context_lost: '独立隐私浏览器上下文意外关闭。', page_interaction_failed: 'OpenAI 页面控件操作失败或页面结构发生变化。', openai_route_error: 'OpenAI 登录页临时返回 Route Error，当前隐私会话已关闭，请重新授权。', oauth_session_expired: 'OpenAI 登录会话已失效（invalid_state），当前隐私会话已关闭，请重新授权。', phone_rejected: 'OpenAI 拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权总时长已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
 }
 function normalizedStage(row: OAuthQueueRow) {
   if (row.localStatus) return 'opening'
@@ -279,13 +343,17 @@ function normalizedStage(row: OAuthQueueRow) {
   if (row.task?.status === 'completed') return 'verify'
   const stage = row.task?.stage || 'opening'
   if (['login', 'email'].includes(stage)) return 'email'
+  if (['email_code_waiting', 'email_code_submitting'].includes(stage)) return 'email_code'
   if (['phone_required', 'phone_submitting'].includes(stage)) return 'phone'
   if (['sms_waiting', 'sms_submitting'].includes(stage)) return 'sms'
   if (['callback_waiting', 'callback_received'].includes(stage)) return 'callback'
-  return flowStages.includes(stage as typeof flowStages[number]) ? stage as typeof flowStages[number] : 'opening'
+  const flow = flowStages(row)
+  return flow.some(item => item === stage) ? stage : 'opening'
 }
-function progressStep(row: OAuthQueueRow) { return Math.max(1, flowStages.indexOf(normalizedStage(row)) + 1) }
-function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'completed' ? 100 : Math.round((progressStep(row) / flowStepCount) * 100) }
+function flowStages(row: OAuthQueueRow): readonly string[] { return row.task?.login_method === 'email_code' ? emailCodeFlowStages : passwordFlowStages }
+function flowStepCount(row: OAuthQueueRow) { return flowStages(row).length }
+function progressStep(row: OAuthQueueRow) { return Math.max(1, flowStages(row).indexOf(normalizedStage(row)) + 1) }
+function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'completed' ? 100 : Math.round((progressStep(row) / flowStepCount(row)) * 100) }
 function progressClass(row: OAuthQueueRow) {
   if (row.task?.status === 'completed') return 'bg-emerald-500'
   if (row.retryPending) return 'bg-primary-500'
@@ -293,7 +361,7 @@ function progressClass(row: OAuthQueueRow) {
   return 'bg-primary-500'
 }
 function stageText(row: OAuthQueueRow) {
-  return ({ opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
+  return ({ opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', email_code: '查询并提交邮箱验证码', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
 }
 function elapsedText(row: OAuthQueueRow) {
   const startedAt = Date.parse(row.task?.created_at || '')
@@ -308,5 +376,28 @@ onMounted(async () => {
   elapsedTimer = setInterval(() => { now.value = Date.now() }, 1000)
   try { pools.value = (await apiClient.get<{ items: typeof pools.value }>('/admin/account-pools')).data.items; poolsReady.value = true } catch { localError.value = '号池列表加载失败，请关闭后重新打开。' }
 })
-onUnmounted(() => { input.value = ''; if (elapsedTimer) clearInterval(elapsedTimer); window.removeEventListener('beforeunload', beforeUnload) })
+onUnmounted(() => { passwordInput.value = ''; emailCodeInput.value = ''; if (elapsedTimer) clearInterval(elapsedTimer); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
+
+<style scoped>
+.batch-mode-tab {
+  display: inline-flex;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.25rem;
+  padding-inline: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.batch-mode-tab-active {
+  @apply bg-primary-50 text-primary-700 dark:bg-primary-950/50 dark:text-primary-300;
+}
+
+.batch-mode-tab-idle {
+  @apply text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200;
+}
+</style>

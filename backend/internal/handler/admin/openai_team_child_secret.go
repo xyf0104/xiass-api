@@ -31,6 +31,8 @@ type openAIAccountReauthorizationCredentialsRequest struct {
 	Password *string `json:"password"`
 	// Omitted preserves the saved authenticator; an explicit empty value clears it.
 	TOTPSecret *string `json:"totp_secret"`
+	// Omitted preserves the saved email-code token; an explicit empty value clears it.
+	EmailCodeToken *string `json:"email_code_token"`
 }
 
 // SaveOpenAIAccountReauthorizationCredentials saves an administrator-provided
@@ -78,6 +80,16 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		response.BadRequest(c, "Invalid authenticator secret")
 		return
 	}
+	if req.EmailCodeToken != nil && *req.EmailCodeToken != "" && validateBatchEmailCodeLogin(email, *req.EmailCodeToken) != nil {
+		response.BadRequest(c, "邮箱验证码 Token 必须是 64 位十六进制字符串")
+		return
+	}
+	switchingToEmailCode := req.EmailCodeToken != nil && *req.EmailCodeToken != ""
+	switchingToPassword := (req.Password != nil && *req.Password != "") || (req.TOTPSecret != nil && *req.TOTPSecret != "")
+	if switchingToEmailCode && switchingToPassword {
+		response.BadRequest(c, "密码登录信息和邮箱验证码 Token 必须分开保存")
+		return
+	}
 
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
@@ -104,6 +116,13 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 	credentials := map[string]any{
 		service.OpenAIOAuthReauthorizationEmailCredentialKey: email,
 	}
+	if switchingToEmailCode {
+		credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = nil
+		credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = nil
+	}
+	if switchingToPassword {
+		credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey] = nil
+	}
 	if req.Password != nil {
 		if *req.Password == "" {
 			credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = nil
@@ -125,6 +144,17 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 				return
 			}
 			credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = ciphertext
+		}
+	}
+	if req.EmailCodeToken != nil {
+		credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey] = nil
+		if *req.EmailCodeToken != "" {
+			ciphertext, err := h.secretEncryptor.Encrypt(*req.EmailCodeToken)
+			if err != nil || ciphertext == "" {
+				response.InternalError(c, "邮箱验证码 Token 加密失败")
+				return
+			}
+			credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey] = ciphertext
 		}
 	}
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{

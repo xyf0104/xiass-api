@@ -12,6 +12,7 @@ export interface BatchOAuthConfig {
 export interface BatchOAuthTask {
   task_id: string
   email: string
+  login_method: 'password' | 'email_code'
   status: 'queued' | 'running' | 'ready' | 'completed' | 'failed' | 'blocked' | 'canceled'
   stage: string
   reason?: string
@@ -23,10 +24,18 @@ export interface BatchOAuthTask {
   finished_at?: string
 }
 
-export interface BatchOAuthLogin {
+export interface BatchOAuthPasswordLogin {
+  login_method: 'password'
   password: string
   totp_secret: string
 }
+
+export interface BatchOAuthEmailCodeLogin {
+  login_method: 'email_code'
+  email_code_token: string
+}
+
+export type BatchOAuthLogin = BatchOAuthPasswordLogin | BatchOAuthEmailCodeLogin
 
 export interface BatchOAuthSMS {
   task: BatchOAuthTask

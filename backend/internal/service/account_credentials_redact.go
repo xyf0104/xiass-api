@@ -8,9 +8,10 @@ const (
 	// by the private Team automation to recover an existing OpenAI OAuth
 	// account. These are not OAuth credentials and are never returned in a
 	// normal account DTO, export, or clone.
-	OpenAIOAuthReauthorizationPasswordCredentialKey   = "xiass_openai_oauth_reauth_password_encrypted"
-	OpenAIOAuthReauthorizationEmailCredentialKey      = "xiass_openai_oauth_reauth_email"
-	OpenAIOAuthReauthorizationTOTPSecretCredentialKey = "xiass_openai_oauth_reauth_totp_secret_encrypted"
+	OpenAIOAuthReauthorizationPasswordCredentialKey       = "xiass_openai_oauth_reauth_password_encrypted"
+	OpenAIOAuthReauthorizationEmailCredentialKey          = "xiass_openai_oauth_reauth_email"
+	OpenAIOAuthReauthorizationTOTPSecretCredentialKey     = "xiass_openai_oauth_reauth_totp_secret_encrypted"
+	OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey = "xiass_openai_oauth_reauth_email_code_token_encrypted"
 )
 
 // SensitiveCredentialKeys 列出 Account.Credentials JSON map 中绝不允许返回到前端的子键。
@@ -33,6 +34,7 @@ var SensitiveCredentialKeys = []string{
 	OpenAIOAuthReauthorizationPasswordCredentialKey,
 	OpenAIOAuthReauthorizationEmailCredentialKey,
 	OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+	OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
 }
 
 var sensitiveCredentialKeySet = func() map[string]struct{} {

@@ -34,6 +34,8 @@ const batchOAuthAlreadyExistsReason = "account_already_exists"
 const (
 	batchOAuthModeCreate          = "create"
 	batchOAuthModeReauthorization = "reauthorization"
+	batchOAuthLoginPassword       = "password"
+	batchOAuthLoginEmailCode      = "email_code"
 )
 
 var errBatchOAuthMissing = errors.New("batch task unavailable")
@@ -66,6 +68,8 @@ type batchOAuthStartRequest struct {
 	ExpectedEmail  string `json:"expected_email"`
 	Password       string `json:"password"`
 	TOTPSecret     string `json:"totp_secret"`
+	LoginMethod    string `json:"login_method"`
+	EmailCodeToken string `json:"email_code_token"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
@@ -76,6 +80,7 @@ type batchOAuthTask struct {
 	ID                      string            `json:"task_id"`
 	Mode                    string            `json:"mode"`
 	Email                   string            `json:"email"`
+	LoginMethod             string            `json:"login_method"`
 	Status                  string            `json:"status"`
 	Stage                   string            `json:"stage"`
 	Reason                  string            `json:"reason,omitempty"`
@@ -99,6 +104,7 @@ type batchOAuthTask struct {
 	rejectedPhones          map[string]bool
 	loginPasswordEncrypted  string `json:"-"`
 	loginTOTPEncrypted      string `json:"-"`
+	loginEmailCodeEncrypted string `json:"-"`
 	loginTOTPConfigured     bool
 	executionNodeID         string
 }
@@ -307,6 +313,42 @@ func validateBatchLogin(email, password, secret string) error {
 	return validateOpenAIReauthorizationTOTP(secret)
 }
 
+func normalizeBatchOAuthLoginMethod(method string) string {
+	if strings.TrimSpace(method) == "" {
+		return batchOAuthLoginPassword
+	}
+	return strings.TrimSpace(method)
+}
+
+func validateBatchEmailCodeLogin(email, token string) error {
+	if !validTeamChildWorkflowEmail(email) || email != strings.TrimSpace(email) || len(token) != 64 {
+		return errors.New("valid account email and email-code token are required")
+	}
+	for _, char := range token {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return errors.New("valid account email and email-code token are required")
+		}
+	}
+	return nil
+}
+
+func validateBatchLoginMethod(email, method, password, secret, emailCodeToken string) error {
+	switch normalizeBatchOAuthLoginMethod(method) {
+	case batchOAuthLoginPassword:
+		if emailCodeToken != "" {
+			return errors.New("password login cannot include an email-code token")
+		}
+		return validateBatchLogin(email, password, secret)
+	case batchOAuthLoginEmailCode:
+		if password != "" || secret != "" {
+			return errors.New("email-code login cannot include a password or authenticator secret")
+		}
+		return validateBatchEmailCodeLogin(email, emailCodeToken)
+	default:
+		return errors.New("unsupported OpenAI login method")
+	}
+}
+
 func (t *batchOAuthTask) normalizedMode() string {
 	if t != nil && t.Mode == batchOAuthModeReauthorization {
 		return batchOAuthModeReauthorization
@@ -325,22 +367,29 @@ func (t *batchOAuthTask) matchesMode(mode string) bool {
 	return t != nil && t.normalizedMode() == mode
 }
 
-func (h *OpenAIOAuthHandler) encryptBatchLogin(password, secret string) (string, string, error) {
+func (h *OpenAIOAuthHandler) encryptBatchLogin(method, password, secret, emailCodeToken string) (string, string, string, error) {
 	if h.secretEncryptor == nil {
-		return "", "", errors.New("login encryption unavailable")
+		return "", "", "", errors.New("login encryption unavailable")
+	}
+	if normalizeBatchOAuthLoginMethod(method) == batchOAuthLoginEmailCode {
+		tokenEncrypted, err := h.secretEncryptor.Encrypt(emailCodeToken)
+		if err != nil || tokenEncrypted == "" {
+			return "", "", "", errors.New("login encryption failed")
+		}
+		return "", "", tokenEncrypted, nil
 	}
 	passwordEncrypted, err := h.secretEncryptor.Encrypt(password)
 	if err != nil || passwordEncrypted == "" {
-		return "", "", errors.New("login encryption failed")
+		return "", "", "", errors.New("login encryption failed")
 	}
 	var totpEncrypted string
 	if secret != "" {
 		totpEncrypted, err = h.secretEncryptor.Encrypt(secret)
 		if err != nil || totpEncrypted == "" {
-			return "", "", errors.New("login encryption failed")
+			return "", "", "", errors.New("login encryption failed")
 		}
 	}
-	return passwordEncrypted, totpEncrypted, nil
+	return passwordEncrypted, totpEncrypted, "", nil
 }
 
 func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batchOAuthConfig) (map[string]string, error) {
@@ -583,12 +632,13 @@ func (t *batchOAuthTask) markFinishedIfTerminal() {
 func (t *batchOAuthTask) clearLoginCredentials() {
 	t.loginPasswordEncrypted = ""
 	t.loginTOTPEncrypted = ""
+	t.loginEmailCodeEncrypted = ""
 }
 
 func batchOAuthPublicStage(stage string) string {
 	switch stage {
 	case "queued", "opening", "login", "email", "password", "totp", "phone_required", "phone_submitting",
-		"sms_waiting", "sms_submitting", "workspace", "callback_waiting", "callback_received", "completed",
+		"email_code_waiting", "email_code_submitting", "sms_waiting", "sms_submitting", "workspace", "callback_waiting", "callback_received", "completed",
 		"failed", "blocked", "canceled":
 		return stage
 	default:
@@ -598,7 +648,7 @@ func batchOAuthPublicStage(stage string) string {
 
 func batchOAuthPublicReason(reason string) string {
 	switch reason {
-	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "captcha_required", "captcha", "account_blocked", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
+	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "email_code_timeout", "email_code_access_denied", "email_code_unavailable", "invalid_email_code", "reauthorization_phone_required", "captcha_required", "captcha", "account_blocked", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
 	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
 		return reason
@@ -652,7 +702,7 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 	return r, nil
 }
 
-func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAuthTask, password, secret string, proxy map[string]string) error {
+func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAuthTask, password, secret, emailCodeToken string, proxy map[string]string) error {
 	t.Status, t.Stage, t.Reason = "failed", "failed", "oauth_session_failed"
 	auth, err := h.openaiOAuthService.GenerateAuthURL(ctx, t.config.ProxyID, openai.DefaultRedirectURI, service.PlatformOpenAI)
 	if err != nil {
@@ -666,7 +716,9 @@ func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAut
 	t.sessionID, t.state = auth.SessionID, u.Query().Get("state")
 	t.ExpiresAt = time.Now().Add(openai.SessionTTL).UTC()
 	payload := map[string]any{"task_id": t.sidecarID, "owner_id": t.ownerID, "email": t.Email, "expected_email": t.Email,
-		"password": password, "totp_secret": secret, "auth_url": auth.AuthURL, "oauth_session_id": auth.SessionID}
+		"workflow_mode": t.normalizedMode(),
+		"login_method":  t.LoginMethod, "password": password, "totp_secret": secret, "email_code_token": emailCodeToken,
+		"auth_url": auth.AuthURL, "oauth_session_id": auth.SessionID}
 	if proxy != nil {
 		payload["proxy"] = proxy
 	}
@@ -699,11 +751,12 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.LoginMethod = normalizeBatchOAuthLoginMethod(req.LoginMethod)
 	if req.ExpectedEmail != "" && !strings.EqualFold(strings.TrimSpace(req.ExpectedEmail), req.Email) {
 		response.BadRequest(c, "expected_email must match the account login email")
 		return
 	}
-	if err := validateBatchLogin(req.Email, req.Password, req.TOTPSecret); err != nil {
+	if err := validateBatchLoginMethod(req.Email, req.LoginMethod, req.Password, req.TOTPSecret, req.EmailCodeToken); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -716,18 +769,19 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	}
 	// Only non-secret configuration participates in the retry identity.
 	raw, _ := json.Marshal(struct {
-		Email  string
-		Config batchOAuthConfig
-	}{req.Email, req.batchOAuthConfig})
+		Email       string
+		LoginMethod string
+		Config      batchOAuthConfig
+	}{req.Email, req.LoginMethod, req.batchOAuthConfig})
 	hash := sha256.Sum256(raw)
 	existingAccount, err := h.existingBatchOAuthAccount(c.Request.Context(), req.Email)
 	if err != nil {
 		response.InternalError(c, "Unable to check existing OpenAI accounts")
 		return
 	}
-	var passwordEncrypted, totpEncrypted string
+	var passwordEncrypted, totpEncrypted, emailCodeEncrypted string
 	if existingAccount == nil {
-		passwordEncrypted, totpEncrypted, err = h.encryptBatchLogin(req.Password, req.TOTPSecret)
+		passwordEncrypted, totpEncrypted, emailCodeEncrypted, err = h.encryptBatchLogin(req.LoginMethod, req.Password, req.TOTPSecret, req.EmailCodeToken)
 		if err != nil {
 			response.InternalError(c, "Login encryption failed")
 			return
@@ -780,8 +834,8 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 		response.InternalError(c, "Task creation failed")
 		return
 	}
-	t := &batchOAuthTask{ID: id, Mode: batchOAuthModeCreate, sidecarID: id, ownerID: owner, Email: req.Email, config: req.batchOAuthConfig,
-		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
+	t := &batchOAuthTask{ID: id, Mode: batchOAuthModeCreate, sidecarID: id, ownerID: owner, Email: req.Email, LoginMethod: req.LoginMethod, config: req.batchOAuthConfig,
+		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginEmailCodeEncrypted: emailCodeEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
 		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
 	if existingAccount != nil {
 		now := time.Now().UTC()
@@ -806,7 +860,7 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 35*time.Second)
 	defer cancel()
-	_ = h.startBatchAttempt(ctx, t, req.Password, req.TOTPSecret, proxy)
+	_ = h.startBatchAttempt(ctx, t, req.Password, req.TOTPSecret, req.EmailCodeToken, proxy)
 	response.Success(c, t)
 }
 
@@ -944,7 +998,8 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Success(c, t)
 		return
 	}
-	if t.loginPasswordEncrypted == "" {
+	if (t.LoginMethod == batchOAuthLoginEmailCode && t.loginEmailCodeEncrypted == "") ||
+		(t.LoginMethod != batchOAuthLoginEmailCode && t.loginPasswordEncrypted == "") {
 		response.Error(c, 409, "Saved login credentials unavailable; restart OAuth")
 		return
 	}
@@ -980,9 +1035,13 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	schedulable := true
 	credentials := h.openaiOAuthService.BuildAccountCredentials(token)
 	credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey] = t.Email
-	credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = t.loginPasswordEncrypted
-	if t.loginTOTPEncrypted != "" {
-		credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = t.loginTOTPEncrypted
+	if t.LoginMethod == batchOAuthLoginEmailCode {
+		credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey] = t.loginEmailCodeEncrypted
+	} else {
+		credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey] = t.loginPasswordEncrypted
+		if t.loginTOTPEncrypted != "" {
+			credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey] = t.loginTOTPEncrypted
+		}
 	}
 	if t.config.PoolID != nil {
 		h.batchOAuthStore.poolNamingMu.Lock()
@@ -1062,9 +1121,13 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 	// silently succeed when the trusted create path dropped private credentials.
 	passwordCiphertext := a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey)
 	totpCiphertext := a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
+	emailCodeCiphertext := a.GetCredential(service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	credentialsMismatch := !strings.EqualFold(strings.TrimSpace(a.GetCredential("email")), t.Email) ||
-		a.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey) != t.Email || passwordCiphertext == ""
-	if t.loginPasswordEncrypted != "" {
+		a.GetCredential(service.OpenAIOAuthReauthorizationEmailCredentialKey) != t.Email
+	if t.LoginMethod == batchOAuthLoginEmailCode {
+		credentialsMismatch = credentialsMismatch || t.loginEmailCodeEncrypted == "" || emailCodeCiphertext != t.loginEmailCodeEncrypted ||
+			passwordCiphertext != "" || totpCiphertext != ""
+	} else if t.loginPasswordEncrypted != "" {
 		credentialsMismatch = credentialsMismatch || passwordCiphertext != t.loginPasswordEncrypted || totpCiphertext != t.loginTOTPEncrypted
 	} else if t.loginTOTPConfigured {
 		credentialsMismatch = credentialsMismatch || totpCiphertext == ""
@@ -1229,9 +1292,11 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 	defer t.markFinishedIfTerminal()
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var req struct {
-		Password   *string `json:"password"`
-		TOTPSecret *string `json:"totp_secret"`
-		Confirmed  bool    `json:"confirmed"`
+		LoginMethod    *string `json:"login_method"`
+		Password       *string `json:"password"`
+		TOTPSecret     *string `json:"totp_secret"`
+		EmailCodeToken *string `json:"email_code_token"`
+		Confirmed      bool    `json:"confirmed"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		response.BadRequest(c, "Valid login credentials required")
@@ -1245,20 +1310,27 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 		response.Error(c, 503, "Login encryption unavailable")
 		return
 	}
-	if req.Password == nil {
-		response.BadRequest(c, "Valid login credentials required")
-		return
+	method := normalizeBatchOAuthLoginMethod(t.LoginMethod)
+	if req.LoginMethod != nil {
+		method = normalizeBatchOAuthLoginMethod(*req.LoginMethod)
 	}
-	password := *req.Password
+	password := ""
+	if req.Password != nil {
+		password = *req.Password
+	}
 	secret := ""
 	if req.TOTPSecret != nil {
 		secret = *req.TOTPSecret
 	}
-	if validateBatchLogin(t.Email, password, secret) != nil {
+	emailCodeToken := ""
+	if req.EmailCodeToken != nil {
+		emailCodeToken = *req.EmailCodeToken
+	}
+	if validateBatchLoginMethod(t.Email, method, password, secret, emailCodeToken) != nil {
 		response.BadRequest(c, "Valid login credentials required")
 		return
 	}
-	passwordEncrypted, totpEncrypted, err := h.encryptBatchLogin(password, secret)
+	passwordEncrypted, totpEncrypted, emailCodeEncrypted, err := h.encryptBatchLogin(method, password, secret, emailCodeToken)
 	if err != nil {
 		response.InternalError(c, "Login encryption failed")
 		return
@@ -1304,9 +1376,11 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false
 	t.FinishedAt = nil
+	t.LoginMethod = method
 	t.loginPasswordEncrypted, t.loginTOTPEncrypted = passwordEncrypted, totpEncrypted
+	t.loginEmailCodeEncrypted = emailCodeEncrypted
 	t.loginTOTPConfigured = secret != ""
-	_ = h.startBatchAttempt(ctx, t, password, secret, proxy)
+	_ = h.startBatchAttempt(ctx, t, password, secret, emailCodeToken, proxy)
 	response.Success(c, t)
 }
 

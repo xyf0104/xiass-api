@@ -152,6 +152,51 @@ func TestBatchOAuthSavesEncryptedLoginAndSameAccount401Reauthorization(t *testin
 	require.Len(t, f.admin.createdAccounts, 1)
 }
 
+func TestBatchOAuthSavesSeparateEncryptedEmailCodeLogin(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	storage := &onboardingCredentialsAdmin{stubAdminService: f.admin}
+	f.h.adminService = storage
+	encryptor := &onboardingCountingEncryptor{SecretEncryptor: f.h.secretEncryptor}
+	f.h.secretEncryptor = encryptor
+	r := batchOAuthRouter(f.h, 42, "admin")
+	token := strings.Repeat("a", 64)
+	body := `{"email":"OWNER@example.test","login_method":"email_code","email_code_token":"` + token + `","name":"mail account","concurrency":2,"priority":4,"idempotency_key":"saved-email-code-operation-1"}`
+
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NotContains(t, w.Body.String(), token)
+	require.Len(t, f.requests, 1)
+	require.Equal(t, batchOAuthModeCreate, f.requests[0]["workflow_mode"])
+	require.Equal(t, batchOAuthLoginEmailCode, f.requests[0]["login_method"])
+	require.Equal(t, token, f.requests[0]["email_code_token"])
+	require.Empty(t, f.requests[0]["password"])
+	require.Empty(t, f.requests[0]["totp_secret"])
+
+	id, ok := f.requests[0]["task_id"].(string)
+	require.True(t, ok)
+	task := f.h.batchOAuthStore.tasks[id]
+	emailCodeCiphertext := task.loginEmailCodeEncrypted
+	require.NotEmpty(t, emailCodeCiphertext)
+	require.NotContains(t, emailCodeCiphertext, token)
+	require.Empty(t, task.loginPasswordEncrypted)
+	require.Empty(t, task.loginTOTPEncrypted)
+
+	w = batchOAuthRequest(r, http.MethodPost, "/tasks/"+id+"/complete", "{}")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"status":"completed"`)
+	require.Zero(t, encryptor.decrypts)
+	require.Empty(t, task.loginEmailCodeEncrypted)
+	a := storage.persisted
+	require.Equal(t, emailCodeCiphertext, a.GetCredential(service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey))
+	require.Empty(t, a.GetCredential(service.OpenAIOAuthReauthorizationPasswordCredentialKey))
+	require.Empty(t, a.GetCredential(service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey))
+	plain, err := encryptor.SecretEncryptor.Decrypt(a.GetCredential(service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey))
+	require.NoError(t, err)
+	require.Equal(t, token, plain)
+	require.NotContains(t, w.Body.String(), token)
+	require.NotContains(t, w.Body.String(), emailCodeCiphertext)
+}
+
 func TestBatchOAuthReadbackRejectsDroppedLoginAndConfiguration(t *testing.T) {
 	for _, field := range []string{"password", "totp", "name", "priority"} {
 		t.Run(field, func(t *testing.T) {
@@ -266,14 +311,15 @@ func TestSaveOpenAIReauthorizationTOTPTristatePreservesAccountConfiguration(t *t
 }
 
 func TestOpenAIReauthorizationTOTPRedactedFromDTOAndExport(t *testing.T) {
-	credentials := map[string]any{service.OpenAIOAuthReauthorizationEmailCredentialKey: "private@example.test", service.OpenAIOAuthReauthorizationPasswordCredentialKey: "password-ciphertext", service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "totp-ciphertext", "base_url": "https://example.test"}
+	credentials := map[string]any{service.OpenAIOAuthReauthorizationEmailCredentialKey: "private@example.test", service.OpenAIOAuthReauthorizationPasswordCredentialKey: "password-ciphertext", service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "totp-ciphertext", service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "email-code-ciphertext", "base_url": "https://example.test"}
 	out, status := dto.RedactCredentials(credentials)
 	require.Equal(t, map[string]any{"base_url": "https://example.test"}, out)
 	require.Equal(t, out, exportableAccountCredentials(credentials))
 	require.True(t, status["has_"+service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey])
+	require.True(t, status["has_"+service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey])
 	encoded, err := json.Marshal(dto.AccountFromService(&service.Account{Credentials: credentials}))
 	require.NoError(t, err)
-	for _, secret := range []string{"private@example.test", "password-ciphertext", "totp-ciphertext"} {
+	for _, secret := range []string{"private@example.test", "password-ciphertext", "totp-ciphertext", "email-code-ciphertext"} {
 		require.False(t, strings.Contains(string(encoded), secret))
 	}
 }

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 
+import { createICGCEmailCodeSession } from './email-code.mjs'
 import { generateTOTP as sharedGenerateTOTP, isAuthenticatorChallenge } from './totp.mjs'
 
 const CALLBACK = 'http://localhost:1455/auth/callback'
@@ -9,6 +10,8 @@ const TTL = 15 * 60_000
 const STEP_DELAY = 1_000
 export const BATCH_OAUTH_REASONS = Object.freeze([
   '', 'sms_timeout', 'sms_confirmation_timeout', 'email_code_required',
+  'email_code_timeout', 'email_code_access_denied', 'email_code_unavailable', 'invalid_email_code',
+  'reauthorization_phone_required',
   'captcha_required', 'account_blocked', 'manual_challenge', 'task_expired',
   'invalid_credentials', 'authenticator_required', 'phone_rejected',
   'proxy_unavailable', 'navigation_timeout', 'browser_context_lost',
@@ -60,6 +63,9 @@ function ownerKey(owner) {
 }
 
 function automationFailureReason(error, stage) {
+  if (['email_code_timeout', 'email_code_access_denied', 'email_code_unavailable'].includes(error?.code)) {
+    return error.code
+  }
   const message = error instanceof Error ? error.message : String(error || '')
   if (/ERR_(?:PROXY|SOCKS|TUNNEL)_|ECONNREFUSED|proxy[^\n]*(?:failed|refused|unavailable|unreachable)/i.test(message)) {
     return 'proxy_unavailable'
@@ -124,6 +130,21 @@ const defaults = {
     }
     return null
   },
+  async switchToEmailCode(page) {
+    const patterns = [
+      /continue with (?:an? )?(?:email )?code/i,
+      /use (?:an? )?(?:email )?(?:verification )?code/i,
+      /email me (?:an? )?code/i,
+      /send (?:an? )?(?:login )?code/i,
+      /使用.*验证码|发送.*验证码/i,
+    ]
+    const action = await defaults.firstVisibleRole(page, 'button', patterns)
+      || await defaults.firstVisibleRole(page, 'link', patterns)
+    if (!action) return false
+    await action.click()
+    return true
+  },
+  createEmailCodeSession: createICGCEmailCodeSession,
   async verificationInputs(page) {
     const inputs = page.locator('input[autocomplete="one-time-code"], input[inputmode="numeric"], input[name*="code" i], input[id*="code" i]')
     const result = []
@@ -151,15 +172,23 @@ export class BatchOAuthRunner {
   }
 
   async start(body) {
+    const loginMethod = body?.login_method == null || body.login_method === '' ? 'password' : body.login_method
     if (!body || typeof body.task_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.task_id)
       || typeof body.email !== 'string' || body.email.length > 254
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)
-      || typeof body.password !== 'string' || !body.password || body.password.length > 2048
+      || !['password', 'email_code'].includes(loginMethod)
       || typeof body.oauth_session_id !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(body.oauth_session_id)
       || typeof body.auth_url !== 'string' || body.auth_url.length > 8192) throw fail('invalid_input', 400)
     const owner = ownerKey(body.owner_id)
+    const workflowMode = body.workflow_mode == null || body.workflow_mode === '' ? 'create' : body.workflow_mode
+    if (!['create', 'reauthorization'].includes(workflowMode)) throw fail('invalid_input', 400)
     const secret = body.totp_secret ?? ''
-    if (secret !== '') decodeSecret(secret).fill(0)
+    const emailCodeToken = body.email_code_token ?? ''
+    if (loginMethod === 'password') {
+      if (typeof body.password !== 'string' || !body.password || body.password.length > 2048 || emailCodeToken !== '') throw fail('invalid_input', 400)
+      if (secret !== '') decodeSecret(secret).fill(0)
+    } else if (typeof emailCodeToken !== 'string' || !/^[A-Fa-f0-9]{64}$/.test(emailCodeToken)
+      || (body.password ?? '') !== '' || secret !== '') throw fail('invalid_input', 400)
     const proxy = proxyOptions(body.proxy)
     let auth
     try {
@@ -179,10 +208,11 @@ export class BatchOAuthRunner {
     const task = {
       id: body.task_id, owner_id: body.owner_id, owner, status: 'running', stage: 'opening', reason: '',
       authURL: auth.toString(), state: auth.searchParams.get('state'),
-      email: body.email.toLowerCase(), password: body.password, secret, proxy,
+      email: body.email.toLowerCase(), workflowMode, loginMethod, password: body.password || '', secret, emailCodeToken, proxy,
       rejected: new Set(), phone: '', pending: null, busy: false,
       emailSubmitted: false, expiresAt: this.#h.now() + TTL,
-      stageDeadline: 0, smsDeadline: 0, context: null, page: null
+      stageDeadline: 0, smsDeadline: 0, context: null, page: null,
+      emailCodeSession: null, emailCodeAbort: null, emailCodeRequestedAt: 0, emailCodeSubmittedAt: 0,
     }
     this.#tasks.set(task.id, task)
     this.#slots++
@@ -237,7 +267,7 @@ export class BatchOAuthRunner {
   }
 
   #summary(task) {
-    const result = { id: task.id, owner_id: task.owner_id, status: task.status, stage: task.stage, reason: task.reason }
+    const result = { id: task.id, owner_id: task.owner_id, status: task.status, stage: task.stage, reason: task.reason, login_method: task.loginMethod }
     // INTERNAL backend response only. Parent must never expose callback_url to
     // public task polling, access logs, persistence, or browser clients.
     if (task.status === 'completed' && task.callback) result.callback_url = task.callback
@@ -295,9 +325,11 @@ export class BatchOAuthRunner {
     if (task.status !== 'running') return
     task.status = status
     task.reason = reasons.has(reason) ? reason : 'manual_challenge'
-    task.password = task.secret = task.authURL = ''
+    task.password = task.secret = task.emailCodeToken = task.authURL = ''
     task.proxy = undefined
     task.pending = null
+    task.emailCodeAbort?.abort()
+    task.emailCodeSession?.close?.()
     this.#h.clearTimeout(task.stageTimer)
     task.stageDeadline = 0
     this.#report(task)
@@ -380,12 +412,14 @@ export class BatchOAuthRunner {
     if (/\/create-account|\/signup|\/about-you/.test(new URL(page.url()).pathname)
       || /tell us about yourself|create (?:a |your )password/i.test(body)) return { kind: 'signup' }
     const inputs = await this.#h.verificationInputs(page)
-    if (/check your (?:email|inbox)|code (?:we |was )?sent to (?:your )?email|verify your email|邮箱验证码/i.test(body)) return { kind: 'email_code' }
+    const invalidCode = /incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)/i.test(body)
+    if (/check your (?:email|inbox)|code (?:we |was )?sent to (?:your )?email|verify your email|邮箱验证码/i.test(body)) {
+      return { kind: invalidCode ? 'invalid_email_code' : 'email_code' }
+    }
     if (inputs.length) {
-      const invalidCode = /incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)/i.test(body)
       if (isAuthenticatorChallenge(body, inputs)) return { kind: invalidCode ? 'invalid_totp' : 'totp' }
       if (/text message|\bsms\b|phone|mobile|短信/i.test(body)) return { kind: invalidCode ? 'invalid_sms_code' : 'sms_code' }
-      return { kind: 'email_code' }
+      return { kind: invalidCode ? 'invalid_email_code' : 'email_code' }
     }
     if (/phone.*(?:invalid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)/i.test(body)) return { kind: 'phone_rejected' }
     if (await this.#h.firstVisibleInput(page, (s) => /tel|phone|mobile/.test(s) && !/code|otp/.test(s))) return { kind: 'phone' }
@@ -448,6 +482,15 @@ export class BatchOAuthRunner {
     let requestListener
     const attempted = new Set()
     try {
+      if (task.loginMethod === 'email_code') {
+        task.emailCodeAbort = new AbortController()
+        task.emailCodeSession = await this.#h.createEmailCodeSession({
+          email: task.email,
+          token: task.emailCodeToken,
+          signal: task.emailCodeAbort.signal,
+        })
+        task.emailCodeToken = ''
+      }
       const browser = await (typeof this.#browser === 'function' ? this.#browser() : this.#browser)
       if (task.status !== 'running') return
       task.context = await browser.newContext({ proxy: task.proxy })
@@ -472,12 +515,50 @@ export class BatchOAuthRunner {
         if (this.#checkTimeout(task)) break
         if (!this.#trustedPage(task)) { this.#stop(task, 'blocked', 'manual_challenge'); break }
         if (state.email && state.email.toLowerCase() !== task.email) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
-        const manual = { captcha: 'captcha_required', email_code: 'email_code_required', account_blocked: 'account_blocked',
+        if (state.kind === 'email_code') {
+          if (task.loginMethod !== 'email_code' || !task.emailCodeSession) {
+            this.#stop(task, 'blocked', 'email_code_required')
+            break
+          }
+          if (attempted.has('email_code')) {
+            if (task.emailCodeSubmittedAt && this.#h.now() - task.emailCodeSubmittedAt < 10_000) {
+              await this.#pause(task)
+              continue
+            }
+            this.#stop(task, 'blocked', 'invalid_email_code')
+            break
+          }
+          attempted.add('email_code')
+          this.#stage(task, 'email_code_waiting')
+          const code = await task.emailCodeSession.waitForCode({ notBefore: task.emailCodeRequestedAt || this.#h.now() })
+          if (task.status !== 'running') break
+          this.#stage(task, 'email_code_submitting')
+          await this.#code(page, code)
+          task.emailCodeSubmittedAt = this.#h.now()
+          await this.#stepPause(task)
+          continue
+        }
+        if (state.kind === 'password' && task.loginMethod === 'email_code') {
+          if (attempted.has('email_code_switch') || !(await this.#h.switchToEmailCode(page))) {
+            this.#stop(task, 'blocked', 'email_code_required')
+            break
+          }
+          attempted.add('email_code_switch')
+          task.emailCodeRequestedAt = this.#h.now()
+          this.#stage(task, 'email_code_waiting')
+          await this.#stepPause(task)
+          continue
+        }
+        const manual = { captcha: 'captcha_required', account_blocked: 'account_blocked', invalid_email_code: 'invalid_email_code',
           invalid_credentials: 'invalid_credentials', invalid_totp: 'invalid_totp', invalid_sms_code: 'invalid_sms_code',
           signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
         if (manual) { this.#stop(task, 'blocked', manual); break }
         const retryable = { openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }[state.kind]
         if (retryable) { this.#stop(task, 'failed', retryable); break }
+        if (task.workflowMode === 'reauthorization' && ['phone', 'phone_rejected', 'sms_code'].includes(state.kind)) {
+          this.#stop(task, 'blocked', 'reauthorization_phone_required')
+          break
+        }
         if (state.kind === 'phone_rejected') {
           if (task.phone) task.rejected.add(task.phone)
           this.#stage(task, 'phone_required')
@@ -526,6 +607,7 @@ export class BatchOAuthRunner {
           if (state.kind === 'login') await state.action.click()
           if (state.kind === 'email') {
             task.emailSubmitted = true
+            if (task.loginMethod === 'email_code') task.emailCodeRequestedAt = this.#h.now()
             await this.#fill(page, 'email', task.email)
           }
           if (state.kind === 'password') {
@@ -553,14 +635,17 @@ export class BatchOAuthRunner {
       this.#stop(task, 'failed', automationFailureReason(error, task.stage))
     } finally {
       if (requestListener) task.page?.off('request', requestListener)
+      task.emailCodeAbort?.abort()
+      task.emailCodeSession?.close?.()
       // Acquisition is deliberately not raced against cancellation. A late
       // context must be closed before its reservation can ever be reused.
       while (task.context && !(await this.#close(task))) {
         await new Promise((resolve) => this.#timer(resolve, 1000))
       }
       task.context = task.page = null
-      task.password = task.secret = task.authURL = task.phone = task.state = task.email = ''
+      task.password = task.secret = task.emailCodeToken = task.authURL = task.phone = task.state = task.email = ''
       task.proxy = task.pending = null
+      task.emailCodeSession = task.emailCodeAbort = null
       task.rejected.clear()
       this.#slots--
     }

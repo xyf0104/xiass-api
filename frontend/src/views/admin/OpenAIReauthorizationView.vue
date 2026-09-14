@@ -63,7 +63,7 @@
           @click="activeWorkspace = 'credentials'"
         >
           <Icon name="key" size="sm" :stroke-width="2" />
-          <span>账号密码库</span>
+          <span>账号库</span>
         </button>
       </nav>
 
@@ -116,6 +116,9 @@
                 <span v-if="account.execution_node_id" class="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-500 dark:border-dark-600 dark:text-gray-400">{{ account.execution_node_id }}</span>
               </div>
               <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(account) }}</p>
+              <span class="mt-2 inline-flex rounded border px-1.5 py-0.5 text-[11px] font-medium" :class="loginMethodClass(account)">
+                {{ loginMethodLabel(account) }}
+              </span>
             </div>
 
             <div class="min-w-0">
@@ -134,6 +137,10 @@
               <button v-if="isActive(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" @click="stopAccount(account)">
                 <Icon name="x" size="sm" :stroke-width="2" />
                 <span>停止</span>
+              </button>
+              <button v-else-if="!accountLoginMethod(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" @click="activeWorkspace = 'credentials'">
+                <Icon name="key" size="sm" :stroke-width="2" />
+                <span>补充登录资料</span>
               </button>
               <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="startAccount(account)">
                 <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
@@ -249,7 +256,7 @@ const summary = computed(() => [
 const deleteConfirmationMessage = computed(() => {
   const account = pendingDeleteAccount.value
   if (!account) return ''
-  return `#${account.id} ${account.name} 将从账号管理中完整删除。所属分组、密码库中的邮箱、密码和 2FA 会同时删除，此操作不可撤销。`
+  return `#${account.id} ${account.name} 将从账号管理中完整删除。所属分组、账号登录资料中的邮箱、密码、2FA 和邮箱验证码 Token 会同时删除，此操作不可撤销。`
 })
 
 const orderedAccounts = computed(() => [...accounts.value].sort((a, b) => {
@@ -321,8 +328,30 @@ function accountEmail(account: Account): string {
   return email || account.name
 }
 
+function accountLoginMethod(account: Account): 'password' | 'email_code' | '' {
+  const status = account.credentials_status
+  if (status?.has_xiass_openai_oauth_reauth_email !== true) return ''
+  if (status?.has_xiass_openai_oauth_reauth_email_code_token_encrypted === true) return 'email_code'
+  if (status?.has_xiass_openai_oauth_reauth_password_encrypted === true) return 'password'
+  return ''
+}
+
+function loginMethodLabel(account: Account): string {
+  const method = accountLoginMethod(account)
+  if (method === 'email_code') return '邮箱验证码'
+  if (method === 'password') return '密码 + 2FA'
+  return '未保存登录资料'
+}
+
+function loginMethodClass(account: Account): string {
+  return accountLoginMethod(account)
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-300'
+    : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-300'
+}
+
 function canStart(account: Account): boolean {
   if (busyAccountIDs.value.has(account.id)) return false
+  if (!accountLoginMethod(account)) return false
   const task = taskFor(account)
   if (!task) return true
   if (task.account_id) return task.reason === 'account_state_recovery_failed'
@@ -349,6 +378,8 @@ const stageDetails: Record<string, { step: number; label: string }> = {
   email: { step: 2, label: '填写登录邮箱' },
   password: { step: 3, label: '填写保存的登录密码' },
   totp: { step: 4, label: '填写实时 2FA 验证码' },
+  email_code_waiting: { step: 3, label: '查询邮箱验证码' },
+  email_code_submitting: { step: 3, label: '提交邮箱验证码' },
   phone_required: { step: 4, label: 'OpenAI 要求额外手机号验证' },
   phone_submitting: { step: 4, label: '提交手机号' },
   sms_waiting: { step: 4, label: '等待短信验证码' },
@@ -369,6 +400,11 @@ const reasonLabels: Record<string, string> = {
   account_blocked: 'OpenAI 限制了当前账号，系统不会自动重试。',
   captcha_required: 'OpenAI 要求完成人机验证。',
   email_code_required: 'OpenAI 要求邮箱验证码，当前自动流程未继续。',
+  email_code_timeout: '等待邮箱验证码超过 60 秒，任务已停止。',
+  email_code_access_denied: '保存的邮箱验证码 Token 已失效或与邮箱不匹配。',
+  email_code_unavailable: '邮箱验证码服务暂时不可用，任务已停止。',
+  invalid_email_code: 'OpenAI 拒绝了邮箱验证码。',
+  reauthorization_phone_required: '401 重新授权不应进入手机号接码，任务已停止。',
   proxy_unavailable: '账号代理无法用于浏览器授权。',
   navigation_timeout: '打开 OpenAI 授权页超时。',
   browser_context_lost: '独立隐私浏览器上下文意外关闭。',

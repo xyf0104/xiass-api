@@ -1221,7 +1221,7 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 	}
 	if _, err := txClient.ExecContext(ctx, `
 		UPDATE accounts
-		SET credentials = COALESCE(credentials, '{}'::jsonb) - ARRAY[$2, $3, $4, $5]::text[],
+		SET credentials = COALESCE(credentials, '{}'::jsonb) - ARRAY[$2, $3, $4, $5, $6]::text[],
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 	`,
@@ -1230,6 +1230,7 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 		service.OpenAIOAuthReauthorizationEmailCredentialKey,
 		service.OpenAIOAuthReauthorizationPasswordCredentialKey,
 		service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+		service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
 	); err != nil {
 		return err
 	}

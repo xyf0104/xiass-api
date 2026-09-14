@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { defineComponent } from 'vue'
+import { createPinia } from 'pinia'
 import BatchOpenAIOAuthModal from '../BatchOpenAIOAuthModal.vue'
 import { batchOAuthAPI, type BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
 
@@ -10,9 +11,9 @@ const SelectStub = defineComponent({ props: ['modelValue', 'options'], emits: ['
 const base = { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' }
 const confirm = { props: ['show', 'title', 'message'], emits: ['cancel', 'confirm'], template: '<div v-if="show" data-testid="confirmation"><h3>{{title}}</h3><p>{{message}}</p><slot/><button data-testid="confirm" @click="$emit(\'confirm\')">确认</button></div>' }
 let wrapper: VueWrapper
-function task(stage = 'login'): BatchOAuthTask { return { task_id: 'task-00000000000001', email: 'person@example.test', status: 'running', stage, restart_count: 0, requires_sms_confirmation: stage === 'phone_required', created_at: '', expires_at: '' } }
+function task(stage = 'login'): BatchOAuthTask { return { task_id: 'task-00000000000001', email: 'person@example.test', login_method: 'password', status: 'running', stage, restart_count: 0, requires_sms_confirmation: stage === 'phone_required', created_at: '', expires_at: '' } }
 async function render() {
-  wrapper = mount(BatchOpenAIOAuthModal, { props: { show: true, groups: [], proxies: [] }, global: { stubs: { BaseDialog: base, ConfirmDialog: confirm, Select: SelectStub, ProxySelector: { props: ['modelValue'], template: '<span data-testid="proxy">{{modelValue}}</span>' }, GroupSelector: true, Icon: true } } })
+  wrapper = mount(BatchOpenAIOAuthModal, { props: { show: true, groups: [], proxies: [] }, global: { plugins: [createPinia()], stubs: { BaseDialog: base, ConfirmDialog: confirm, Select: SelectStub, ProxySelector: { props: ['modelValue'], template: '<span data-testid="proxy">{{modelValue}}</span>' }, GroupSelector: true, Icon: true } } })
   await flushPromises()
   return wrapper
 }
@@ -26,15 +27,25 @@ afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 describe('batch OAuth modal', () => {
   it('parses privately, snapshots pool proxy and clears pasted credentials after starting', async () => {
     await render()
-    await wrapper.get('[data-testid="batch-credentials"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
     expect(wrapper.text()).toContain('已识别 1 个账号')
     expect(wrapper.text()).not.toContain('MyPrivatePassword')
     await wrapper.findAll('select')[0].setValue(4)
     expect(wrapper.get('[data-testid="proxy"]').text()).toBe('9')
     await wrapper.get('[data-testid="batch-start"]').trigger('click')
     await flushPromises()
-    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'person@example.test', pool_id: 4, proxy_id: 9, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off' }))
-    expect(wrapper.find('[data-testid="batch-credentials"]').exists()).toBe(false)
+    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'person@example.test',
+      login_method: 'password',
+      password: 'MyPrivatePassword',
+      totp_secret: 'JBSWY3DPEHPK3PXP',
+      pool_id: 4,
+      proxy_id: 9,
+      concurrency: 1,
+      priority: 2,
+      codex_fingerprint_mode: 'off',
+    }))
+    expect(wrapper.find('[data-testid="batch-credentials-password"]').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('MyPrivatePassword')
   })
   it('shows an existing account as skipped without announcing a new account', async () => {
@@ -46,7 +57,7 @@ describe('batch OAuth modal', () => {
       account_id: 77,
     })
     await render()
-    await wrapper.get('[data-testid="batch-credentials"]').setValue('existing@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('existing@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
     await wrapper.get('[data-testid="batch-start"]').trigger('click')
     await flushPromises()
 
@@ -105,7 +116,7 @@ describe('batch OAuth modal', () => {
     vi.mocked(batchOAuthAPI.create).mockResolvedValue(failed)
     vi.mocked(batchOAuthAPI.restart).mockResolvedValue({ ...failed, status: 'running', stage: 'opening', reason: undefined, restart_count: 2 })
     await render()
-    await wrapper.get('[data-testid="batch-credentials"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
     await wrapper.get('[data-testid="batch-start"]').trigger('click')
     await flushPromises()
     const retryButton = wrapper.get('[data-testid="oauth-row-person@example.test"]').findAll('button').find(button => button.text().includes('重新授权'))!
@@ -113,6 +124,7 @@ describe('batch OAuth modal', () => {
     await wrapper.get('[data-testid="confirm"]').trigger('click')
     await flushPromises()
     expect(batchOAuthAPI.restart).toHaveBeenCalledWith(failed.task_id, {
+      login_method: 'password',
       password: 'MyPrivatePassword',
       totp_secret: 'JBSWY3DPEHPK3PXP'
     })
@@ -138,9 +150,39 @@ describe('batch OAuth modal', () => {
   })
   it('disables start with invalid 2FA or malformed rows instead of partially importing', async () => {
     await render()
-    await wrapper.get('[data-testid="batch-credentials"]').setValue('person@example.test----password----INVALID!!\nmalformed')
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('person@example.test----password----INVALID!!\nmalformed')
     expect(wrapper.get('[data-testid="batch-start"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('第 1、2 行')
     expect(batchOAuthAPI.create).not.toHaveBeenCalled()
+  })
+  it('keeps email-code login separate and retains failed email plus token only in modal memory', async () => {
+    const token = 'a'.repeat(64)
+    const failed: BatchOAuthTask = {
+      ...task('email_code_waiting'),
+      login_method: 'email_code',
+      status: 'failed',
+      reason: 'email_code_access_denied',
+      restart_count: 0,
+    }
+    vi.mocked(batchOAuthAPI.create).mockResolvedValue(failed)
+    await render()
+
+    await wrapper.get('[data-testid="batch-mode-email-code"]').trigger('click')
+    expect(wrapper.find('[data-testid="batch-credentials-password"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="batch-credentials-email-code"]').setValue(
+      `gpt-0 https://ic.g-c.cc person@example.test ${token} Plus 美国洛杉矶-3`
+    )
+    await wrapper.get('[data-testid="batch-start"]').trigger('click')
+    await flushPromises()
+
+    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'person@example.test',
+      login_method: 'email_code',
+      email_code_token: token,
+    }))
+    expect(wrapper.text()).toContain('邮箱与 64 位 Token 不匹配')
+    expect(wrapper.get('textarea[aria-label="失败邮箱验证码账号"]').attributes('value')).toBe(`person@example.test\t${token}`)
+    expect(wrapper.text()).not.toContain('密码与 2FA 已识别')
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
   })
 })

@@ -108,9 +108,10 @@ func TestExportDataIncludesSecrets(t *testing.T) {
 			Type:     service.AccountTypeOAuth,
 			Credentials: map[string]any{
 				"token": "secret",
-				service.OpenAITeamChildPasswordCredentialKey:            "encrypted-password",
-				service.OpenAIOAuthReauthorizationEmailCredentialKey:    "ordinary@example.test",
-				service.OpenAIOAuthReauthorizationPasswordCredentialKey: "encrypted-ordinary-password",
+				service.OpenAITeamChildPasswordCredentialKey:                  "encrypted-password",
+				service.OpenAIOAuthReauthorizationEmailCredentialKey:          "ordinary@example.test",
+				service.OpenAIOAuthReauthorizationPasswordCredentialKey:       "encrypted-ordinary-password",
+				service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted-email-code-token",
 			},
 			Extra: map[string]any{
 				"note":                               "x",
@@ -144,6 +145,7 @@ func TestExportDataIncludesSecrets(t *testing.T) {
 	require.NotContains(t, resp.Data.Accounts[0].Credentials, service.OpenAITeamChildPasswordCredentialKey)
 	require.NotContains(t, resp.Data.Accounts[0].Credentials, service.OpenAIOAuthReauthorizationEmailCredentialKey)
 	require.NotContains(t, resp.Data.Accounts[0].Credentials, service.OpenAIOAuthReauthorizationPasswordCredentialKey)
+	require.NotContains(t, resp.Data.Accounts[0].Credentials, service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	require.NotContains(t, resp.Data.Accounts[0].Extra, service.OpenAITeamChildExtraKey)
 	require.NotContains(t, resp.Data.Accounts[0].Extra, service.OpenAITeamChildEmailExtraKey)
 }
@@ -315,9 +317,10 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 					"type":     service.AccountTypeOAuth,
 					"credentials": map[string]any{
 						"token": "x",
-						service.OpenAITeamChildPasswordCredentialKey:            "copied-ciphertext",
-						service.OpenAIOAuthReauthorizationEmailCredentialKey:    "ordinary@example.test",
-						service.OpenAIOAuthReauthorizationPasswordCredentialKey: "copied-ordinary-ciphertext",
+						service.OpenAITeamChildPasswordCredentialKey:                  "copied-ciphertext",
+						service.OpenAIOAuthReauthorizationEmailCredentialKey:          "ordinary@example.test",
+						service.OpenAIOAuthReauthorizationPasswordCredentialKey:       "copied-ordinary-ciphertext",
+						service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "copied-email-code-ciphertext",
 					},
 					"extra": map[string]any{
 						service.OpenAITeamChildExtraKey:      true,
@@ -345,6 +348,7 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.NotContains(t, adminSvc.createdAccounts[0].Credentials, service.OpenAITeamChildPasswordCredentialKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Credentials, service.OpenAIOAuthReauthorizationEmailCredentialKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Credentials, service.OpenAIOAuthReauthorizationPasswordCredentialKey)
+	require.NotContains(t, adminSvc.createdAccounts[0].Credentials, service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Extra, service.OpenAITeamChildExtraKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Extra, service.OpenAITeamChildEmailExtraKey)
 }

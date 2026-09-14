@@ -33,6 +33,10 @@ const completeStatus = {
   has_xiass_openai_oauth_reauth_password_encrypted: true,
   has_xiass_openai_oauth_reauth_totp_secret_encrypted: true,
 }
+const emailCodeCompleteStatus = {
+  has_xiass_openai_oauth_reauth_email: true,
+  has_xiass_openai_oauth_reauth_email_code_token_encrypted: true,
+}
 
 async function mountDialog() {
   const wrapper = mount(OpenAIOAuthCredentialLibraryPanel, {
@@ -77,8 +81,8 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
 
     expect(mocks.list).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('当前服务器可管理3')
-    expect(wrapper.text()).toContain('已完整保存1')
-    expect(wrapper.text()).toContain('待补充2')
+    expect(wrapper.text()).toContain('密码 + 2FA已保存1')
+    expect(wrapper.text()).toContain('密码 + 2FA待补充2')
     wrapper.unmount()
   })
 
@@ -93,7 +97,7 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     mocks.save.mockResolvedValue({ ...partial, credentials_status: completeStatus })
     const wrapper = await mountDialog()
 
-    await wrapper.get('[data-testid="credential-library-input"]').setValue([
+    await wrapper.get('[data-testid="credential-library-password-input"]').setValue([
       'manual@example.test----new-password----JBSWY3DPEHPK3PXP',
       'MANUAL@example.test----ignored-password----JBSWY3DPEHPK3PXP',
       'saved@example.test----saved-password----JBSWY3DPEHPK3PXP',
@@ -101,8 +105,8 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     ].join('\n'))
 
     expect(wrapper.text()).toContain('已忽略 1 条重复内容')
-    expect(wrapper.text()).toContain('可补充 1 个账号')
-    expect(wrapper.text()).toContain('已完整保存，跳过')
+    expect(wrapper.text()).toContain('可补充或切换 1 个账号')
+    expect(wrapper.text()).toContain('密码 + 2FA已保存，跳过')
     expect(wrapper.text()).toContain('未找到现有 OpenAI OAuth 账号')
 
     await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
@@ -113,8 +117,8 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
       email: 'manual@example.test',
       password: 'new-password',
     })
-    expect((wrapper.get('[data-testid="credential-library-input"]').element as HTMLTextAreaElement).value).toBe('')
-    expect(wrapper.text()).toContain('已保存 1 个，失败 0 个，未匹配 1 条，已完整保存跳过 1 个')
+    expect((wrapper.get('[data-testid="credential-library-password-input"]').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.text()).toContain('已保存 1 个，失败 0 个，未匹配 1 条，当前方式已保存跳过 1 个')
     expect(wrapper.emitted('updated')).toHaveLength(1)
     wrapper.unmount()
   })
@@ -125,7 +129,7 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     mocks.save.mockResolvedValue({ ...named, credentials_status: completeStatus })
     const wrapper = await mountDialog()
 
-    await wrapper.get('[data-testid="credential-library-input"]').setValue('沐4----password----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="credential-library-password-input"]').setValue('沐4----password----JBSWY3DPEHPK3PXP')
     await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
     await flushPromises()
 
@@ -143,14 +147,14 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     mocks.save.mockResolvedValue({ ...named, credentials_status: completeStatus })
     const wrapper = await mountDialog()
 
-    await wrapper.get('[data-testid="credential-library-input"]').setValue([
+    await wrapper.get('[data-testid="credential-library-password-input"]').setValue([
       '沐4----first-password----JBSWY3DPEHPK3PXP',
       'oauth@example.test----second-password----JBSWY3DPEHPK3PXP',
     ].join('\n'))
 
     expect(wrapper.text()).toContain('已忽略 1 条重复内容')
     expect(wrapper.text()).toContain('同一账号已在上方，跳过')
-    expect(wrapper.text()).toContain('可补充 1 个账号')
+    expect(wrapper.text()).toContain('可补充或切换 1 个账号')
 
     await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
     await flushPromises()
@@ -181,7 +185,7 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     const wrapper = await mountDialog()
 
     expect(wrapper.text()).toContain('当前服务器可管理1')
-    await wrapper.get('[data-testid="credential-library-input"]').setValue([
+    await wrapper.get('[data-testid="credential-library-password-input"]').setValue([
       'primary@example.test----primary-password----JBSWY3DPEHPK3PXP',
       'secondary@example.test----secondary-password----JBSWY3DPEHPK3PXP',
     ].join('\n'))
@@ -194,6 +198,47 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
       password: 'secondary-password',
       totp_secret: 'JBSWY3DPEHPK3PXP',
     })
+    wrapper.unmount()
+  })
+
+  it('stores email-code accounts in a separate mode and switches away from password credentials', async () => {
+    const passwordSaved = account(50, 'mail@example.test', completeStatus)
+    mocks.list.mockResolvedValue({ items: [passwordSaved], total: 1, page: 1, page_size: 200, pages: 1 })
+    mocks.save.mockResolvedValue({ ...passwordSaved, credentials_status: emailCodeCompleteStatus })
+    const wrapper = await mountDialog()
+    const token = 'b'.repeat(64)
+
+    await wrapper.get('[data-testid="credential-mode-email-code"]').trigger('click')
+    expect(wrapper.find('[data-testid="credential-library-password-input"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="credential-library-email-code-input"]').setValue(
+      `gpt-0 https://ic.g-c.cc mail@example.test ${token} Plus 美国洛杉矶-3 20260912 20261012 指纹浏览器`
+    )
+
+    expect(wrapper.text()).toContain('当前保存：密码 + 2FA；保存后切换为 邮箱验证码')
+    await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.save).toHaveBeenCalledWith(50, {
+      email: 'mail@example.test',
+      email_code_token: token,
+    })
+    expect(wrapper.text()).toContain('邮箱验证码：已保存 1 个')
+    wrapper.unmount()
+  })
+
+  it('skips an email-code account already saved in the selected mode', async () => {
+    const saved = account(51, 'saved-mail@example.test', emailCodeCompleteStatus)
+    mocks.list.mockResolvedValue({ items: [saved], total: 1, page: 1, page_size: 200, pages: 1 })
+    const wrapper = await mountDialog()
+
+    await wrapper.get('[data-testid="credential-mode-email-code"]').trigger('click')
+    await wrapper.get('[data-testid="credential-library-email-code-input"]').setValue(
+      `saved-mail@example.test ${'c'.repeat(64)}`
+    )
+
+    expect(wrapper.text()).toContain('邮箱验证码已保存，跳过')
+    expect(wrapper.get('[data-testid="save-credential-library"]').attributes('disabled')).toBeDefined()
+    expect(mocks.save).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

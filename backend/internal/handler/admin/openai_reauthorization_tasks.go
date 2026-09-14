@@ -18,6 +18,14 @@ type openAIReauthorizationStartRequest struct {
 	AccountID int64 `json:"account_id"`
 }
 
+type openAIReauthorizationLoginMaterial struct {
+	Email          string
+	Method         string
+	Password       string
+	TOTPSecret     string
+	EmailCodeToken string
+}
+
 func cloneBatchOAuthInt64(value *int64) *int64 {
 	if value == nil {
 		return nil
@@ -40,48 +48,63 @@ func openAIReauthorizationAccountConfig(account *service.Account) batchOAuthConf
 	}
 }
 
-func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64) (*service.Account, string, string, string, map[string]string, error) {
+func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64) (*service.Account, *openAIReauthorizationLoginMaterial, map[string]string, error) {
 	if h == nil || h.adminService == nil || h.secretEncryptor == nil {
-		return nil, "", "", "", nil, errors.New("OpenAI reauthorization is unavailable")
+		return nil, nil, nil, errors.New("OpenAI reauthorization is unavailable")
 	}
 	account, err := h.adminService.GetAccount(ctx, accountID)
 	if err != nil || account == nil {
-		return nil, "", "", "", nil, errors.New("OpenAI account not found")
+		return nil, nil, nil, errors.New("OpenAI account not found")
 	}
 	if !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
-		return nil, "", "", "", nil, errors.New("only OpenAI OAuth accounts can be reauthorized")
+		return nil, nil, nil, errors.New("only OpenAI OAuth accounts can be reauthorized")
 	}
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
 	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
 	if localNodeID != "" && accountNodeID != "" && accountNodeID != localNodeID {
-		return nil, "", "", "", nil, errors.New("open this account on its assigned XIASS server")
+		return nil, nil, nil, errors.New("open this account on its assigned XIASS server")
 	}
 	email, ciphertext, _ := openAIAccountReauthorizationLogin(account)
 	if email == "" {
-		return nil, "", "", "", nil, errors.New("saved OpenAI login email is unavailable")
+		return nil, nil, nil, errors.New("saved OpenAI login email is unavailable")
+	}
+	if encrypted, _ := account.Credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey].(string); encrypted != "" {
+		emailCodeToken, decryptErr := h.secretEncryptor.Decrypt(encrypted)
+		if decryptErr != nil || validateBatchEmailCodeLogin(email, emailCodeToken) != nil {
+			return nil, nil, nil, errors.New("saved OpenAI email-code token cannot be decrypted")
+		}
+		proxy, proxyErr := h.batchOAuthBrowserProxy(ctx, account.ProxyID)
+		if proxyErr != nil {
+			return nil, nil, nil, errors.New("the account proxy is unavailable for browser authorization")
+		}
+		return account, &openAIReauthorizationLoginMaterial{
+			Email: email, Method: batchOAuthLoginEmailCode, EmailCodeToken: emailCodeToken,
+		}, proxy, nil
 	}
 	if strings.TrimSpace(ciphertext) == "" {
-		return nil, "", "", "", nil, errors.New("saved OpenAI login password is unavailable")
+		return nil, nil, nil, errors.New("saved OpenAI login password is unavailable")
 	}
 	password, err := h.secretEncryptor.Decrypt(ciphertext)
 	if err != nil || len(password) == 0 || len(password) > 2048 {
-		return nil, "", "", "", nil, errors.New("saved OpenAI login password cannot be decrypted")
+		return nil, nil, nil, errors.New("saved OpenAI login password cannot be decrypted")
 	}
 	var totpSecret string
 	if encrypted, _ := account.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey].(string); encrypted != "" {
 		totpSecret, err = h.secretEncryptor.Decrypt(encrypted)
 		if err != nil || validateOpenAIReauthorizationTOTP(totpSecret) != nil {
-			return nil, "", "", "", nil, errors.New("saved OpenAI 2FA secret cannot be decrypted")
+			return nil, nil, nil, errors.New("saved OpenAI 2FA secret cannot be decrypted")
 		}
 	}
 	if err := validateBatchLogin(email, password, totpSecret); err != nil {
-		return nil, "", "", "", nil, errors.New("saved OpenAI login information is invalid")
+		return nil, nil, nil, errors.New("saved OpenAI login information is invalid")
 	}
 	proxy, err := h.batchOAuthBrowserProxy(ctx, account.ProxyID)
 	if err != nil {
-		return nil, "", "", "", nil, errors.New("the account proxy is unavailable for browser authorization")
+		return nil, nil, nil, errors.New("the account proxy is unavailable for browser authorization")
 	}
-	return account, email, password, totpSecret, proxy, nil
+	return account, &openAIReauthorizationLoginMaterial{
+		Email: email, Method: batchOAuthLoginPassword, Password: password, TOTPSecret: totpSecret,
+	}, proxy, nil
 }
 
 func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
@@ -103,7 +126,7 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	account, email, password, secret, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), req.AccountID)
+	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), req.AccountID)
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
@@ -142,7 +165,7 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	}
 	now := time.Now().UTC()
 	task := &batchOAuthTask{
-		ID: id, Mode: batchOAuthModeReauthorization, Email: email, TargetAccountID: req.AccountID,
+		ID: id, Mode: batchOAuthModeReauthorization, Email: login.Email, LoginMethod: login.Method, TargetAccountID: req.AccountID,
 		ownerID: owner, sidecarID: id, config: openAIReauthorizationAccountConfig(account),
 		executionNodeID: strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)),
 		Status:          "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
@@ -154,7 +177,7 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	defer task.markFinishedIfTerminal()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 35*time.Second)
 	defer cancel()
-	_ = h.startBatchAttempt(ctx, task, password, secret, proxy)
+	_ = h.startBatchAttempt(ctx, task, login.Password, login.TOTPSecret, login.EmailCodeToken, proxy)
 	response.Success(c, task)
 }
 
@@ -307,7 +330,7 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	account, email, password, secret, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID)
+	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID)
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
@@ -337,7 +360,8 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		return
 	}
 	task.sidecarID = id
-	task.Email = email
+	task.Email = login.Email
+	task.LoginMethod = login.Method
 	task.config = openAIReauthorizationAccountConfig(account)
 	task.executionNodeID = strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
 	task.submittedPhone = ""
@@ -345,6 +369,6 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	task.RequiresSMSConfirmation = false
 	task.FinishedAt = nil
 	task.Status, task.Stage, task.Reason = "queued", "queued", ""
-	_ = h.startBatchAttempt(ctx, task, password, secret, proxy)
+	_ = h.startBatchAttempt(ctx, task, login.Password, login.TOTPSecret, login.EmailCodeToken, proxy)
 	response.Success(c, task)
 }

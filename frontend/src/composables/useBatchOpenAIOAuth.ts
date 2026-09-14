@@ -1,7 +1,10 @@
 import { computed, onScopeDispose, ref } from 'vue'
 import { batchOAuthAPI, type BatchOAuthConfig, type BatchOAuthLogin, type BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
-import type { AccountCredentialRow } from '@/features/token-converter/accountCredentials'
-import { normalizeBase32Secret } from '@/features/token-converter/totp'
+
+export interface BatchOAuthQueueCredential {
+  account: string
+  login: BatchOAuthLogin
+}
 
 export interface OAuthQueueRow {
   key: string
@@ -38,6 +41,7 @@ export function batchTaskSkipped(task?: BatchOAuthTask) {
 }
 
 export function batchTaskWillAutoRestart(task?: BatchOAuthTask) {
+  if (task?.login_method === 'email_code') return false
   return !!task && ['failed', 'blocked'].includes(task.status) && !task.account_id
     && task.restart_count < (automaticRestartLimits[task.reason || ''] || 0)
 }
@@ -180,7 +184,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     }
   }
 
-  function start(credentials: AccountCredentialRow[], settings: BatchOAuthConfig) {
+  function start(credentials: BatchOAuthQueueCredential[], settings: BatchOAuthConfig) {
     if (started.value || disposed || loading.value || error.value || hasWork.value) return
     config = { ...settings, group_ids: [...settings.group_ids] }
     const existing = new Set(rows.value.filter(r => batchTaskActive(r.task)).map(r => r.email.toLowerCase()))
@@ -189,7 +193,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       if (existing.has(email)) continue
       existing.add(email)
       const key = crypto.randomUUID()
-      secrets.set(key, { password: credential.password, totp_secret: normalizeBase32Secret(credential.twoFactor) })
+      secrets.set(key, credential.login)
       rows.value.push({ key, email, localStatus: 'pending' })
     }
     started.value = true
@@ -259,7 +263,9 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (!row.task || row.task.account_id || row.task.restart_count >= 2) return
     const retryLogin = login || secrets.get(row.key)
     if (!retryLogin) {
-      row.error = '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
+      row.error = row.task?.login_method === 'email_code'
+        ? '邮箱验证码 Token 已从浏览器内存清除，请删除记录后在邮箱验证码模式重新粘贴。'
+        : '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
       return
     }
     await operation(row, async () => {
@@ -271,7 +277,9 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   function retry(row: OAuthQueueRow) {
     if (disposed || row.retryPending) return
     if (!secrets.has(row.key)) {
-      row.error = '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
+      row.error = row.task?.login_method === 'email_code'
+        ? '邮箱验证码 Token 已从浏览器内存清除，请删除记录后在邮箱验证码模式重新粘贴。'
+        : '登录信息已从浏览器内存清除，请删除记录后重新粘贴账号、密码和 2FA。'
       return
     }
     if (row.localStatus !== 'uncertain' && (!row.task || row.task.account_id || row.task.restart_count >= 2)) return
@@ -314,5 +322,10 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   onScopeDispose(dispose)
   void sync()
   return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch,
-    hasSecret: (row: OAuthQueueRow) => secrets.has(row.key), refresh: async () => { clearTimeout(timer); await sync() } }
+    hasSecret: (row: OAuthQueueRow) => secrets.has(row.key),
+    emailCodeToken: (row: OAuthQueueRow) => {
+      const login = secrets.get(row.key)
+      return login?.login_method === 'email_code' ? login.email_code_token : ''
+    },
+    refresh: async () => { clearTimeout(timer); await sync() } }
 }

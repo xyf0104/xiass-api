@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -97,6 +98,34 @@ func TestOpenAIReauthorizationTaskUsesSavedLoginAndAccountProxy(t *testing.T) {
 	require.Equal(t, "stored-password", f.requests[0]["password"])
 	require.Equal(t, "JBSWY3DPEHPK3PXP", f.requests[0]["totp_secret"])
 	require.Equal(t, map[string]any{"server": "http://proxy.example.test:8080", "username": "user", "password": "proxy-secret"}, f.requests[0]["proxy"])
+}
+
+func TestOpenAIReauthorizationTaskUsesSeparateSavedEmailCodeLogin(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	account := reauthorizationAccount(449)
+	delete(account.Credentials, service.OpenAIOAuthReauthorizationPasswordCredentialKey)
+	delete(account.Credentials, service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
+	token := strings.Repeat("b", 64)
+	ciphertext, err := f.h.secretEncryptor.Encrypt(token)
+	require.NoError(t, err)
+	account.Credentials[service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey] = ciphertext
+	f.admin.getAccountResult = account
+	proxy := service.Proxy{ID: 9, Name: "account-egress", Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+
+	r := openAIReauthorizationRouter(f.h, 42)
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":449}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"login_method":"email_code"`)
+	require.NotContains(t, w.Body.String(), token)
+	require.Len(t, f.requests, 1)
+	require.Equal(t, batchOAuthModeReauthorization, f.requests[0]["workflow_mode"])
+	require.Equal(t, batchOAuthLoginEmailCode, f.requests[0]["login_method"])
+	require.Equal(t, token, f.requests[0]["email_code_token"])
+	require.Empty(t, f.requests[0]["password"])
+	require.Empty(t, f.requests[0]["totp_secret"])
 }
 
 func TestOpenAIReauthorizationTaskRejectsAnotherExecutionNode(t *testing.T) {

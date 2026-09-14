@@ -321,6 +321,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	delete(credentials, OpenAIOAuthReauthorizationEmailCredentialKey)
 	delete(credentials, OpenAIOAuthReauthorizationPasswordCredentialKey)
 	delete(credentials, OpenAIOAuthReauthorizationTOTPSecretCredentialKey)
+	delete(credentials, OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	extra, err := duplicateAccountExtra(source.Extra)
 	if err != nil {
 		return nil, fmt.Errorf("clone account extra configuration: %w", err)
@@ -595,6 +596,7 @@ func containsOpenAIReauthorizationCredentials(credentials map[string]any) bool {
 		OpenAIOAuthReauthorizationEmailCredentialKey,
 		OpenAIOAuthReauthorizationPasswordCredentialKey,
 		OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+		OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
 	} {
 		if _, exists := credentials[key]; exists {
 			return true
@@ -613,7 +615,8 @@ func stripOpenAIReauthorizationCredentials(credentials map[string]any) map[strin
 		case OpenAITeamChildPasswordCredentialKey,
 			OpenAIOAuthReauthorizationEmailCredentialKey,
 			OpenAIOAuthReauthorizationPasswordCredentialKey,
-			OpenAIOAuthReauthorizationTOTPSecretCredentialKey:
+			OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+			OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey:
 			continue
 		default:
 			filtered[key] = value

@@ -49,6 +49,11 @@ function account(id: number) {
     status: 'error',
     error_message: '401 unauthorized',
     credentials: { email: `person-${id}@example.test` },
+    credentials_status: {
+      has_xiass_openai_oauth_reauth_email: true,
+      has_xiass_openai_oauth_reauth_password_encrypted: true,
+      has_xiass_openai_oauth_reauth_totp_secret_encrypted: true,
+    },
     extra: { error_code: 'unauthenticated', xiass_execution_node_id: 'api2' },
     execution_node_id: 'api2',
     concurrency: 1,
@@ -63,6 +68,7 @@ function task(id: number, status = 'running', stage = 'email', reason = '') {
     mode: 'reauthorization',
     target_account_id: id,
     email: `person-${id}@example.test`,
+    login_method: 'password',
     status,
     stage,
     reason,
@@ -154,13 +160,35 @@ describe('OpenAIReauthorizationView', () => {
   it('keeps the account password library inside the 401 management page', async () => {
     const wrapper = await mountView()
 
-    expect(wrapper.get('[data-testid="credential-library-workspace-tab"]').text()).toContain('账号密码库')
+    expect(wrapper.get('[data-testid="credential-library-workspace-tab"]').text()).toContain('账号库')
     await wrapper.get('[data-testid="credential-library-workspace-tab"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.get('[data-testid="openai-credential-library"]').isVisible()).toBe(true)
-    expect(wrapper.text()).toContain('保存账号登录信息')
+    expect(wrapper.text()).toContain('OpenAI 账号登录资料')
+    expect(wrapper.text()).toContain('密码 + 2FA 与邮箱验证码 Token 分开保存')
     expect(mocks.executionNodesAPI.getStatus).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('does not start a 401 account until one explicit login method is saved', async () => {
+    const missing = account(12)
+    missing.credentials_status = {}
+    mocks.accountsAPI.list.mockResolvedValueOnce({
+      items: [missing],
+      total: 1,
+      page: 1,
+      page_size: 200,
+      pages: 1,
+    }).mockResolvedValue(emptyAccountPage())
+    const wrapper = await mountView()
+    await wrapper.get('[data-testid="reauthorization-workspace-tab"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('未保存登录资料')
+    expect(wrapper.text()).toContain('补充登录资料')
+    expect(wrapper.find('[data-testid="start-reauthorization-12"]').exists()).toBe(false)
+    expect(mocks.openAIReauthorizationAPI.start).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -257,7 +285,7 @@ describe('OpenAIReauthorizationView', () => {
     const wrapper = await mountView()
 
     await wrapper.get('[data-testid="delete-reauthorization-account-11"]').trigger('click')
-    expect(wrapper.get('[data-testid="delete-confirmation"]').text()).toContain('密码库中的邮箱、密码和 2FA 会同时删除')
+    expect(wrapper.get('[data-testid="delete-confirmation"]').text()).toContain('邮箱、密码、2FA 和邮箱验证码 Token 会同时删除')
     await wrapper.get('[data-testid="confirm-delete"]').trigger('click')
     await flushPromises()
 

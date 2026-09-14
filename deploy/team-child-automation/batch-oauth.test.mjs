@@ -68,6 +68,7 @@ class Page extends EventEmitter {
 function harness(plans = [], overrides = {}) {
   const clock = new Clock()
   const contexts = []
+  let emailSessionIndex = 0
   let live = 0, maxLive = 0
   const browser = {
     async newContext(options) {
@@ -98,7 +99,7 @@ function harness(plans = [], overrides = {}) {
     now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     stepDelayMs: 0,
     async inspectPage(page) { return { kind: page.kind, email: page.plan.identity } },
-    async fillWorkflowEmail(page, value) { page.calls.push(['email', value]); page.kind = 'password' },
+    async fillWorkflowEmail(page, value) { page.calls.push(['email', value]); page.kind = page.plan.afterEmail || 'password' },
     async fillLoginPassword(page, value) {
       page.calls.push(['password', value])
       if (page.plan.passwordGate) await page.plan.passwordGate.promise
@@ -106,7 +107,30 @@ function harness(plans = [], overrides = {}) {
     },
     async fillVerificationCode(page, value) {
       page.calls.push([page.kind, value])
-      page.kind = page.kind === 'totp' ? page.plan.afterTOTP || 'workspace' : 'workspace'
+      page.kind = page.kind === 'totp'
+        ? page.plan.afterTOTP || 'workspace'
+        : page.kind === 'email_code'
+          ? page.plan.afterEmailCode || 'workspace'
+          : 'workspace'
+    },
+    async switchToEmailCode(page) {
+      page.calls.push(['email_code_switch'])
+      if (page.plan.emailCodeSwitchUnavailable) return false
+      page.kind = 'email_code'
+      return true
+    },
+    async createEmailCodeSession({ email, token }) {
+      const plan = plans[emailSessionIndex++] || {}
+      assert.match(email, /@example\.com$/)
+      assert.match(token, /^[a-f0-9]{64}$/i)
+      if (plan.emailCodeSessionError) throw Object.assign(new Error(plan.emailCodeSessionError), { code: plan.emailCodeSessionError })
+      return {
+        async waitForCode() {
+          if (plan.emailCodeError) throw Object.assign(new Error(plan.emailCodeError), { code: plan.emailCodeError })
+          return plan.emailCode || '543604'
+        },
+        close() {},
+      }
     },
     async submitPhoneOnOpenAI(page, value) {
       page.calls.push(['phone', value])
@@ -129,7 +153,7 @@ function body(id = 'task-1', owner = 1, extra = {}) {
   auth.searchParams.set('state', `state-${id}`)
   auth.searchParams.set('redirect_uri', 'http://localhost:1455/auth/callback')
   return { task_id: id, owner_id: owner, email: `${id}@example.com`, password: `password-${id}`,
-    totp_secret: '', auth_url: auth.toString(), oauth_session_id: `session-${id}-1234567890`, ...extra }
+    workflow_mode: 'create', login_method: 'password', totp_secret: '', auth_url: auth.toString(), oauth_session_id: `session-${id}-1234567890`, ...extra }
 }
 
 async function stopAll(h, ids) {
@@ -211,7 +235,7 @@ test('all methods enforce owner and snapshots contain no login, proxy or session
   await assert.rejects(h.runner.cancel('task-1', 2), /not_found/)
   assert.throws(() => h.runner.get('task-1', '01'), /not_found/)
   const snapshot = h.runner.get('task-1', '1')
-  assert.deepEqual(Object.keys(snapshot).sort(), ['id', 'owner_id', 'reason', 'stage', 'status'])
+  assert.deepEqual(Object.keys(snapshot).sort(), ['id', 'login_method', 'owner_id', 'reason', 'stage', 'status'])
   snapshot.status = 'completed'
   assert.equal(h.runner.get('task-1', 1).status, 'running')
   assert.equal(JSON.stringify(h.runner), '{}')
@@ -236,6 +260,65 @@ test('authenticator-only login and workspace capture callback request before nav
   await h.clock.advance(15 * 60_000)
   assert.throws(() => h.runner.get('totp', 1), /not_found/)
   assert.equal(h.clock.timers.size, 0)
+})
+
+test('email-code login is separate from password login and completes with a fresh mailbox code', async () => {
+  const h = harness([{ afterEmail: 'email_code', emailCode: '654321' }])
+  await h.runner.start(body('mail-code', 1, {
+    login_method: 'email_code',
+    password: '',
+    email_code_token: 'b'.repeat(64),
+  }))
+  await flush()
+
+  const result = h.runner.get('mail-code', 1)
+  assert.equal(result.status, 'completed')
+  assert.equal(result.login_method, 'email_code')
+  assert.deepEqual(h.contexts[0].page.calls, [
+    ['email', 'mail-code@example.com'],
+    ['email_code', '654321'],
+    ['workspace'],
+  ])
+})
+
+test('email-code login switches away from a password screen and stops on provider errors', async () => {
+  const switched = harness([{ emailCode: '543604' }])
+  await switched.runner.start(body('mail-switch', 1, {
+    login_method: 'email_code', password: '', email_code_token: 'c'.repeat(64),
+  }))
+  await flush()
+  assert.equal(switched.runner.get('mail-switch', 1).status, 'completed')
+  assert.deepEqual(switched.contexts[0].page.calls.slice(0, 3), [
+    ['email', 'mail-switch@example.com'], ['email_code_switch'], ['email_code', '543604'],
+  ])
+
+  for (const reason of ['email_code_access_denied', 'email_code_timeout', 'email_code_unavailable']) {
+    const failed = harness([{ emailCodeSessionError: reason }])
+    await failed.runner.start(body(`failed-${reason}`, 1, {
+      login_method: 'email_code', password: '', email_code_token: 'd'.repeat(64),
+    }))
+    await flush()
+    const result = failed.runner.get(`failed-${reason}`, 1)
+    assert.equal(result.status, 'failed')
+    assert.equal(result.reason, reason)
+    assert.equal(failed.contexts.length, 0)
+  }
+})
+
+test('reauthorization never enters the phone or SMS acquisition flow', async () => {
+  const h = harness([{ afterEmail: 'email_code', afterEmailCode: 'phone', emailCode: '543604' }])
+  await h.runner.start(body('reauth-mail', 1, {
+    workflow_mode: 'reauthorization',
+    login_method: 'email_code',
+    password: '',
+    email_code_token: 'e'.repeat(64),
+  }))
+  await flush()
+
+  const result = h.runner.get('reauth-mail', 1)
+  assert.equal(result.status, 'blocked')
+  assert.equal(result.reason, 'reauthorization_phone_required')
+  assert.equal(h.contexts[0].page.calls.some(([kind]) => kind === 'phone'), false)
 })
 
 test('only exact callback authority/path, single code and matching single state can complete', async (t) => {
@@ -547,6 +630,8 @@ test('validation rejects unsafe URL, malformed inputs and proxy credentials with
     { proxy: { server: 'http://user:secret@proxy.example' } }, { auth_url: 'https://evil.example' }]) {
     await assert.rejects(h.runner.start(body('bad', 1, extra)))
   }
+  await assert.rejects(h.runner.start(body('mixed', 1, { login_method: 'email_code', email_code_token: 'a'.repeat(64) })))
+  await assert.rejects(h.runner.start(body('bad-token', 1, { login_method: 'email_code', password: '', email_code_token: 'short' })))
   const duplicate = body()
   duplicate.auth_url += '&state=another'
   await assert.rejects(h.runner.start(duplicate), /invalid_auth_url/)

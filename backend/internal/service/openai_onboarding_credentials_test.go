@@ -15,9 +15,10 @@ func TestOpenAIOnboardingTrustedCreatePersistsLoginWithAccount(t *testing.T) {
 	svc := &adminServiceImpl{accountRepo: repo}
 	credentials := map[string]any{
 		"email": "owner@example.test", "access_token": "oauth-token",
-		OpenAIOAuthReauthorizationEmailCredentialKey:      "owner@example.test",
-		OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted-password",
-		OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted-totp",
+		OpenAIOAuthReauthorizationEmailCredentialKey:          "owner@example.test",
+		OpenAIOAuthReauthorizationPasswordCredentialKey:       "encrypted-password",
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey:     "encrypted-totp",
+		OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted-email-code-token",
 	}
 	schedulable := true
 	a, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
@@ -44,9 +45,10 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 	credentials := map[string]any{
 		"email": "owner@example.test", "chatgpt_account_id": "same-account",
 		"access_token": "old-token", "refresh_token": "old-refresh",
-		OpenAIOAuthReauthorizationEmailCredentialKey:      "owner@example.test",
-		OpenAIOAuthReauthorizationPasswordCredentialKey:   "encrypted-password",
-		OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "encrypted-totp",
+		OpenAIOAuthReauthorizationEmailCredentialKey:          "owner@example.test",
+		OpenAIOAuthReauthorizationPasswordCredentialKey:       "encrypted-password",
+		OpenAIOAuthReauthorizationTOTPSecretCredentialKey:     "encrypted-totp",
+		OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "encrypted-email-code-token",
 	}
 	repo := &updateAccountCredsRepoStub{account: &Account{
 		ID: 209, Name: "saved account", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
@@ -69,7 +71,7 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.updateCalls)
 	require.Equal(t, int64(209), updated.ID)
-	for _, key := range []string{OpenAIOAuthReauthorizationEmailCredentialKey, OpenAIOAuthReauthorizationPasswordCredentialKey, OpenAIOAuthReauthorizationTOTPSecretCredentialKey} {
+	for _, key := range []string{OpenAIOAuthReauthorizationEmailCredentialKey, OpenAIOAuthReauthorizationPasswordCredentialKey, OpenAIOAuthReauthorizationTOTPSecretCredentialKey, OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey} {
 		require.Equal(t, credentials[key], updated.Credentials[key])
 	}
 	require.Equal(t, "new-token", updated.GetCredential("access_token"))
@@ -127,17 +129,18 @@ func TestDuplicateAccountStripsAllOpenAIOnboardingLoginCredentials(t *testing.T)
 	// on any duplicable source so changing its type cannot bypass isolation.
 	source := &Account{Name: "source", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
 		"api_key": "existing-api-key", OpenAITeamChildPasswordCredentialKey: "team-password-ciphertext",
-		OpenAIOAuthReauthorizationEmailCredentialKey: "owner@example.test", OpenAIOAuthReauthorizationPasswordCredentialKey: "password-ciphertext", OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "totp-ciphertext",
+		OpenAIOAuthReauthorizationEmailCredentialKey: "owner@example.test", OpenAIOAuthReauthorizationPasswordCredentialKey: "password-ciphertext", OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "totp-ciphertext", OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey: "email-code-ciphertext",
 	}}
 	require.NoError(t, repo.Create(context.Background(), source))
 	duplicate, err := svc.DuplicateAccount(context.Background(), source.ID, "admin:1", "")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"api_key": "existing-api-key"}, duplicate.Credentials)
 	require.Equal(t, "totp-ciphertext", source.GetCredential(OpenAIOAuthReauthorizationTOTPSecretCredentialKey))
+	require.Equal(t, "email-code-ciphertext", source.GetCredential(OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey))
 }
 
 func TestOpenAIOnboardingSecretsAreSensitiveInAuditBodies(t *testing.T) {
-	for _, key := range []string{OpenAIOAuthReauthorizationEmailCredentialKey, OpenAIOAuthReauthorizationPasswordCredentialKey, OpenAIOAuthReauthorizationTOTPSecretCredentialKey} {
+	for _, key := range []string{OpenAIOAuthReauthorizationEmailCredentialKey, OpenAIOAuthReauthorizationPasswordCredentialKey, OpenAIOAuthReauthorizationTOTPSecretCredentialKey, OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey} {
 		require.True(t, IsSensitiveCredentialKey(key))
 		require.True(t, isAuditSensitiveBodyKey(key))
 	}

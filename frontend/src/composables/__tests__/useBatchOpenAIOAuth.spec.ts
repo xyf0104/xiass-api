@@ -5,11 +5,14 @@ import { batchOAuthAPI, type BatchOAuthTask, type BatchOAuthConfig } from '@/api
 import { batchTaskWillAutoRestart, useBatchOpenAIOAuth } from '../useBatchOpenAIOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 
-vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), sms: vi.fn() } }))
+vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), remove: vi.fn(), sms: vi.fn() } }))
 const settings: BatchOAuthConfig = { group_ids: [4, 9], proxy_id: 3, pool_id: 2, concurrency: 3, priority: 1, codex_fingerprint_mode: 'off' }
-const credentials = parseAccountCredentials(Array.from({ length: 5 }, (_, i) => `person${i}@example.test----password-${i}----JBSWY3DPEHPK3PXP`).join('\n')).rows
+const credentials = parseAccountCredentials(Array.from({ length: 5 }, (_, i) => `person${i}@example.test----password-${i}----JBSWY3DPEHPK3PXP`).join('\n')).rows.map(row => ({
+  account: row.account,
+  login: { login_method: 'password' as const, password: row.password, totp_secret: row.twoFactor },
+}))
 function task(id: string, email = 'person0@example.test', status: BatchOAuthTask['status'] = 'running'): BatchOAuthTask {
-  return { task_id: id, email, status, stage: 'login', restart_count: 0, requires_sms_confirmation: false, created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString() }
+  return { task_id: id, email, login_method: 'password', status, stage: 'login', restart_count: 0, requires_sms_confirmation: false, created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString() }
 }
 let scope: EffectScope
 let server: BatchOAuthTask[]
@@ -47,6 +50,15 @@ describe('batch OAuth orchestration', () => {
       ...task('restricted', 'restricted@example.test', 'blocked'),
       stage: 'totp',
       reason: 'account_blocked',
+    })).toBe(false)
+  })
+
+  it('never automatically retries an email-code account', () => {
+    expect(batchTaskWillAutoRestart({
+      ...task('email-code', 'mail@example.test', 'failed'),
+      login_method: 'email_code',
+      stage: 'email_code_waiting',
+      reason: 'email_code_unavailable',
     })).toBe(false)
   })
 

@@ -6,6 +6,7 @@ RUN npm ci --omit=dev
 COPY server.mjs ./server.mjs
 COPY totp.mjs ./totp.mjs
 COPY batch-oauth.mjs ./batch-oauth.mjs
+COPY email-code.mjs ./email-code.mjs
 COPY browser-proxy.mjs ./browser-proxy.mjs
 
 ENV NODE_ENV=production
