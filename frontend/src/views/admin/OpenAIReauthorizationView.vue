@@ -6,11 +6,11 @@
           <Icon name="arrowLeft" size="sm" :stroke-width="2" />
         </button>
         <div class="min-w-0">
-          <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">OpenAI OAuth 401 重新授权</h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">每个账号使用独立隐私上下文；成功或失败后都会关闭当前授权页面。</p>
+          <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">OpenAI OAuth 401 重新授权管理</h1>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">待授权账号与账号密码库统一管理；每个账号使用独立隐私上下文。</p>
         </div>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+      <div v-if="activeWorkspace === 'reauthorization'" class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-secondary flex items-center gap-2" :disabled="loading || refreshing" @click="refreshAll">
           <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
           <span>刷新状态</span>
@@ -23,29 +23,58 @@
     </header>
 
     <section class="overflow-hidden border-y border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-      <div class="grid gap-3 border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:grid-cols-5">
-        <div v-for="item in summary" :key="item.label" class="min-w-0">
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ item.label }}</p>
-          <p class="mt-0.5 text-lg font-semibold" :class="item.className">{{ item.value }}</p>
+      <nav class="flex min-w-0 overflow-x-auto border-b border-gray-200 px-4 dark:border-dark-700" role="tablist" aria-label="401 重新授权管理">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeWorkspace === 'reauthorization'"
+          class="-mb-px flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors"
+          :class="activeWorkspace === 'reauthorization' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          data-testid="reauthorization-workspace-tab"
+          @click="activeWorkspace = 'reauthorization'"
+        >
+          <Icon name="refresh" size="sm" :stroke-width="2" />
+          <span>待重新授权</span>
+          <span class="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-dark-700">{{ accounts.length }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeWorkspace === 'credentials'"
+          class="-mb-px flex h-12 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors"
+          :class="activeWorkspace === 'credentials' ? 'border-primary-500 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+          data-testid="credential-library-workspace-tab"
+          @click="activeWorkspace = 'credentials'"
+        >
+          <Icon name="key" size="sm" :stroke-width="2" />
+          <span>账号密码库</span>
+        </button>
+      </nav>
+
+      <template v-if="activeWorkspace === 'reauthorization'">
+        <div class="grid gap-3 border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:grid-cols-5">
+          <div v-for="item in summary" :key="item.label" class="min-w-0">
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ item.label }}</p>
+            <p class="mt-0.5 text-lg font-semibold" :class="item.className">{{ item.value }}</p>
+          </div>
         </div>
-      </div>
 
-      <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">
-        {{ loadError }}
-      </div>
+        <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">
+          {{ loadError }}
+        </div>
 
-      <div v-if="loading" class="flex min-h-40 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <Icon name="refresh" size="sm" class="animate-spin" />
-        正在读取待授权账号
-      </div>
+        <div v-if="loading" class="flex min-h-40 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <Icon name="refresh" size="sm" class="animate-spin" />
+          正在读取待授权账号
+        </div>
 
-      <div v-else-if="!orderedAccounts.length" class="flex min-h-40 flex-col items-center justify-center px-4 text-center">
-        <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
-        <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有待处理的 OpenAI OAuth 401 账号</p>
-      </div>
+        <div v-else-if="!orderedAccounts.length" class="flex min-h-40 flex-col items-center justify-center px-4 text-center">
+          <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
+          <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有待处理的 OpenAI OAuth 401 账号</p>
+        </div>
 
-      <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
-        <article v-for="account in orderedAccounts" :key="account.id" class="grid min-w-0 gap-3 px-4 py-4 xl:grid-cols-[minmax(230px,0.8fr)_minmax(360px,1.6fr)_auto] xl:items-center" :data-testid="`reauthorization-account-${account.id}`">
+        <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
+          <article v-for="account in orderedAccounts" :key="account.id" class="grid min-w-0 gap-3 px-4 py-4 xl:grid-cols-[minmax(230px,0.8fr)_minmax(360px,1.6fr)_auto] xl:items-center" :data-testid="`reauthorization-account-${account.id}`">
           <div class="min-w-0">
             <div class="flex min-w-0 flex-wrap items-center gap-2">
               <p class="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">#{{ account.id }} {{ account.name }}</p>
@@ -80,8 +109,15 @@
               <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
             </span>
           </div>
-        </article>
-      </div>
+          </article>
+        </div>
+      </template>
+
+      <OpenAIOAuthCredentialLibraryPanel
+        v-show="activeWorkspace === 'credentials'"
+        :active="activeWorkspace === 'credentials'"
+        @updated="handleCredentialLibraryUpdated"
+      />
     </section>
   </div>
 </template>
@@ -90,6 +126,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from '@/components/icons'
+import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
 import { accountsAPI } from '@/api/admin'
 import { openAIReauthorizationAPI, type OpenAIReauthorizationTask } from '@/api/admin/openaiReauthorization'
 import type { Account } from '@/types'
@@ -109,6 +146,7 @@ const now = ref(Date.now())
 const queuedAccountIDs = ref<number[]>([])
 const busyAccountIDs = ref(new Set<number>())
 const localErrors = ref(new Map<number, string>())
+const activeWorkspace = ref<'reauthorization' | 'credentials'>('reauthorization')
 const completingTaskIDs = new Set<string>()
 const smsTaskIDs = new Set<string>()
 let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -129,13 +167,14 @@ const taskByAccountID = computed(() => {
 })
 
 const activeCount = computed(() => tasks.value.filter(task => activeStatuses.has(task.status)).length + busyAccountIDs.value.size)
+const visibleActiveCount = computed(() => accounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
 const completedCount = computed(() => accounts.value.filter(account => taskFor(account)?.status === 'completed').length)
 const failedCount = computed(() => accounts.value.filter(account => terminalFailureStatuses.has(taskFor(account)?.status || '') || localErrors.value.has(account.id)).length)
-const pendingCount = computed(() => Math.max(0, accounts.value.length - completedCount.value - failedCount.value - tasks.value.filter(task => activeStatuses.has(task.status)).length))
+const pendingCount = computed(() => Math.max(0, accounts.value.length - completedCount.value - failedCount.value - visibleActiveCount.value))
 const startableAccounts = computed(() => accounts.value.filter(canStart))
 const summary = computed(() => [
   { label: '待授权账号', value: accounts.value.length, className: 'text-gray-900 dark:text-gray-100' },
-  { label: '进行中', value: tasks.value.filter(task => activeStatuses.has(task.status)).length, className: 'text-primary-600 dark:text-primary-400' },
+  { label: '进行中', value: visibleActiveCount.value, className: 'text-primary-600 dark:text-primary-400' },
   { label: '等待开始', value: pendingCount.value, className: 'text-gray-700 dark:text-gray-300' },
   { label: '成功', value: completedCount.value, className: 'text-green-600 dark:text-green-400' },
   { label: '失败', value: failedCount.value, className: 'text-red-600 dark:text-red-400' }
@@ -426,6 +465,10 @@ async function refreshAll() {
   } finally {
     refreshing.value = false
   }
+}
+
+async function handleCredentialLibraryUpdated() {
+  await loadAccounts()
 }
 
 function schedulePoll() {

@@ -51,20 +51,30 @@
         <template #cell-account="{ row }">
           <div class="flex min-w-0 flex-col">
             <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
-            <span
-              v-if="showExecutionNode && accountExecutionNodeID(row)"
-              :class="[
-                'mt-1 inline-flex w-fit shrink-0 items-center gap-0.5 whitespace-nowrap rounded px-1 py-px text-[11px] font-medium leading-4',
-                accountExecutionNodeID(row) === executionNodeLocalId
-                  ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-                  : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
-              ]"
-              :title="t('admin.accounts.columns.executionNodeHint')"
+            <div
+              v-if="(showExecutionNode && accountExecutionNodeID(row)) || accountPool(row)"
+              data-testid="account-affiliation-badges"
+              class="mt-1 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden"
             >
-              <Icon name="server" size="xs" class="shrink-0" :stroke-width="2" />
-              <span>{{ accountExecutionNodeID(row) === executionNodeLocalId ? t('admin.accounts.executionNodeLocal') : accountExecutionNodeID(row) }}</span>
-            </span>
-            <AccountPoolBadge v-if="accountPool(row)" class="mt-1" :pool="accountPool(row)!" />
+              <span
+                v-if="showExecutionNode && accountExecutionNodeID(row)"
+                :class="[
+                  'inline-flex w-fit shrink-0 items-center gap-0.5 whitespace-nowrap rounded px-1 py-px text-[11px] font-medium leading-4',
+                  accountExecutionNodeID(row) === executionNodeLocalId
+                    ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                    : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
+                ]"
+                :title="t('admin.accounts.columns.executionNodeHint')"
+              >
+                <Icon name="server" size="xs" class="shrink-0" :stroke-width="2" />
+                <span>{{ accountExecutionNodeID(row) === executionNodeLocalId ? t('admin.accounts.executionNodeLocal') : accountExecutionNodeID(row) }}</span>
+              </span>
+              <AccountPoolBadge
+                v-if="accountPool(row)"
+                class="min-w-0 shrink whitespace-nowrap"
+                :pool="accountPool(row)!"
+              />
+            </div>
           </div>
         </template>
 

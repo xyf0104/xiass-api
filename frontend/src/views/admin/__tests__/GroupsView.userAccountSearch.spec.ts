@@ -89,6 +89,16 @@ vi.mock("@/stores/onboarding", () => ({
   useOnboardingStore: () => ({ isCurrentStep, nextStep }),
 }));
 
+vi.mock("@/composables/useExecutionNodeAdminAccess", () => ({
+  useExecutionNodeAdminAccess: () => ({
+    executionNodeStatus: { value: null },
+    executionNodeAccessLoading: { value: false },
+    sharedWriteAllowed: { value: true },
+    sharedReadOnly: { value: false },
+    loadExecutionNodeAdminAccess: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
 vi.mock("vue-i18n", async () => {
   const actual = await vi.importActual<typeof import("vue-i18n")>("vue-i18n");
   return {
@@ -439,5 +449,28 @@ describe("GroupsView group user account search", () => {
     await flushPromises();
 
     expect(updateUserAccountAllowlist).toHaveBeenCalledWith(10, 1, []);
+  });
+
+  it("keeps the open runtime dialog synchronized with the latest group concurrency snapshot", async () => {
+    getUserAccountRuntime
+      .mockResolvedValueOnce({
+        users: [runtimeUser(1, "selected-live", 1, [101])],
+        accounts: [{ ...account, current_concurrency: 1, available: true }],
+      })
+      .mockResolvedValueOnce({
+        users: [runtimeUser(1, "selected-live", 4, [101])],
+        accounts: [{ ...account, current_concurrency: 4, available: true }],
+      });
+
+    await mountView();
+
+    expect(wrapper!.get('[data-test="runtime-user-concurrency-1"]').text()).toContain("1");
+    expect(getUserAccountRuntime).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushPromises();
+
+    expect(getUserAccountRuntime).toHaveBeenCalledTimes(2);
+    expect(wrapper!.get('[data-test="runtime-user-concurrency-1"]').text()).toContain("4");
   });
 });

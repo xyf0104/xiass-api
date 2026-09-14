@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
     getById: vi.fn(),
     list: vi.fn(),
   },
+  executionNodesAPI: {
+    getStatus: vi.fn(),
+  },
   openAIReauthorizationAPI: {
     list: vi.fn(),
     start: vi.fn(),
@@ -22,7 +25,10 @@ const mocks = vi.hoisted(() => ({
 
 const { accountsAPI, openAIReauthorizationAPI } = mocks
 
-vi.mock('@/api/admin', () => ({ accountsAPI: mocks.accountsAPI }))
+vi.mock('@/api/admin', () => ({
+  accountsAPI: mocks.accountsAPI,
+  executionNodesAPI: mocks.executionNodesAPI,
+}))
 vi.mock('@/api/admin/openaiReauthorization', () => ({ openAIReauthorizationAPI: mocks.openAIReauthorizationAPI }))
 vi.mock('vue-router', () => ({
   useRoute: () => mocks.route,
@@ -85,6 +91,11 @@ describe('OpenAIReauthorizationView', () => {
     mocks.routerPush.mockReset()
     accountsAPI.getById.mockReset()
     accountsAPI.list.mockReset().mockResolvedValue(emptyAccountPage())
+    mocks.executionNodesAPI.getStatus.mockReset().mockResolvedValue({
+      admin_write_allowed: true,
+      admin_write_mode: 'single_node',
+      runtime: { enabled: false, node_id: 'api', legacy_unassigned_node_id: 'api' },
+    })
     openAIReauthorizationAPI.list.mockReset().mockResolvedValue({ items: [], max_concurrency: 3, max_restarts: 2 })
     openAIReauthorizationAPI.start.mockReset()
     openAIReauthorizationAPI.complete.mockReset()
@@ -112,6 +123,19 @@ describe('OpenAIReauthorizationView', () => {
     expect(wrapper.text()).not.toContain('覆盖导入原 Team 账号')
     expect(wrapper.text()).not.toContain('等待工作空间 10 秒')
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+    wrapper.unmount()
+  })
+
+  it('keeps the account password library inside the 401 management page', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="credential-library-workspace-tab"]').text()).toContain('账号密码库')
+    await wrapper.get('[data-testid="credential-library-workspace-tab"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="openai-credential-library"]').isVisible()).toBe(true)
+    expect(wrapper.text()).toContain('保存账号登录信息')
+    expect(mocks.executionNodesAPI.getStatus).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 

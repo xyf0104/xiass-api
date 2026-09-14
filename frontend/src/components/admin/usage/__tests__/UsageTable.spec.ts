@@ -162,11 +162,18 @@ describe('admin UsageTable execution-node badges', () => {
     expect(badges[1].text()).toContain('api2')
   })
 
-  it('shows the account pool used by a historical request', () => {
+  it('keeps the execution node and account pool on the same row for historical requests', () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{ ...baseImageRow, request_id: 'pooled', account_id: 12, account: { id: 12, name: 'Pool account' } }],
+        data: [{
+          ...baseImageRow,
+          request_id: 'pooled',
+          account_id: 12,
+          account: { id: 12, name: 'Pool account', execution_node_id: 'api' }
+        }],
         columns: [],
+        showExecutionNode: true,
+        executionNodeLocalId: 'api',
         accountPoolLookup: {
           '12': { id: 7, name: '沐念云', proxy_id: null, account_ids: [12], account_count: 1 }
         }
@@ -179,7 +186,11 @@ describe('admin UsageTable execution-node badges', () => {
       }
     })
 
-    expect(wrapper.get('[title="号池：沐念云"]').text()).toBe('沐念云')
+    const row = wrapper.get('[data-testid="account-affiliation-badges"]')
+    expect(row.classes()).toContain('flex-nowrap')
+    expect(row.get('[title="Account egress node"]').text()).toContain('Local')
+    expect(row.get('[title="号池：沐念云"]').text()).toBe('沐念云')
+    expect(row.get('[title="号池：沐念云"]').classes()).not.toContain('mt-1')
   })
 })
 

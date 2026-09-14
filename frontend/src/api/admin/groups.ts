@@ -523,14 +523,27 @@ export async function getCapacitySummary(): Promise<
 > {
   const { data } = await apiClient.get<
     { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
-  >('/admin/groups/capacity-summary')
+  >('/admin/groups/capacity-summary', {
+    params: { _ts: Date.now() },
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache'
+    }
+  })
   return data
 }
 
 /** Get live users and normal schedulable accounts for one group. */
 export async function getUserAccountRuntime(groupID: number): Promise<UserGroupAccountRuntime> {
   const { data } = await apiClient.get<UserGroupAccountRuntime>(
-    `/admin/groups/${groupID}/user-account-runtime`
+    `/admin/groups/${groupID}/user-account-runtime`,
+    {
+      params: { _ts: Date.now() },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache'
+      }
+    }
   )
   return data
 }

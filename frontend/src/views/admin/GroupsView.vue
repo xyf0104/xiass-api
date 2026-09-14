@@ -4899,7 +4899,7 @@ const COLUMN_SETTINGS_VERSION = 2;
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ["id"],
 };
-const CAPACITY_REFRESH_INTERVAL_MS = 10_000;
+const CAPACITY_REFRESH_INTERVAL_MS = 5_000;
 
 const openActiveConcurrencyAccounts = (groupID: number) => {
   void openUserAccountRuntime(groupID);
@@ -5271,9 +5271,12 @@ const allowlistLoading = ref(false);
 const allowlistSaving = ref(false);
 const RUNTIME_USER_SEARCH_DEBOUNCE_MS = 300;
 const RUNTIME_USER_SEARCH_PAGE_SIZE = 50;
+const RUNTIME_CONCURRENCY_REFRESH_INTERVAL_MS = 5_000;
 let runtimeUserSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let runtimeUserSearchController: AbortController | null = null;
 let runtimeUserSearchRevision = 0;
+let runtimeConcurrencyRefreshTimer: ReturnType<typeof setInterval> | null = null;
+const runtimeConcurrencyRefreshes = new Map<number, Promise<boolean>>();
 
 const visibleRuntimeUsers = computed(() => {
   const activeUsers = runtimeAccountFilterID.value === null
@@ -5317,6 +5320,73 @@ const clearRuntimeUserSearch = () => {
   cancelRuntimeUserSearchRequest();
   runtimeUserSearchQuery.value = "";
   runtimeUserSearchResults.value = [];
+};
+
+const stopRuntimeConcurrencyRefresh = () => {
+  if (runtimeConcurrencyRefreshTimer === null) return;
+  clearInterval(runtimeConcurrencyRefreshTimer);
+  runtimeConcurrencyRefreshTimer = null;
+};
+
+const applyRuntimeConcurrencySnapshot = (
+  groupID: number,
+  runtime: Awaited<ReturnType<typeof adminAPI.groups.getUserAccountRuntime>>,
+) => {
+  if (!showUserAccountRuntimeDialog.value || runtimeGroup.value?.id !== groupID) return;
+  runtimeUsers.value = runtime.users || [];
+  runtimeAccounts.value = runtime.accounts || [];
+
+  const current = capacityMap.value.get(groupID);
+  if (current) {
+    const concurrencyUsed = runtimeUsers.value.reduce(
+      (sum, user) => sum + Math.max(0, Number(user.current_concurrency) || 0),
+      0,
+    );
+    if (current.concurrencyUsed !== concurrencyUsed) {
+      const next = new Map(capacityMap.value);
+      next.set(groupID, { ...current, concurrencyUsed });
+      capacityMap.value = next;
+    }
+  }
+};
+
+const refreshRuntimeConcurrency = (groupID: number, reportError = false): Promise<boolean> => {
+  const activeRefresh = runtimeConcurrencyRefreshes.get(groupID);
+  if (activeRefresh) return activeRefresh;
+
+  const refresh = (async () => {
+    try {
+      const runtime = await adminAPI.groups.getUserAccountRuntime(groupID);
+      applyRuntimeConcurrencySnapshot(groupID, runtime);
+      return true;
+    } catch (error: unknown) {
+      if (reportError) {
+        appStore.showError(extractApiErrorMessage(error, t("admin.groups.userAccountAllowlist.loadFailed")));
+      }
+      return false;
+    }
+  })();
+  runtimeConcurrencyRefreshes.set(groupID, refresh);
+  void refresh.finally(() => {
+    if (runtimeConcurrencyRefreshes.get(groupID) === refresh) {
+      runtimeConcurrencyRefreshes.delete(groupID);
+    }
+  });
+  return refresh;
+};
+
+const startRuntimeConcurrencyRefresh = () => {
+  if (runtimeConcurrencyRefreshTimer !== null) return;
+  runtimeConcurrencyRefreshTimer = setInterval(() => {
+    const groupID = runtimeGroup.value?.id;
+    if (
+      document.visibilityState === "visible" &&
+      showUserAccountRuntimeDialog.value &&
+      groupID
+    ) {
+      void refreshRuntimeConcurrency(groupID);
+    }
+  }, RUNTIME_CONCURRENCY_REFRESH_INTERVAL_MS);
 };
 
 const normalizeRuntimeSearchUser = (user: AdminUser): UserGroupAccountRuntimeUser => ({
@@ -5387,8 +5457,10 @@ const scheduleRuntimeUserSearch = () => {
 };
 
 const closeUserAccountRuntimeDialog = () => {
+  stopRuntimeConcurrencyRefresh();
   clearRuntimeUserSearch();
   showUserAccountRuntimeDialog.value = false;
+  runtimeLoading.value = false;
   runtimeAccountFilterID.value = null;
 };
 
@@ -5422,17 +5494,14 @@ const openUserAccountRuntime = async (
   runtimeAccountFilterID.value = accountID;
   showUserAccountRuntimeDialog.value = true;
   runtimeLoading.value = true;
-  try {
-    const runtime = await adminAPI.groups.getUserAccountRuntime(groupID);
-    if (runtimeGroup.value?.id !== groupID) return;
-    runtimeUsers.value = runtime.users || [];
-    runtimeAccounts.value = runtime.accounts || [];
-  } catch (error: unknown) {
-    appStore.showError(extractApiErrorMessage(error, t("admin.groups.userAccountAllowlist.loadFailed")));
+  const loaded = await refreshRuntimeConcurrency(groupID, true);
+  if (!loaded) {
     closeUserAccountRuntimeDialog();
-  } finally {
-    if (runtimeGroup.value?.id === groupID) runtimeLoading.value = false;
+    return;
   }
+  if (!showUserAccountRuntimeDialog.value || runtimeGroup.value?.id !== groupID) return;
+  runtimeLoading.value = false;
+  startRuntimeConcurrencyRefresh();
 };
 
 const openUserAccountAllowlist = async (user: UserGroupAccountRuntimeUser) => {
@@ -7474,6 +7543,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearRuntimeUserSearch();
+  stopRuntimeConcurrencyRefresh();
   stopCapacityRefresh();
   document.removeEventListener("click", handleClickOutside);
   accountSearchRunner.clearAll();

@@ -131,6 +131,29 @@ func (s *OpsService) GetConcurrencyStats(
 	collectedAt := time.Now()
 	loadMap := s.getAccountsLoadMapBestEffort(ctx, accounts)
 
+	// A group-filtered account view must use the account slots that were
+	// actually acquired through that group. An account can belong to multiple
+	// groups, so its global load would otherwise be repeated in every group.
+	var groupScopedAccountConcurrency map[int64]int
+	if groupIDFilter != nil && *groupIDFilter > 0 && s.concurrencyService != nil {
+		snapshot, snapshotErr := s.concurrencyService.GetGroupAccountConcurrencySnapshot(ctx, *groupIDFilter)
+		if snapshotErr != nil {
+			return nil, nil, nil, nil, snapshotErr
+		}
+		groupScopedAccountConcurrency = snapshot.Counts
+	}
+
+	groupIDs := opsConcurrencyGroupIDs(accounts, groupIDFilter)
+	groupCurrentConcurrency := map[int64]int{}
+	useGroupCurrentConcurrency := false
+	if s.concurrencyService != nil && len(groupIDs) > 0 {
+		var groupErr error
+		groupCurrentConcurrency, useGroupCurrentConcurrency, groupErr = s.concurrencyService.GetGroupConcurrencyBatch(ctx, groupIDs)
+		if groupErr != nil {
+			return nil, nil, nil, nil, groupErr
+		}
+	}
+
 	platform := make(map[string]*PlatformConcurrencyInfo)
 	group := make(map[int64]*GroupConcurrencyInfo)
 	account := make(map[int64]*AccountConcurrencyInfo)
@@ -163,6 +186,9 @@ func (s *OpsService) GetConcurrencyStats(
 		if load != nil {
 			currentInUse = int64(load.CurrentConcurrency)
 			waiting = int64(load.WaitingCount)
+		}
+		if groupScopedAccountConcurrency != nil {
+			currentInUse = int64(groupScopedAccountConcurrency[acc.ID])
 		}
 
 		// Account-level view picks one display group (the first group).
@@ -225,7 +251,9 @@ func (s *OpsService) GetConcurrencyStats(
 				g.Platform = ""
 			}
 			g.MaxCapacity += int64(acc.Concurrency)
-			g.CurrentInUse += currentInUse
+			if !useGroupCurrentConcurrency {
+				g.CurrentInUse += currentInUse
+			}
 			g.WaitingInQueue += waiting
 		} else {
 			for _, grp := range acc.Groups {
@@ -248,9 +276,17 @@ func (s *OpsService) GetConcurrencyStats(
 					g.Platform = ""
 				}
 				g.MaxCapacity += int64(acc.Concurrency)
-				g.CurrentInUse += currentInUse
+				if !useGroupCurrentConcurrency {
+					g.CurrentInUse += currentInUse
+				}
 				g.WaitingInQueue += waiting
 			}
+		}
+	}
+
+	if useGroupCurrentConcurrency {
+		for groupID, info := range group {
+			info.CurrentInUse = int64(groupCurrentConcurrency[groupID])
 		}
 	}
 
@@ -266,6 +302,27 @@ func (s *OpsService) GetConcurrencyStats(
 	}
 
 	return platform, group, account, &collectedAt, nil
+}
+
+func opsConcurrencyGroupIDs(accounts []Account, groupIDFilter *int64) []int64 {
+	if groupIDFilter != nil && *groupIDFilter > 0 {
+		return []int64{*groupIDFilter}
+	}
+	seen := make(map[int64]struct{})
+	groupIDs := make([]int64, 0)
+	for i := range accounts {
+		for _, group := range accounts[i].Groups {
+			if group == nil || group.ID <= 0 {
+				continue
+			}
+			if _, ok := seen[group.ID]; ok {
+				continue
+			}
+			seen[group.ID] = struct{}{}
+			groupIDs = append(groupIDs, group.ID)
+		}
+	}
+	return groupIDs
 }
 
 // listAllActiveUsersForOps returns all active users with their concurrency settings.

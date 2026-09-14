@@ -10,6 +10,7 @@ const {
   getAllGroups,
   getAllIncludingInactive,
   getBatchUsersUsage,
+  getUserConcurrencyStats,
   listEnabledDefinitions,
   getBatchUserAttributes
 } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const {
   getAllGroups: vi.fn(),
   getAllIncludingInactive: vi.fn(),
   getBatchUsersUsage: vi.fn(),
+  getUserConcurrencyStats: vi.fn(),
   listEnabledDefinitions: vi.fn(),
   getBatchUserAttributes: vi.fn()
 }))
@@ -34,6 +36,9 @@ vi.mock('@/api/admin', () => ({
     },
     dashboard: {
       getBatchUsersUsage
+    },
+    ops: {
+      getUserConcurrencyStats
     },
     userAttributes: {
       listEnabledDefinitions,
@@ -87,6 +92,7 @@ const DataTableStub = {
     <div>
       <div data-test="columns">{{ columns.map(col => col.key).join(',') }}</div>
       <div data-test="row-order">{{ data.map(row => row.email).join(',') }}</div>
+      <div data-test="row-concurrency">{{ data.map(row => row.id + ':' + (row.current_concurrency || 0)).join(',') }}</div>
       <div data-test="selected-keys">{{ (selectedKeys || []).join(',') }}</div>
       <button data-test="sort-last-used" @click="$emit('sort', 'last_used_at', 'desc')">sort</button>
       <button
@@ -166,6 +172,7 @@ describe('admin UsersView', () => {
     getAllGroups.mockReset()
     getAllIncludingInactive.mockReset()
     getBatchUsersUsage.mockReset()
+    getUserConcurrencyStats.mockReset()
     listEnabledDefinitions.mockReset()
     getBatchUserAttributes.mockReset()
 
@@ -179,6 +186,7 @@ describe('admin UsersView', () => {
     getAllGroups.mockResolvedValue([])
     getAllIncludingInactive.mockResolvedValue([])
     getBatchUsersUsage.mockResolvedValue({ stats: {} })
+    getUserConcurrencyStats.mockResolvedValue({ enabled: true, user: {} })
     listEnabledDefinitions.mockResolvedValue([])
     getBatchUserAttributes.mockResolvedValue({ values: {} })
   })
@@ -595,5 +603,58 @@ describe('admin UsersView', () => {
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('refreshed-page-two@example.com')
     expect(wrapper.find('[data-test="bulk-edit-limits"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="selected-keys"]').text()).toBe('')
+  })
+
+  it('refreshes visible user concurrency from the shared live snapshot without reloading the table', async () => {
+    listUsers.mockResolvedValue({
+      items: [createAdminUser({ current_concurrency: 8 })],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    getUserConcurrencyStats.mockResolvedValue({
+      enabled: true,
+      user: {
+        42: { user_id: 42, current_in_use: 2, max_capacity: 1, load_percentage: 200 }
+      }
+    })
+
+    const wrapper = mount(UsersView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          EmptyState: true,
+          GroupBadge: true,
+          Select: true,
+          UserAttributesConfigModal: true,
+          UserConcurrencyCell: true,
+          UserCreateModal: true,
+          UserEditModal: true,
+          BulkEditUserModal: BulkEditUserModalStub,
+          UserPlatformQuotaModal: true,
+          UserApiKeysModal: true,
+          UserAllowedGroupsModal: true,
+          UserBalanceModal: true,
+          UserBalanceHistoryModal: true,
+          GroupReplaceModal: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUserConcurrencyStats).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-test="row-concurrency"]').text()).toBe('42:2')
+    expect(listUsers).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 })

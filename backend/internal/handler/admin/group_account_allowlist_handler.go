@@ -15,6 +15,9 @@ type replaceUserGroupAccountAllowlistRequest struct {
 }
 
 func (h *GroupHandler) GetUserAccountRuntime(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store, max-age=0")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
 	groupID, ok := parsePositiveGroupAllowlistID(c, "group ID")
 	if !ok {
 		return

@@ -1367,6 +1367,10 @@ const closePlatformQuotaModal = () => {
 }
 let abortController: AbortController | null = null
 let secondaryDataSeq = 0
+const REALTIME_USER_CONCURRENCY_POLL_INTERVAL_MS = 5_000
+let realtimeUserConcurrencyTimer: ReturnType<typeof setInterval> | null = null
+let realtimeUserConcurrencyFetching = false
+let usersViewDisposed = false
 
 const loadUsersSecondaryData = async (
   userIds: number[],
@@ -1784,6 +1788,53 @@ const loadUsers = async () => {
   }
 }
 
+const refreshRealtimeUserConcurrency = async () => {
+  if (
+    realtimeUserConcurrencyFetching ||
+    loading.value ||
+    users.value.length === 0 ||
+    (typeof document !== 'undefined' && document.hidden)
+  ) return
+
+  const getUserConcurrencyStats = adminAPI.ops?.getUserConcurrencyStats
+  if (typeof getUserConcurrencyStats !== 'function') return
+
+  realtimeUserConcurrencyFetching = true
+  try {
+    const snapshot = await getUserConcurrencyStats()
+    if (!snapshot.enabled) return
+
+    const liveUsers = snapshot.user ?? {}
+    let changed = false
+    const nextUsers = users.value.map((user) => {
+      const rawCurrent = Number(liveUsers[String(user.id)]?.current_in_use ?? 0)
+      const currentConcurrency = Number.isFinite(rawCurrent) ? Math.max(0, Math.trunc(rawCurrent)) : 0
+      if ((user.current_concurrency ?? 0) === currentConcurrency) return user
+      changed = true
+      return { ...user, current_concurrency: currentConcurrency }
+    })
+    if (changed) users.value = nextUsers
+  } catch {
+    // Keep the last known snapshot during a transient monitoring failure.
+  } finally {
+    realtimeUserConcurrencyFetching = false
+  }
+}
+
+const startRealtimeUserConcurrencyPolling = () => {
+  if (realtimeUserConcurrencyTimer !== null) return
+  void refreshRealtimeUserConcurrency()
+  realtimeUserConcurrencyTimer = setInterval(() => {
+    void refreshRealtimeUserConcurrency()
+  }, REALTIME_USER_CONCURRENCY_POLL_INTERVAL_MS)
+}
+
+const stopRealtimeUserConcurrencyPolling = () => {
+  if (realtimeUserConcurrencyTimer === null) return
+  clearInterval(realtimeUserConcurrencyTimer)
+  realtimeUserConcurrencyTimer = null
+}
+
 const handleBulkLimitsSuccess = async () => {
   clearSelection()
   await loadUsers()
@@ -1991,10 +2042,13 @@ const handleFloatingMenuViewportChange = () => {
 }
 
 onMounted(async () => {
+  usersViewDisposed = false
   await loadAttributeDefinitions()
   loadSavedFilters()
   loadSavedColumns()
-  loadUsers()
+  void loadUsers().then(() => {
+    if (!usersViewDisposed) startRealtimeUserConcurrencyPolling()
+  })
   if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
     loadAllGroups()
   }
@@ -2010,6 +2064,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  usersViewDisposed = true
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('keydown', handleDocumentKeydown)
   window.removeEventListener('scroll', handleFloatingMenuViewportChange, true)
@@ -2017,6 +2072,7 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener('scroll', handleFloatingMenuViewportChange)
   window.visualViewport?.removeEventListener('resize', handleFloatingMenuViewportChange)
   clearTimeout(searchTimeout)
+  stopRealtimeUserConcurrencyPolling()
   abortController?.abort()
 })
 </script>

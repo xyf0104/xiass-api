@@ -132,12 +132,6 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
                       </button>
-                      <button class="account-tools-menu-item" data-testid="openai-credential-library" @click="openOpenAICredentialLibrary">
-                        <span class="account-tools-menu-icon bg-cyan-50 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-300">
-                          <Icon name="key" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">401 账号库</span>
-                      </button>
                       <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
                         <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
                           <Icon name="download" size="sm" />
@@ -634,16 +628,6 @@
     </BaseDialog>
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
-    <OpenAIOAuthCredentialLibraryDialog
-      v-if="showOpenAICredentialLibrary"
-      :show="showOpenAICredentialLibrary"
-      :execution-node-enabled="executionNodeStatus?.runtime.enabled === true"
-      :local-execution-node-id="executionNodeStatus?.runtime.node_id || 'api'"
-      :legacy-unassigned-node-id="executionNodeStatus?.runtime.legacy_unassigned_node_id || 'api'"
-      :paired-full-access="pairedFullAccess"
-      @close="showOpenAICredentialLibrary = false"
-      @updated="reload"
-    />
     <BulkEditAccountModal
       v-if="showBulkEdit"
       :show="showBulkEdit"
@@ -738,7 +722,6 @@ const CreateAccountModal = defineAsyncComponent(loadCreateAccountModal)
 const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
 const BulkEditAccountModal = defineAsyncComponent(loadBulkEditAccountModal)
 const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
-const OpenAIOAuthCredentialLibraryDialog = defineAsyncComponent(() => import('@/components/admin/account/OpenAIOAuthCredentialLibraryDialog.vue'))
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -897,7 +880,6 @@ function allowAccountWrite(account?: Account): boolean {
 const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
-const showOpenAICredentialLibrary = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
@@ -1534,7 +1516,6 @@ const isAnyModalOpen = computed(() => {
     showEdit.value ||
     showSync.value ||
     showImportData.value ||
-    showOpenAICredentialLibrary.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
     showTempUnsched.value ||
@@ -1777,12 +1758,6 @@ const openImportData = () => {
   if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showImportData.value = true
-}
-
-const openOpenAICredentialLibrary = () => {
-  if (!allowAccountWrite()) return
-  closeAccountToolsDropdown()
-  showOpenAICredentialLibrary.value = true
 }
 
 const openExportDataDialogFromMenu = () => {

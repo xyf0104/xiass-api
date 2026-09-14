@@ -363,7 +363,13 @@ export async function getConcurrencyStats(platform?: string, groupId?: number | 
 }
 
 export async function getUserConcurrencyStats(): Promise<OpsUserConcurrencyStatsResponse> {
-  const { data } = await apiClient.get<OpsUserConcurrencyStatsResponse>('/admin/ops/user-concurrency')
+  const { data } = await apiClient.get<OpsUserConcurrencyStatsResponse>('/admin/ops/user-concurrency', {
+    params: { _ts: Date.now() },
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache'
+    }
+  })
   return data
 }
 

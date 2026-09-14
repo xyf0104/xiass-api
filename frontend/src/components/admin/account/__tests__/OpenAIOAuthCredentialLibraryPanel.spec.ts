@@ -1,13 +1,17 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import OpenAIOAuthCredentialLibraryDialog from '../OpenAIOAuthCredentialLibraryDialog.vue'
+import OpenAIOAuthCredentialLibraryPanel from '../OpenAIOAuthCredentialLibraryPanel.vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   save: vi.fn(),
+  getExecutionNodeStatus: vi.fn(),
 }))
 
-vi.mock('@/api/admin', () => ({ accountsAPI: { list: mocks.list } }))
+vi.mock('@/api/admin', () => ({
+  accountsAPI: { list: mocks.list },
+  executionNodesAPI: { getStatus: mocks.getExecutionNodeStatus },
+}))
 vi.mock('@/api/admin/teamChild', () => ({ saveOpenAIAccountReauthorizationCredentials: mocks.save }))
 
 function account(id: number, email: string, status: Record<string, boolean> = {}) {
@@ -31,16 +35,11 @@ const completeStatus = {
 }
 
 async function mountDialog() {
-  const wrapper = mount(OpenAIOAuthCredentialLibraryDialog, {
-    props: { show: true },
+  const wrapper = mount(OpenAIOAuthCredentialLibraryPanel, {
+    props: { active: true },
     global: {
       stubs: {
         Icon: { template: '<span />' },
-        BaseDialog: {
-          props: ['show', 'title'],
-          emits: ['close'],
-          template: '<div v-if="show"><h2>{{ title }}</h2><slot /><slot name="footer" /></div>',
-        },
       },
     },
   })
@@ -48,10 +47,19 @@ async function mountDialog() {
   return wrapper
 }
 
-describe('OpenAIOAuthCredentialLibraryDialog', () => {
+describe('OpenAIOAuthCredentialLibraryPanel', () => {
   beforeEach(() => {
     mocks.list.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 200, pages: 0 })
     mocks.save.mockReset()
+    mocks.getExecutionNodeStatus.mockReset().mockResolvedValue({
+      admin_write_allowed: true,
+      admin_write_mode: 'single_node',
+      runtime: {
+        enabled: false,
+        node_id: 'api',
+        legacy_unassigned_node_id: 'api',
+      },
+    })
   })
 
   it('loads every OpenAI OAuth account page and reports saved coverage', async () => {
@@ -68,9 +76,9 @@ describe('OpenAIOAuthCredentialLibraryDialog', () => {
     const wrapper = await mountDialog()
 
     expect(mocks.list).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('可管理 OpenAI OAuth 3 个')
-    expect(wrapper.text()).toContain('已完整保存 1 个')
-    expect(wrapper.text()).toContain('待补充 2 个')
+    expect(wrapper.text()).toContain('当前服务器可管理3')
+    expect(wrapper.text()).toContain('已完整保存1')
+    expect(wrapper.text()).toContain('待补充2')
     wrapper.unmount()
   })
 
@@ -151,6 +159,39 @@ describe('OpenAIOAuthCredentialLibraryDialog', () => {
     expect(mocks.save).toHaveBeenCalledWith(30, {
       email: 'oauth@example.test',
       password: 'first-password',
+      totp_secret: 'JBSWY3DPEHPK3PXP',
+    })
+    wrapper.unmount()
+  })
+
+  it('only edits accounts owned by the current browser node without paired write access', async () => {
+    mocks.getExecutionNodeStatus.mockResolvedValue({
+      admin_write_allowed: false,
+      admin_write_mode: 'secondary_read_only',
+      runtime: {
+        enabled: true,
+        node_id: 'api2',
+        legacy_unassigned_node_id: 'api',
+      },
+    })
+    const primary = { ...account(40, 'primary@example.test'), execution_node_id: 'api' }
+    const secondary = { ...account(41, 'secondary@example.test'), execution_node_id: 'api2' }
+    mocks.list.mockResolvedValue({ items: [primary, secondary], total: 2, page: 1, page_size: 200, pages: 1 })
+    mocks.save.mockResolvedValue({ ...secondary, credentials_status: completeStatus })
+    const wrapper = await mountDialog()
+
+    expect(wrapper.text()).toContain('当前服务器可管理1')
+    await wrapper.get('[data-testid="credential-library-input"]').setValue([
+      'primary@example.test----primary-password----JBSWY3DPEHPK3PXP',
+      'secondary@example.test----secondary-password----JBSWY3DPEHPK3PXP',
+    ].join('\n'))
+    await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.save).toHaveBeenCalledTimes(1)
+    expect(mocks.save).toHaveBeenCalledWith(41, {
+      email: 'secondary@example.test',
+      password: 'secondary-password',
       totp_secret: 'JBSWY3DPEHPK3PXP',
     })
     wrapper.unmount()

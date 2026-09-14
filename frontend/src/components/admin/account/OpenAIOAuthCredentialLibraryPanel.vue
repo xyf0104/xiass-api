@@ -1,97 +1,117 @@
 <template>
-  <BaseDialog :show="show" title="401 账号库" width="wide" :close-on-escape="!saving" @close="requestClose">
-    <div class="space-y-4" data-testid="openai-credential-library">
-      <div class="flex flex-wrap gap-x-5 gap-y-2 border-y border-gray-200 py-3 text-sm dark:border-dark-700">
-        <span>可管理 OpenAI OAuth {{ manageableAccounts.length }} 个</span>
-        <span class="text-emerald-700 dark:text-emerald-300">已完整保存 {{ completeAccountCount }} 个</span>
-        <span class="text-amber-700 dark:text-amber-300">待补充 {{ Math.max(0, manageableAccounts.length - completeAccountCount) }} 个</span>
+  <div class="min-w-0" data-testid="openai-credential-library">
+    <div class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-4 dark:border-dark-700">
+      <div class="min-w-0">
+        <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">保存账号登录信息</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">批量补全邮箱、密码和 2FA；重复账号与已完整保存的账号会自动跳过。</p>
       </div>
+      <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="loading || saving" data-testid="refresh-credential-library" @click="loadAccounts">
+        <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" :stroke-width="2" />
+        <span>重新读取</span>
+      </button>
+    </div>
 
-      <div v-if="loading" class="flex min-h-32 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <Icon name="refresh" size="sm" class="animate-spin" />
-        正在读取账号
+    <div class="grid border-b border-gray-200 dark:border-dark-700 sm:grid-cols-3">
+      <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
+        <p class="text-xs text-gray-500 dark:text-gray-400">当前服务器可管理</p>
+        <p class="mt-0.5 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ manageableAccounts.length }}</p>
       </div>
+      <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
+        <p class="text-xs text-gray-500 dark:text-gray-400">已完整保存</p>
+        <p class="mt-0.5 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{{ completeAccountCount }}</p>
+      </div>
+      <div class="px-4 py-3">
+        <p class="text-xs text-gray-500 dark:text-gray-400">待补充</p>
+        <p class="mt-0.5 text-lg font-semibold text-amber-700 dark:text-amber-300">{{ Math.max(0, manageableAccounts.length - completeAccountCount) }}</p>
+      </div>
+    </div>
 
-      <template v-else>
-        <label class="block text-sm text-gray-700 dark:text-gray-200">
-          邮箱或账号名称、密码、2FA
+    <div v-if="loading" class="flex min-h-56 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+      <Icon name="refresh" size="sm" class="animate-spin" />
+      正在读取 OpenAI OAuth 账号
+    </div>
+
+    <template v-else>
+      <div class="grid min-w-0 xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,0.95fr)]">
+        <div class="min-w-0 px-4 py-5 xl:border-r xl:border-gray-200 xl:dark:border-dark-700">
+          <label class="block text-sm font-medium text-gray-800 dark:text-gray-200" for="credential-library-input">
+            邮箱或账号名称、密码、2FA
+          </label>
           <textarea
+            id="credential-library-input"
             v-model="input"
-            class="input mt-2 min-h-32 resize-y font-mono"
-            rows="5"
+            class="input mt-2 min-h-48 resize-y font-mono text-sm leading-6"
+            rows="8"
             autocomplete="off"
             autocapitalize="off"
             :spellcheck="false"
             placeholder="邮箱----密码----2FA，每行一个账号"
             data-testid="credential-library-input"
           />
-        </label>
 
-        <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
-          <span>已识别 {{ uniqueRows.length }} 条</span>
-          <span v-if="totalDuplicateCount">已忽略 {{ totalDuplicateCount }} 条重复内容</span>
-          <span v-if="targetCount" class="text-primary-700 dark:text-primary-300">可补充 {{ targetCount }} 个账号</span>
-          <span v-if="invalidLines.length" class="text-red-600 dark:text-red-300" role="alert">格式错误：第 {{ invalidLines.join('、') }} 行</span>
-        </div>
+          <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
+            <span>已识别 {{ uniqueRows.length }} 条</span>
+            <span v-if="totalDuplicateCount">已忽略 {{ totalDuplicateCount }} 条重复内容</span>
+            <span v-if="targetCount" class="text-primary-700 dark:text-primary-300">可补充 {{ targetCount }} 个账号</span>
+            <span v-if="invalidLines.length" class="text-red-600 dark:text-red-300" role="alert">格式错误：第 {{ invalidLines.join('、') }} 行</span>
+          </div>
 
-        <div v-if="previewEntries.length" class="max-h-72 overflow-y-auto border-y border-gray-200 dark:border-dark-700">
-          <div
-            v-for="entry in previewEntries"
-            :key="entry.key"
-            class="grid gap-1 border-b border-gray-100 px-1 py-3 last:border-b-0 dark:border-dark-700 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-center sm:gap-3"
-          >
-            <span class="min-w-0 break-all text-sm font-medium text-gray-900 dark:text-gray-100">{{ entry.label }}</span>
-            <span class="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">{{ matchedAccountText(entry) }}</span>
-            <span class="text-xs font-medium" :class="previewStatusClass(entry)">{{ previewStatusText(entry) }}</span>
+          <p v-if="loadError" class="mt-3 text-sm text-red-600 dark:text-red-300" role="alert">{{ loadError }}</p>
+          <div v-if="lastResult" class="mt-4 border-y border-gray-200 py-3 text-sm dark:border-dark-700" role="status">
+            <p :class="lastResult.failed ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'">
+              已保存 {{ lastResult.saved }} 个，失败 {{ lastResult.failed }} 个，未匹配 {{ lastResult.unmatched }} 条，已完整保存跳过 {{ lastResult.alreadySaved }} 个。
+            </p>
+            <p v-if="lastResult.errors.length" class="mt-1 break-words text-xs text-red-600 dark:text-red-300">{{ lastResult.errors.join('；') }}</p>
           </div>
         </div>
 
-        <p v-if="loadError" class="text-sm text-red-600 dark:text-red-300" role="alert">{{ loadError }}</p>
-        <div v-if="lastResult" class="border-y border-gray-200 py-3 text-sm dark:border-dark-700" role="status">
-          <p :class="lastResult.failed ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'">
-            已保存 {{ lastResult.saved }} 个，失败 {{ lastResult.failed }} 个，未匹配 {{ lastResult.unmatched }} 条，已完整保存跳过 {{ lastResult.alreadySaved }} 个。
-          </p>
-          <p v-if="lastResult.errors.length" class="mt-1 break-words text-xs text-red-600 dark:text-red-300">{{ lastResult.errors.join('；') }}</p>
+        <div class="min-w-0 border-t border-gray-200 px-4 py-5 dark:border-dark-700 xl:border-t-0">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">匹配结果</h3>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ previewEntries.length }} 条</span>
+          </div>
+          <div v-if="previewEntries.length" class="mt-3 max-h-[26rem] overflow-y-auto border-y border-gray-200 dark:border-dark-700">
+            <div
+              v-for="entry in previewEntries"
+              :key="entry.key"
+              class="border-b border-gray-100 py-3 last:border-b-0 dark:border-dark-700"
+            >
+              <div class="flex min-w-0 items-start justify-between gap-3">
+                <span class="min-w-0 break-all text-sm font-medium text-gray-900 dark:text-gray-100">{{ entry.label }}</span>
+                <span class="shrink-0 text-xs font-medium" :class="previewStatusClass(entry)">{{ previewStatusText(entry) }}</span>
+              </div>
+              <p class="mt-1 min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">{{ matchedAccountText(entry) }}</p>
+            </div>
+          </div>
+          <div v-else class="mt-3 flex min-h-48 items-center justify-center border-y border-gray-200 px-4 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
+            粘贴登录信息后，这里会显示账号匹配与保存状态。
+          </div>
         </div>
-      </template>
-    </div>
+      </div>
 
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <button type="button" class="btn btn-secondary" :disabled="saving" @click="requestClose">关闭</button>
+      <div class="flex justify-end border-t border-gray-200 px-4 py-3 dark:border-dark-700">
         <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="save-credential-library" :disabled="!canSave" @click="saveAll">
-          <Icon name="check" size="sm" :class="saving ? 'animate-spin' : ''" />
-          <span>{{ saving ? '正在保存' : '保存登录信息' }}</span>
+          <Icon :name="saving ? 'refresh' : 'check'" size="sm" :class="saving ? 'animate-spin' : ''" />
+          <span>{{ saving ? '正在保存' : `保存登录信息${targetCount ? ` (${targetCount})` : ''}` }}</span>
         </button>
       </div>
     </template>
-  </BaseDialog>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
-import BaseDialog from '@/components/common/BaseDialog.vue'
+import { computed, ref, watch } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
-import { accountsAPI } from '@/api/admin'
+import { accountsAPI, executionNodesAPI } from '@/api/admin'
 import { saveOpenAIAccountReauthorizationCredentials } from '@/api/admin/teamChild'
+import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import { parseAccountCredentials, type AccountCredentialRow } from '@/features/token-converter/accountCredentials'
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { Account } from '@/types'
 
-const props = withDefaults(defineProps<{
-  show: boolean
-  executionNodeEnabled?: boolean
-  localExecutionNodeID?: string
-  legacyUnassignedNodeID?: string
-  pairedFullAccess?: boolean
-}>(), {
-  executionNodeEnabled: false,
-  localExecutionNodeID: 'api',
-  legacyUnassignedNodeID: 'api',
-  pairedFullAccess: false,
-})
-const emit = defineEmits<{ close: []; updated: [] }>()
+const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true })
+const emit = defineEmits<{ updated: [] }>()
 
 type PreviewStatus = 'ready' | 'complete' | 'duplicate' | 'unmatched' | 'unsupported'
 
@@ -126,6 +146,8 @@ const loading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
 const lastResult = ref<ImportResult | null>(null)
+const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
+const loaded = ref(false)
 
 const parsed = computed(() => parseAccountCredentials(input.value))
 const uniqueRows = computed(() => {
@@ -248,8 +270,12 @@ function loginEmail(account: Account, importedIdentity: string): string {
 
 function canStoreCredentials(account: Account): boolean {
   const extra = account.extra as Record<string, unknown> | undefined
-  const owner = account.execution_node_id?.trim() || props.legacyUnassignedNodeID || 'api'
-  const nodeWritable = !props.executionNodeEnabled || props.pairedFullAccess || owner === props.localExecutionNodeID
+  const status = executionNodeStatus.value
+  const localNodeID = status?.runtime.node_id || 'api'
+  const legacyNodeID = status?.runtime.legacy_unassigned_node_id || localNodeID
+  const owner = account.execution_node_id?.trim() || legacyNodeID
+  const pairedFullAccess = status?.admin_write_mode === 'paired_full_access' && status.admin_write_allowed === true
+  const nodeWritable = status?.runtime.enabled !== true || pairedFullAccess || owner === localNodeID
   return account.platform === 'openai'
     && account.type === 'oauth'
     && account.parent_account_id == null
@@ -284,23 +310,32 @@ function previewStatusClass(entry: PreviewEntry): string {
 }
 
 async function loadAccounts() {
+  if (loading.value || saving.value) return
   loading.value = true
   loadError.value = ''
   try {
-    const found: Account[] = []
-    let page = 1
-    while (true) {
-      const result = await accountsAPI.list(page, 200, {
-        platform: 'openai',
-        type: 'oauth',
-        sort_by: 'id',
-        sort_order: 'asc'
-      })
-      found.push(...result.items)
-      if (page >= result.pages || result.items.length === 0) break
-      page++
-    }
+    const [status, found] = await Promise.all([
+      executionNodesAPI.getStatus(),
+      (async () => {
+        const resultAccounts: Account[] = []
+        let page = 1
+        while (true) {
+          const result = await accountsAPI.list(page, 200, {
+            platform: 'openai',
+            type: 'oauth',
+            sort_by: 'id',
+            sort_order: 'asc'
+          })
+          resultAccounts.push(...result.items)
+          if (page >= result.pages || result.items.length === 0) break
+          page++
+        }
+        return resultAccounts
+      })()
+    ])
+    executionNodeStatus.value = status
     accounts.value = found
+    loaded.value = true
   } catch (error) {
     loadError.value = extractApiErrorMessage(error, '读取 OpenAI OAuth 账号失败。')
   } finally {
@@ -351,19 +386,7 @@ async function saveAll() {
   if (result.saved > 0) emit('updated')
 }
 
-function requestClose() {
-  if (saving.value) return
-  input.value = ''
-  lastResult.value = null
-  emit('close')
-}
-
-watch(() => props.show, show => {
-  if (show) void loadAccounts()
-  else input.value = ''
+watch(() => props.active, active => {
+  if (active && !loaded.value) void loadAccounts()
 }, { immediate: true })
-
-onUnmounted(() => {
-  input.value = ''
-})
 </script>

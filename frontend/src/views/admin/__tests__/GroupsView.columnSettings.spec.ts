@@ -390,7 +390,7 @@ describe('admin GroupsView column settings', () => {
 
     expect(getCapacitySummary).toHaveBeenCalledTimes(1)
 
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(5_000)
     await flushPromises()
     expect(getCapacitySummary).toHaveBeenCalledTimes(2)
 
@@ -414,7 +414,7 @@ describe('admin GroupsView column settings', () => {
 
     resolveCapacity?.([])
     await flushPromises()
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(5_000)
     await flushPromises()
     expect(getCapacitySummary).toHaveBeenCalledTimes(2)
 
