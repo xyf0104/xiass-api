@@ -101,7 +101,19 @@ const (
 	backoffMultiplier = 1.5
 	// maxBackoff 最大退避时间
 	maxBackoff = 2 * time.Second
+	// accountPoolRetryMaxBackoff keeps non-sticky pool rescans responsive. A
+	// request waiting on the whole pool should notice a slot released by any
+	// eligible account quickly instead of sleeping on one account for seconds.
+	accountPoolRetryMaxBackoff = 250 * time.Millisecond
 )
+
+const accountPoolRetryStateKey = "xiass_openai_account_pool_retry_state"
+
+type accountPoolRetryState struct {
+	deadline time.Time
+	backoff  time.Duration
+	nextPing time.Time
+}
 
 // SSEPingFormat defines the format of SSE ping events for different platforms
 type SSEPingFormat string
@@ -420,6 +432,116 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
 func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
 	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true)
+}
+
+// WaitForAccountPoolRetry applies one short, jittered backoff before the caller
+// runs account selection again. The deadline is shared by all retries for the
+// current request, so repeated pool rescans cannot extend the configured wait
+// timeout. Unlike account-specific waiting, this lets a request take whichever
+// eligible account releases a slot first.
+func (h *ConcurrencyHelper) WaitForAccountPoolRetry(c *gin.Context, timeout time.Duration, isStream bool, streamStarted *bool) error {
+	if c == nil || c.Request == nil {
+		return fmt.Errorf("request context is unavailable")
+	}
+	if timeout <= 0 {
+		timeout = maxConcurrencyWait
+	}
+
+	now := time.Now()
+	state, _ := c.Get(accountPoolRetryStateKey)
+	retryState, _ := state.(*accountPoolRetryState)
+	if retryState == nil {
+		retryState = &accountPoolRetryState{
+			deadline: now.Add(timeout),
+			backoff:  initialBackoff,
+		}
+		if isStream && h.pingFormat != "" && h.pingInterval > 0 {
+			retryState.nextPing = now.Add(h.pingInterval)
+		}
+		c.Set(accountPoolRetryStateKey, retryState)
+	}
+
+	remaining := time.Until(retryState.deadline)
+	if remaining <= 0 {
+		return &ConcurrencyError{SlotType: "account", IsTimeout: true}
+	}
+
+	delay := retryState.backoff
+	if delay <= 0 {
+		delay = initialBackoff
+	}
+	if delay > accountPoolRetryMaxBackoff {
+		delay = accountPoolRetryMaxBackoff
+	}
+	jitter := 0.8 + rand.Float64()*0.4
+	delay = time.Duration(float64(delay) * jitter)
+	if delay > remaining {
+		delay = remaining
+	}
+
+	pingDue := false
+	if !retryState.nextPing.IsZero() {
+		untilPing := time.Until(retryState.nextPing)
+		if untilPing <= 0 {
+			delay = 0
+			pingDue = true
+		} else if untilPing < delay {
+			delay = untilPing
+			pingDue = true
+		}
+	}
+
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-c.Request.Context().Done():
+			return c.Request.Context().Err()
+		case <-timer.C:
+		}
+	}
+
+	if pingDue {
+		if err := h.writeWaitPing(c, streamStarted); err != nil {
+			return err
+		}
+		retryState.nextPing = time.Now().Add(h.pingInterval)
+	}
+
+	next := time.Duration(float64(retryState.backoff) * backoffMultiplier)
+	if next > accountPoolRetryMaxBackoff {
+		next = accountPoolRetryMaxBackoff
+	}
+	retryState.backoff = next
+	return nil
+}
+
+func (h *ConcurrencyHelper) ResetAccountPoolRetry(c *gin.Context) {
+	if c != nil {
+		c.Set(accountPoolRetryStateKey, (*accountPoolRetryState)(nil))
+	}
+}
+
+func (h *ConcurrencyHelper) writeWaitPing(c *gin.Context, streamStarted *bool) error {
+	if h == nil || h.pingFormat == "" || c == nil || streamStarted == nil {
+		return nil
+	}
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return fmt.Errorf("streaming not supported")
+	}
+	if !*streamStarted {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		*streamStarted = true
+	}
+	if _, err := fmt.Fprint(c.Writer, string(h.pingFormat)); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
 }
 
 // nextBackoff 计算下一次退避时间

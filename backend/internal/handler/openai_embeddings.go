@@ -181,6 +181,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			}
 			continue
 		}
+		if slotResult == openAISlotAcquireRetrySelection {
+			continue
+		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}

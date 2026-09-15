@@ -671,6 +671,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}
 			continue
 		}
+		if slotResult == openAISlotAcquireRetrySelection {
+			continue
+		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}
@@ -1274,6 +1277,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 			continue
 		}
+		if slotResult == openAISlotAcquireRetrySelection {
+			continue
+		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}
@@ -1593,7 +1599,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	return wrapReleaseOnDone(ctx, userReleaseFunc), true
 }
 
-// openAISlotAcquireResult 是账号槽位获取的三态结果。
+// openAISlotAcquireResult 是账号槽位获取结果。
 type openAISlotAcquireResult int
 
 const (
@@ -1604,6 +1610,9 @@ const (
 	// 未写任何响应；调用方应经 recordOpenAIProfitVeto 把该账号加入本请求排除集
 	// 后重新选号，全池耗尽由下一轮选号返回标准 no available accounts。
 	openAISlotAcquireProfitVetoed
+	// openAISlotAcquireRetrySelection：非粘性请求已完成一次短退避，调用方应
+	// 立即重新扫描整个合格账号池，而不是继续固定等待当前账号。
+	openAISlotAcquireRetrySelection
 )
 
 // openAIWSTurnPricing 持有 WebSocket 连接内「当前 turn」的计费定价时刻。
@@ -1698,6 +1707,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 				reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			}
 		}
+		h.concurrencyHelper.ResetAccountPoolRetry(c)
 		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), openAISlotAcquireOK
 	}
 	if selection.WaitPlan == nil {
@@ -1732,7 +1742,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
+		h.concurrencyHelper.ResetAccountPoolRetry(c)
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
+	}
+	if selection.WaitPlan.ReselectPool {
+		if err := h.concurrencyHelper.WaitForAccountPoolRetry(c, selection.WaitPlan.Timeout, reqStream, streamStarted); err != nil {
+			reqLog.Warn("openai.account_pool_retry_wait_failed", zap.Error(err))
+			h.handleConcurrencyError(c, err, "account", *streamStarted)
+			return nil, openAISlotAcquireFailed
+		}
+		return nil, openAISlotAcquireRetrySelection
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
@@ -1787,6 +1806,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
+	h.concurrencyHelper.ResetAccountPoolRetry(c)
 	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
 }
 
@@ -2084,6 +2104,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
 	wsPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
 	ctx = wsPricingCtx
+	poolRetryStreamStarted := false
 
 	for {
 		if ctx.Err() != nil {
@@ -2171,6 +2192,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return
 			}
 			if !fastAcquired {
+				if selection.WaitPlan.ReselectPool {
+					if waitErr := h.concurrencyHelper.WaitForAccountPoolRetry(c, selection.WaitPlan.Timeout, false, &poolRetryStreamStarted); waitErr != nil {
+						reqLog.Warn("openai.websocket_account_pool_retry_wait_failed", zap.Error(waitErr))
+						closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account pool remained busy")
+						return
+					}
+					continue
+				}
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
 				return
 			}
@@ -2193,6 +2222,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			selection.Account = latest
 			accountReleaseFunc = fastReleaseFunc
 		}
+		h.concurrencyHelper.ResetAccountPoolRetry(c)
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
 		ctx = admissionCtx
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)

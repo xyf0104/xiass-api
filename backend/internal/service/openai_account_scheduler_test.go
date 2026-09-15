@@ -2669,6 +2669,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsS
 	require.False(t, selection.Acquired)
 	require.NotNil(t, selection.WaitPlan)
 	require.Equal(t, int64(21001), selection.WaitPlan.AccountID)
+	require.False(t, selection.WaitPlan.ReselectPool, "sticky sessions must remain on their bound account")
 	require.Equal(t, openAIAccountScheduleLayerSessionSticky, decision.Layer)
 	require.True(t, decision.StickySessionHit)
 	require.Equal(t, time.Minute, cache.refreshTTLs["openai:session_hash_sticky_busy"])
@@ -4222,6 +4223,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedFallbackS
 	require.False(t, selection.Acquired)
 	require.NotNil(t, selection.WaitPlan)
 	require.Equal(t, int64(38001), selection.WaitPlan.AccountID)
+	require.True(t, selection.WaitPlan.ReselectPool, "non-sticky fallback waits must rescan the eligible pool")
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	// 失效的粘连绑定应被清理，避免后续请求反复走同一条泄漏路径。
 	require.Positive(t, cache.deletedSessions["openai:session_weighted_out_of_group"])
@@ -4288,5 +4290,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityWai
 	require.False(t, selection.Acquired)
 	require.NotNil(t, selection.WaitPlan)
 	require.Equal(t, int64(38011), selection.WaitPlan.AccountID)
+	require.True(t, selection.WaitPlan.ReselectPool, "fallback waits must notice capacity released by any eligible account")
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }

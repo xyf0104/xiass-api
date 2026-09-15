@@ -569,6 +569,11 @@ type AccountWaitPlan struct {
 	MaxConcurrency int
 	Timeout        time.Duration
 	MaxWaiting     int
+	// ReselectPool marks a non-sticky fallback wait. The handler must briefly
+	// back off and run account selection again instead of pinning the request to
+	// this one account for the whole timeout. Sticky and previous-response
+	// affinity waits leave this false so their account identity is preserved.
+	ReselectPool bool
 }
 
 type AccountSelectionResult struct {

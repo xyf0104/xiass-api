@@ -4739,6 +4739,7 @@
                         v-if="unassignedConcurrencyForUser(user) > 0"
                         class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                         :data-test="`runtime-user-waiting-${user.id}`"
+                        :title="t('admin.groups.userAccountAllowlist.waitingForAccountHint')"
                       >
                         <Icon name="clock" size="xs" />
                         {{ t('admin.groups.userAccountAllowlist.waitingForAccount') }}

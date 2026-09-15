@@ -233,6 +233,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			}
 			continue
 		}
+		if slotResult == openAISlotAcquireRetrySelection {
+			continue
+		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}
