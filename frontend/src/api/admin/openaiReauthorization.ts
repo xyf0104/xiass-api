@@ -26,6 +26,7 @@ export interface OpenAIReauthorizationAccountStatus {
   last_attempt_at?: string
   first_succeeded_at?: string
   last_succeeded_at?: string
+  successful_authorization_times?: string[]
   last_result?: string
   last_reason?: string
   last_result_at?: string

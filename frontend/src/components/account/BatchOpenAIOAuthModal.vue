@@ -224,7 +224,7 @@ const canStart = computed(() => !loading.value && poolsReady.value && !error.val
   && Number.isInteger(settings.priority) && settings.priority >= 0 && settings.priority <= 1000)
 const poolOptions = computed(() => [{ value: null, label: '不加入号池' }, ...pools.value.map(pool => ({ value: pool.id, label: pool.name }))])
 const effectiveProxy = computed(() => settings.pool_id === null ? settings.proxy_id : pools.value.find(p => p.id === settings.pool_id)?.proxy_id ?? null)
-const fingerprintOptions = [{ value: 'off', label: '关闭' }, { value: 'device', label: '设备' }, { value: 'session', label: '会话' }, { value: 'full', label: '完整' }]
+const fingerprintOptions = [{ value: 'off', label: '关闭' }, { value: 'device', label: '设备' }, { value: 'session', label: '会话' }, { value: 'full', label: '指纹 + 会话' }]
 const isSkipped = (row: OAuthQueueRow) => batchTaskSkipped(row.task)
 const completedCount = computed(() => rows.value.filter(row => row.task?.status === 'completed' && !isSkipped(row)).length)
 const skippedCount = computed(() => rows.value.filter(isSkipped).length)

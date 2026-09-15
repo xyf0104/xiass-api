@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   save: vi.fn(),
   getExecutionNodeStatus: vi.fn(),
+  clipboardWrite: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -64,6 +65,11 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
         legacy_unassigned_node_id: 'api',
       },
     })
+    mocks.clipboardWrite.mockReset().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: mocks.clipboardWrite },
+    })
   })
 
   it('loads every OpenAI OAuth account page and reports saved coverage', async () => {
@@ -81,8 +87,49 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
 
     expect(mocks.list).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('当前服务器可管理3')
-    expect(wrapper.text()).toContain('密码 + 2FA已保存1')
-    expect(wrapper.text()).toContain('密码 + 2FA待补充2')
+    expect(wrapper.text()).toContain('已保存登录资料1')
+    expect(wrapper.text()).toContain('待补充登录资料2')
+    expect(wrapper.find('[data-testid="credential-mode-missing-accounts"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="credential-missing-subpage-button"]').trigger('click')
+    expect(wrapper.get('[data-testid="credential-missing-subpage"]').text()).toContain('密码 + 2FA 未保存 2')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-1"]').text()).toContain('one@example.test')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-3"]').text()).toContain('three@example.test')
+    await wrapper.get('[data-testid="credential-mode-missing-account-1"]').trigger('click')
+    await flushPromises()
+    expect(mocks.clipboardWrite).toHaveBeenCalledWith('one@example.test')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-1"]').text()).toContain('已复制')
+    wrapper.unmount()
+  })
+
+  it('aggregates both login methods while showing the accounts missing the selected method', async () => {
+    mocks.list.mockResolvedValue({
+      items: [
+        account(61, 'password-one@example.test', completeStatus),
+        account(62, 'password-two@example.test', completeStatus),
+        account(63, 'email-one@example.test', emailCodeCompleteStatus),
+        account(64, 'email-two@example.test', emailCodeCompleteStatus),
+      ],
+      total: 4,
+      page: 1,
+      page_size: 200,
+      pages: 1,
+    })
+
+    const wrapper = await mountDialog()
+
+    expect(wrapper.text()).toContain('当前服务器可管理4')
+    expect(wrapper.text()).toContain('已保存登录资料4')
+    expect(wrapper.text()).toContain('待补充登录资料0')
+    expect(wrapper.get('[data-testid="credential-mode-password"]').text()).toContain('2')
+    expect(wrapper.get('[data-testid="credential-mode-email-code"]').text()).toContain('2')
+    await wrapper.get('[data-testid="credential-missing-subpage-button"]').trigger('click')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-63"]').text()).toContain('当前：邮箱验证码')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-64"]').text()).toContain('当前：邮箱验证码')
+
+    await wrapper.get('[data-testid="missing-mode-email-code"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-61"]').text()).toContain('当前：密码 + 2FA')
+    expect(wrapper.get('[data-testid="credential-mode-missing-account-62"]').text()).toContain('当前：密码 + 2FA')
     wrapper.unmount()
   })
 

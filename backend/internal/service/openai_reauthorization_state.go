@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 )
@@ -32,21 +33,22 @@ const OpenAIReauthorizationCooldown = 7 * 24 * time.Hour
 // passwords, mailbox tokens and OAuth credentials remain in their existing
 // encrypted storage and never enter this document.
 type OpenAIReauthorizationState struct {
-	Version             int        `json:"version"`
-	TrackingStartedAt   *time.Time `json:"tracking_started_at,omitempty"`
-	AttemptCount        int        `json:"attempt_count"`
-	SuccessCount        int        `json:"success_count"`
-	FirstAttemptAt      *time.Time `json:"first_attempt_at,omitempty"`
-	LastAttemptAt       *time.Time `json:"last_attempt_at,omitempty"`
-	FirstSucceededAt    *time.Time `json:"first_succeeded_at,omitempty"`
-	LastSucceededAt     *time.Time `json:"last_succeeded_at,omitempty"`
-	LastResult          string     `json:"last_result,omitempty"`
-	LastReason          string     `json:"last_reason,omitempty"`
-	LastResultAt        *time.Time `json:"last_result_at,omitempty"`
-	LastEventKey        string     `json:"last_event_key,omitempty"`
-	HistorySource       string     `json:"history_source,omitempty"`
-	HistoryConfidence   string     `json:"history_confidence,omitempty"`
-	LegacyEvidenceCount int        `json:"legacy_evidence_count,omitempty"`
+	Version                      int         `json:"version"`
+	TrackingStartedAt            *time.Time  `json:"tracking_started_at,omitempty"`
+	AttemptCount                 int         `json:"attempt_count"`
+	SuccessCount                 int         `json:"success_count"`
+	FirstAttemptAt               *time.Time  `json:"first_attempt_at,omitempty"`
+	LastAttemptAt                *time.Time  `json:"last_attempt_at,omitempty"`
+	FirstSucceededAt             *time.Time  `json:"first_succeeded_at,omitempty"`
+	LastSucceededAt              *time.Time  `json:"last_succeeded_at,omitempty"`
+	SuccessfulAuthorizationTimes []time.Time `json:"successful_authorization_times,omitempty"`
+	LastResult                   string      `json:"last_result,omitempty"`
+	LastReason                   string      `json:"last_reason,omitempty"`
+	LastResultAt                 *time.Time  `json:"last_result_at,omitempty"`
+	LastEventKey                 string      `json:"last_event_key,omitempty"`
+	HistorySource                string      `json:"history_source,omitempty"`
+	HistoryConfidence            string      `json:"history_confidence,omitempty"`
+	LegacyEvidenceCount          int         `json:"legacy_evidence_count,omitempty"`
 }
 
 func OpenAIReauthorizationStateFromAccount(account *Account) OpenAIReauthorizationState {
@@ -97,12 +99,51 @@ func (s *OpenAIReauthorizationState) Normalize() {
 	s.FirstSucceededAt = normalizedOpenAIReauthorizationTime(s.FirstSucceededAt)
 	s.LastSucceededAt = normalizedOpenAIReauthorizationTime(s.LastSucceededAt)
 	s.LastResultAt = normalizedOpenAIReauthorizationTime(s.LastResultAt)
+	times := append([]time.Time(nil), s.SuccessfulAuthorizationTimes...)
+	if s.FirstSucceededAt != nil {
+		times = append(times, s.FirstSucceededAt.UTC())
+	}
+	if s.LastSucceededAt != nil {
+		times = append(times, s.LastSucceededAt.UTC())
+	}
+	s.SuccessfulAuthorizationTimes = normalizeOpenAIReauthorizationTimes(times)
+	if len(s.SuccessfulAuthorizationTimes) > 0 {
+		first := s.SuccessfulAuthorizationTimes[0]
+		last := s.SuccessfulAuthorizationTimes[len(s.SuccessfulAuthorizationTimes)-1]
+		s.FirstSucceededAt = &first
+		s.LastSucceededAt = &last
+		if s.SuccessCount < len(s.SuccessfulAuthorizationTimes) {
+			s.SuccessCount = len(s.SuccessfulAuthorizationTimes)
+		}
+		if s.AttemptCount < s.SuccessCount {
+			s.AttemptCount = s.SuccessCount
+		}
+	}
 	if s.FirstAttemptAt != nil && s.LastAttemptAt != nil && s.LastAttemptAt.Before(*s.FirstAttemptAt) {
 		s.LastAttemptAt = cloneOpenAIReauthorizationTime(s.FirstAttemptAt)
 	}
 	if s.FirstSucceededAt != nil && s.LastSucceededAt != nil && s.LastSucceededAt.Before(*s.FirstSucceededAt) {
 		s.LastSucceededAt = cloneOpenAIReauthorizationTime(s.FirstSucceededAt)
 	}
+}
+
+func normalizeOpenAIReauthorizationTimes(values []time.Time) []time.Time {
+	result := make([]time.Time, 0, len(values))
+	for _, value := range values {
+		if value.IsZero() {
+			continue
+		}
+		result = append(result, value.UTC())
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Before(result[j]) })
+	unique := result[:0]
+	for _, value := range result {
+		if len(unique) > 0 && unique[len(unique)-1].Equal(value) {
+			continue
+		}
+		unique = append(unique, value)
+	}
+	return unique
 }
 
 func (s OpenAIReauthorizationState) IsTracked() bool {

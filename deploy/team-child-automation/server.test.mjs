@@ -243,6 +243,10 @@ describe('Team child OAuth automation state', () => {
       body: 'Your account has been restricted'
     }), workflow)).kind, 'account_blocked')
     assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/mfa-challenge',
+      body: 'Your account has been deactivated'
+    }), workflow)).kind, 'account_deleted_or_disabled')
+    assert.equal((await reauthorizationNextState(page({
       url: 'https://auth.openai.com/log-in/password',
       inputs: [input({ type: 'text', placeholder: 'Email address', editable: false })]
     }), workflow)).kind, 'unknown')

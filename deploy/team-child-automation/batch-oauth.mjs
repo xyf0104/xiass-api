@@ -12,7 +12,7 @@ export const BATCH_OAUTH_REASONS = Object.freeze([
   '', 'sms_timeout', 'sms_confirmation_timeout', 'email_code_required',
   'email_code_timeout', 'email_code_access_denied', 'email_code_unavailable', 'invalid_email_code',
   'reauthorization_phone_required',
-  'captcha_required', 'account_blocked', 'manual_challenge', 'task_expired',
+  'captcha_required', 'account_blocked', 'account_deleted_or_disabled', 'manual_challenge', 'task_expired',
   'invalid_credentials', 'authenticator_required', 'phone_rejected',
   'proxy_unavailable', 'navigation_timeout', 'browser_context_lost',
   'page_interaction_failed', 'invalid_totp', 'invalid_sms_code',
@@ -405,7 +405,8 @@ export class BatchOAuthRunner {
     }
     if (/captcha|verify (?:that )?you are human|checking your browser|验证您是人类|人机验证/i.test(body)) return { kind: 'captcha' }
     if (await firstVisible(page.locator('iframe[src*="captcha"], iframe[src*="challenges.cloudflare.com"]'))) return { kind: 'captcha' }
-    if (/(?:your |this )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned|restricted|limited)|account_(?:deactivated|restricted|limited)|账号.*(?:封禁|停用|受限|限制)/i.test(body)) return { kind: 'account_blocked' }
+    if (/(?:your |this )?account (?:has been |is )?(?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)/i.test(body)) return { kind: 'account_deleted_or_disabled' }
+    if (/(?:your |this )?account (?:has been |is )?(?:suspended|banned|restricted|limited)|account_(?:suspended|restricted|limited)|账号.*(?:封禁|受限|限制)/i.test(body)) return { kind: 'account_blocked' }
     if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
       return { kind: 'invalid_credentials' }
     }
@@ -549,7 +550,7 @@ export class BatchOAuthRunner {
           await this.#stepPause(task)
           continue
         }
-        const manual = { captcha: 'captcha_required', account_blocked: 'account_blocked', invalid_email_code: 'invalid_email_code',
+        const manual = { captcha: 'captcha_required', account_blocked: 'account_blocked', account_deleted_or_disabled: 'account_deleted_or_disabled', invalid_email_code: 'invalid_email_code',
           invalid_credentials: 'invalid_credentials', invalid_totp: 'invalid_totp', invalid_sms_code: 'invalid_sms_code',
           signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
         if (manual) { this.#stop(task, 'blocked', manual); break }

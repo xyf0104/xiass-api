@@ -426,7 +426,8 @@ test('typed route error at phone submission remains a retryable route failure', 
 test('manual challenges, explicit bans, identity mismatch, signup and missing TOTP close context', async (t) => {
   for (const [plan, reason] of [
     [{ afterPassword: 'captcha' }, 'captcha_required'], [{ afterPassword: 'email_code' }, 'email_code_required'],
-    [{ afterPassword: 'account_blocked' }, 'account_blocked'], [{ afterPassword: 'totp' }, 'authenticator_required'],
+    [{ afterPassword: 'account_blocked' }, 'account_blocked'], [{ afterPassword: 'account_deleted_or_disabled' }, 'account_deleted_or_disabled'],
+    [{ afterPassword: 'totp' }, 'authenticator_required'],
     [{ afterPassword: 'signup' }, 'manual_challenge'], [{ identity: 'other@example.com' }, 'invalid_credentials'],
     [{ kind: 'workspace' }, 'invalid_credentials'], [{ afterPassword: 'external_provider' }, 'manual_challenge']
   ]) await t.test(reason, async () => {
@@ -680,7 +681,8 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     ['Enter code from your authenticator app', true, 'totp'],
     ['Check your inbox for a verification code', true, 'email_code'],
     ['Incorrect email address or password', false, 'invalid_credentials'],
-    ['Your account has been deactivated', false, 'account_blocked'],
+    ['Your account has been deactivated', false, 'account_deleted_or_disabled'],
+    ['Your account is disabled', false, 'account_deleted_or_disabled'],
     ['Your account is restricted', false, 'account_blocked'],
     ['Your account is limited', false, 'account_blocked'],
     ['当前账号受到限制', false, 'account_blocked'],
@@ -703,7 +705,7 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     h.contexts[0].page.locator = () => empty
     await flush()
     const result = h.runner.get('task-1', 1)
-    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', captcha: 'captcha_required', openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }
+    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', account_deleted_or_disabled: 'account_deleted_or_disabled', captcha: 'captcha_required', openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }
     assert.equal(result.reason, reasons[expected] || '')
     const retryable = ['openai_route_error', 'oauth_session_expired'].includes(expected)
     assert.equal(result.status, expected === 'unknown' ? 'running' : retryable ? 'failed' : 'blocked')

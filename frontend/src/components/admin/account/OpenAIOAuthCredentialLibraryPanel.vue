@@ -2,27 +2,37 @@
   <div class="min-w-0" data-testid="openai-credential-library">
     <div class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-4 dark:border-dark-700">
       <div class="min-w-0">
-        <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">OpenAI 账号登录资料</h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">密码 + 2FA 与邮箱验证码 Token 分开保存；同一账号只使用当前选择的登录方式。</p>
+        <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ credentialLibraryView === 'manage' ? 'OpenAI 账号登录资料' : '未保存登录资料' }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ credentialLibraryView === 'manage' ? '密码 + 2FA 与邮箱验证码 Token 分开保存；同一账号只使用当前选择的登录方式。' : '按登录方式查看缺失账号；点击邮箱即可复制。' }}</p>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="loading || saving" data-testid="refresh-credential-library" @click="loadAccounts">
-        <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" :stroke-width="2" />
-        <span>重新读取</span>
-      </button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button v-if="credentialLibraryView === 'manage'" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" data-testid="credential-missing-subpage-button" @click="openMissingAccountsPage">
+          <Icon name="clipboard" size="sm" :stroke-width="2" />
+          <span>未保存资料</span>
+        </button>
+        <button v-else type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" data-testid="credential-library-back" @click="credentialLibraryView = 'manage'">
+          <Icon name="arrowLeft" size="sm" :stroke-width="2" />
+          <span>返回账号库</span>
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="loading || saving" data-testid="refresh-credential-library" @click="loadAccounts">
+          <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" :stroke-width="2" />
+          <span>重新读取</span>
+        </button>
+      </div>
     </div>
 
-    <div class="grid border-b border-gray-200 dark:border-dark-700 sm:grid-cols-3">
+    <div v-if="credentialLibraryView === 'manage'" class="grid border-b border-gray-200 dark:border-dark-700 sm:grid-cols-3">
       <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
         <p class="text-xs text-gray-500 dark:text-gray-400">当前服务器可管理</p>
         <p class="mt-0.5 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ manageableAccounts.length }}</p>
       </div>
       <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ currentModeLabel }}已保存</p>
-        <p class="mt-0.5 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{{ currentModeCompleteCount }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">已保存登录资料</p>
+        <p class="mt-0.5 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{{ savedCredentialAccounts.length }}</p>
       </div>
       <div class="px-4 py-3">
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ currentModeLabel }}待补充</p>
-        <p class="mt-0.5 text-lg font-semibold text-amber-700 dark:text-amber-300">{{ Math.max(0, manageableAccounts.length - currentModeCompleteCount) }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">待补充登录资料</p>
+        <p class="mt-0.5 text-lg font-semibold text-amber-700 dark:text-amber-300">{{ missingCredentialAccounts.length }}</p>
       </div>
     </div>
 
@@ -31,14 +41,14 @@
       正在读取 OpenAI OAuth 账号
     </div>
 
-    <template v-else>
+    <template v-else-if="credentialLibraryView === 'manage'">
       <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
         <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="tablist" aria-label="账号登录资料类型">
           <button type="button" role="tab" class="credential-mode-tab" :class="loginMode === 'password' ? 'credential-mode-tab-active' : 'credential-mode-tab-idle'" :aria-selected="loginMode === 'password'" data-testid="credential-mode-password" @click="selectMode('password')">
-            <Icon name="key" size="sm" />密码 + 2FA
+            <Icon name="key" size="sm" />密码 + 2FA <span class="credential-mode-count">{{ passwordCredentialCount }}</span>
           </button>
           <button type="button" role="tab" class="credential-mode-tab" :class="loginMode === 'email_code' ? 'credential-mode-tab-active' : 'credential-mode-tab-idle'" :aria-selected="loginMode === 'email_code'" data-testid="credential-mode-email-code" @click="selectMode('email_code')">
-            <Icon name="mail" size="sm" />邮箱验证码
+            <Icon name="mail" size="sm" />邮箱验证码 <span class="credential-mode-count">{{ emailCodeCredentialCount }}</span>
           </button>
         </div>
       </div>
@@ -121,6 +131,37 @@
         </button>
       </div>
     </template>
+
+    <section v-else class="min-w-0" data-testid="credential-missing-subpage">
+      <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
+        <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="tablist" aria-label="未保存登录资料类型">
+          <button type="button" role="tab" class="credential-mode-tab" :class="loginMode === 'password' ? 'credential-mode-tab-active' : 'credential-mode-tab-idle'" :aria-selected="loginMode === 'password'" data-testid="missing-mode-password" @click="selectMode('password')">
+            <Icon name="key" size="sm" />密码 + 2FA 未保存 <span class="credential-mode-count">{{ manageableAccounts.length - passwordCredentialCount }}</span>
+          </button>
+          <button type="button" role="tab" class="credential-mode-tab" :class="loginMode === 'email_code' ? 'credential-mode-tab-active' : 'credential-mode-tab-idle'" :aria-selected="loginMode === 'email_code'" data-testid="missing-mode-email-code" @click="selectMode('email_code')">
+            <Icon name="mail" size="sm" />邮箱验证码未保存 <span class="credential-mode-count">{{ manageableAccounts.length - emailCodeCredentialCount }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="currentModeMissingAccounts.length" class="grid gap-2 p-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="credential-mode-missing-accounts">
+        <button
+          v-for="account in currentModeMissingAccounts"
+          :key="account.id"
+          type="button"
+          class="credential-missing-email"
+          :disabled="!missingAccountEmail(account)"
+          :title="missingAccountEmail(account) ? `复制 ${missingAccountEmail(account)}` : '该账号没有可复制的邮箱'"
+          :data-testid="`credential-mode-missing-account-${account.id}`"
+          @click="copyMissingAccountEmail(account)"
+        >
+          <Icon :name="copiedMissingAccountID === account.id ? 'check' : 'copy'" size="sm" :stroke-width="2" />
+          <span class="min-w-0 flex-1 truncate">#{{ account.id }} {{ missingAccountEmail(account) || account.name }}</span>
+          <span class="shrink-0 text-gray-400 dark:text-gray-500">{{ copiedMissingAccountID === account.id ? '已复制' : (savedLoginMethod(account) ? `当前：${savedLoginMethod(account)}` : '无登录资料') }}</span>
+        </button>
+      </div>
+      <div v-else class="flex min-h-56 items-center justify-center px-4 text-sm text-gray-500 dark:text-gray-400">所有账号均已保存{{ currentModeLabel }}资料</div>
+    </section>
   </div>
 </template>
 
@@ -183,6 +224,8 @@ const loadError = ref('')
 const lastResult = ref<ImportResult | null>(null)
 const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
 const loaded = ref(false)
+const credentialLibraryView = ref<'manage' | 'missing'>('manage')
+const copiedMissingAccountID = ref<number | null>(null)
 
 const currentModeLabel = computed(() => loginMode.value === 'email_code' ? '邮箱验证码' : '密码 + 2FA')
 const passwordParsed = computed(() => parseAccountCredentials(passwordInput.value))
@@ -300,13 +343,23 @@ const previewEntries = computed<PreviewEntry[]>(() => {
 const targetCount = computed(() => previewEntries.value.reduce((sum, entry) => sum + entry.targets.length, 0))
 const totalDuplicateCount = computed(() => duplicateCount.value + previewEntries.value.reduce((sum, entry) => sum + entry.duplicateCount, 0))
 const manageableAccounts = computed(() => accounts.value.filter(canStoreCredentials))
-const currentModeCompleteCount = computed(() => manageableAccounts.value.filter(account => hasCompleteCredentials(account, loginMode.value)).length)
+const passwordCredentialCount = computed(() => manageableAccounts.value.filter(account => hasCompleteCredentials(account, 'password')).length)
+const emailCodeCredentialCount = computed(() => manageableAccounts.value.filter(account => hasCompleteCredentials(account, 'email_code')).length)
+const savedCredentialAccounts = computed(() => manageableAccounts.value.filter(account => Boolean(savedLoginMethod(account))))
+const missingCredentialAccounts = computed(() => manageableAccounts.value.filter(account => !savedLoginMethod(account)))
+const currentModeMissingAccounts = computed(() => manageableAccounts.value.filter(account => !hasCompleteCredentials(account, loginMode.value)))
 const canSave = computed(() => !loading.value && !saving.value && !loadError.value && invalidLines.value.length === 0 && targetCount.value > 0)
 
 function selectMode(mode: LoginMode) {
   if (saving.value || loginMode.value === mode) return
   loginMode.value = mode
   lastResult.value = null
+  copiedMissingAccountID.value = null
+}
+
+function openMissingAccountsPage(): void {
+  copiedMissingAccountID.value = null
+  credentialLibraryView.value = 'missing'
 }
 
 function normalizeIdentity(value: unknown): string {
@@ -360,6 +413,44 @@ function savedLoginMethod(account: Account): string {
   if (hasCompleteCredentials(account, 'email_code')) return '邮箱验证码'
   if (hasCompleteCredentials(account, 'password')) return '密码 + 2FA'
   return ''
+}
+
+function missingAccountEmail(account: Account): string {
+  const stored = typeof account.credentials?.email === 'string' ? account.credentials.email.trim() : ''
+  if (validEmail(stored)) return stored.toLowerCase()
+  const name = account.name.trim()
+  return validEmail(name) ? name.toLowerCase() : ''
+}
+
+async function copyMissingAccountEmail(account: Account): Promise<void> {
+  const email = missingAccountEmail(account)
+  if (!email) return
+  let copied = false
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(email)
+      copied = true
+    }
+  } catch {
+    copied = false
+  }
+  if (!copied) {
+    const textarea = document.createElement('textarea')
+    textarea.value = email
+    textarea.setAttribute('readonly', 'true')
+    textarea.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none'
+    document.body.appendChild(textarea)
+    textarea.focus({ preventScroll: true })
+    textarea.select()
+    textarea.setSelectionRange(0, textarea.value.length)
+    copied = typeof document.execCommand === 'function' && document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
+  if (!copied) return
+  copiedMissingAccountID.value = account.id
+  window.setTimeout(() => {
+    if (copiedMissingAccountID.value === account.id) copiedMissingAccountID.value = null
+  }, 1600)
 }
 
 function matchedAccountText(entry: PreviewEntry): string {
@@ -496,5 +587,44 @@ watch(() => props.active, active => {
 
 .credential-mode-tab-idle {
   @apply text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200;
+}
+
+.credential-mode-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.credential-missing-email {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid rgb(148 163 184 / 0.34);
+  border-radius: 6px;
+  color: rgb(100 116 139);
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+}
+
+.credential-missing-email:hover {
+  border-color: rgb(14 165 233 / 0.48);
+  color: rgb(3 105 161);
+}
+
+.credential-missing-email {
+  min-height: 2rem;
+  background: rgb(241 245 249 / 0.7);
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+  font-size: 0.75rem;
+}
+
+:global(.dark .credential-missing-email) {
+  border-color: rgb(123 178 199 / 0.22);
+  background: rgb(15 39 53 / 0.64);
+  color: rgb(148 163 184);
+}
+
+:global(.dark .credential-missing-email:hover) {
+  border-color: rgb(56 189 248 / 0.44);
+  color: rgb(125 211 252);
 }
 </style>

@@ -124,7 +124,7 @@ func TestOpenAIReauthorizationTaskRequiresConfirmation(t *testing.T) {
 	require.Zero(t, f.admin.openAIReauthorizationState.calls)
 }
 
-func TestOpenAIReauthorizationTaskLocksSecondDropForSevenDays(t *testing.T) {
+func TestOpenAIReauthorizationTaskAllowsCooldownOverrideOnlyAfterHighRiskConfirmation(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 	account := reauthorizationAccount(448)
@@ -141,10 +141,17 @@ func TestOpenAIReauthorizationTaskLocksSecondDropForSevenDays(t *testing.T) {
 	f.admin.proxies = []service.Proxy{proxy}
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 
-	w := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
-	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), "必须等待 7 天")
+	router := openAIReauthorizationRouter(f.h, 42)
+	rejected := batchOAuthRequest(router, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, rejected.Code, rejected.Body.String())
+	require.Contains(t, rejected.Body.String(), "7 天冷静期")
+	require.Contains(t, rejected.Body.String(), "高风险二次确认")
 	require.Empty(t, f.requests)
+
+	accepted := batchOAuthRequest(router, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
+	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
+	require.Contains(t, accepted.Body.String(), `"reauthorization_number":2`)
+	require.Len(t, f.requests, 1)
 }
 
 func TestOpenAIReauthorizationTaskRequiresHighRiskAcknowledgementAfterCooldown(t *testing.T) {
@@ -281,11 +288,11 @@ func TestOpenAIReauthorizationStatusShowsExactCooldownAndLegacyInference(t *test
 	status := buildOpenAIReauthorizationAccountStatus(exact, service.OpenAIReauthorizationStateFromAccount(exact), true, now)
 	require.Equal(t, "cooldown", status.RiskLevel)
 	require.Equal(t, 2, status.CurrentAuthorizationNumber)
-	require.False(t, status.CanStart)
+	require.True(t, status.CanStart)
 	require.Greater(t, status.CooldownRemainingSeconds, int64(4*24*time.Hour/time.Second))
 }
 
-func TestOpenAIReauthorizationLegacyAccountRequiresHighRiskAcknowledgement(t *testing.T) {
+func TestOpenAIReauthorizationUntrackedAccountStartsAsFirstAuthorization(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	account := reauthorizationAccount(503)
 	delete(account.Extra, service.OpenAIReauthorizationStateExtraKey)
@@ -293,25 +300,16 @@ func TestOpenAIReauthorizationLegacyAccountRequiresHighRiskAcknowledgement(t *te
 	now := time.Date(2026, time.September, 15, 8, 0, 0, 0, time.UTC)
 
 	state := f.h.openAIReauthorizationState(context.Background(), account)
-	require.Equal(t, service.OpenAIReauthorizationResultLegacyUnknown, state.LastResult)
-	require.Equal(t, service.OpenAIReauthorizationHistoryUnknown, state.HistoryConfidence)
+	require.Empty(t, state.LastResult)
+	require.False(t, state.HasHistory())
 	status := buildOpenAIReauthorizationAccountStatus(account, state, true, now)
-	require.Equal(t, "unknown", status.RiskLevel)
+	require.Equal(t, "first", status.RiskLevel)
 	require.True(t, status.CanStart)
-	require.True(t, status.RequiresRiskConfirmation)
-
-	_, _, err := f.h.validateOpenAIReauthorizationStart(
-		context.Background(), account,
-		openAIReauthorizationAuthorizationRequest{Confirmed: true}, now,
-	)
-	require.ErrorContains(t, err, "历史无法证明")
+	require.False(t, status.RequiresRiskConfirmation)
 
 	_, authorizationNumber, err := f.h.validateOpenAIReauthorizationStart(
 		context.Background(), account,
-		openAIReauthorizationAuthorizationRequest{
-			Confirmed:                             true,
-			AcknowledgedSecondReauthorizationRisk: true,
-		}, now,
+		openAIReauthorizationAuthorizationRequest{Confirmed: true}, now,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, authorizationNumber)
@@ -405,7 +403,7 @@ func TestOpenAIReauthorizationRepeatedStartReturnsExistingTask(t *testing.T) {
 	require.Equal(t, int32(1), f.sidecarCalls.Load())
 }
 
-func TestOpenAIReauthorizationRestrictedTaskCannotRestart(t *testing.T) {
+func TestOpenAIReauthorizationRestrictedTaskRestartsOnlyAfterHighRiskConfirmation(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 	f.admin.getAccountResult = reauthorizationAccount(448)
@@ -427,5 +425,10 @@ func TestOpenAIReauthorizationRestrictedTaskCannotRestart(t *testing.T) {
 	task.mu.Unlock()
 	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true}`)
 	require.Equal(t, http.StatusConflict, restart.Code, restart.Body.String())
+	require.Contains(t, restart.Body.String(), "高风险二次确认")
 	require.Len(t, f.requests, 1)
+
+	restart = batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
+	require.Equal(t, http.StatusOK, restart.Code, restart.Body.String())
+	require.Len(t, f.requests, 2)
 }

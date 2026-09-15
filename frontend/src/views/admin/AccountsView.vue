@@ -25,7 +25,7 @@
               </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="batch-openai-oauth" @click="openOpenAIAccountWorkbench">
                 <Icon name="userPlus" size="sm" />
-                <span>批量添加账号</span>
+                <span>XIASS工作台</span>
                 <span v-if="openAI401Accounts.length" class="rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold leading-none text-white">{{ openAI401Accounts.length }}</span>
               </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="pelican-benchmark" @click="showPelicanBenchmark = true">

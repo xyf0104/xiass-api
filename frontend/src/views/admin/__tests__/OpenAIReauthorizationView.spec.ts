@@ -151,29 +151,32 @@ describe('OpenAIReauthorizationView', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows the real 401 flow at the top without Team registration copy', async () => {
+  it('shows the 401 workbench and keeps Team creation as a separate native route', async () => {
     mocks.route.query = { account_ids: '448' }
     openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(448)], cooldown_seconds: 604800 })
     const wrapper = await mountView()
 
-    expect(wrapper.text()).toContain('OpenAI OAuth 工作台')
+    expect(wrapper.text()).toContain('XIASS工作台')
     expect(wrapper.get('[data-testid="reauthorization-workspace-tab"]').text()).toContain('401 重新授权')
-    expect(wrapper.text()).toContain('#448 account-448')
+    expect(wrapper.get('[data-testid="reauthorization-account-448"]').text()).toContain('account-448')
     expect(wrapper.text()).toContain('尚未启动')
-    expect(wrapper.text()).not.toContain('Team 子号创建')
+    expect(wrapper.get('[data-testid="team-child-creation-entry"]').text()).toContain('创建 Team 子号')
     expect(wrapper.text()).not.toContain('覆盖导入原 Team 账号')
     expect(wrapper.text()).not.toContain('等待工作空间 10 秒')
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+
+    await wrapper.get('[data-testid="team-child-creation-entry"]').trigger('click')
+    expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'AdminTeamChildCreation' })
     wrapper.unmount()
   })
 
-  it('opens the native workbench on batch add by default', async () => {
+  it('opens the native workbench on 401 reauthorization by default', async () => {
     mocks.route.query = {}
     const wrapper = await mountView()
 
-    expect(wrapper.get('[data-testid="batch-workspace-tab"]').attributes('aria-selected')).toBe('true')
-    expect(wrapper.get('[data-testid="batch-oauth"]').isVisible()).toBe(true)
-    expect(wrapper.text()).toContain('批量添加账号')
+    expect(wrapper.get('[data-testid="reauthorization-workspace-tab"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="batch-workspace-tab"]').attributes('aria-selected')).toBe('false')
+    expect(wrapper.text()).toContain('401 重新授权')
     wrapper.unmount()
   })
 
@@ -209,7 +212,7 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
-  it('loads current 401 accounts and completed reauthorization history together', async () => {
+  it('separates current 401 accounts from completed authorization history', async () => {
     openAIReauthorizationAPI.accounts.mockResolvedValue({
       items: [
         reauthorizationStatus(201),
@@ -229,8 +232,14 @@ describe('OpenAIReauthorizationView', () => {
 
     const wrapper = await mountView()
 
-    expect(wrapper.text()).toContain('#201 account-201')
-    expect(wrapper.text()).toContain('#401 account-401')
+    expect(wrapper.get('[data-testid="reauthorization-account-201"]').text()).toContain('account-201')
+    expect(wrapper.find('[data-testid="authorization-history-account-401"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="authorization-history-workspace-tab"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="authorization-history-account-401"]').text()).toContain('account-401')
+    expect(wrapper.find('[data-testid="reauthorization-account-201"]').exists()).toBe(false)
     expect(openAIReauthorizationAPI.accounts).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
@@ -295,18 +304,25 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
-  it('does not offer another retry after OpenAI marks the account restricted', async () => {
+  it('allows a deleted or disabled account to retry only after red high-risk confirmation', async () => {
     mocks.route.query = { account_ids: '10' }
-    openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(10, { can_start: false, risk_level: 'blocked', last_result: 'blocked', last_reason: 'account_blocked' })], cooldown_seconds: 604800 })
-    openAIReauthorizationAPI.list.mockResolvedValue({ items: [task(10, 'blocked', 'blocked', 'account_blocked')], max_concurrency: 3, max_restarts: 2 })
+    openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(10, { can_start: true, requires_risk_confirmation: true, risk_level: 'blocked', last_result: 'blocked', last_reason: 'account_deleted_or_disabled' })], cooldown_seconds: 604800 })
+    openAIReauthorizationAPI.list.mockResolvedValue({ items: [task(10, 'blocked', 'blocked', 'account_deleted_or_disabled')], max_concurrency: 3, max_restarts: 2 })
+    openAIReauthorizationAPI.restart.mockResolvedValue(task(10, 'running', 'opening'))
     const wrapper = await mountView()
 
-    expect(wrapper.text()).toContain('账号受限，建议删除')
-    expect(wrapper.find('[data-testid="start-reauthorization-10"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('账号已删除或停用')
+    const retry = wrapper.get('[data-testid="start-reauthorization-10"]')
+    expect(retry.text()).toContain('继续授权')
+    await retry.trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('账号已删除或停用')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+    expect(openAIReauthorizationAPI.restart).toHaveBeenCalledWith(task(10, 'blocked', 'blocked', 'account_deleted_or_disabled').task_id, true)
     wrapper.unmount()
   })
 
-  it('locks a second 401 authorization during the seven-day cooldown', async () => {
+  it('keeps cooldown copy short and allows a manual continuation after confirmation', async () => {
     const firstSucceededAt = new Date(Date.now() - 3 * 86400_000).toISOString()
     openAIReauthorizationAPI.accounts.mockResolvedValue({
       items: [reauthorizationStatus(20, {
@@ -319,20 +335,32 @@ describe('OpenAIReauthorizationView', () => {
         first_succeeded_at: firstSucceededAt,
         seconds_since_first_reauthorization: 3 * 86400,
         cooldown_remaining_seconds: 4 * 86400,
-        can_start: false,
+        can_start: true,
         requires_risk_confirmation: true,
         risk_level: 'cooldown',
       })],
       cooldown_seconds: 604800,
     })
+    openAIReauthorizationAPI.start.mockResolvedValue(task(20))
 
     const wrapper = await mountView()
 
-    expect(wrapper.get('[data-testid="reauthorization-history-20"]').text()).toContain('第 2 次掉授权')
-    expect(wrapper.text()).toContain('建议不要授权')
+    expect(wrapper.get('[data-testid="reauthorization-history-20"]').text()).toContain('第 2 次授权')
     expect(wrapper.get('[data-testid="reauthorization-cooldown-20"]').text()).toContain('4 天 0 小时')
-    expect(wrapper.find('[data-testid="start-reauthorization-20"]').exists()).toBe(false)
-    expect(openAIReauthorizationAPI.start).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="reauthorization-cooldown-20"]').text()).not.toContain('仍可')
+    const retry = wrapper.get('[data-testid="start-reauthorization-20"]')
+    expect(retry.text()).toContain('继续授权')
+    await retry.trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('仍在 7 天冷静期内')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(20, true)
+
+    await wrapper.get('[data-testid="authorization-history-workspace-tab"]').trigger('click')
+    const history = wrapper.get('[data-testid="authorization-history-account-20"]')
+    expect(history.text()).toContain('第 1 次授权')
+    expect(history.get('[data-testid="history-pending-authorization-20"]').text()).toContain('待第 2 次授权')
+    expect(history.text()).toContain('第 2 次授权建议等待 7 天')
     wrapper.unmount()
   })
 
@@ -367,7 +395,7 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
-  it('does not treat an unverified legacy account as a first authorization', async () => {
+  it('starts an untracked account as the first authorization instead of showing an old-version warning', async () => {
     openAIReauthorizationAPI.accounts.mockResolvedValue({
       items: [reauthorizationStatus(22, {
         current_authorization_number: 1,
@@ -386,15 +414,66 @@ describe('OpenAIReauthorizationView', () => {
     openAIReauthorizationAPI.start.mockResolvedValue(task(22))
     const wrapper = await mountView()
 
-    expect(wrapper.text()).toContain('无法确定这是第一次还是第二次')
-    expect(wrapper.get('[data-testid="reauthorize-all"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('旧版')
+    expect(wrapper.text()).not.toContain('历史不明')
+    expect(wrapper.get('[data-testid="reauthorization-history-22"]').text()).toContain('第 1 次授权')
     await wrapper.get('[data-testid="start-reauthorization-22"]').trigger('click')
-    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('历史无法确认')
-    expect(wrapper.get('[data-testid="confirm-action"]').text()).toContain('我已知风险')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('第一次 401 重新授权')
+    expect(wrapper.get('[data-testid="confirm-action"]').text()).toContain('确认开始')
     await wrapper.get('[data-testid="confirm-action"]').trigger('click')
     await flushPromises()
 
-    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(22, true)
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(22, false)
+    wrapper.unmount()
+  })
+
+  it('shows only the immediately previous success time before the third and fourth authorizations', async () => {
+    const first = new Date(Date.now() - 20 * 86400_000).toISOString()
+    const second = new Date(Date.now() - 10 * 86400_000).toISOString()
+    const third = new Date(Date.now() - 2 * 86400_000).toISOString()
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [
+        reauthorizationStatus(30, {
+          current_authorization_number: 3,
+          has_history: true,
+          has_attempted: true,
+          has_reauthorized: true,
+          attempt_count: 2,
+          success_count: 2,
+          first_succeeded_at: first,
+          last_succeeded_at: second,
+          successful_authorization_times: [first, second],
+          requires_risk_confirmation: true,
+          risk_level: 'repeated',
+        }),
+        reauthorizationStatus(31, {
+          current_authorization_number: 4,
+          has_history: true,
+          has_attempted: true,
+          has_reauthorized: true,
+          attempt_count: 3,
+          success_count: 3,
+          first_succeeded_at: first,
+          last_succeeded_at: third,
+          successful_authorization_times: [first, second, third],
+          requires_risk_confirmation: true,
+          risk_level: 'cooldown',
+        }),
+      ],
+      cooldown_seconds: 604800,
+    })
+    const wrapper = await mountView()
+    await wrapper.get('[data-testid="authorization-history-workspace-tab"]').trigger('click')
+
+    const thirdPending = wrapper.get('[data-testid="authorization-history-account-30"]')
+    expect(thirdPending.text()).toContain('第 2 次授权')
+    expect(thirdPending.text()).not.toContain('第 1 次授权')
+    expect(thirdPending.text()).toContain('待第 3 次授权')
+
+    const fourthPending = wrapper.get('[data-testid="authorization-history-account-31"]')
+    expect(fourthPending.text()).toContain('第 3 次授权')
+    expect(fourthPending.text()).not.toContain('第 2 次授权')
+    expect(fourthPending.text()).toContain('待第 4 次授权')
     wrapper.unmount()
   })
 

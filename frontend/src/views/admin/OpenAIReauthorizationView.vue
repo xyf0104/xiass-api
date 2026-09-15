@@ -1,33 +1,14 @@
 <template>
-  <div class="openai-account-workbench mx-auto w-full max-w-[1200px] min-w-0 space-y-5 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
-    <header class="mx-auto flex w-full max-w-[1120px] min-w-0 flex-col gap-3 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between">
-      <div class="flex min-w-0 items-start gap-3">
-        <button type="button" class="btn btn-secondary flex h-9 w-9 shrink-0 items-center justify-center p-0" title="返回账号管理" aria-label="返回账号管理" @click="backToAccounts">
-          <Icon name="arrowLeft" size="sm" :stroke-width="2" />
-        </button>
-        <div class="min-w-0">
-          <div class="mb-2 flex items-center gap-2 text-xs font-semibold text-primary-600 dark:text-primary-400">
-            <Icon name="userPlus" size="sm" :stroke-width="2" />
-            <span>OpenAI OAuth 工作台</span>
-          </div>
-          <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100">批量添加账号</h1>
-          <p class="mt-1 max-w-2xl text-sm text-gray-500 dark:text-gray-400">批量添加、401 重新授权和账号登录信息在同一工作台处理。</p>
-        </div>
-      </div>
-      <div v-if="activeWorkspace === 'reauthorization'" class="flex flex-wrap items-center justify-end gap-2">
-        <button type="button" class="btn btn-secondary flex items-center gap-2" :disabled="loading || refreshing" @click="refreshAll">
-          <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
-          <span>刷新状态</span>
-        </button>
-        <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!batchStartableAccounts.length || startingAll" @click="requestStartAll">
-          <Icon name="play" size="sm" :stroke-width="2" />
-          <span>{{ startingAll ? '正在启动' : `一键授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
-        </button>
-      </div>
+  <div class="openai-account-workbench mx-auto w-full min-w-0 space-y-4 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
+    <header class="oauth-workbench-heading">
+      <button type="button" class="oauth-icon-button oauth-workbench-back" title="返回账号管理" aria-label="返回账号管理" @click="backToAccounts">
+        <Icon name="arrowLeft" size="sm" :stroke-width="2" />
+      </button>
+      <h1 class="text-2xl font-semibold text-gray-950 dark:text-white">XIASS工作台</h1>
     </header>
 
-    <section class="mx-auto w-full max-w-[1120px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
-      <nav class="flex min-w-0 overflow-x-auto border-b border-gray-200 px-3 dark:border-dark-700 sm:px-4" role="tablist" aria-label="OpenAI OAuth 账号工作台">
+    <nav class="oauth-workbench-nav" aria-label="XIASS 工作台导航">
+      <div class="oauth-workbench-tablist" role="tablist" aria-label="OpenAI OAuth 账号工作台">
         <button
           type="button"
           role="tab"
@@ -49,9 +30,25 @@
           data-testid="reauthorization-workspace-tab"
           @click="activeWorkspace = 'reauthorization'"
         >
-          <Icon name="refresh" size="sm" :stroke-width="2" />
+          <span class="reauthorization-tab-icon" aria-hidden="true">
+            <Icon name="shield" size="sm" class="reauthorization-tab-shield" :stroke-width="2" />
+            <Icon name="refresh" size="xs" class="reauthorization-tab-refresh" :stroke-width="2.4" />
+          </span>
           <span>401 重新授权</span>
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-dark-700">{{ accounts.length }}</span>
+          <span class="workbench-tab-count">{{ reauthorizationAccounts.length }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeWorkspace === 'history'"
+          class="workbench-tab"
+          :class="activeWorkspace === 'history' ? 'workbench-tab-active' : 'workbench-tab-idle'"
+          data-testid="authorization-history-workspace-tab"
+          @click="activeWorkspace = 'history'"
+        >
+          <Icon name="clock" size="sm" :stroke-width="2" />
+          <span>授权历史</span>
+          <span class="workbench-tab-count">{{ historyAccounts.length }}</span>
         </button>
         <button
           type="button"
@@ -65,13 +62,23 @@
           <Icon name="key" size="sm" :stroke-width="2" />
           <span>账号库</span>
         </button>
-      </nav>
+      </div>
+      <div class="team-child-entry">
+        <button type="button" class="team-child-entry-button" data-testid="team-child-creation-entry" @click="openTeamChildCreation">
+          <span class="team-child-entry-icon"><Icon name="users" size="sm" :stroke-width="2" /></span>
+          <span>创建 Team 子号</span>
+          <Icon name="arrowRight" size="xs" :stroke-width="2" />
+        </button>
+      </div>
+    </nav>
 
-      <div v-show="activeWorkspace === 'batch'" class="min-w-0">
-        <div class="border-b border-gray-200 px-4 py-4 dark:border-dark-700 sm:px-5">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">批量添加 OpenAI OAuth 账号</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">账号按当前号池、代理、分组、并发数和优先级保存。</p>
-        </div>
+    <section v-show="activeWorkspace === 'batch'" class="oauth-workbench-surface min-w-0 overflow-hidden">
+        <header class="oauth-module-header">
+          <div class="flex items-center gap-2">
+            <span class="oauth-module-icon"><Icon name="userPlus" size="sm" :stroke-width="2" /></span>
+            <h2 class="text-base font-semibold text-gray-950 dark:text-white">批量添加账号</h2>
+          </div>
+        </header>
         <div v-if="batchOptionsError" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300" role="alert">{{ batchOptionsError }}</div>
         <div v-if="batchOptionsLoading" class="flex min-h-48 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
           <Icon name="refresh" size="sm" class="animate-spin" />
@@ -85,15 +92,30 @@
             @created="handleBatchAccountCreated"
           />
         </div>
-      </div>
+    </section>
 
-      <template v-if="activeWorkspace === 'reauthorization'">
-        <div class="grid grid-cols-2 gap-px border-b border-gray-200 bg-gray-200 dark:border-dark-700 dark:bg-dark-700 sm:grid-cols-5">
-          <div v-for="item in summary" :key="item.label" class="min-w-0 bg-white px-4 py-3 dark:bg-dark-800">
-            <p class="text-xs text-gray-500 dark:text-gray-400">{{ item.label }}</p>
-            <p class="mt-0.5 text-lg font-semibold" :class="item.className">{{ item.value }}</p>
+    <section v-if="activeWorkspace === 'reauthorization'" class="oauth-workbench-surface min-w-0 overflow-hidden">
+        <header class="oauth-module-header flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex min-w-0 flex-wrap items-center gap-2.5">
+            <div class="flex items-center gap-2">
+              <span class="oauth-module-icon"><Icon name="refresh" size="sm" :stroke-width="2" /></span>
+              <h2 class="text-base font-semibold text-gray-950 dark:text-white">401 重新授权</h2>
+            </div>
+            <span class="oauth-summary-chip"><b>{{ reauthorizationAccounts.length }}</b> 待处理</span>
+            <span class="oauth-summary-chip oauth-summary-chip-active"><b>{{ visibleActiveCount }}</b> 进行中</span>
+            <span v-if="pendingCount" class="oauth-summary-chip oauth-summary-chip-warning"><b>{{ pendingCount }}</b> 高风险</span>
           </div>
-        </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn btn-secondary flex items-center gap-2" :disabled="loading || refreshing" @click="refreshAll">
+              <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
+              <span>刷新</span>
+            </button>
+            <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!batchStartableAccounts.length || startingAll" @click="requestStartAll">
+              <Icon name="play" size="sm" :stroke-width="2" />
+              <span>{{ startingAll ? '正在启动' : `一键授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
+            </button>
+          </div>
+        </header>
 
         <div v-if="operationNotice" class="border-b border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-900/60 dark:bg-green-950/20 dark:text-green-300" role="status">{{ operationNotice }}</div>
         <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">{{ loadError }}</div>
@@ -103,45 +125,48 @@
           正在读取待授权账号
         </div>
 
-        <div v-else-if="!orderedAccounts.length" class="flex min-h-48 flex-col items-center justify-center px-4 text-center">
+        <div v-else-if="!reauthorizationAccounts.length" class="oauth-empty-state">
           <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
-          <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有 401 掉授权或历史重授权记录</p>
+          <p>当前没有待重授权账号</p>
         </div>
 
-        <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
-          <article v-for="account in orderedAccounts" :key="account.id" class="grid min-w-0 gap-4 px-4 py-4 sm:px-5 xl:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.6fr)_auto] xl:items-center" :data-testid="`reauthorization-account-${account.id}`">
-            <div class="min-w-0">
-              <div class="flex min-w-0 flex-wrap items-center gap-2">
-                <p class="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">#{{ account.id }} {{ account.name }}</p>
-                <span v-if="account.execution_node_id" class="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-500 dark:border-dark-600 dark:text-gray-400">{{ account.execution_node_id }}</span>
+        <div v-else class="oauth-account-list">
+          <article v-for="account in reauthorizationAccounts" :key="account.id" class="oauth-account-row" :data-testid="`reauthorization-account-${account.id}`">
+            <div class="oauth-account-identity">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="oauth-account-avatar">{{ accountAvatar(account) }}</span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ account.name }}</p>
+                  <p class="truncate text-xs text-gray-500 dark:text-gray-400">#{{ account.id }} · {{ accountEmail(account) }}</p>
+                </div>
               </div>
-              <p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(account) }}</p>
-              <span class="mt-2 inline-flex rounded border px-1.5 py-0.5 text-[11px] font-medium" :class="loginMethodClass(account)">
-                {{ loginMethodLabel(account) }}
-              </span>
+              <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                <span v-if="account.execution_node_id" class="oauth-mini-tag">{{ account.execution_node_id }}</span>
+                <span class="oauth-mini-tag" :class="loginMethodClass(account)">{{ loginMethodLabel(account) }}</span>
+              </div>
             </div>
 
-            <div class="min-w-0">
-              <div class="mb-3 rounded-md border px-3 py-2.5" :class="historyPanelClass(account)" :data-testid="`reauthorization-history-${account.id}`">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <p class="text-sm font-semibold">{{ historyTitle(account) }}</p>
-                  <span class="rounded px-2 py-0.5 text-[11px] font-semibold" :class="historyBadgeClass(account)">{{ historyBadge(account) }}</span>
-                </div>
-                <p class="mt-1 text-xs leading-5">{{ historyMessage(account) }}</p>
-                <p v-if="historyTimeMessage(account)" class="mt-1 text-xs font-medium">{{ historyTimeMessage(account) }}</p>
-              </div>
+            <div class="oauth-account-progress">
               <div class="flex min-w-0 items-center justify-between gap-3">
-                <p class="truncate text-sm font-medium" :class="statusClass(account)">{{ statusLabel(account) }}</p>
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="oauth-round-badge" :class="authorizationRoundClass(account)" :data-testid="`reauthorization-history-${account.id}`">{{ authorizationRoundLabel(account) }}</span>
+                  <p class="truncate text-sm font-medium" :class="statusClass(account)">{{ statusLabel(account) }}</p>
+                </div>
                 <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ elapsedText(account) }}</span>
               </div>
-              <div class="mt-2 h-1.5 overflow-hidden rounded bg-gray-200 dark:bg-dark-700">
-                <div class="h-full transition-[width] duration-300" :class="progressClass(account)" :style="{ width: `${progressPercent(account)}%` }" />
+              <div class="oauth-progress-track">
+                <div class="h-full rounded-full transition-[width] duration-300" :class="progressClass(account)" :style="{ width: `${progressPercent(account)}%` }" />
               </div>
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ stepLabel(account) }}</p>
+              <div class="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ stepLabel(account) }}</p>
+              </div>
+              <p v-if="reauthorizationRowNotice(account)" class="mt-1.5 break-words text-xs font-semibold" :class="reauthorizationRowNoticeClass(account)" :data-testid="statusFor(account)?.risk_level === 'cooldown' ? `reauthorization-cooldown-${account.id}` : undefined">
+                {{ reauthorizationRowNotice(account) }}
+              </p>
               <p v-if="failureText(account)" class="mt-1 break-words text-sm text-red-600 dark:text-red-400" role="alert">{{ failureText(account) }}</p>
             </div>
 
-            <div class="flex flex-wrap items-center justify-end gap-2">
+            <div class="oauth-account-actions">
               <button v-if="isActive(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" @click="stopAccount(account)">
                 <Icon name="x" size="sm" :stroke-width="2" />
                 <span>停止</span>
@@ -154,23 +179,90 @@
                 <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
                 <span>{{ retryLabel(account) }}</span>
               </button>
-              <span v-else-if="statusFor(account)?.risk_level === 'cooldown'" class="text-xs font-semibold text-amber-600 dark:text-amber-300" :data-testid="`reauthorization-cooldown-${account.id}`">冷却中，{{ formatDuration(statusFor(account)?.cooldown_remaining_seconds || 0) }} 后才可再授权</span>
-              <span v-else-if="statusFor(account)?.risk_level === 'blocked' || taskFor(account)?.reason === 'account_blocked'" class="text-xs font-medium text-red-600 dark:text-red-400">账号受限，建议删除</span>
               <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
                 <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
               </span>
-              <span v-else-if="!statusFor(account)?.current_needs_reauthorization" class="text-xs font-medium text-gray-500 dark:text-gray-400">当前无 401，仅展示历史</span>
-              <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5 text-red-600 dark:text-red-300" :disabled="deletingAccountIDs.has(account.id)" :data-testid="`delete-reauthorization-account-${account.id}`" @click="requestDeleteAccount(account)">
+              <button type="button" class="oauth-delete-button" title="从账号管理和账号库完整删除" :aria-label="`删除账号 ${account.name}`" :disabled="deletingAccountIDs.has(account.id)" :data-testid="`delete-reauthorization-account-${account.id}`" @click="requestDeleteAccount(account)">
                 <Icon name="trash" size="sm" :class="deletingAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
-                <span>{{ deletingAccountIDs.has(account.id) ? '正在删除' : '删除账号' }}</span>
               </button>
             </div>
           </article>
         </div>
-      </template>
+    </section>
 
+    <section v-if="activeWorkspace === 'history'" class="oauth-workbench-surface min-w-0 overflow-hidden" data-testid="authorization-history-module">
+      <header class="oauth-module-header flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex items-center gap-2">
+          <span class="oauth-module-icon"><Icon name="clock" size="sm" :stroke-width="2" /></span>
+          <h2 class="text-base font-semibold text-gray-950 dark:text-white">授权历史</h2>
+          <span class="oauth-summary-chip"><b>{{ historyAccounts.length }}</b> 条</span>
+        </div>
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <div class="oauth-history-filters" role="group" aria-label="授权次数筛选">
+            <button
+              v-for="option in historyFilterOptions"
+              :key="option.value"
+              type="button"
+              class="oauth-history-filter"
+              :class="historyFilter === option.value ? 'oauth-history-filter-active' : ''"
+              :aria-pressed="historyFilter === option.value"
+              :data-testid="`history-filter-${option.value}`"
+              @click="historyFilter = option.value"
+            >
+              <span>{{ option.label }}</span>
+              <b>{{ historyFilterCount(option.value) }}</b>
+            </button>
+          </div>
+          <button type="button" class="oauth-icon-button" title="刷新授权历史" aria-label="刷新授权历史" :disabled="loading || refreshing" @click="refreshAll">
+            <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
+          </button>
+        </div>
+      </header>
+
+      <div v-if="loadError" role="alert" class="border-b border-red-200 bg-red-50/80 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-300">{{ loadError }}</div>
+      <div v-if="loading" class="flex min-h-48 items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <Icon name="refresh" size="sm" class="animate-spin" />
+        正在读取授权历史
+      </div>
+      <div v-else-if="!filteredHistoryAccounts.length" class="oauth-empty-state">
+        <Icon name="clock" size="lg" class="text-gray-400" :stroke-width="2" />
+        <p>{{ historyAccounts.length ? '当前筛选下没有账号' : '暂无授权历史' }}</p>
+      </div>
+      <div v-else class="oauth-history-list">
+        <article v-for="account in filteredHistoryAccounts" :key="account.id" class="oauth-history-row" :data-testid="`authorization-history-account-${account.id}`">
+          <div class="oauth-account-identity">
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="oauth-account-avatar">{{ accountAvatar(account) }}</span>
+              <div class="min-w-0">
+                <p class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ account.name }}</p>
+                <p class="truncate text-xs text-gray-500 dark:text-gray-400">#{{ account.id }} · {{ accountEmail(account) }}</p>
+              </div>
+            </div>
+          </div>
+          <div class="min-w-0">
+            <div class="space-y-1.5">
+              <div v-for="(entry, index) in historyAuthorizationTimeline(account)" :key="`${entry.label}-${entry.time}`" class="flex min-w-0 flex-wrap items-center gap-2">
+                <span class="oauth-round-badge" :class="historyResultClass(account)">{{ entry.label }}</span>
+                <time v-if="entry.time" class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ entry.time }}</time>
+                <span v-if="index === historyAuthorizationTimeline(account).length - 1 && historyPendingAuthorizationLabel(account)" class="text-xs font-semibold text-red-600 dark:text-red-300" :data-testid="`history-pending-authorization-${account.id}`">
+                  {{ historyPendingAuthorizationLabel(account) }}
+                </span>
+              </div>
+            </div>
+            <p v-if="historyNextAuthorizationLabel(account)" class="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-300">{{ historyNextAuthorizationLabel(account) }}</p>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <span class="oauth-history-result" :class="historyResultClass(account)">{{ historyResultLabel(account) }}</span>
+            <button type="button" class="oauth-delete-button" title="从账号管理和账号库完整删除" :aria-label="`删除账号 ${account.name}`" :disabled="deletingAccountIDs.has(account.id)" :data-testid="`delete-history-account-${account.id}`" @click="requestDeleteAccount(account)">
+              <Icon name="trash" size="sm" :class="deletingAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section v-show="activeWorkspace === 'credentials'" class="oauth-workbench-surface min-w-0 overflow-hidden">
       <OpenAIOAuthCredentialLibraryPanel
-        v-show="activeWorkspace === 'credentials'"
         :active="activeWorkspace === 'credentials'"
         @updated="handleCredentialLibraryUpdated"
       />
@@ -238,8 +330,16 @@ const batchOptionsError = ref('')
 const operationNotice = ref('')
 const pendingDeleteAccount = ref<Account | null>(null)
 const pendingAuthorization = ref<{ accounts: Account[]; batch: boolean } | null>(null)
-type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'credentials'
+type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'history' | 'credentials'
+type HistoryFilter = 'all' | 'unauthorized' | 'first' | 'second'
 const activeWorkspace = ref<WorkbenchWorkspace>(initialWorkspace())
+const historyFilter = ref<HistoryFilter>('all')
+const historyFilterOptions: Array<{ value: HistoryFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'unauthorized', label: '未授权' },
+  { value: 'first', label: '第一次授权' },
+  { value: 'second', label: '第二次授权' },
+]
 const completingTaskIDs = new Set<string>()
 const smsTaskIDs = new Set<string>()
 const historyRefreshedTaskEvents = new Set<string>()
@@ -248,12 +348,12 @@ let disposed = false
 
 const activeStatuses = new Set(['queued', 'running', 'ready'])
 const terminalFailureStatuses = new Set(['failed', 'blocked', 'canceled'])
-const restrictedReasons = new Set(['account_blocked'])
+const restrictionReasons = new Set(['account_blocked', 'account_deleted_or_disabled'])
 
 function initialWorkspace(): WorkbenchWorkspace {
   const raw = Array.isArray(route.query.workspace) ? route.query.workspace[0] : route.query.workspace
-  if (raw === 'batch' || raw === 'reauthorization' || raw === 'credentials') return raw
-  return queryAccountIDs().length ? 'reauthorization' : 'batch'
+  if (raw === 'batch' || raw === 'reauthorization' || raw === 'history' || raw === 'credentials') return raw
+  return 'reauthorization'
 }
 
 const taskByAccountID = computed(() => {
@@ -269,18 +369,38 @@ const taskByAccountID = computed(() => {
 const statusByAccountID = computed(() => new Map(accountStatuses.value.map(item => [item.account.id, item])))
 
 const activeCount = computed(() => tasks.value.filter(task => activeStatuses.has(task.status)).length + busyAccountIDs.value.size)
-const visibleActiveCount = computed(() => accounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
+const reauthorizationAccounts = computed(() => accounts.value
+  .filter(account => {
+    const status = statusFor(account)
+    const task = taskFor(account)
+    return Boolean(status?.current_needs_reauthorization || (task && activeStatuses.has(task.status)) || localErrors.value.has(account.id))
+  })
+  .sort((left, right) => {
+    const rank = (account: Account) => {
+      const task = taskFor(account)
+      if (task && activeStatuses.has(task.status)) return 0
+      const risk = statusFor(account)?.risk_level
+      if (risk === 'blocked') return 2
+      if (risk === 'cooldown' || risk === 'repeated' || risk === 'unknown') return 1
+      return 0
+    }
+    return rank(left) - rank(right) || left.id - right.id
+  }))
+const historyAccounts = computed(() => accountStatuses.value
+  .filter(status => status.has_history || status.has_attempted || status.attempt_count > 0 || status.success_count > 0 || Boolean(status.last_result))
+  .sort((left, right) => historyTimestamp(right) - historyTimestamp(left) || right.account.id - left.account.id)
+  .map(status => status.account))
+const filteredHistoryAccounts = computed(() => historyFilter.value === 'all'
+  ? historyAccounts.value
+  : historyAccounts.value.filter(account => historyAuthorizationBucket(account) === historyFilter.value))
+const visibleActiveCount = computed(() => reauthorizationAccounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
 const pendingCount = computed(() =>
-  accountStatuses.value.filter(item => item.risk_level === 'cooldown' || item.risk_level === 'blocked').length
+  reauthorizationAccounts.value.filter(account => {
+    const risk = statusFor(account)?.risk_level
+    return risk === 'cooldown' || risk === 'repeated' || risk === 'blocked' || risk === 'unknown'
+  }).length
 )
-const batchStartableAccounts = computed(() => accounts.value.filter(account => canStart(account) && statusFor(account)?.risk_level === 'first'))
-const summary = computed(() => [
-  { label: '401 / 历史账号', value: accounts.value.length, className: 'text-gray-900 dark:text-gray-100' },
-  { label: '进行中', value: visibleActiveCount.value, className: 'text-primary-600 dark:text-primary-400' },
-  { label: '冷却 / 禁止', value: pendingCount.value, className: 'text-amber-600 dark:text-amber-300' },
-  { label: '已重授权', value: accountStatuses.value.filter(item => item.has_reauthorized).length, className: 'text-green-600 dark:text-green-400' },
-  { label: '失败 / 封号', value: accountStatuses.value.filter(item => item.risk_level === 'failed' || item.risk_level === 'blocked').length, className: 'text-red-600 dark:text-red-400' }
-])
+const batchStartableAccounts = computed(() => reauthorizationAccounts.value.filter(account => canStart(account) && statusFor(account)?.risk_level === 'first'))
 
 const deleteConfirmationMessage = computed(() => {
   const account = pendingDeleteAccount.value
@@ -298,7 +418,8 @@ const authorizationConfirmationTitle = computed(() => {
   if (!pending) return ''
   if (pending.batch) return `确认批量授权 ${pending.accounts.length} 个账号`
   const status = statusFor(pending.accounts[0])
-  if (status?.risk_level === 'unknown') return '高风险：旧版 401 授权历史无法确认'
+  if (status?.risk_level === 'cooldown') return '高风险：冷静期内再次授权'
+  if (status?.risk_level === 'blocked') return '高风险：受限账号再次授权'
   return status?.requires_risk_confirmation ? '高风险：再次 401 重新授权' : '确认首次 401 重新授权'
 })
 
@@ -310,8 +431,13 @@ const authorizationConfirmationMessage = computed(() => {
   }
   const account = pending.accounts[0]
   const status = statusFor(account)
-  if (status?.risk_level === 'unknown') {
-    return `#${account.id} ${account.name} 在旧版中没有可以证明成功或失败的 401 重授权记录，无法确定这是第一次还是第二次。建议不要授权；继续必须单独确认风险。`
+  if (status?.risk_level === 'cooldown') {
+    const nextAt = nextAuthorizationAt(status)
+    const recommendation = nextAt ? `，建议等到 ${formatHistoryDate(nextAt)}` : ''
+    return `#${account.id} ${account.name} 仍在 7 天冷静期内，剩余 ${formatDuration(status.cooldown_remaining_seconds)}${recommendation}。现在继续会强制启动第 ${status.current_authorization_number} 次授权，存在较高封号风险；仅在你已确认风险时继续。`
+  }
+  if (status?.risk_level === 'blocked') {
+    return `#${account.id} ${account.name} 的 OpenAI 页面检测结果为“${accountRestrictionLabel(account)}”。自动重试已停止；现在继续可能再次失败或导致更严格限制，只能在你已确认风险后手动启动。`
   }
   if (status?.requires_risk_confirmation) {
     return `#${account.id} ${account.name} 已经成功进行过 401 重新授权，现在是第 ${status.current_authorization_number} 次掉授权。建议不要再授权，继续可能导致封号。仅在你已确认风险时继续。`
@@ -321,18 +447,6 @@ const authorizationConfirmationMessage = computed(() => {
 
 const authorizationConfirmationButton = computed(() => authorizationConfirmationDanger.value ? '我已知风险，继续授权' : '确认开始')
 
-const orderedAccounts = computed(() => [...accounts.value].sort((a, b) => {
-  const rank = (account: Account) => {
-    const status = statusFor(account)
-    if (status?.current_needs_reauthorization) return status.risk_level === 'blocked' ? 1 : 0
-    const task = taskFor(account)
-    if (task && activeStatuses.has(task.status)) return 0
-    return 2
-  }
-  const difference = rank(a) - rank(b)
-  return difference || a.id - b.id
-}))
-
 function queryAccountIDs(): number[] {
   const raw = Array.isArray(route.query.account_ids) ? route.query.account_ids[0] : route.query.account_ids
   if (typeof raw !== 'string') return []
@@ -341,8 +455,24 @@ function queryAccountIDs(): number[] {
 
 async function loadAccounts() {
   const result = await openAIReauthorizationAPI.accounts(queryAccountIDs())
-  accountStatuses.value = result.items
-  accounts.value = result.items.map(item => item.account)
+  accountStatuses.value = result.items.map(normalizeUntrackedAuthorizationStatus)
+  accounts.value = accountStatuses.value.map(item => item.account)
+}
+
+function normalizeUntrackedAuthorizationStatus(status: OpenAIReauthorizationAccountStatus): OpenAIReauthorizationAccountStatus {
+  if (status.last_result !== 'legacy_unknown' || status.success_count > 0 || status.attempt_count > 0) return status
+  return {
+    ...status,
+    has_history: false,
+    has_attempted: false,
+    last_result: '',
+    last_reason: '',
+    history_source: 'xiass_tracking',
+    history_confidence: 'exact',
+    can_start: status.current_needs_reauthorization,
+    requires_risk_confirmation: false,
+    risk_level: status.current_needs_reauthorization ? 'first' : 'history',
+  }
 }
 
 async function loadBatchOptions() {
@@ -375,6 +505,11 @@ function accountEmail(account: Account): string {
   return email || account.name
 }
 
+function accountAvatar(account: Account): string {
+  const source = (account.name || accountEmail(account)).trim()
+  return (source.match(/[a-z0-9]/i)?.[0] || source.charAt(0) || '?').toUpperCase()
+}
+
 function accountLoginMethod(account: Account): 'password' | 'email_code' | '' {
   const status = account.credentials_status
   if (status?.has_xiass_openai_oauth_reauth_email !== true) return ''
@@ -400,11 +535,12 @@ function canStart(account: Account): boolean {
   if (busyAccountIDs.value.has(account.id)) return false
   if (!accountLoginMethod(account)) return false
   const status = statusFor(account)
-  if (!status?.can_start) return false
+  if (!status) return false
+  if (!status.can_start && status.risk_level !== 'cooldown' && status.risk_level !== 'blocked') return false
   const task = taskFor(account)
   if (!task) return true
   if (task.account_id) return task.reason === 'account_state_recovery_failed'
-  if (task.status === 'completed' || activeStatuses.has(task.status) || restrictedReasons.has(task.reason || '')) return false
+  if (task.status === 'completed' || activeStatuses.has(task.status)) return false
   return task.restart_count < maxRestarts.value
 }
 
@@ -417,7 +553,7 @@ function retryLabel(account: Account): string {
   const task = taskFor(account)
   if (busyAccountIDs.value.has(account.id)) return '正在启动'
   if (task?.reason === 'account_state_recovery_failed') return '重试恢复状态'
-  if (statusFor(account)?.requires_risk_confirmation) return '高风险重新授权'
+  if (statusFor(account)?.risk_level === 'cooldown' || statusFor(account)?.risk_level === 'blocked' || statusFor(account)?.requires_risk_confirmation) return '继续授权'
   return task && terminalFailureStatuses.has(task.status) ? '重试本次授权' : '开始授权'
 }
 
@@ -447,7 +583,8 @@ const reasonLabels: Record<string, string> = {
   invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。',
   invalid_totp: '2FA 验证码未通过验证。',
   authenticator_required: 'OpenAI 要求 2FA，但该账号没有可用的已保存密钥。',
-  account_blocked: 'OpenAI 限制了当前账号，系统不会自动重试。',
+  account_blocked: 'OpenAI 页面显示当前账号受限，系统不会自动重试。',
+  account_deleted_or_disabled: 'OpenAI 页面明确显示账号已删除或停用，系统不会自动重试。',
   captcha_required: 'OpenAI 要求完成人机验证。',
   email_code_required: 'OpenAI 要求邮箱验证码，当前自动流程未继续。',
   email_code_timeout: '等待邮箱验证码超过 60 秒，任务已停止。',
@@ -548,73 +685,163 @@ function formatHistoryDate(value?: string): string {
   }).format(date)
 }
 
-function historyTitle(account: Account): string {
-  const status = statusFor(account)
-  if (!status) return '历史状态未知'
-  if (status.risk_level === 'blocked') return '账号已受限或封号'
-  if (status.risk_level === 'cooldown') return `第 ${status.current_authorization_number} 次掉授权，正在冷却`
-  if (status.risk_level === 'repeated') return `第 ${status.current_authorization_number} 次掉授权`
-  if (status.risk_level === 'first') return '第 1 次掉授权'
-  if (status.risk_level === 'success') return `已成功完成 ${status.success_count} 次 401 重授权`
-  if (status.risk_level === 'failed') return '上次 401 重新授权未完成'
-  return status.has_history ? '存在旧版 401 授权记录' : '尚无 401 重授权记录'
+function historyTimestamp(status: OpenAIReauthorizationAccountStatus): number {
+  const value = status.last_succeeded_at || status.last_result_at || status.last_attempt_at || status.first_succeeded_at || status.first_attempt_at
+  const timestamp = value ? Date.parse(value) : 0
+  return Number.isFinite(timestamp) ? timestamp : 0
 }
 
-function historyBadge(account: Account): string {
+function historyAuthorizationBucket(account: Account): Exclude<HistoryFilter, 'all'> {
   const status = statusFor(account)
-  if (!status) return '未知'
-  if (status.risk_level === 'blocked') return '建议删除'
-  if (status.risk_level === 'cooldown') return '禁止授权'
-  if (status.risk_level === 'repeated') return '高风险'
-  if (status.risk_level === 'success') return '授权成功'
-  if (status.risk_level === 'failed') return '授权失败'
-  if (status.history_confidence === 'inferred') return '历史推断'
-  if (status.history_confidence === 'unknown') return '旧版未知'
-  return status.risk_level === 'first' ? '首次' : '已记录'
+  const successCount = status?.success_count || 0
+  if (successCount >= 2 || (status?.current_needs_reauthorization && status.current_authorization_number >= 2)) return 'second'
+  if (successCount === 1) return 'first'
+  return 'unauthorized'
 }
 
-function historyMessage(account: Account): string {
-  const status = statusFor(account)
-  if (!status) return '无法读取该账号的 401 重授权历史。'
-  if (status.risk_level === 'blocked') return '已检测到 OpenAI 限制或封号结果。系统不会自动重试，建议直接删除账号。'
-  if (status.risk_level === 'cooldown') return '该账号已成功重授权过，现在再次掉授权。建议不要授权；7 天冷却结束前服务端会硬性拒绝。'
-  if (status.risk_level === 'repeated') return '冷却期已结束，但这仍是高风险重复授权。建议不要授权，继续前必须二次确认。'
-  if (status.risk_level === 'first') return '未发现该账号成功重授权过的记录。本次作为首次 401 重新授权处理。'
-  if (status.risk_level === 'success') return '当前账号没有 401，上次重新授权成功，历史已持久保存。'
-  if (status.risk_level === 'failed') return '上次重新授权失败或被停止，失败原因已记录；未计为成功重授权。'
-  if (status.history_confidence === 'inferred') return '旧版审计记录与后续成功调用能够证明曾重授权，但结果为历史推断。'
-  return '旧版只保留了授权操作痕迹，无法确定这是第一次还是第二次，也无法准确证明成功、失败或封号，因此明确标记为未知。'
+function historyFilterCount(filter: HistoryFilter): number {
+  if (filter === 'all') return historyAccounts.value.length
+  return historyAccounts.value.filter(account => historyAuthorizationBucket(account) === filter).length
 }
 
-function historyTimeMessage(account: Account): string {
+function authorizationRoundLabel(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '第 1 次授权'
+  return `第 ${Math.max(1, status.current_authorization_number || 1)} 次授权`
+}
+
+function authorizationRoundClass(account: Account): string {
+  const risk = statusFor(account)?.risk_level
+  if (risk === 'blocked' || risk === 'repeated') return 'oauth-tone-danger'
+  if (risk === 'cooldown' || risk === 'unknown' || risk === 'failed') return 'oauth-tone-warning'
+  return 'oauth-tone-info'
+}
+
+function authorizationRiskHint(account: Account): string {
   const status = statusFor(account)
   if (!status) return ''
+  if (status.risk_level === 'blocked') return '账号受限'
+  if (status.risk_level === 'repeated') return '高风险，需二次确认'
+  if (status.risk_level === 'unknown') return ''
   if (status.risk_level === 'cooldown') {
-    return `距首次成功重授权已过 ${formatDuration(status.seconds_since_first_reauthorization || 0)}，冷却剩余 ${formatDuration(status.cooldown_remaining_seconds)}。`
+    const nextAt = nextAuthorizationAt(status)
+    return nextAt ? `最早 ${formatHistoryDate(nextAt)}` : `冷却 ${formatDuration(status.cooldown_remaining_seconds)}`
   }
-  if (status.first_succeeded_at) {
-    return `首次成功重授权：${formatHistoryDate(status.first_succeeded_at)}；距今 ${formatDuration(status.seconds_since_first_reauthorization || 0)}。`
-  }
-  if (status.last_result_at) return `最后记录：${formatHistoryDate(status.last_result_at)}`
   return ''
 }
 
-function historyPanelClass(account: Account): string {
-  const risk = statusFor(account)?.risk_level
-  if (risk === 'blocked' || risk === 'repeated') return 'border-red-300 bg-red-50 text-red-800 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200'
-  if (risk === 'cooldown' || risk === 'failed' || risk === 'unknown') return 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200'
-  if (risk === 'success') return 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200'
-  if (risk === 'first') return 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200'
-  return 'border-gray-300 bg-gray-50 text-gray-700 dark:border-dark-600 dark:bg-dark-900/60 dark:text-gray-300'
+function authorizationRiskHintClass(account: Account): string {
+  return statusFor(account)?.risk_level === 'blocked' || statusFor(account)?.risk_level === 'repeated'
+    ? 'text-red-600 dark:text-red-300'
+    : 'text-amber-700 dark:text-amber-300'
 }
 
-function historyBadgeClass(account: Account): string {
-  const risk = statusFor(account)?.risk_level
-  if (risk === 'blocked' || risk === 'repeated') return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-200'
-  if (risk === 'cooldown' || risk === 'failed' || risk === 'unknown') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-200'
-  if (risk === 'success') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200'
-  if (risk === 'first') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-200'
-  return 'bg-gray-200 text-gray-700 dark:bg-dark-700 dark:text-gray-300'
+function reauthorizationRowNotice(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return ''
+  if (status.risk_level === 'blocked' || restrictionReasons.has(taskFor(account)?.reason || '')) return accountRestrictionLabel(account)
+  if (status.risk_level === 'cooldown') {
+    const nextAt = nextAuthorizationAt(status)
+    const recommendation = nextAt ? `，建议 ${formatHistoryDate(nextAt)}` : ''
+    return `冷静期剩余 ${formatDuration(status.cooldown_remaining_seconds)}${recommendation}`
+  }
+  return authorizationRiskHint(account)
+}
+
+function accountRestrictionLabel(account: Account): string {
+  const reason = taskFor(account)?.reason || statusFor(account)?.last_reason || ''
+  return reason === 'account_deleted_or_disabled' ? '账号已删除或停用' : '账号受限'
+}
+
+function reauthorizationRowNoticeClass(account: Account): string {
+  return authorizationRiskHintClass(account)
+}
+
+function historySequenceLabel(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '历史记录'
+  if (status.success_count > 0) return `第 ${status.success_count} 次授权`
+  if (status.attempt_count > 0) return `第 ${status.attempt_count} 次尝试`
+  return '历史记录'
+}
+
+function historyRecordedAt(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return ''
+  const value = status.last_succeeded_at || status.last_result_at || status.last_attempt_at || status.first_succeeded_at || status.first_attempt_at
+  return formatHistoryDate(value)
+}
+
+function successfulAuthorizationTimes(status: OpenAIReauthorizationAccountStatus): string[] {
+  const values = [
+    ...(status.successful_authorization_times || []),
+    status.first_succeeded_at || '',
+    status.last_succeeded_at || '',
+  ]
+    .map(value => ({ value, timestamp: Date.parse(value) }))
+    .filter(item => item.value && Number.isFinite(item.timestamp))
+    .sort((left, right) => left.timestamp - right.timestamp)
+  return [...new Map(values.map(item => [item.timestamp, item.value])).values()]
+}
+
+function historyAuthorizationTimeline(account: Account): Array<{ label: string; time: string }> {
+  const status = statusFor(account)
+  if (!status) return [{ label: '历史记录', time: '' }]
+  const values = successfulAuthorizationTimes(status)
+  if (status.success_count >= 2) {
+    const last = values.at(-1) || status.last_succeeded_at || status.first_succeeded_at
+    return [{ label: `第 ${status.success_count} 次授权`, time: formatHistoryDate(last) }]
+  }
+  if (status.success_count === 1) {
+    const first = values[0] || status.first_succeeded_at || status.last_succeeded_at
+    return [{ label: '第 1 次授权', time: formatHistoryDate(first) }]
+  }
+  return [{ label: historySequenceLabel(account), time: historyRecordedAt(account) }]
+}
+
+function historyPendingAuthorizationLabel(account: Account): string {
+  const status = statusFor(account)
+  if (!status
+    || !status.current_needs_reauthorization
+    || status.current_authorization_number < 2
+    || status.risk_level === 'blocked'
+    || status.success_count >= status.current_authorization_number) return ''
+  return `待第 ${status.current_authorization_number} 次授权`
+}
+
+function nextAuthorizationAt(status: OpenAIReauthorizationAccountStatus): string {
+  if (status.cooldown_until) return status.cooldown_until
+  const anchor = status.last_succeeded_at || status.first_succeeded_at
+  if (!anchor) return ''
+  const timestamp = Date.parse(anchor)
+  if (!Number.isFinite(timestamp)) return ''
+  return new Date(timestamp + 7 * 86400_000).toISOString()
+}
+
+function historyNextAuthorizationLabel(account: Account): string {
+  const status = statusFor(account)
+  if (!status || !status.current_needs_reauthorization || status.current_authorization_number < 2 || status.risk_level === 'blocked') return ''
+  const nextAt = nextAuthorizationAt(status)
+  if (status.risk_level === 'repeated') return `第 ${status.current_authorization_number} 次授权已满 7 天，继续需二次确认`
+  return nextAt ? `第 ${status.current_authorization_number} 次授权建议等待 7 天，推荐：${formatHistoryDate(nextAt)}` : ''
+}
+
+function historyResultLabel(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '未知'
+  if (status.last_result === 'blocked' || status.risk_level === 'blocked') return accountRestrictionLabel(account)
+  if (status.last_result === 'success' || status.has_reauthorized) return '成功'
+  if (status.last_result === 'canceled') return '已停止'
+  if (status.last_result === 'failed' || status.risk_level === 'failed') return '失败'
+  return status.history_confidence === 'unknown' ? '待确认' : '已记录'
+}
+
+function historyResultClass(account: Account): string {
+  const result = historyResultLabel(account)
+  if (result === '成功') return 'oauth-tone-success'
+  if (result === '账号已删除或停用' || result === '账号受限' || result === '失败') return 'oauth-tone-danger'
+  if (result === '已停止' || result === '待确认') return 'oauth-tone-warning'
+  return 'oauth-tone-info'
 }
 
 function setBusy(accountID: number, busy: boolean) {
@@ -823,6 +1050,10 @@ function backToAccounts() {
   void router.push({ name: 'AdminAccounts' })
 }
 
+function openTeamChildCreation() {
+  void router.push({ name: 'AdminTeamChildCreation' })
+}
+
 onMounted(async () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
   try {
@@ -843,38 +1074,653 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .openai-account-workbench {
+  position: relative;
+  z-index: 1;
+  max-width: 1440px;
   overflow-x: clip;
 }
 
-.workbench-tab {
-  margin-bottom: -1px;
+.oauth-workbench-heading,
+.oauth-workbench-nav,
+.oauth-workbench-surface {
+  width: 100%;
+  max-width: 1360px;
+  margin-inline: auto;
+}
+
+.oauth-workbench-heading {
+  position: relative;
   display: flex;
-  height: 3rem;
+  min-height: 4.5rem;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 0.25rem;
+  text-align: center;
+}
+
+.oauth-workbench-back {
+  position: absolute;
+  left: 0.25rem;
+}
+
+.oauth-workbench-nav,
+.oauth-workbench-surface {
+  border: 1px solid rgb(148 163 184 / 0.34);
+  border-radius: 8px;
+  background: rgb(247 250 252 / 0.52);
+  box-shadow: 0 18px 42px rgb(51 65 85 / 0.12);
+  backdrop-filter: blur(24px) saturate(122%);
+  -webkit-backdrop-filter: blur(24px) saturate(122%);
+}
+
+:global(.dark .oauth-workbench-nav),
+:global(.dark .oauth-workbench-surface) {
+  border-color: rgb(123 178 199 / 0.28);
+  background: rgb(2 19 31 / 0.72);
+  box-shadow: 0 16px 42px rgb(0 7 14 / 0.24);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
+}
+
+.oauth-workbench-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.55fr);
+  min-width: 0;
+  align-items: stretch;
+  padding: 0.4rem;
+}
+
+.oauth-workbench-tablist {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  overflow-x: auto;
+}
+
+.team-child-entry {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid rgb(148 163 184 / 0.22);
+  padding-inline: 0.75rem;
+}
+
+:global(.dark .team-child-entry) {
+  border-color: rgb(123 178 199 / 0.2);
+}
+
+.team-child-entry-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid rgb(14 165 233 / 0.4);
+  border-radius: 7px;
+  background: rgb(14 165 233 / 0.12);
+  padding-inline: 0.9rem;
+  color: rgb(3 105 161);
+  font-size: 0.875rem;
+  font-weight: 700;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.team-child-entry-button:hover {
+  border-color: rgb(14 165 233 / 0.66);
+  background: rgb(14 165 233 / 0.18);
+  box-shadow: 0 0 18px rgb(14 165 233 / 0.14);
+}
+
+.team-child-entry-icon {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgb(14 165 233 / 0.16);
+}
+
+:global(.dark .team-child-entry-button) {
+  border-color: rgb(34 211 238 / 0.42);
+  background: rgb(8 145 178 / 0.18);
+  color: rgb(165 243 252);
+}
+
+:global(.dark .team-child-entry-button:hover) {
+  border-color: rgb(103 232 249 / 0.64);
+  background: rgb(8 145 178 / 0.28);
+  box-shadow: 0 0 22px rgb(34 211 238 / 0.16);
+}
+
+.workbench-tab {
+  display: flex;
+  min-height: 2.75rem;
   flex-shrink: 0;
   align-items: center;
   gap: 0.5rem;
-  border-bottom-width: 2px;
-  padding-inline: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding-inline: 0.9rem;
   font-size: 0.875rem;
-  font-weight: 500;
-  transition: color 150ms ease, border-color 150ms ease;
+  font-weight: 600;
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .workbench-tab-active {
-  @apply border-primary-500 text-primary-700 dark:text-primary-300;
+  border-color: rgb(14 165 233 / 0.38);
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(3 105 161);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.24);
 }
 
 .workbench-tab-idle {
-  @apply border-transparent text-gray-500 dark:text-gray-400;
+  color: rgb(71 85 105);
 }
 
 .workbench-tab-idle:hover {
-  @apply text-gray-800 dark:text-gray-200;
+  border-color: rgb(148 163 184 / 0.28);
+  background: rgb(255 255 255 / 0.32);
+  color: rgb(15 23 42);
+}
+
+:global(.dark .workbench-tab-active) {
+  border-color: rgb(56 189 248 / 0.42);
+  background: rgb(3 105 161 / 0.28);
+  color: rgb(165 243 252);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.035);
+}
+
+:global(.dark .workbench-tab-idle) {
+  color: rgb(148 163 184);
+}
+
+:global(.dark .workbench-tab-idle:hover) {
+  border-color: rgb(123 178 199 / 0.24);
+  background: rgb(8 39 56 / 0.48);
+  color: rgb(226 232 240);
+}
+
+.workbench-tab-count {
+  display: inline-flex;
+  min-width: 1.5rem;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(148 163 184 / 0.18);
+  padding-inline: 0.4rem;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.reauthorization-tab-icon {
+  position: relative;
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(14 165 233 / 0.34);
+  border-radius: 7px;
+  background: rgb(14 165 233 / 0.1);
+  color: rgb(2 132 199);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.reauthorization-tab-shield {
+  width: 1rem;
+  height: 1rem;
+}
+
+.reauthorization-tab-refresh {
+  position: absolute;
+  right: -0.22rem;
+  bottom: -0.22rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1px solid rgb(125 211 252 / 0.68);
+  border-radius: 999px;
+  background: rgb(3 105 161);
+  padding: 0.08rem;
+  color: white;
+}
+
+.workbench-tab-active .reauthorization-tab-icon {
+  border-color: rgb(103 232 249 / 0.62);
+  background: rgb(8 145 178 / 0.24);
+  box-shadow: 0 0 0 3px rgb(14 165 233 / 0.1), 0 0 18px rgb(34 211 238 / 0.18);
+  color: rgb(165 243 252);
+}
+
+:global(.dark .reauthorization-tab-icon) {
+  border-color: rgb(56 189 248 / 0.34);
+  background: rgb(3 105 161 / 0.22);
+  color: rgb(125 211 252);
+}
+
+.oauth-module-header {
+  display: flex;
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgb(148 163 184 / 0.24);
+  background: rgb(255 255 255 / 0.14);
+}
+
+:global(.dark .oauth-module-header) {
+  border-color: rgb(123 178 199 / 0.2);
+  background: rgb(1 16 27 / 0.44);
+}
+
+.oauth-module-icon,
+.oauth-icon-button,
+.oauth-delete-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.oauth-module-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 7px;
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(2 132 199);
+}
+
+:global(.dark .oauth-module-icon) {
+  background: rgb(8 145 178 / 0.2);
+  color: rgb(103 232 249);
+}
+
+.oauth-icon-button,
+.oauth-delete-button {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgb(148 163 184 / 0.38);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.36);
+  color: rgb(71 85 105);
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.oauth-icon-button:hover {
+  border-color: rgb(14 165 233 / 0.5);
+  color: rgb(2 132 199);
+}
+
+.oauth-delete-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: rgb(220 38 38);
+}
+
+.oauth-delete-button:hover {
+  border-color: rgb(248 113 113 / 0.62);
+  background: rgb(254 226 226 / 0.56);
+}
+
+:global(.dark .oauth-icon-button),
+:global(.dark .oauth-delete-button) {
+  border-color: rgb(123 178 199 / 0.26);
+  background: rgb(3 25 40 / 0.72);
+  color: rgb(186 230 253);
+}
+
+:global(.dark .oauth-delete-button) {
+  color: rgb(252 165 165);
+}
+
+:global(.dark .oauth-delete-button:hover) {
+  border-color: rgb(248 113 113 / 0.46);
+  background: rgb(127 29 29 / 0.26);
+}
+
+.oauth-summary-chip,
+.oauth-mini-tag,
+.oauth-round-badge,
+.oauth-history-result {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgb(148 163 184 / 0.28);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.28);
+  color: rgb(71 85 105);
+}
+
+.oauth-summary-chip {
+  min-height: 1.75rem;
+  gap: 0.28rem;
+  padding-inline: 0.55rem;
+  font-size: 0.72rem;
+}
+
+.oauth-summary-chip b {
+  color: rgb(15 23 42);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.oauth-summary-chip-active {
+  border-color: rgb(56 189 248 / 0.3);
+  color: rgb(3 105 161);
+}
+
+.oauth-summary-chip-warning {
+  border-color: rgb(245 158 11 / 0.32);
+  color: rgb(180 83 9);
+}
+
+:global(.dark .oauth-summary-chip),
+:global(.dark .oauth-mini-tag) {
+  border-color: rgb(123 178 199 / 0.22);
+  background: rgb(3 27 43 / 0.7);
+  color: rgb(148 163 184);
+}
+
+:global(.dark .oauth-summary-chip b) {
+  color: rgb(226 232 240);
+}
+
+:global(.dark .oauth-summary-chip-active) {
+  color: rgb(125 211 252);
+}
+
+:global(.dark .oauth-summary-chip-warning) {
+  color: rgb(253 230 138);
+}
+
+.oauth-history-filters {
+  display: inline-flex;
+  min-width: 0;
+  gap: 0.22rem;
+  overflow-x: auto;
+  border: 1px solid rgb(148 163 184 / 0.28);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.2);
+  padding: 0.22rem;
+}
+
+.oauth-history-filter {
+  display: inline-flex;
+  min-height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding-inline: 0.62rem;
+  color: rgb(71 85 105);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.oauth-history-filter b {
+  color: inherit;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.oauth-history-filter-active {
+  border-color: rgb(14 165 233 / 0.34);
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(3 105 161);
+}
+
+:global(.dark .oauth-history-filters) {
+  border-color: rgb(123 178 199 / 0.22);
+  background: rgb(1 17 28 / 0.54);
+}
+
+:global(.dark .oauth-history-filter) {
+  color: rgb(148 163 184);
+}
+
+:global(.dark .oauth-history-filter-active) {
+  border-color: rgb(56 189 248 / 0.38);
+  background: rgb(3 105 161 / 0.3);
+  color: rgb(186 230 253);
+}
+
+.oauth-account-list,
+.oauth-history-list {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+}
+
+.oauth-account-row,
+.oauth-history-row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid rgb(148 163 184 / 0.24);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.28);
+  padding: 0.9rem 1rem;
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.24);
+}
+
+.oauth-account-row {
+  grid-template-columns: minmax(22rem, 30rem) minmax(22rem, 1fr) 12rem;
+}
+
+.oauth-history-row {
+  grid-template-columns: minmax(22rem, 30rem) minmax(20rem, 1fr) 10rem;
+}
+
+:global(.dark .oauth-account-row),
+:global(.dark .oauth-history-row) {
+  border-color: rgb(123 178 199 / 0.2);
+  background: rgb(2 24 39 / 0.62);
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.02);
+}
+
+.oauth-account-identity,
+.oauth-account-progress {
+  min-width: 0;
+}
+
+.oauth-account-avatar {
+  display: inline-flex;
+  width: 2.4rem;
+  height: 2.4rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(2 132 199);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+:global(.dark .oauth-account-avatar) {
+  background: rgb(3 105 161 / 0.3);
+  color: rgb(125 211 252);
+}
+
+.oauth-mini-tag {
+  min-height: 1.35rem;
+  padding-inline: 0.38rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.oauth-round-badge,
+.oauth-history-result {
+  min-height: 1.55rem;
+  padding-inline: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.oauth-progress-track {
+  height: 0.36rem;
+  margin-top: 0.55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(148 163 184 / 0.22);
+}
+
+:global(.dark .oauth-progress-track) {
+  background: rgb(148 163 184 / 0.16);
+}
+
+.oauth-account-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.oauth-account-actions :deep(.btn) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.oauth-tone-success {
+  border-color: rgb(16 185 129 / 0.34);
+  background: rgb(209 250 229 / 0.58);
+  color: rgb(4 120 87);
+}
+
+.oauth-tone-danger {
+  border-color: rgb(239 68 68 / 0.34);
+  background: rgb(254 226 226 / 0.58);
+  color: rgb(185 28 28);
+}
+
+.oauth-tone-warning {
+  border-color: rgb(245 158 11 / 0.34);
+  background: rgb(254 243 199 / 0.58);
+  color: rgb(180 83 9);
+}
+
+.oauth-tone-info {
+  border-color: rgb(14 165 233 / 0.32);
+  background: rgb(224 242 254 / 0.52);
+  color: rgb(3 105 161);
+}
+
+:global(.dark .oauth-tone-success) {
+  border-color: rgb(52 211 153 / 0.28);
+  background: rgb(6 78 59 / 0.34);
+  color: rgb(167 243 208);
+}
+
+:global(.dark .oauth-tone-danger) {
+  border-color: rgb(248 113 113 / 0.32);
+  background: rgb(127 29 29 / 0.3);
+  color: rgb(254 202 202);
+}
+
+:global(.dark .oauth-tone-warning) {
+  border-color: rgb(251 191 36 / 0.3);
+  background: rgb(120 53 15 / 0.3);
+  color: rgb(253 230 138);
+}
+
+:global(.dark .oauth-tone-info) {
+  border-color: rgb(56 189 248 / 0.28);
+  background: rgb(3 105 161 / 0.26);
+  color: rgb(186 230 253);
+}
+
+.oauth-empty-state {
+  display: flex;
+  min-height: 13rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 1rem;
+  color: rgb(71 85 105);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+:global(.dark .oauth-empty-state) {
+  color: rgb(148 163 184);
+}
+
+.oauth-workbench-surface :deep(.btn),
+.oauth-workbench-surface :deep(.input),
+.oauth-workbench-surface :deep(.select-trigger) {
+  border-radius: 8px;
+}
+
+@media (max-width: 1023px) {
+  .oauth-workbench-nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team-child-entry {
+    justify-content: flex-start;
+    border-top: 1px solid rgb(148 163 184 / 0.22);
+    border-left: 0;
+    padding: 0.5rem 0.25rem 0.1rem;
+  }
+
+  .oauth-account-row,
+  .oauth-history-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oauth-account-actions,
+  .oauth-history-row > :last-child {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 639px) {
+  .openai-account-workbench {
+    padding-inline: 0.5rem;
+  }
+
+  .oauth-workbench-heading {
+    min-height: 3.75rem;
+  }
+
+  .workbench-tab {
+    min-height: 2.5rem;
+    padding-inline: 0.7rem;
+    font-size: 0.8rem;
+  }
+
+  .oauth-module-header {
+    padding-inline: 0.75rem;
+  }
+
+  .oauth-account-list,
+  .oauth-history-list {
+    padding: 0.5rem;
+  }
+
+  .oauth-account-row,
+  .oauth-history-row {
+    padding: 0.8rem;
+  }
+
   .openai-account-workbench :deep(.btn) {
     max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-tab,
+  .oauth-icon-button,
+  .oauth-delete-button {
+    transition-duration: 1ms;
   }
 }
 </style>

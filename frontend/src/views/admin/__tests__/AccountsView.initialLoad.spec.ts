@@ -250,6 +250,7 @@ describe('admin AccountsView initial data synchronization', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="account-toolbar-loading"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).toContain('XIASS工作台')
     expect(wrapper.find('[data-testid="create-team-child"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="create-account"]').exists()).toBe(true)
     wrapper.unmount()

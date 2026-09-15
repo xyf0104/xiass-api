@@ -14,9 +14,28 @@ func TestOpenAIReauthorizationStateCooldownUsesMostRecentSuccess(t *testing.T) {
 		AttemptCount: 2, SuccessCount: 2,
 		FirstSucceededAt: &first, LastSucceededAt: &last,
 	}
+	state.Normalize()
 
 	require.Equal(t, 3, state.NextAuthorizationNumber())
 	require.Equal(t, last.Add(7*24*time.Hour), *state.CooldownUntil())
+	require.Equal(t, []time.Time{first, last}, state.SuccessfulAuthorizationTimes)
+}
+
+func TestOpenAIReauthorizationStatePreservesEveryKnownSuccessTime(t *testing.T) {
+	first := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	second := time.Date(2026, 9, 8, 9, 30, 0, 0, time.UTC)
+	third := time.Date(2026, 9, 15, 11, 45, 0, 0, time.UTC)
+	state := OpenAIReauthorizationState{
+		AttemptCount: 3, SuccessCount: 3,
+		FirstSucceededAt: &first, LastSucceededAt: &third,
+		SuccessfulAuthorizationTimes: []time.Time{third, second, first, second},
+	}
+	state.Normalize()
+
+	require.Equal(t, []time.Time{first, second, third}, state.SuccessfulAuthorizationTimes)
+	require.Equal(t, first, *state.FirstSucceededAt)
+	require.Equal(t, third, *state.LastSucceededAt)
+	require.Equal(t, third.Add(7*24*time.Hour), *state.CooldownUntil())
 }
 
 func TestParseOpenAIReauthorizationStateNormalizesInvalidCounters(t *testing.T) {

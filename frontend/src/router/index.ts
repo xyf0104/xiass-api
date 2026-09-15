@@ -612,7 +612,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: '批量添加账号'
+      title: 'XIASS工作台'
     }
   },
   {

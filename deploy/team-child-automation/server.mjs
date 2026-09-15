@@ -1574,7 +1574,10 @@ function reauthorizationFailureState(body) {
   if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
     return { kind: 'invalid_credentials' }
   }
-  if (/(?:your |this |current )?account (?:has been |is )?(?:deactivated|disabled|suspended|banned|restricted|limited)|account_(?:deactivated|disabled|suspended)|OpenAI\s*限制了当前账号|账号.*(?:受限|限制|封禁|停用)/i.test(body)) {
+  if (/(?:your |this |current )?account (?:has been |is )?(?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)/i.test(body)) {
+    return { kind: 'account_deleted_or_disabled' }
+  }
+  if (/(?:your |this |current )?account (?:has been |is )?(?:suspended|banned|restricted|limited)|account_(?:suspended|restricted)|OpenAI\s*限制了当前账号|账号.*(?:受限|限制|封禁)/i.test(body)) {
     return { kind: 'account_blocked' }
   }
   return null
@@ -2368,7 +2371,10 @@ async function advanceOAuthReauthorization(workflow, current, state, { operatorC
     throw new Error('OpenAI 拒绝了服务器保存的登录邮箱或密码，请更新该账号的登录密码后重新授权')
   }
   if (state.kind === 'account_blocked') {
-    throw new Error('OpenAI 限制了当前账号，已停止自动化且不会自动重试')
+    throw new Error('OpenAI 页面显示当前账号受限，已停止自动化且不会自动重试')
+  }
+  if (state.kind === 'account_deleted_or_disabled') {
+    throw new Error('OpenAI 页面明确显示账号已删除或停用，已停止自动化且不会自动重试')
   }
   if (state.kind === 'external_provider' || state.kind === 'external_provider_choice') {
     requireManualReauthorizationLogin(workflow, state)
