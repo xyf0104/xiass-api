@@ -173,9 +173,6 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			}
 			continue
 		}
-		if slotResult == openAISlotAcquireRetrySelection {
-			continue
-		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}

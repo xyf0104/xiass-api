@@ -307,9 +307,6 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 			continue
 		}
-		if slotResult == openAISlotAcquireRetrySelection {
-			continue
-		}
 		if slotResult != openAISlotAcquireOK {
 			return
 		}

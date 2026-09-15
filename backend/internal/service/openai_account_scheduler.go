@@ -1871,7 +1871,6 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 					MaxConcurrency: fresh.Concurrency,
 					Timeout:        cfg.FallbackWaitTimeout,
 					MaxWaiting:     cfg.FallbackMaxWaiting,
-					ReselectPool:   true,
 				},
 			}), candidateCount, topK, loadSkew, nil
 		}

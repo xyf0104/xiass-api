@@ -277,27 +277,6 @@ func TestWaitForSlotWithPingTimeout_AccountAndUserAcquire(t *testing.T) {
 	})
 }
 
-func TestWaitForAccountPoolRetrySharesDeadlineAcrossReselection(t *testing.T) {
-	helper := NewConcurrencyHelper(service.NewConcurrencyService(&helperConcurrencyCacheStub{}), SSEPingFormatNone, 5*time.Millisecond)
-	c, _ := newHelperTestContext(http.MethodPost, "/v1/responses")
-	streamStarted := false
-	started := time.Now()
-
-	var err error
-	for attempts := 0; attempts < 10; attempts++ {
-		err = helper.WaitForAccountPoolRetry(c, 140*time.Millisecond, false, &streamStarted)
-		if err != nil {
-			break
-		}
-	}
-
-	var concurrencyErr *ConcurrencyError
-	require.ErrorAs(t, err, &concurrencyErr)
-	require.True(t, concurrencyErr.IsTimeout)
-	require.Less(t, time.Since(started), 350*time.Millisecond, "pool rescans must not restart the timeout on each selection attempt")
-	require.False(t, streamStarted)
-}
-
 func TestAcquireUserSlotWithWait_ImmediateAcquireSkipsWaitQueue(t *testing.T) {
 	cache := &helperConcurrencyCacheStub{
 		userSeq: []bool{true},

@@ -127,8 +127,7 @@ describe('UserAccountAllowlistDialog', () => {
     })
 
     expect(wrapper.get('[data-test="allowlist-active-account-101"]').text()).toContain('×1')
-    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('未占账号槽位')
-    expect(wrapper.get('[data-test="allowlist-waiting-account"]').attributes('title')).toContain('尚未绑定账号槽位')
+    expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('换号或处理中')
     expect(wrapper.get('[data-test="allowlist-waiting-account"]').text()).toContain('×2')
   })
 })

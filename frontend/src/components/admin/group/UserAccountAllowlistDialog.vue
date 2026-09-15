@@ -51,10 +51,9 @@
                 v-if="unassignedConcurrency > 0"
                 class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                 data-test="allowlist-waiting-account"
-                :title="text('admin.groups.userAccountAllowlist.waitingForAccountHint', '请求已进入当前分组但尚未绑定账号槽位，包括选号、快速换号、故障转移和全池满载等待。')"
               >
                 <Icon name="clock" size="xs" />
-                {{ text('admin.groups.userAccountAllowlist.waitingForAccount', '未占账号槽位') }}
+                {{ text('admin.groups.userAccountAllowlist.waitingForAccount', '换号或处理中') }}
                 <span class="font-mono text-current/70">×{{ unassignedConcurrency }}</span>
               </span>
             </div>
