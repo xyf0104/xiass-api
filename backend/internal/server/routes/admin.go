@@ -664,6 +664,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, setting
 		// Beta 策略配置
 		adminSettings.GET("/beta-policy", h.Admin.Setting.GetBetaPolicySettings)
 		adminSettings.PUT("/beta-policy", h.Admin.Setting.UpdateBetaPolicySettings)
+		// OpenAI model-specific preferred account selection
+		adminSettings.GET("/openai-model-priority", h.Admin.Setting.GetOpenAIModelPrioritySettings)
+		adminSettings.PUT("/openai-model-priority", h.Admin.Setting.UpdateOpenAIModelPrioritySettings)
 		// Web Search 模拟配置
 		adminSettings.GET("/web-search-emulation", h.Admin.Setting.GetWebSearchEmulationConfig)
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)

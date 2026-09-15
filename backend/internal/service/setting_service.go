@@ -249,6 +249,10 @@ type SettingService struct {
 
 	executionNodeRoutingCache       atomic.Value // *cachedExecutionNodeRoutingSettings
 	executionNodeRoutingSF          singleflight.Group
+	openAIModelPriorityCache        atomic.Value // *cachedOpenAIModelPrioritySettings
+	openAIModelPrioritySF           singleflight.Group
+	openAIModelPriorityRefreshing   atomic.Bool
+	openAIModelPriorityMu           sync.Mutex
 	executionNodeActivationMu       sync.Mutex
 	executionNodeAccountPreparer    ExecutionNodeAccountPreparer
 	executionNodeRoutingActivator   ExecutionNodeRoutingActivator

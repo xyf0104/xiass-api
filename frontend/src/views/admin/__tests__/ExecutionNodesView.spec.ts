@@ -135,6 +135,7 @@ function mountView() {
     global: {
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
+        OpenAIModelPrioritySettings: true,
         Toggle: ToggleStub,
         ConfirmDialog: ConfirmDialogStub,
         Icon: true

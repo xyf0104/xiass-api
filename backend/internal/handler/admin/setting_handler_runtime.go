@@ -384,6 +384,37 @@ func (h *SettingHandler) UpdateBetaPolicySettings(c *gin.Context) {
 	response.Success(c, dto.BetaPolicySettings{Rules: outRules})
 }
 
+// GetOpenAIModelPrioritySettings returns the compact global model-to-account
+// preference rules used by the load-balancing panel.
+func (h *SettingHandler) GetOpenAIModelPrioritySettings(c *gin.Context) {
+	settings, err := h.settingService.GetOpenAIModelPrioritySettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+// UpdateOpenAIModelPrioritySettings replaces the complete preference snapshot.
+// The service validates and compiles it before publishing it to request paths.
+func (h *SettingHandler) UpdateOpenAIModelPrioritySettings(c *gin.Context) {
+	var settings service.OpenAIModelPrioritySettings
+	if err := c.ShouldBindJSON(&settings); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.settingService.SetOpenAIModelPrioritySettings(c.Request.Context(), &settings); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	updated, err := h.settingService.GetOpenAIModelPrioritySettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, updated)
+}
+
 // UpdateStreamTimeoutSettingsRequest 更新流超时配置请求
 type UpdateStreamTimeoutSettingsRequest struct {
 	Enabled                bool   `json:"enabled"`

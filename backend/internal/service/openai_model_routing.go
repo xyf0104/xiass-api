@@ -8,9 +8,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
-// openAIModelRoutingPreference is a soft, group-scoped tier above the normal
-// account priority. Direct account IDs and dynamic account-pool membership are
-// matched at request time; an empty preference leaves scheduling unchanged.
+// openAIModelRoutingPreference is a soft tier above the normal account
+// priority. It combines the existing group-scoped routing with the global
+// model priority panel. An empty preference leaves scheduling unchanged.
 type openAIModelRoutingPreference struct {
 	accountIDs map[int64]struct{}
 	poolIDs    map[string]struct{}
@@ -39,6 +39,25 @@ func newOpenAIModelRoutingPreference(accountIDs, poolIDs []int64) openAIModelRou
 	return preference
 }
 
+func (p openAIModelRoutingPreference) withAccountIDSet(accountIDs map[int64]struct{}) openAIModelRoutingPreference {
+	if len(accountIDs) == 0 {
+		return p
+	}
+	if len(p.accountIDs) == 0 {
+		p.accountIDs = accountIDs
+		return p
+	}
+	merged := make(map[int64]struct{}, len(p.accountIDs)+len(accountIDs))
+	for accountID := range p.accountIDs {
+		merged[accountID] = struct{}{}
+	}
+	for accountID := range accountIDs {
+		merged[accountID] = struct{}{}
+	}
+	p.accountIDs = merged
+	return p
+}
+
 func (p openAIModelRoutingPreference) configured() bool {
 	return len(p.accountIDs) > 0 || len(p.poolIDs) > 0
 }
@@ -64,9 +83,16 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	platform string,
 	requestedModel string,
 ) openAIModelRoutingPreference {
-	if s == nil || groupID == nil || strings.TrimSpace(requestedModel) == "" ||
+	if s == nil || strings.TrimSpace(requestedModel) == "" ||
 		normalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
 		return openAIModelRoutingPreference{}
+	}
+	preference := openAIModelRoutingPreference{}
+	if s.settingService != nil {
+		preference = preference.withAccountIDSet(s.settingService.ResolveOpenAIModelPriorityAccountIDs(ctx, requestedModel))
+	}
+	if groupID == nil {
+		return preference
 	}
 
 	var group *Group
@@ -81,13 +107,20 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	}
 	if group == nil || !group.ModelRoutingEnabled ||
 		(group.Platform != PlatformOpenAI && group.Platform != PlatformComposite) {
-		return openAIModelRoutingPreference{}
+		return preference
 	}
 
-	return newOpenAIModelRoutingPreference(
+	groupPreference := newOpenAIModelRoutingPreference(
 		group.GetRoutingAccountIDs(requestedModel),
 		group.GetRoutingAccountPoolIDs(requestedModel),
 	)
+	for accountID := range preference.accountIDs {
+		if groupPreference.accountIDs == nil {
+			groupPreference.accountIDs = make(map[int64]struct{}, len(preference.accountIDs))
+		}
+		groupPreference.accountIDs[accountID] = struct{}{}
+	}
+	return groupPreference
 }
 
 func partitionOpenAIAccountsByModelPreference(

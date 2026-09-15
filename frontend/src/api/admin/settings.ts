@@ -1405,6 +1405,35 @@ export interface OpenAIFastPolicySettings {
   rules: OpenAIFastPolicyRule[];
 }
 
+// ==================== OpenAI Model Priority Settings ====================
+
+export interface OpenAIModelPriorityRule {
+  model_pattern: string;
+  account_ids: number[];
+}
+
+export interface OpenAIModelPrioritySettings {
+  enabled: boolean;
+  rules: OpenAIModelPriorityRule[];
+}
+
+export async function getOpenAIModelPrioritySettings(): Promise<OpenAIModelPrioritySettings> {
+  const { data } = await apiClient.get<OpenAIModelPrioritySettings>(
+    "/admin/settings/openai-model-priority",
+  );
+  return data;
+}
+
+export async function updateOpenAIModelPrioritySettings(
+  settings: OpenAIModelPrioritySettings,
+): Promise<OpenAIModelPrioritySettings> {
+  const { data } = await apiClient.put<OpenAIModelPrioritySettings>(
+    "/admin/settings/openai-model-priority",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Beta Policy Settings ====================
 
 /**
@@ -1538,6 +1567,8 @@ export const settingsAPI = {
   updateRectifierSettings,
   getBetaPolicySettings,
   updateBetaPolicySettings,
+  getOpenAIModelPrioritySettings,
+  updateOpenAIModelPrioritySettings,
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,

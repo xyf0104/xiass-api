@@ -587,6 +587,10 @@ const (
 	SettingKeyExecutionNodeClusterID         = "execution_node_cluster_id"
 	SettingKeyExecutionNodePairingInvite     = "execution_node_pairing_invite"
 	SettingKeyExecutionNodePairingPeerPrefix = "execution_node_pairing_peer:"
+	// SettingKeyOpenAIModelPrioritySettings stores global model-to-account
+	// preference rules. The compiled policy is kept in memory on the request hot
+	// path; the settings table is never queried while selecting an account.
+	SettingKeyOpenAIModelPrioritySettings = "openai_model_priority_settings"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。

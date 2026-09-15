@@ -41,6 +41,7 @@ func selectOpenAIModelRoutingTestAccount(
 	accounts []Account,
 	cache schedulerTestConcurrencyCache,
 	session string,
+	settingServices ...*SettingService,
 ) *AccountSelectionResult {
 	t.Helper()
 	cfg := &config.Config{}
@@ -51,6 +52,9 @@ func selectOpenAIModelRoutingTestAccount(
 		cache:              &schedulerTestGatewayCache{},
 		cfg:                cfg,
 		concurrencyService: NewConcurrencyService(cache),
+	}
+	if len(settingServices) > 0 {
+		svc.settingService = settingServices[0]
 	}
 	if mode == "advanced" {
 		selection, _, err := newDefaultOpenAIAccountScheduler(svc, nil).Select(ctx, OpenAIAccountScheduleRequest{
@@ -75,6 +79,16 @@ func selectOpenAIModelRoutingTestAccount(
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	return selection
+}
+
+func openAIModelPriorityTestService(t *testing.T, accountIDs ...int64) *SettingService {
+	t.Helper()
+	settings := NewSettingService(&openAIModelPriorityRepoStub{values: map[string]string{}}, &config.Config{})
+	require.NoError(t, settings.SetOpenAIModelPrioritySettings(context.Background(), &OpenAIModelPrioritySettings{
+		Enabled: true,
+		Rules:   []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: accountIDs}},
+	}))
+	return settings
 }
 
 func TestOpenAIModelRoutingPreferenceMatchesDirectAccountAndDynamicPool(t *testing.T) {
@@ -156,6 +170,98 @@ func TestOpenAIModelRoutingFallsBackWhenPreferredPoolIsBusy(t *testing.T) {
 			)
 			require.Equal(t, pro.ID, selection.Account.ID)
 			require.Contains(t, acquired, pro.ID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+func TestOpenAIModelPriorityPreemptsOrdinaryPriorityAcrossSchedulers(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		t.Run(mode, func(t *testing.T) {
+			groupID := int64(12005)
+			ordinary := openAIModelRoutingTestAccount(81, groupID, 1, "")
+			preferred := openAIModelRoutingTestAccount(82, groupID, 9, "")
+			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
+			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+			selection := selectOpenAIModelRoutingTestAccount(
+				t, mode, ctx, groupID, []Account{ordinary, preferred},
+				schedulerTestConcurrencyCache{}, "", openAIModelPriorityTestService(t, preferred.ID),
+			)
+			require.Equal(t, preferred.ID, selection.Account.ID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+func TestOpenAIModelPriorityFallsBackImmediatelyWhenPreferredAccountsAreBusy(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		t.Run(mode, func(t *testing.T) {
+			groupID := int64(12006)
+			ordinary := openAIModelRoutingTestAccount(91, groupID, 1, "")
+			preferred := openAIModelRoutingTestAccount(92, groupID, 9, "")
+			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
+			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+			acquired := []int64{}
+			selection := selectOpenAIModelRoutingTestAccount(
+				t, mode, ctx, groupID, []Account{ordinary, preferred},
+				schedulerTestConcurrencyCache{
+					acquiredIDs:    &acquired,
+					acquireResults: map[int64]bool{preferred.ID: false, ordinary.ID: true},
+					loadMap: map[int64]*AccountLoadInfo{
+						preferred.ID: {AccountID: preferred.ID, CurrentConcurrency: 1, LoadRate: 100},
+						ordinary.ID:  {AccountID: ordinary.ID, CurrentConcurrency: 0, LoadRate: 0},
+					},
+				},
+				"", openAIModelPriorityTestService(t, preferred.ID),
+			)
+			require.Equal(t, ordinary.ID, selection.Account.ID)
+			require.Contains(t, acquired, ordinary.ID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+func TestOpenAIModelPriorityLeavesUnmatchedModelsOnOrdinaryScheduling(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		t.Run(mode, func(t *testing.T) {
+			groupID := int64(12007)
+			ordinary := openAIModelRoutingTestAccount(101, groupID, 1, "")
+			lunaOnly := openAIModelRoutingTestAccount(102, groupID, 9, "")
+			settings := openAIModelPriorityTestService(t, lunaOnly.ID)
+			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
+			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+
+			cfg := &config.Config{}
+			cfg.Gateway.Scheduling.LoadBatchEnabled = mode != "legacy_no_batch"
+			cfg.Gateway.OpenAIWS.LBTopK = 2
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: []Account{ordinary, lunaOnly}}},
+				cache:              &schedulerTestGatewayCache{},
+				cfg:                cfg,
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+				settingService:     settings,
+			}
+
+			var selection *AccountSelectionResult
+			if mode == "advanced" {
+				var err error
+				selection, _, err = newDefaultOpenAIAccountScheduler(svc, nil).Select(ctx, OpenAIAccountScheduleRequest{
+					GroupID: &groupID, Platform: PlatformOpenAI, RequestedModel: "gpt-6-astra",
+					RequiredTransport: OpenAIUpstreamTransportAny,
+				})
+				require.NoError(t, err)
+			} else {
+				var err error
+				selection, err = svc.selectAccountWithLoadAwareness(ctx, &groupID, PlatformOpenAI, "", "gpt-6-astra", nil, false, "", false)
+				require.NoError(t, err)
+			}
+			require.Equal(t, ordinary.ID, selection.Account.ID)
 			if selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()
 			}

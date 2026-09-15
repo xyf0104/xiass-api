@@ -17,6 +17,8 @@
       </div>
 
       <template v-else-if="status">
+        <OpenAIModelPrioritySettings />
+
         <section class="card overflow-hidden">
           <div class="flex min-w-0 items-start gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
             <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" :class="pairingStatus?.production_ready ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'">
@@ -246,6 +248,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import OpenAIModelPrioritySettings from '@/components/admin/account/OpenAIModelPrioritySettings.vue'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores/app'
 
