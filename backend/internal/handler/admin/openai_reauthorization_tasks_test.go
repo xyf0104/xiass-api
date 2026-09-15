@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -60,6 +61,7 @@ func openAIReauthorizationRouter(h *OpenAIOAuthHandler, owner int64) *gin.Engine
 
 func reauthorizationAccount(id int64) *service.Account {
 	proxyID := int64(9)
+	trackingStartedAt := time.Date(2026, time.September, 15, 0, 0, 0, 0, time.UTC)
 	return &service.Account{
 		ID: id, Name: "Preserved account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Status: service.StatusError, ErrorMessage: "401 unauthorized", Schedulable: true,
@@ -74,6 +76,10 @@ func reauthorizationAccount(id int64) *service.Account {
 		Extra: map[string]any{
 			service.AccountExecutionNodeExtraKey: "api2", service.AccountPoolExtraKey: "14",
 			"codex_fingerprint_mode": "device", "codex_fingerprint_seed": "38fb7d63-5ef9-4c06-bb74-21a42464636a",
+			service.OpenAIReauthorizationStateExtraKey: service.OpenAIReauthorizationState{
+				Version: 1, TrackingStartedAt: &trackingStartedAt,
+				HistorySource: "xiass_state", HistoryConfidence: service.OpenAIReauthorizationHistoryExact,
+			},
 		},
 	}
 }
@@ -86,7 +92,7 @@ func TestOpenAIReauthorizationTaskUsesSavedLoginAndAccountProxy(t *testing.T) {
 	f.admin.proxies = []service.Proxy{proxy}
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 	r := openAIReauthorizationRouter(f.h, 42)
-	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"mode":"reauthorization"`)
 	require.Contains(t, w.Body.String(), `"target_account_id":448`)
@@ -98,6 +104,75 @@ func TestOpenAIReauthorizationTaskUsesSavedLoginAndAccountProxy(t *testing.T) {
 	require.Equal(t, "stored-password", f.requests[0]["password"])
 	require.Equal(t, "JBSWY3DPEHPK3PXP", f.requests[0]["totp_secret"])
 	require.Equal(t, map[string]any{"server": "http://proxy.example.test:8080", "username": "user", "password": "proxy-secret"}, f.requests[0]["proxy"])
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.last.AttemptCount)
+	require.Equal(t, service.OpenAIReauthorizationResultRunning, f.admin.openAIReauthorizationState.last.LastResult)
+	require.Equal(t, service.OpenAIReauthorizationHistoryExact, f.admin.openAIReauthorizationState.last.HistoryConfidence)
+}
+
+func TestOpenAIReauthorizationTaskRequiresConfirmation(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+
+	w := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "确认本次 401")
+	require.Empty(t, f.requests)
+	require.Zero(t, f.admin.openAIReauthorizationState.calls)
+}
+
+func TestOpenAIReauthorizationTaskLocksSecondDropForSevenDays(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	account := reauthorizationAccount(448)
+	succeededAt := time.Now().UTC().Add(-3 * 24 * time.Hour)
+	account.Extra[service.OpenAIReauthorizationStateExtraKey] = service.OpenAIReauthorizationState{
+		Version: 1, AttemptCount: 1, SuccessCount: 1,
+		FirstAttemptAt: &succeededAt, LastAttemptAt: &succeededAt,
+		FirstSucceededAt: &succeededAt, LastSucceededAt: &succeededAt,
+		LastResult:    service.OpenAIReauthorizationResultSuccess,
+		HistorySource: "xiass_state", HistoryConfidence: service.OpenAIReauthorizationHistoryExact,
+	}
+	f.admin.getAccountResult = account
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+
+	w := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "必须等待 7 天")
+	require.Empty(t, f.requests)
+}
+
+func TestOpenAIReauthorizationTaskRequiresHighRiskAcknowledgementAfterCooldown(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	account := reauthorizationAccount(448)
+	succeededAt := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	account.Extra[service.OpenAIReauthorizationStateExtraKey] = service.OpenAIReauthorizationState{
+		Version: 1, AttemptCount: 1, SuccessCount: 1,
+		FirstAttemptAt: &succeededAt, LastAttemptAt: &succeededAt,
+		FirstSucceededAt: &succeededAt, LastSucceededAt: &succeededAt,
+		LastResult:    service.OpenAIReauthorizationResultSuccess,
+		HistorySource: "xiass_state", HistoryConfidence: service.OpenAIReauthorizationHistoryExact,
+	}
+	f.admin.getAccountResult = account
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	router := openAIReauthorizationRouter(f.h, 42)
+
+	rejected := batchOAuthRequest(router, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, rejected.Code, rejected.Body.String())
+	require.Contains(t, rejected.Body.String(), "高风险二次确认")
+
+	accepted := batchOAuthRequest(router, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
+	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
+	require.Contains(t, accepted.Body.String(), `"reauthorization_number":2`)
+	require.Len(t, f.requests, 1)
 }
 
 func TestOpenAIReauthorizationTaskUsesSeparateSavedEmailCodeLogin(t *testing.T) {
@@ -116,7 +191,7 @@ func TestOpenAIReauthorizationTaskUsesSeparateSavedEmailCodeLogin(t *testing.T) 
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 
 	r := openAIReauthorizationRouter(f.h, 42)
-	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":449}`)
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":449,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"login_method":"email_code"`)
 	require.NotContains(t, w.Body.String(), token)
@@ -133,7 +208,7 @@ func TestOpenAIReauthorizationTaskRejectsAnotherExecutionNode(t *testing.T) {
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
 	f.admin.getAccountResult = reauthorizationAccount(448)
 	r := openAIReauthorizationRouter(f.h, 42)
-	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	require.Empty(t, f.requests)
 }
@@ -149,7 +224,7 @@ func TestOpenAIReauthorizationCompletionOnlyUpdatesMergedCredentials(t *testing.
 	invalidator := &openAIReauthorizationInvalidator{}
 	f.h.ConfigureTokenCacheInvalidator(invalidator)
 	r := openAIReauthorizationRouter(f.h, 42)
-	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
 	var envelope struct {
 		Data struct {
@@ -177,6 +252,69 @@ func TestOpenAIReauthorizationCompletionOnlyUpdatesMergedCredentials(t *testing.
 	require.Equal(t, account.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey], input.Credentials[service.OpenAIOAuthReauthorizationPasswordCredentialKey])
 	require.Equal(t, account.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey], input.Credentials[service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey])
 	require.Equal(t, []int64{448, 448}, invalidator.accountIDs)
+	require.Equal(t, service.OpenAIReauthorizationResultSuccess, f.admin.openAIReauthorizationState.last.LastResult)
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.last.SuccessCount)
+}
+
+func TestOpenAIReauthorizationStatusShowsExactCooldownAndLegacyInference(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	now := time.Now().UTC()
+	exact := reauthorizationAccount(501)
+	succeededAt := now.Add(-2 * 24 * time.Hour)
+	exact.Extra[service.OpenAIReauthorizationStateExtraKey] = service.OpenAIReauthorizationState{
+		Version: 1, AttemptCount: 1, SuccessCount: 1,
+		FirstAttemptAt: &succeededAt, LastAttemptAt: &succeededAt,
+		FirstSucceededAt: &succeededAt, LastSucceededAt: &succeededAt,
+		LastResult:    service.OpenAIReauthorizationResultSuccess,
+		HistorySource: "xiass_state", HistoryConfidence: service.OpenAIReauthorizationHistoryExact,
+	}
+	legacy := reauthorizationAccount(502)
+	legacyAttempt := now.Add(-10 * 24 * time.Hour)
+	legacy.LastUsedAt = new(time.Time)
+	*legacy.LastUsedAt = legacyAttempt.Add(time.Hour)
+	f.admin.accounts = []service.Account{*exact, *legacy}
+	evidence := openAIReauthorizationAuditEvidence{Attempts: []time.Time{legacyAttempt}}
+	inferred := inferOpenAIReauthorizationState(legacy, evidence)
+	require.Equal(t, service.OpenAIReauthorizationHistoryInferred, inferred.HistoryConfidence)
+	require.Equal(t, 1, inferred.SuccessCount)
+
+	status := buildOpenAIReauthorizationAccountStatus(exact, service.OpenAIReauthorizationStateFromAccount(exact), true, now)
+	require.Equal(t, "cooldown", status.RiskLevel)
+	require.Equal(t, 2, status.CurrentAuthorizationNumber)
+	require.False(t, status.CanStart)
+	require.Greater(t, status.CooldownRemainingSeconds, int64(4*24*time.Hour/time.Second))
+}
+
+func TestOpenAIReauthorizationLegacyAccountRequiresHighRiskAcknowledgement(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	account := reauthorizationAccount(503)
+	delete(account.Extra, service.OpenAIReauthorizationStateExtraKey)
+	account.CreatedAt = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 15, 8, 0, 0, 0, time.UTC)
+
+	state := f.h.openAIReauthorizationState(context.Background(), account)
+	require.Equal(t, service.OpenAIReauthorizationResultLegacyUnknown, state.LastResult)
+	require.Equal(t, service.OpenAIReauthorizationHistoryUnknown, state.HistoryConfidence)
+	status := buildOpenAIReauthorizationAccountStatus(account, state, true, now)
+	require.Equal(t, "unknown", status.RiskLevel)
+	require.True(t, status.CanStart)
+	require.True(t, status.RequiresRiskConfirmation)
+
+	_, _, err := f.h.validateOpenAIReauthorizationStart(
+		context.Background(), account,
+		openAIReauthorizationAuthorizationRequest{Confirmed: true}, now,
+	)
+	require.ErrorContains(t, err, "历史无法证明")
+
+	_, authorizationNumber, err := f.h.validateOpenAIReauthorizationStart(
+		context.Background(), account,
+		openAIReauthorizationAuthorizationRequest{
+			Confirmed:                             true,
+			AcknowledgedSecondReauthorizationRisk: true,
+		}, now,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, authorizationNumber)
 }
 
 func TestOpenAIReauthorizationCompletionRejectsChangedProxy(t *testing.T) {
@@ -188,7 +326,7 @@ func TestOpenAIReauthorizationCompletionRejectsChangedProxy(t *testing.T) {
 	f.admin.proxies = []service.Proxy{proxy}
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 	r := openAIReauthorizationRouter(f.h, 42)
-	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
 	var envelope struct {
 		Data struct {
@@ -215,7 +353,7 @@ func TestOpenAIReauthorizationRetriesOnlyAccountStateRecovery(t *testing.T) {
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 	f.admin.clearAccountErrorErr = errors.New("temporary database error")
 	r := openAIReauthorizationRouter(f.h, 42)
-	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
 	var envelope struct {
 		Data struct {
@@ -247,7 +385,7 @@ func TestOpenAIReauthorizationRepeatedStartReturnsExistingTask(t *testing.T) {
 	f.admin.proxies = []service.Proxy{proxy}
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 	r := openAIReauthorizationRouter(f.h, 42)
-	first := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	first := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	var firstEnvelope struct {
 		Data struct {
@@ -261,7 +399,7 @@ func TestOpenAIReauthorizationRepeatedStartReturnsExistingTask(t *testing.T) {
 	task.markFinishedIfTerminal()
 	task.mu.Unlock()
 
-	second := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	second := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
 	require.Contains(t, second.Body.String(), `"task_id":"`+firstEnvelope.Data.ID+`"`)
 	require.Equal(t, int32(1), f.sidecarCalls.Load())
@@ -275,7 +413,7 @@ func TestOpenAIReauthorizationRestrictedTaskCannotRestart(t *testing.T) {
 	f.admin.proxies = []service.Proxy{proxy}
 	configureOpenAIReauthorizationProxy(t, f, proxy)
 	r := openAIReauthorizationRouter(f.h, 42)
-	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448}`)
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
 	var envelope struct {
 		Data struct {
@@ -287,7 +425,7 @@ func TestOpenAIReauthorizationRestrictedTaskCannotRestart(t *testing.T) {
 	task.mu.Lock()
 	task.Status, task.Stage, task.Reason = "blocked", "blocked", "account_blocked"
 	task.mu.Unlock()
-	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{}`)
+	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true}`)
 	require.Equal(t, http.StatusConflict, restart.Code, restart.Body.String())
 	require.Len(t, f.requests, 1)
 }

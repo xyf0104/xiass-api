@@ -142,6 +142,25 @@ describe('DataTable', () => {
     expect(instance.options.getItemKey(5)).toBe(105)
   })
 
+  it('can disable virtualizer scroll compensation for live variable-height rows', async () => {
+    const data = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, name: `Row ${i + 1}` }))
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name' }],
+        data,
+        rowKey: 'id',
+        virtualizeThreshold: 3,
+        stabilizeVariableRowScroll: true,
+      },
+    })
+
+    await wrapper.vm.$nextTick()
+
+    const exposed = (wrapper.vm as any).virtualizer
+    const instance = exposed?.value ?? exposed
+    expect(instance.options.shouldAdjustScrollPositionOnItemSizeChange({}, 40, instance)).toBe(false)
+  })
+
   it('clears stale row and element caches when pagination replaces the row ID set', async () => {
     const firstPage = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, name: `First ${i + 1}` }))
     const secondPage = Array.from({ length: 100 }, (_, i) => ({ id: i + 101, name: `Second ${i + 1}` }))

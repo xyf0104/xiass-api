@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 type openAIReauthorizationStartRequest struct {
 	AccountID int64 `json:"account_id"`
+	openAIReauthorizationAuthorizationRequest
 }
 
 type openAIReauthorizationLoginMaterial struct {
@@ -131,10 +133,17 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
 	}
+	state, authorizationNumber, err := h.validateOpenAIReauthorizationStart(
+		c.Request.Context(), account, req.openAIReauthorizationAuthorizationRequest, time.Now().UTC(),
+	)
+	if err != nil {
+		response.Error(c, http.StatusConflict, err.Error())
+		return
+	}
 
 	store := h.batchOAuthStore
 	store.mu.Lock()
-	for _, task := range store.tasks {
+	for taskID, task := range store.tasks {
 		if !task.matchesMode(batchOAuthModeReauthorization) || task.TargetAccountID != req.AccountID {
 			continue
 		}
@@ -143,13 +152,21 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 			response.Error(c, http.StatusConflict, "The reauthorization task is busy")
 			return
 		}
-		store.mu.Unlock()
-		defer task.mu.Unlock()
 		if task.ownerID != owner {
+			task.mu.Unlock()
+			store.mu.Unlock()
 			response.Error(c, http.StatusConflict, "This account already has an authorization task")
 			return
 		}
+		if task.Status == "completed" && openAIAccountNeedsReauthorization(account) {
+			task.clearLoginCredentials()
+			delete(store.tasks, taskID)
+			task.mu.Unlock()
+			continue
+		}
+		store.mu.Unlock()
 		response.Success(c, task)
+		task.mu.Unlock()
 		return
 	}
 	if !store.hasCapacityLocked(nil) || len(store.tasks) >= 1000 {
@@ -169,17 +186,28 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		ownerID: owner, sidecarID: id, config: openAIReauthorizationAccountConfig(account),
 		executionNodeID: strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)),
 		Status:          "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
+		ReauthorizationNumber: authorizationNumber,
 	}
 	task.snapshotJSONLocked()
 	task.mu.Lock()
 	store.tasks[id] = task
 	store.mu.Unlock()
+	if err := h.persistOpenAIReauthorizationStart(c.Request.Context(), account, state, task, now); err != nil {
+		store.mu.Lock()
+		delete(store.tasks, id)
+		store.mu.Unlock()
+		task.mu.Unlock()
+		response.Error(c, http.StatusServiceUnavailable, "401 重新授权历史无法保存，为避免重复授权已停止本次操作")
+		return
+	}
 	defer task.mu.Unlock()
 	defer task.snapshotJSONLocked()
 	defer task.markFinishedIfTerminal()
+	defer func() { _ = h.persistOpenAIReauthorizationTaskState(context.WithoutCancel(c.Request.Context()), task) }()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 35*time.Second)
 	defer cancel()
 	_ = h.startBatchAttempt(ctx, task, login.Password, login.TOTPSecret, login.EmailCodeToken, proxy)
+	middleware.SetAuditExtra(c, map[string]any{"account_id": req.AccountID, "reauthorization_number": authorizationNumber})
 	response.Success(c, task)
 }
 
@@ -211,6 +239,7 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 	defer task.mu.Unlock()
 	defer task.markFinishedIfTerminal()
 	defer h.revokeTerminalBatchSession(task)
+	defer func() { _ = h.persistOpenAIReauthorizationTaskState(context.WithoutCancel(c.Request.Context()), task) }()
 	if task.AccountID > 0 {
 		if task.Status == "completed" {
 			response.Success(c, task)
@@ -303,6 +332,9 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		return
 	}
 	finishOpenAIReauthorizationTask(task, cleared)
+	middleware.SetAuditExtra(c, map[string]any{
+		"account_id": account.ID, "reauthorization_number": task.ReauthorizationNumber, "result": "success",
+	})
 	response.Success(c, task)
 }
 
@@ -320,6 +352,12 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	}
 	defer task.mu.Unlock()
 	defer task.markFinishedIfTerminal()
+	var req openAIReauthorizationAuthorizationRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "Invalid reauthorization confirmation")
+		return
+	}
 	if task.AccountID > 0 || task.RestartCount >= batchOAuthMaxRestarts || task.Reason == "account_blocked" {
 		response.Error(c, http.StatusConflict, "Task cannot restart")
 		return
@@ -333,6 +371,11 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		return
 	}
 	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID)
+	if err != nil {
+		response.Error(c, http.StatusConflict, err.Error())
+		return
+	}
+	state, authorizationNumber, err := h.validateOpenAIReauthorizationStart(c.Request.Context(), account, req, time.Now().UTC())
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
@@ -371,6 +414,18 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	task.RequiresSMSConfirmation = false
 	task.FinishedAt = nil
 	task.Status, task.Stage, task.Reason = "queued", "queued", ""
+	if task.ReauthorizationNumber <= 0 {
+		task.ReauthorizationNumber = authorizationNumber
+	}
+	if err := h.persistOpenAIReauthorizationStart(c.Request.Context(), account, state, task, time.Now().UTC()); err != nil {
+		task.Status, task.Stage, task.Reason = "failed", "failed", "reauthorization_history_unavailable"
+		response.Error(c, http.StatusServiceUnavailable, "401 重新授权历史无法保存，已停止重试")
+		return
+	}
 	_ = h.startBatchAttempt(ctx, task, login.Password, login.TOTPSecret, login.EmailCodeToken, proxy)
+	_ = h.persistOpenAIReauthorizationTaskState(context.WithoutCancel(c.Request.Context()), task)
+	middleware.SetAuditExtra(c, map[string]any{
+		"account_id": task.TargetAccountID, "reauthorization_number": task.ReauthorizationNumber,
+	})
 	response.Success(c, task)
 }

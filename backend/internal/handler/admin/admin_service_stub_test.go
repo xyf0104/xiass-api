@@ -9,6 +9,12 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+type stubOpenAIReauthorizationState struct {
+	calls int
+	last  service.OpenAIReauthorizationState
+	err   error
+}
+
 type stubAdminService struct {
 	users                               []service.User
 	apiKeys                             []service.APIKey
@@ -41,6 +47,7 @@ type stubAdminService struct {
 	getAccountResult                    *service.Account
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
+	openAIReauthorizationState          stubOpenAIReauthorizationState
 	checkMixedErr                       error
 	lastMixedCheck                      struct {
 		accountID int64
@@ -537,6 +544,21 @@ func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *s
 
 func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	s.updateAccountExtraCalls++
+	return nil
+}
+
+func (s *stubAdminService) UpdateOpenAIReauthorizationState(_ context.Context, id int64, state service.OpenAIReauthorizationState) error {
+	s.openAIReauthorizationState.calls++
+	s.openAIReauthorizationState.last = state
+	if s.openAIReauthorizationState.err != nil {
+		return s.openAIReauthorizationState.err
+	}
+	if s.getAccountResult != nil && s.getAccountResult.ID == id {
+		if s.getAccountResult.Extra == nil {
+			s.getAccountResult.Extra = make(map[string]any)
+		}
+		s.getAccountResult.Extra[service.OpenAIReauthorizationStateExtraKey] = state
+	}
 	return nil
 }
 

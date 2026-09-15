@@ -34,6 +34,7 @@ type OpenAIOAuthHandler struct {
 	batchOAuthStore          *batchOAuthStore
 	batchSMSService          batchOAuthSMS
 	tokenCacheInvalidator    service.TokenCacheInvalidator
+	reauthAuditReader        openAIReauthorizationAuditReader
 }
 
 // ConfigureTeamChildSecrets attaches the application encryption boundary used

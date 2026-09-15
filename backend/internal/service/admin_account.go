@@ -521,6 +521,17 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	// Imported runtime observations belong to the source row, not a new account.
 	if input.Platform == PlatformOpenAI && input.Type == AccountTypeOAuth {
 		accountExtra = stripOpenAIQuotaRuntimeExtra(accountExtra)
+		if accountExtra == nil {
+			accountExtra = make(map[string]any)
+		}
+		// Reauthorization history is XIASS-managed. A newly created primary
+		// OAuth account gets an exact tracking baseline; imported payloads may
+		// not forge a prior authorization result.
+		startedAt := time.Now().UTC()
+		accountExtra[OpenAIReauthorizationStateExtraKey] = OpenAIReauthorizationState{
+			Version: 1, TrackingStartedAt: &startedAt,
+			HistorySource: "xiass_state", HistoryConfidence: OpenAIReauthorizationHistoryExact,
+		}
 	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
@@ -839,6 +850,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// Ordinary account edits may neither forge nor clear these managed fields.
 		delete(normalizedExtra, OpenAITeamChildExtraKey)
 		delete(normalizedExtra, OpenAITeamChildEmailExtraKey)
+		delete(normalizedExtra, OpenAIReauthorizationStateExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -856,6 +868,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			openAIWeeklyEstimateBaselineKey,
 			OpenAITeamChildExtraKey,
 			OpenAITeamChildEmailExtraKey,
+			OpenAIReauthorizationStateExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -1235,6 +1248,7 @@ func (s *adminServiceImpl) ApplyAntigravityOAuthCredentials(
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripOpenAIQuotaRuntimeExtra(updates)
+	delete(updates, OpenAIReauthorizationStateExtraKey)
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
@@ -1294,6 +1308,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
+	delete(input.Extra, OpenAIReauthorizationStateExtraKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)

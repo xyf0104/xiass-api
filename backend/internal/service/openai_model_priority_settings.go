@@ -211,7 +211,11 @@ func (s *SettingService) GetOpenAIModelPrioritySettings(ctx context.Context) (*O
 	if err != nil {
 		return nil, err
 	}
-	return cloneOpenAIModelPrioritySettings(loaded.(*cachedOpenAIModelPrioritySettings).settings), nil
+	entry, ok := loaded.(*cachedOpenAIModelPrioritySettings)
+	if !ok || entry == nil {
+		return nil, errors.New("invalid OpenAI model priority cache entry")
+	}
+	return cloneOpenAIModelPrioritySettings(entry.settings), nil
 }
 
 func (s *SettingService) SetOpenAIModelPrioritySettings(ctx context.Context, settings *OpenAIModelPrioritySettings) error {

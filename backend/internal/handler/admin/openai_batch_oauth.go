@@ -89,6 +89,7 @@ type batchOAuthTask struct {
 	TargetAccountID         int64             `json:"target_account_id,omitempty"`
 	AccountConfig           *batchOAuthConfig `json:"account_config,omitempty"`
 	RestartCount            int               `json:"restart_count"`
+	ReauthorizationNumber   int               `json:"reauthorization_number,omitempty"`
 	RequiresSMSConfirmation bool              `json:"requires_sms_confirmation"`
 	CreatedAt               time.Time         `json:"created_at"`
 	ExpiresAt               time.Time         `json:"expires_at"`
@@ -108,6 +109,7 @@ type batchOAuthTask struct {
 	loginEmailCodeEncrypted string `json:"-"`
 	loginTOTPConfigured     bool
 	executionNodeID         string
+	reauthStateEvent        string
 	publicSnapshot          atomic.Pointer[[]byte]
 }
 
@@ -924,6 +926,9 @@ func (h *OpenAIOAuthHandler) listBatchOAuthTasks(c *gin.Context, mode string) {
 			defer t.mu.Unlock()
 			_, _ = t.refresh(ctx)
 			t.markFinishedIfTerminal()
+			if mode == batchOAuthModeReauthorization {
+				_ = h.persistOpenAIReauthorizationTaskState(ctx, t)
+			}
 			h.revokeTerminalBatchSession(t)
 			items[i] = t.snapshotJSONLocked()
 		}()
@@ -948,6 +953,9 @@ func (h *OpenAIOAuthHandler) getBatchOAuthTask(c *gin.Context, mode string) {
 	if _, err := t.refresh(c.Request.Context()); err != nil {
 		response.Error(c, 502, "Batch automation unavailable")
 		return
+	}
+	if mode == batchOAuthModeReauthorization {
+		_ = h.persistOpenAIReauthorizationTaskState(c.Request.Context(), t)
 	}
 	response.Success(c, t)
 }
@@ -1260,6 +1268,9 @@ func (h *OpenAIOAuthHandler) cancelBatchOAuthTask(c *gin.Context, mode string) {
 	}
 	h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
 	t.Status, t.Stage, t.Reason, t.RequiresSMSConfirmation = "canceled", "canceled", "", false
+	if mode == batchOAuthModeReauthorization {
+		_ = h.persistOpenAIReauthorizationTaskState(c.Request.Context(), t)
+	}
 	response.Success(c, t)
 }
 

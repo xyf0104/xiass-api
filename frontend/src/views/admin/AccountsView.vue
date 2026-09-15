@@ -295,6 +295,7 @@
           :estimate-row-height="156"
           :overscan="5"
           :virtualize-threshold="50"
+          stabilize-variable-row-scroll
         >
           <template #header-select>
             <input
@@ -2639,7 +2640,18 @@ const handleSchedule = async (a: Account) => {
   }
 }
 const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.value = null; scheduleModelOptions.value = [] }
-const handleReAuth = (a: Account) => { if (!allowAccountWrite(a)) return; reAuthAcc.value = a; showReAuth.value = true }
+const handleReAuth = (a: Account) => {
+  if (!allowAccountWrite(a)) return
+  if (accountNeedsOpenAIReauthorization(a)) {
+    void router?.push({
+      name: 'AdminOpenAIReauthorization',
+      query: { workspace: 'reauthorization', account_ids: String(a.id) }
+    })
+    return
+  }
+  reAuthAcc.value = a
+  showReAuth.value = true
+}
 const duplicatingAccountIDs = new Set<number>()
 const handleDuplicateAccount = async (a: Account) => {
   if (!allowAccountWrite(a)) return
@@ -2890,6 +2902,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.accounts-page :deep(.table-wrapper) {
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scroll-behavior: auto;
+}
+
 .account-tools-menu-item {
   @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700;
 }

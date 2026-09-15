@@ -200,6 +200,7 @@ func ProvideOpenAIOAuthHandler(
 	settingRepo service.SettingRepository,
 	pixlabSMSService *service.PixlabSMSService,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
+	auditLogService *service.AuditLogService,
 ) *admin.OpenAIOAuthHandler {
 	h := admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
 	h.ConfigureTeamChildSessionStore(redisClient)
@@ -207,6 +208,7 @@ func ProvideOpenAIOAuthHandler(
 	h.ConfigureTeamChildSharedSettings(settingRepo)
 	h.ConfigureBatchOAuthSMS(pixlabSMSService)
 	h.ConfigureTokenCacheInvalidator(tokenCacheInvalidator)
+	h.ConfigureReauthorizationAuditReader(auditLogService)
 	return h
 }
 

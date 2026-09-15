@@ -468,6 +468,8 @@ interface Props {
    * estimated-vs-actual row heights when rows have variable height.
    */
   virtualizeThreshold?: number
+  /** Disable virtualizer scroll compensation for complex variable-height rows. */
+  stabilizeVariableRowScroll?: boolean
   /** Enable controlled row selection. Stable row keys are strongly recommended. */
   selectable?: boolean
   /** Selected row keys. Keys outside the current data page are preserved. */
@@ -784,6 +786,10 @@ const rowVirtualizer = useVirtualizer(computed(() => ({
   observeElementRect: observeElementRectNonZero,
   // 把测量类 ResizeObserver 回调批到 rAF,避免滚动中同步 reflow 风暴导致的校正抖动/空白
   useAnimationFrameWithResizeObserver: true,
+  // Complex account rows update quota/concurrency content while the operator
+  // scrolls. Compensating for every asynchronous height correction pulls a
+  // backward scroll toward the previous offset, which feels like a bounce.
+  shouldAdjustScrollPositionOnItemSizeChange: props.stabilizeVariableRowScroll ? () => false : undefined,
 })))
 
 const virtualItems = computed(() => rowVirtualizer.value.getVirtualItems())

@@ -184,7 +184,9 @@ func TestOpenAIModelPriorityPreemptsOrdinaryPriorityAcrossSchedulers(t *testing.
 			ordinary := openAIModelRoutingTestAccount(81, groupID, 1, "")
 			preferred := openAIModelRoutingTestAccount(82, groupID, 9, "")
 			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
-			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+			group, ok := ctx.Value(ctxkey.Group).(*Group)
+			require.True(t, ok)
+			group.ModelRoutingEnabled = false
 			selection := selectOpenAIModelRoutingTestAccount(
 				t, mode, ctx, groupID, []Account{ordinary, preferred},
 				schedulerTestConcurrencyCache{}, "", openAIModelPriorityTestService(t, preferred.ID),
@@ -204,7 +206,9 @@ func TestOpenAIModelPriorityFallsBackImmediatelyWhenPreferredAccountsAreBusy(t *
 			ordinary := openAIModelRoutingTestAccount(91, groupID, 1, "")
 			preferred := openAIModelRoutingTestAccount(92, groupID, 9, "")
 			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
-			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+			group, ok := ctx.Value(ctxkey.Group).(*Group)
+			require.True(t, ok)
+			group.ModelRoutingEnabled = false
 			acquired := []int64{}
 			selection := selectOpenAIModelRoutingTestAccount(
 				t, mode, ctx, groupID, []Account{ordinary, preferred},
@@ -235,7 +239,9 @@ func TestOpenAIModelPriorityLeavesUnmatchedModelsOnOrdinaryScheduling(t *testing
 			lunaOnly := openAIModelRoutingTestAccount(102, groupID, 9, "")
 			settings := openAIModelPriorityTestService(t, lunaOnly.ID)
 			ctx := openAIModelRoutingTestContext(groupID, nil, nil)
-			ctx.Value(ctxkey.Group).(*Group).ModelRoutingEnabled = false
+			group, ok := ctx.Value(ctxkey.Group).(*Group)
+			require.True(t, ok)
+			group.ModelRoutingEnabled = false
 
 			cfg := &config.Config{}
 			cfg.Gateway.Scheduling.LoadBatchEnabled = mode != "legacy_no_batch"

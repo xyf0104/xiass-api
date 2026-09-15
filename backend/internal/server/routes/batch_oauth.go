@@ -19,6 +19,7 @@ func registerBatchOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	tasks.POST("/:task_id/sms/:action", oauth.BatchOAuthSMSAction)
 
 	reauthorization := admin.Group("/openai/reauthorization/tasks")
+	admin.GET("/openai/reauthorization/accounts", oauth.ListOpenAIReauthorizationAccounts)
 	reauthorization.POST("", oauth.StartOpenAIReauthorizationTask)
 	reauthorization.GET("", oauth.ListOpenAIReauthorizationTasks)
 	reauthorization.GET("/:task_id", oauth.GetOpenAIReauthorizationTask)

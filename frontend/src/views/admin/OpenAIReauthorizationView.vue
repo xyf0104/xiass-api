@@ -19,9 +19,9 @@
           <Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" :stroke-width="2" />
           <span>刷新状态</span>
         </button>
-        <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!startableAccounts.length || startingAll" @click="startAll">
+        <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!batchStartableAccounts.length || startingAll" @click="requestStartAll">
           <Icon name="play" size="sm" :stroke-width="2" />
-          <span>{{ startingAll ? '正在启动' : `一键授权${startableAccounts.length ? ` (${startableAccounts.length})` : ''}` }}</span>
+          <span>{{ startingAll ? '正在启动' : `一键授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
         </button>
       </div>
     </header>
@@ -105,7 +105,7 @@
 
         <div v-else-if="!orderedAccounts.length" class="flex min-h-48 flex-col items-center justify-center px-4 text-center">
           <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
-          <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有待处理的 OpenAI OAuth 401 账号</p>
+          <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200">当前没有 401 掉授权或历史重授权记录</p>
         </div>
 
         <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
@@ -122,6 +122,14 @@
             </div>
 
             <div class="min-w-0">
+              <div class="mb-3 rounded-md border px-3 py-2.5" :class="historyPanelClass(account)" :data-testid="`reauthorization-history-${account.id}`">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="text-sm font-semibold">{{ historyTitle(account) }}</p>
+                  <span class="rounded px-2 py-0.5 text-[11px] font-semibold" :class="historyBadgeClass(account)">{{ historyBadge(account) }}</span>
+                </div>
+                <p class="mt-1 text-xs leading-5">{{ historyMessage(account) }}</p>
+                <p v-if="historyTimeMessage(account)" class="mt-1 text-xs font-medium">{{ historyTimeMessage(account) }}</p>
+              </div>
               <div class="flex min-w-0 items-center justify-between gap-3">
                 <p class="truncate text-sm font-medium" :class="statusClass(account)">{{ statusLabel(account) }}</p>
                 <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ elapsedText(account) }}</span>
@@ -142,14 +150,16 @@
                 <Icon name="key" size="sm" :stroke-width="2" />
                 <span>补充登录资料</span>
               </button>
-              <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="startAccount(account)">
+              <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="requestStartAccount(account)">
                 <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
                 <span>{{ retryLabel(account) }}</span>
               </button>
-              <span v-else-if="taskFor(account)?.reason === 'account_blocked'" class="text-xs font-medium text-red-600 dark:text-red-400">账号受限，不再重试</span>
+              <span v-else-if="statusFor(account)?.risk_level === 'cooldown'" class="text-xs font-semibold text-amber-600 dark:text-amber-300" :data-testid="`reauthorization-cooldown-${account.id}`">冷却中，{{ formatDuration(statusFor(account)?.cooldown_remaining_seconds || 0) }} 后才可再授权</span>
+              <span v-else-if="statusFor(account)?.risk_level === 'blocked' || taskFor(account)?.reason === 'account_blocked'" class="text-xs font-medium text-red-600 dark:text-red-400">账号受限，建议删除</span>
               <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
                 <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
               </span>
+              <span v-else-if="!statusFor(account)?.current_needs_reauthorization" class="text-xs font-medium text-gray-500 dark:text-gray-400">当前无 401，仅展示历史</span>
               <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5 text-red-600 dark:text-red-300" :disabled="deletingAccountIDs.has(account.id)" :data-testid="`delete-reauthorization-account-${account.id}`" @click="requestDeleteAccount(account)">
                 <Icon name="trash" size="sm" :class="deletingAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
                 <span>{{ deletingAccountIDs.has(account.id) ? '正在删除' : '删除账号' }}</span>
@@ -176,6 +186,16 @@
       @confirm="confirmDeleteAccount"
       @cancel="pendingDeleteAccount = null"
     />
+    <ConfirmDialog
+      :show="Boolean(pendingAuthorization)"
+      :title="authorizationConfirmationTitle"
+      :message="authorizationConfirmationMessage"
+      :confirm-text="authorizationConfirmationButton"
+      cancel-text="取消"
+      :danger="authorizationConfirmationDanger"
+      @confirm="confirmAuthorization"
+      @cancel="pendingAuthorization = null"
+    />
   </div>
 </template>
 
@@ -187,13 +207,18 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
 import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
 import { accountsAPI, groupsAPI, proxiesAPI } from '@/api/admin'
-import { openAIReauthorizationAPI, type OpenAIReauthorizationTask } from '@/api/admin/openaiReauthorization'
+import {
+  openAIReauthorizationAPI,
+  type OpenAIReauthorizationAccountStatus,
+  type OpenAIReauthorizationTask,
+} from '@/api/admin/openaiReauthorization'
 import type { Account, AdminGroup, Proxy } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const route = useRoute()
 const router = useRouter()
 const accounts = ref<Account[]>([])
+const accountStatuses = ref<OpenAIReauthorizationAccountStatus[]>([])
 const tasks = ref<OpenAIReauthorizationTask[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
@@ -212,10 +237,12 @@ const batchOptionsLoading = ref(true)
 const batchOptionsError = ref('')
 const operationNotice = ref('')
 const pendingDeleteAccount = ref<Account | null>(null)
+const pendingAuthorization = ref<{ accounts: Account[]; batch: boolean } | null>(null)
 type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'credentials'
 const activeWorkspace = ref<WorkbenchWorkspace>(initialWorkspace())
 const completingTaskIDs = new Set<string>()
 const smsTaskIDs = new Set<string>()
+const historyRefreshedTaskEvents = new Set<string>()
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 
@@ -239,18 +266,20 @@ const taskByAccountID = computed(() => {
   return result
 })
 
+const statusByAccountID = computed(() => new Map(accountStatuses.value.map(item => [item.account.id, item])))
+
 const activeCount = computed(() => tasks.value.filter(task => activeStatuses.has(task.status)).length + busyAccountIDs.value.size)
 const visibleActiveCount = computed(() => accounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
-const completedCount = computed(() => accounts.value.filter(account => taskFor(account)?.status === 'completed').length)
-const failedCount = computed(() => accounts.value.filter(account => terminalFailureStatuses.has(taskFor(account)?.status || '') || localErrors.value.has(account.id)).length)
-const pendingCount = computed(() => Math.max(0, accounts.value.length - completedCount.value - failedCount.value - visibleActiveCount.value))
-const startableAccounts = computed(() => accounts.value.filter(canStart))
+const pendingCount = computed(() =>
+  accountStatuses.value.filter(item => item.risk_level === 'cooldown' || item.risk_level === 'blocked').length
+)
+const batchStartableAccounts = computed(() => accounts.value.filter(account => canStart(account) && statusFor(account)?.risk_level === 'first'))
 const summary = computed(() => [
-  { label: '待授权账号', value: accounts.value.length, className: 'text-gray-900 dark:text-gray-100' },
+  { label: '401 / 历史账号', value: accounts.value.length, className: 'text-gray-900 dark:text-gray-100' },
   { label: '进行中', value: visibleActiveCount.value, className: 'text-primary-600 dark:text-primary-400' },
-  { label: '等待开始', value: pendingCount.value, className: 'text-gray-700 dark:text-gray-300' },
-  { label: '成功', value: completedCount.value, className: 'text-green-600 dark:text-green-400' },
-  { label: '失败', value: failedCount.value, className: 'text-red-600 dark:text-red-400' }
+  { label: '冷却 / 禁止', value: pendingCount.value, className: 'text-amber-600 dark:text-amber-300' },
+  { label: '已重授权', value: accountStatuses.value.filter(item => item.has_reauthorized).length, className: 'text-green-600 dark:text-green-400' },
+  { label: '失败 / 封号', value: accountStatuses.value.filter(item => item.risk_level === 'failed' || item.risk_level === 'blocked').length, className: 'text-red-600 dark:text-red-400' }
 ])
 
 const deleteConfirmationMessage = computed(() => {
@@ -259,11 +288,45 @@ const deleteConfirmationMessage = computed(() => {
   return `#${account.id} ${account.name} 将从账号管理中完整删除。所属分组、账号登录资料中的邮箱、密码、2FA 和邮箱验证码 Token 会同时删除，此操作不可撤销。`
 })
 
+const authorizationConfirmationDanger = computed(() => {
+  const pending = pendingAuthorization.value
+  return Boolean(pending && !pending.batch && statusFor(pending.accounts[0])?.requires_risk_confirmation)
+})
+
+const authorizationConfirmationTitle = computed(() => {
+  const pending = pendingAuthorization.value
+  if (!pending) return ''
+  if (pending.batch) return `确认批量授权 ${pending.accounts.length} 个账号`
+  const status = statusFor(pending.accounts[0])
+  if (status?.risk_level === 'unknown') return '高风险：旧版 401 授权历史无法确认'
+  return status?.requires_risk_confirmation ? '高风险：再次 401 重新授权' : '确认首次 401 重新授权'
+})
+
+const authorizationConfirmationMessage = computed(() => {
+  const pending = pendingAuthorization.value
+  if (!pending) return ''
+  if (pending.batch) {
+    return `即将启动 ${pending.accounts.length} 个尚未成功重授权过的 401 账号。系统最多同时处理 ${maxConcurrency.value} 个，不会把第二次掉授权的高风险账号加入批量队列。`
+  }
+  const account = pending.accounts[0]
+  const status = statusFor(account)
+  if (status?.risk_level === 'unknown') {
+    return `#${account.id} ${account.name} 在旧版中没有可以证明成功或失败的 401 重授权记录，无法确定这是第一次还是第二次。建议不要授权；继续必须单独确认风险。`
+  }
+  if (status?.requires_risk_confirmation) {
+    return `#${account.id} ${account.name} 已经成功进行过 401 重新授权，现在是第 ${status.current_authorization_number} 次掉授权。建议不要再授权，继续可能导致封号。仅在你已确认风险时继续。`
+  }
+  return `#${account.id} ${account.name} 将开始第一次 401 重新授权。授权结果、失败原因和是否封号都会保存在本工作台。`
+})
+
+const authorizationConfirmationButton = computed(() => authorizationConfirmationDanger.value ? '我已知风险，继续授权' : '确认开始')
+
 const orderedAccounts = computed(() => [...accounts.value].sort((a, b) => {
   const rank = (account: Account) => {
+    const status = statusFor(account)
+    if (status?.current_needs_reauthorization) return status.risk_level === 'blocked' ? 1 : 0
     const task = taskFor(account)
-    if (!task || activeStatuses.has(task.status)) return 0
-    if (task.status === 'completed') return 1
+    if (task && activeStatuses.has(task.status)) return 0
     return 2
   }
   const difference = rank(a) - rank(b)
@@ -276,30 +339,10 @@ function queryAccountIDs(): number[] {
   return [...new Set(raw.split(',').map(value => Number(value.trim())).filter(Number.isSafeInteger).filter(value => value > 0))]
 }
 
-function accountNeedsReauthorization(account: Account, requested: Set<number>): boolean {
-  if (account.platform !== 'openai' || account.type !== 'oauth' || account.parent_account_id != null) return false
-  if (requested.has(account.id)) return true
-  const extra = account.extra as Record<string, unknown> | undefined
-  const text = [account.error_message || '', extra?.error, extra?.error_code].filter(value => typeof value === 'string').join(' ')
-  return account.status === 'error' && (extra?.needs_reauth === true || extra?.error_code === 'unauthenticated' || /\b401\b|unauthori[sz]ed|token\s*(?:expired|invalid|失效|过期)/i.test(text))
-}
-
 async function loadAccounts() {
-  const requestedIDs = queryAccountIDs()
-  const requested = new Set(requestedIDs)
-  const found = new Map<number, Account>()
-  const requestedResults = await Promise.allSettled(requestedIDs.map(id => accountsAPI.getById(id)))
-  for (const result of requestedResults) {
-    if (result.status === 'fulfilled') found.set(result.value.id, result.value)
-  }
-  let page = 1
-  while (true) {
-    const result = await accountsAPI.list(page, 200, { platform: 'openai', type: 'oauth', status: 'error', sort_by: 'id', sort_order: 'asc' })
-    for (const account of result.items) found.set(account.id, account)
-    if (page >= result.pages || result.items.length === 0) break
-    page++
-  }
-  accounts.value = [...found.values()].filter(account => accountNeedsReauthorization(account, requested)).sort((a, b) => a.id - b.id)
+  const result = await openAIReauthorizationAPI.accounts(queryAccountIDs())
+  accountStatuses.value = result.items
+  accounts.value = result.items.map(item => item.account)
 }
 
 async function loadBatchOptions() {
@@ -321,6 +364,10 @@ async function loadBatchOptions() {
 
 function taskFor(account: Account): OpenAIReauthorizationTask | undefined {
   return taskByAccountID.value.get(account.id)
+}
+
+function statusFor(account: Account): OpenAIReauthorizationAccountStatus | undefined {
+  return statusByAccountID.value.get(account.id)
 }
 
 function accountEmail(account: Account): string {
@@ -352,6 +399,8 @@ function loginMethodClass(account: Account): string {
 function canStart(account: Account): boolean {
   if (busyAccountIDs.value.has(account.id)) return false
   if (!accountLoginMethod(account)) return false
+  const status = statusFor(account)
+  if (!status?.can_start) return false
   const task = taskFor(account)
   if (!task) return true
   if (task.account_id) return task.reason === 'account_state_recovery_failed'
@@ -368,7 +417,8 @@ function retryLabel(account: Account): string {
   const task = taskFor(account)
   if (busyAccountIDs.value.has(account.id)) return '正在启动'
   if (task?.reason === 'account_state_recovery_failed') return '重试恢复状态'
-  return task && terminalFailureStatuses.has(task.status) ? '重新授权' : '开始授权'
+  if (statusFor(account)?.requires_risk_confirmation) return '高风险重新授权'
+  return task && terminalFailureStatuses.has(task.status) ? '重试本次授权' : '开始授权'
 }
 
 const stageDetails: Record<string, { step: number; label: string }> = {
@@ -418,7 +468,8 @@ const reasonLabels: Record<string, string> = {
   sms_confirmation_timeout: '等待手机号处理超时。',
   phone_rejected: 'OpenAI 拒绝了当前手机号。',
   task_expired: '授权任务已过期。',
-  manual_challenge: 'OpenAI 页面出现了当前自动化未识别的验证步骤。'
+  manual_challenge: 'OpenAI 页面出现了当前自动化未识别的验证步骤。',
+  reauthorization_history_unavailable: '401 重新授权历史无法保存，系统已为安全停止任务。'
 }
 
 function statusLabel(account: Account): string {
@@ -477,6 +528,95 @@ function elapsedText(account: Account): string {
   return `${Math.max(0, Math.round((end - start) / 1000))} 秒`
 }
 
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds || 0))
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
+  if (minutes > 0) return `${minutes} 分钟`
+  return `${seconds} 秒`
+}
+
+function formatHistoryDate(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date)
+}
+
+function historyTitle(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '历史状态未知'
+  if (status.risk_level === 'blocked') return '账号已受限或封号'
+  if (status.risk_level === 'cooldown') return `第 ${status.current_authorization_number} 次掉授权，正在冷却`
+  if (status.risk_level === 'repeated') return `第 ${status.current_authorization_number} 次掉授权`
+  if (status.risk_level === 'first') return '第 1 次掉授权'
+  if (status.risk_level === 'success') return `已成功完成 ${status.success_count} 次 401 重授权`
+  if (status.risk_level === 'failed') return '上次 401 重新授权未完成'
+  return status.has_history ? '存在旧版 401 授权记录' : '尚无 401 重授权记录'
+}
+
+function historyBadge(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '未知'
+  if (status.risk_level === 'blocked') return '建议删除'
+  if (status.risk_level === 'cooldown') return '禁止授权'
+  if (status.risk_level === 'repeated') return '高风险'
+  if (status.risk_level === 'success') return '授权成功'
+  if (status.risk_level === 'failed') return '授权失败'
+  if (status.history_confidence === 'inferred') return '历史推断'
+  if (status.history_confidence === 'unknown') return '旧版未知'
+  return status.risk_level === 'first' ? '首次' : '已记录'
+}
+
+function historyMessage(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return '无法读取该账号的 401 重授权历史。'
+  if (status.risk_level === 'blocked') return '已检测到 OpenAI 限制或封号结果。系统不会自动重试，建议直接删除账号。'
+  if (status.risk_level === 'cooldown') return '该账号已成功重授权过，现在再次掉授权。建议不要授权；7 天冷却结束前服务端会硬性拒绝。'
+  if (status.risk_level === 'repeated') return '冷却期已结束，但这仍是高风险重复授权。建议不要授权，继续前必须二次确认。'
+  if (status.risk_level === 'first') return '未发现该账号成功重授权过的记录。本次作为首次 401 重新授权处理。'
+  if (status.risk_level === 'success') return '当前账号没有 401，上次重新授权成功，历史已持久保存。'
+  if (status.risk_level === 'failed') return '上次重新授权失败或被停止，失败原因已记录；未计为成功重授权。'
+  if (status.history_confidence === 'inferred') return '旧版审计记录与后续成功调用能够证明曾重授权，但结果为历史推断。'
+  return '旧版只保留了授权操作痕迹，无法确定这是第一次还是第二次，也无法准确证明成功、失败或封号，因此明确标记为未知。'
+}
+
+function historyTimeMessage(account: Account): string {
+  const status = statusFor(account)
+  if (!status) return ''
+  if (status.risk_level === 'cooldown') {
+    return `距首次成功重授权已过 ${formatDuration(status.seconds_since_first_reauthorization || 0)}，冷却剩余 ${formatDuration(status.cooldown_remaining_seconds)}。`
+  }
+  if (status.first_succeeded_at) {
+    return `首次成功重授权：${formatHistoryDate(status.first_succeeded_at)}；距今 ${formatDuration(status.seconds_since_first_reauthorization || 0)}。`
+  }
+  if (status.last_result_at) return `最后记录：${formatHistoryDate(status.last_result_at)}`
+  return ''
+}
+
+function historyPanelClass(account: Account): string {
+  const risk = statusFor(account)?.risk_level
+  if (risk === 'blocked' || risk === 'repeated') return 'border-red-300 bg-red-50 text-red-800 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200'
+  if (risk === 'cooldown' || risk === 'failed' || risk === 'unknown') return 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200'
+  if (risk === 'success') return 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200'
+  if (risk === 'first') return 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200'
+  return 'border-gray-300 bg-gray-50 text-gray-700 dark:border-dark-600 dark:bg-dark-900/60 dark:text-gray-300'
+}
+
+function historyBadgeClass(account: Account): string {
+  const risk = statusFor(account)?.risk_level
+  if (risk === 'blocked' || risk === 'repeated') return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-200'
+  if (risk === 'cooldown' || risk === 'failed' || risk === 'unknown') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-200'
+  if (risk === 'success') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200'
+  if (risk === 'first') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-200'
+  return 'bg-gray-200 text-gray-700 dark:bg-dark-700 dark:text-gray-300'
+}
+
 function setBusy(accountID: number, busy: boolean) {
   const next = new Set(busyAccountIDs.value)
   if (busy) next.add(accountID)
@@ -510,6 +650,7 @@ async function confirmDeleteAccount() {
     }
     await accountsAPI.delete(account.id)
     accounts.value = accounts.value.filter(candidate => candidate.id !== account.id)
+    accountStatuses.value = accountStatuses.value.filter(candidate => candidate.account.id !== account.id)
     queuedAccountIDs.value = queuedAccountIDs.value.filter(id => id !== account.id)
     tasks.value = tasks.value.filter(candidate => candidate.target_account_id !== account.id)
     if (task) {
@@ -527,7 +668,7 @@ async function confirmDeleteAccount() {
   }
 }
 
-async function startAccount(account: Account) {
+async function startAccount(account: Account, acknowledgeRisk = false) {
   if (!canStart(account)) return
   setBusy(account.id, true)
   const errors = new Map(localErrors.value)
@@ -538,8 +679,8 @@ async function startAccount(account: Account) {
     const task = current?.reason === 'account_state_recovery_failed' && current.account_id
       ? await openAIReauthorizationAPI.complete(current.task_id)
       : current && terminalFailureStatuses.has(current.status)
-        ? await openAIReauthorizationAPI.restart(current.task_id)
-        : await openAIReauthorizationAPI.start(account.id)
+        ? await openAIReauthorizationAPI.restart(current.task_id, acknowledgeRisk)
+        : await openAIReauthorizationAPI.start(account.id, acknowledgeRisk)
     mergeTask(task)
   } catch (error) {
     const next = new Map(localErrors.value)
@@ -547,7 +688,7 @@ async function startAccount(account: Account) {
     localErrors.value = next
   } finally {
     setBusy(account.id, false)
-    await syncTasks(false)
+    await Promise.all([syncTasks(false), loadAccounts()])
     void pumpQueue()
   }
 }
@@ -568,8 +709,27 @@ async function stopAccount(account: Account) {
   }
 }
 
-function startAll() {
-  queuedAccountIDs.value = startableAccounts.value.map(account => account.id)
+function requestStartAccount(account: Account) {
+  if (!canStart(account)) return
+  pendingAuthorization.value = { accounts: [account], batch: false }
+}
+
+function requestStartAll() {
+  const candidates = batchStartableAccounts.value
+  if (!candidates.length) return
+  pendingAuthorization.value = { accounts: [...candidates], batch: true }
+}
+
+function confirmAuthorization() {
+  const pending = pendingAuthorization.value
+  if (!pending) return
+  pendingAuthorization.value = null
+  if (!pending.batch) {
+    const account = pending.accounts[0]
+    void startAccount(account, statusFor(account)?.requires_risk_confirmation === true)
+    return
+  }
+  queuedAccountIDs.value = pending.accounts.map(account => account.id)
   startingAll.value = true
   void pumpQueue()
 }
@@ -579,7 +739,7 @@ async function pumpQueue() {
     const accountID = queuedAccountIDs.value.shift()!
     const account = accounts.value.find(candidate => candidate.id === accountID)
     if (!account || !canStart(account)) continue
-    void startAccount(account)
+    void startAccount(account, false)
   }
   if (!queuedAccountIDs.value.length) startingAll.value = false
 }
@@ -617,6 +777,13 @@ async function syncTasks(showError = true) {
     maxRestarts.value = Math.max(0, result.max_restarts || 0)
     tasks.value = result.items
     await Promise.all(result.items.map(processTask))
+    const terminalEvents = result.items
+      .filter(task => terminalFailureStatuses.has(task.status) || task.status === 'completed')
+      .map(task => `${task.task_id}:${task.status}:${task.reason || ''}`)
+    if (terminalEvents.some(event => !historyRefreshedTaskEvents.has(event))) {
+      terminalEvents.forEach(event => historyRefreshedTaskEvents.add(event))
+      await loadAccounts()
+    }
     void pumpQueue()
   } catch (error) {
     if (showError) loadError.value = extractApiErrorMessage(error, '暂时无法读取 401 授权任务状态。')
