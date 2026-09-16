@@ -10,7 +10,6 @@ const {
   getUpstreamBillingProbeSettings,
   getAllProxies,
   getAllGroups,
-  getSettings,
   getConcurrencyStats,
   routeState,
   routerReplace
@@ -21,7 +20,6 @@ const {
   getUpstreamBillingProbeSettings: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
-  getSettings: vi.fn(),
   getConcurrencyStats: vi.fn(),
   routeState: { query: {} as Record<string, string> },
   routerReplace: vi.fn()
@@ -50,8 +48,7 @@ vi.mock('@/api/admin', () => ({
     },
     ops: { getConcurrencyStats },
     proxies: { getAll: getAllProxies },
-    groups: { getAll: getAllGroups },
-    settings: { getSettings }
+    groups: { getAll: getAllGroups }
   }
 }))
 
@@ -185,7 +182,6 @@ describe('admin AccountsView initial data synchronization', () => {
     getUpstreamBillingProbeSettings.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
-    getSettings.mockReset()
     getConcurrencyStats.mockReset()
     routerReplace.mockReset()
     routeState.query = {}
@@ -202,7 +198,6 @@ describe('admin AccountsView initial data synchronization', () => {
     getUpstreamBillingProbeSettings.mockResolvedValue({ enabled: true, interval_minutes: 30 })
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([{ id: 7, name: 'ChatGPT Team' }])
-    getSettings.mockResolvedValue({ team_child_creation_enabled: true })
     getConcurrencyStats.mockResolvedValue({ enabled: true, account: {} })
   })
 
@@ -238,20 +233,16 @@ describe('admin AccountsView initial data synchronization', () => {
     secondVisit.unmount()
   })
 
-  it('shows the Team action and native create action together after the feature setting resolves', async () => {
-    let resolveSettings!: (value: { team_child_creation_enabled: boolean }) => void
-    getSettings.mockReturnValue(new Promise((resolve) => { resolveSettings = resolve }))
-
+  it('shows the XIASS workbench and native create action without a duplicate Team entry', async () => {
     const wrapper = mountView()
     expect(wrapper.find('[data-testid="account-toolbar-loading"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="account-actions"]').exists()).toBe(false)
 
-    resolveSettings({ team_child_creation_enabled: true })
     await flushPromises()
 
     expect(wrapper.find('[data-testid="account-toolbar-loading"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).toContain('XIASS工作台')
-    expect(wrapper.find('[data-testid="create-team-child"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="create-team-child"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="create-account"]').exists()).toBe(true)
     wrapper.unmount()
   })

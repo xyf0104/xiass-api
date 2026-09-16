@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -84,7 +85,7 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	helper.adsPower.minInterval = 0
 	helper.closeDelay = 0
 	helper.verifyProxy = func(context.Context, adsPowerProxyConfig) (string, error) { return "203.0.113.42", nil }
-	request := httptest.NewRequest(http.MethodGet, launchURLFor(origin, "launch-ticket"), nil)
+	request := localHelperRequest(http.MethodGet, launchURLFor(origin, "launch-ticket"), nil)
 	recorder := httptest.NewRecorder()
 	helper.routes().ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -98,7 +99,7 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.NotContains(t, report, "proxy_password")
 
 	callback := httptest.NewRecorder()
-	helper.callbackRoutes().ServeHTTP(callback, httptest.NewRequest(http.MethodGet, "/auth/callback?code=abc&state=s", nil))
+	helper.callbackRoutes().ServeHTTP(callback, localHelperRequest(http.MethodGet, "/auth/callback?code=abc&state=s", nil))
 	require.Equal(t, http.StatusOK, callback.Code)
 	require.Contains(t, callback.Body.String(), "授权已返回 XIASS")
 	require.Equal(t, "callback-token", callbackReport["callback_token"])
@@ -162,7 +163,7 @@ func TestAdsPowerClientRetriesExplicitRateLimit(t *testing.T) {
 func TestLaunchRejectsUnknownServerBeforeRedeemingTicket(t *testing.T) {
 	cfg := &config{AdsPowerBaseURL: "http://127.0.0.1:50325", DeviceID: "device-1", Servers: map[string]serverConfig{}}
 	helper := newHelperServer(cfg)
-	request := httptest.NewRequest(http.MethodGet, "/launch?server=https%3A%2F%2Funknown.example&ticket=launch-ticket", nil)
+	request := localHelperRequest(http.MethodGet, "/launch?server=https%3A%2F%2Funknown.example&ticket=launch-ticket", nil)
 	recorder := httptest.NewRecorder()
 	helper.routes().ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
@@ -170,12 +171,12 @@ func TestLaunchRejectsUnknownServerBeforeRedeemingTicket(t *testing.T) {
 }
 
 func TestNormalizeServerOrigin(t *testing.T) {
-	got, err := normalizeServerOrigin("https://api.xiass.com/")
+	got, err := normalizeServerOrigin("https://api.example.com/")
 	require.NoError(t, err)
-	require.Equal(t, "https://api.xiass.com", got)
-	_, err = normalizeServerOrigin("http://api.xiass.com")
+	require.Equal(t, "https://api.example.com", got)
+	_, err = normalizeServerOrigin("http://api.example.com")
 	require.Error(t, err)
-	_, err = normalizeServerOrigin("https://api.xiass.com/path")
+	_, err = normalizeServerOrigin("https://api.example.com/path")
 	require.Error(t, err)
 }
 
@@ -193,15 +194,36 @@ func TestRandomizedFingerprintConfigPrefersMacAndDisablesWebRTC(t *testing.T) {
 	require.NotContains(t, updateConfig, "random_ua")
 }
 
+func TestDirectSOCKSTemplateUsesAdsPowerDefaultGroup(t *testing.T) {
+	server := serverConfig{
+		EnvironmentKey: "api2",
+		ProxyHost:      "api2.example.test",
+		ProxyPort:      "1104",
+		ProxyUser:      "proxy-user",
+		ProxyPassword:  "proxy-password",
+	}
+	template, err := resolveAdsPowerTemplate(context.Background(), nil, server)
+	require.NoError(t, err)
+	require.Equal(t, "0", template.GroupID)
+	require.Equal(t, "socks5", template.UserProxyConfig.ProxyType)
+	require.Equal(t, "api2.example.test", template.UserProxyConfig.ProxyHost)
+}
+
 func TestCallbackPageKeepsCompleteCallbackURL(t *testing.T) {
 	cfg := &config{AdsPowerBaseURL: "http://127.0.0.1:50325", DeviceID: "device-1", Servers: map[string]serverConfig{}}
 	helper := newHelperServer(cfg)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/auth/callback?code=abc&state=def", nil)
+	request := localHelperRequest(http.MethodGet, "/auth/callback?code=abc&state=def", nil)
 	helper.callbackRoutes().ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "http://localhost:1455/auth/callback?code=abc&amp;state=def")
 	parsed, err := url.Parse("http://localhost:1455/auth/callback?code=abc&state=def")
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(parsed.String(), "http://localhost:1455/"))
+}
+
+func localHelperRequest(method, target string, body io.Reader) *http.Request {
+	request := httptest.NewRequest(method, target, body)
+	request.Host = "127.0.0.1:34987"
+	return request
 }

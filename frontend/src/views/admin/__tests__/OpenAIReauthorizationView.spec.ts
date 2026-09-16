@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   executionNodesAPI: {
     getStatus: vi.fn(),
   },
+  accountPoolsAPI: {
+    list: vi.fn(),
+  },
   openAIReauthorizationAPI: {
     accounts: vi.fn(),
     list: vi.fn(),
@@ -37,6 +40,10 @@ vi.mock('@/api/admin', () => ({
   proxiesAPI: mocks.proxiesAPI,
 }))
 vi.mock('@/api/admin/openaiReauthorization', () => ({ openAIReauthorizationAPI: mocks.openAIReauthorizationAPI }))
+vi.mock('@/api/admin/accountPools', () => ({
+  accountPoolsAPI: mocks.accountPoolsAPI,
+  buildAccountPoolLookup: (pools: Array<{ id: number; account_ids: number[] }>) => Object.fromEntries(pools.flatMap(pool => pool.account_ids.map(id => [String(id), pool]))),
+}))
 vi.mock('vue-router', () => ({
   useRoute: () => mocks.route,
   useRouter: () => ({ push: mocks.routerPush }),
@@ -113,6 +120,20 @@ async function mountView() {
           props: ['browserMode', 'showBrowserModeSelector'],
           template: '<div data-testid="batch-oauth" :data-browser-mode="browserMode" :data-show-browser-mode-selector="String(showBrowserModeSelector)" />',
         },
+        AdsPowerHelperSetupDialog: {
+          props: ['show', 'serverOrigin', 'environmentKey'],
+          template: '<div v-if="show" data-testid="adspower-helper-setup-stub">{{ serverOrigin }} · {{ environmentKey }}</div>',
+        },
+        SearchInput: {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+        },
+        Select: {
+          props: ['modelValue', 'options'],
+          emits: ['update:modelValue'],
+          template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :value="option.value">{{ option.label }}</option></select>',
+        },
         ConfirmDialog: {
           props: ['show', 'title', 'message', 'confirmText', 'danger'],
           emits: ['confirm', 'cancel'],
@@ -140,6 +161,7 @@ describe('OpenAIReauthorizationView', () => {
       admin_write_mode: 'single_node',
       runtime: { enabled: false, node_id: 'api', legacy_unassigned_node_id: 'api' },
     })
+    mocks.accountPoolsAPI.list.mockReset().mockResolvedValue({ items: [] })
     openAIReauthorizationAPI.list.mockReset().mockResolvedValue({ items: [], max_concurrency: 3, max_restarts: 2 })
     openAIReauthorizationAPI.accounts.mockReset().mockResolvedValue({ items: [], cooldown_seconds: 604800 })
     openAIReauthorizationAPI.start.mockReset()
@@ -200,7 +222,7 @@ describe('OpenAIReauthorizationView', () => {
     expect(wrapper.get('[data-testid="openai-credential-library"]').isVisible()).toBe(true)
     expect(wrapper.text()).toContain('OpenAI 账号登录资料')
     expect(wrapper.text()).toContain('密码 + 2FA 与邮箱验证码 Token 分开保存')
-    expect(mocks.executionNodesAPI.getStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.executionNodesAPI.getStatus).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 
@@ -282,6 +304,73 @@ describe('OpenAIReauthorizationView', () => {
     expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(19, false, 'adspower')
     expect(openAIReauthorizationAPI.launchAdsPower).toHaveBeenCalledWith(fixedTask.task_id)
     expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=batch')
+    wrapper.unmount()
+  })
+
+  it('filters the 401 list and one-click authorization by keyword and account pool', async () => {
+    const first = account(301)
+    first.name = 'pool-alpha'
+    const second = account(302)
+    second.name = 'pool-beta'
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [
+        reauthorizationStatus(301, { account: first }),
+        reauthorizationStatus(302, { account: second }),
+      ],
+      cooldown_seconds: 604800,
+    })
+    mocks.accountPoolsAPI.list.mockResolvedValue({
+      items: [{ id: 7, name: 'Plus 号池', proxy_id: null, account_ids: [301], account_count: 1 }],
+    })
+    openAIReauthorizationAPI.start.mockResolvedValue(task(301))
+    const wrapper = await mountView()
+
+    const filters = wrapper.get('[aria-label="授权账号筛选"]')
+    await filters.get('select').setValue('7')
+    expect(wrapper.find('[data-testid="reauthorization-account-301"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="reauthorization-account-302"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="reauthorize-all"]').text()).toContain('(1)')
+
+    await filters.get('input').setValue('beta')
+    expect(wrapper.find('[data-testid="reauthorization-account-301"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="reauthorization-account-302"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="reauthorize-all"]').attributes('disabled')).toBeDefined()
+
+    await filters.get('input').setValue('alpha')
+    await wrapper.get('[data-testid="reauthorize-all"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('1 个')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledTimes(1)
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(301, false)
+    wrapper.unmount()
+  })
+
+  it('uses the same keyword and pool filters in authorization history', async () => {
+    const first = account(311)
+    first.name = 'history-alpha'
+    const second = account(312)
+    second.name = 'history-beta'
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [
+        reauthorizationStatus(311, { account: first, current_needs_reauthorization: false, has_history: true, has_attempted: true, success_count: 1, can_start: false, risk_level: 'success' }),
+        reauthorizationStatus(312, { account: second, current_needs_reauthorization: false, has_history: true, has_attempted: true, success_count: 1, can_start: false, risk_level: 'success' }),
+      ],
+      cooldown_seconds: 604800,
+    })
+    mocks.accountPoolsAPI.list.mockResolvedValue({
+      items: [{ id: 9, name: '历史号池', proxy_id: null, account_ids: [312], account_count: 1 }],
+    })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="authorization-history-workspace-tab"]').trigger('click')
+    const filters = wrapper.get('[aria-label="授权账号筛选"]')
+    await filters.get('select').setValue('9')
+    expect(wrapper.find('[data-testid="authorization-history-account-311"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="authorization-history-account-312"]').exists()).toBe(true)
+    await filters.get('input').setValue('alpha')
+    expect(wrapper.find('[data-testid="authorization-history-account-312"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('当前筛选下没有账号')
     wrapper.unmount()
   })
 

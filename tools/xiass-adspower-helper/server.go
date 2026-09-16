@@ -18,6 +18,7 @@ import (
 type helperServer struct {
 	cfg          *config
 	adsPower     *adsPowerClient
+	runtimeMu    sync.RWMutex
 	client       *http.Client
 	verifyProxy  func(context.Context, adsPowerProxyConfig) (string, error)
 	profileLocks sync.Map
@@ -88,20 +89,24 @@ func newHelperServer(cfg *config) *helperServer {
 func (s *helperServer) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /setup", s.setupPage)
+	mux.HandleFunc("GET /api/setup", s.setupState)
+	mux.HandleFunc("POST /api/setup", s.saveSetup)
 	mux.HandleFunc("GET /launch", s.launch)
-	return securityHeaders(mux)
+	return loopbackOnly(securityHeaders(mux))
 }
 
 func (s *helperServer) callbackRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /auth/callback", s.callback)
-	return securityHeaders(mux)
+	return loopbackOnly(securityHeaders(mux))
 }
 
 func (s *helperServer) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.adsPower.status(ctx); err != nil {
+	_, adsPower := s.runtimeSnapshot()
+	if err := adsPower.status(ctx); err != nil {
 		http.Error(w, "AdsPower Local API is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -110,12 +115,13 @@ func (s *helperServer) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
+	cfg, adsPower := s.runtimeSnapshot()
 	serverOrigin, err := normalizeServerOrigin(r.URL.Query().Get("server"))
 	if err != nil {
 		s.renderLaunch(w, http.StatusBadRequest, launchView{Title: "XIASS 地址无效", Message: err.Error()})
 		return
 	}
-	serverCfg, ok := s.cfg.Servers[serverOrigin]
+	serverCfg, ok := cfg.Servers[serverOrigin]
 	if !ok {
 		s.renderLaunch(w, http.StatusForbidden, launchView{Title: "未授权的 XIASS 服务器", Message: "请先在本机助手配置中登记该服务器。"})
 		return
@@ -141,12 +147,12 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	lock := s.profileLock(payload)
 	lock.Lock()
 	defer lock.Unlock()
-	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg)
+	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, adsPower)
 	if err != nil {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
 		return
 	}
-	if err := s.reportBinding(ctx, serverOrigin, payload, profile, templateProfile, exitIP); err != nil {
+	if err := s.reportBinding(ctx, serverOrigin, payload, profile, templateProfile, exitIP, cfg.DeviceID); err != nil {
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "环境绑定未保存", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
@@ -155,7 +161,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "授权回调无法绑定", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
-	if err := s.adsPower.startProfile(ctx, profile.UserID, payload.AuthURL); err != nil {
+	if err := adsPower.startProfile(ctx, profile.UserID, payload.AuthURL); err != nil {
 		if registered {
 			s.removeCallback(state)
 		}
@@ -169,8 +175,8 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig) (*adsPowerProfile, *adsPowerProfile, string, error) {
-	templateProfile, err := s.adsPower.profile(ctx, serverCfg.TemplateProfileID)
+func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig, deviceID string, adsPower *adsPowerClient) (*adsPowerProfile, *adsPowerProfile, string, error) {
+	templateProfile, err := resolveAdsPowerTemplate(ctx, adsPower, serverCfg)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("读取 %s 出口模板失败: %w", serverCfg.EnvironmentKey, err)
 	}
@@ -179,20 +185,20 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		return nil, nil, "", fmt.Errorf("%s 出口代理不可用: %w", serverCfg.EnvironmentKey, err)
 	}
 	if payload.Existing != nil {
-		if payload.Existing.DeviceID != s.cfg.DeviceID {
+		if payload.Existing.DeviceID != deviceID {
 			return nil, nil, "", errors.New("该账号已绑定到另一台设备，必须先在 XIASS 中解除绑定")
 		}
 		if payload.Existing.EnvironmentKey != serverCfg.EnvironmentKey {
 			return nil, nil, "", errors.New("该账号绑定的服务器出口与当前页面不一致")
 		}
-		profile, err := s.adsPower.profile(ctx, payload.Existing.ProfileID)
+		profile, err := adsPower.profile(ctx, payload.Existing.ProfileID)
 		if err != nil {
 			return nil, nil, "", errors.New("账号原有 AdsPower 环境已不存在；请先解除绑定后再创建新环境")
 		}
-		if err := s.adsPower.enforceProfilePolicy(ctx, profile, templateProfile); err != nil {
+		if err := adsPower.enforceProfilePolicy(ctx, profile, templateProfile); err != nil {
 			return nil, nil, "", fmt.Errorf("刷新既有环境安全策略失败: %w", err)
 		}
-		profile, err = s.adsPower.profile(ctx, payload.Existing.ProfileID)
+		profile, err = adsPower.profile(ctx, payload.Existing.ProfileID)
 		if err != nil {
 			return nil, nil, "", errors.New("刷新后的 AdsPower 环境无法读取")
 		}
@@ -202,7 +208,7 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		}
 		return profile, templateProfile, profileExitIP, nil
 	}
-	profile, err := s.adsPower.createProfile(ctx, payload.AccountName, templateProfile)
+	profile, err := adsPower.createProfile(ctx, payload.AccountName, templateProfile)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("创建账号专属环境失败: %w", err)
 	}
@@ -211,6 +217,21 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		return nil, nil, "", errors.New("新建 AdsPower 环境没有使用当前服务器出口")
 	}
 	return profile, templateProfile, profileExitIP, nil
+}
+
+func resolveAdsPowerTemplate(ctx context.Context, adsPower *adsPowerClient, serverCfg serverConfig) (*adsPowerProfile, error) {
+	if strings.TrimSpace(serverCfg.TemplateProfileID) != "" {
+		return adsPower.profile(ctx, serverCfg.TemplateProfileID)
+	}
+	proxyConfig, ok := serverCfg.adsPowerProxy()
+	if !ok {
+		return nil, errors.New("SOCKS5 proxy is not configured")
+	}
+	return &adsPowerProfile{
+		Name:            "XIASS " + serverCfg.EnvironmentKey,
+		GroupID:         "0",
+		UserProxyConfig: proxyConfig,
+	}, nil
 }
 
 func (s *helperServer) profileLock(payload *launchPayload) *sync.Mutex {
@@ -303,16 +324,17 @@ func (s *helperServer) stopProfileAfterCallback(profileID string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if err := s.adsPower.stopProfile(ctx, profileID); err != nil {
+		_, adsPower := s.runtimeSnapshot()
+		if err := adsPower.stopProfile(ctx, profileID); err != nil {
 			log.Printf("stop AdsPower profile after OAuth callback: %v", err)
 		}
 	}()
 }
 
-func (s *helperServer) reportBinding(ctx context.Context, origin string, launch *launchPayload, profile, templateProfile *adsPowerProfile, exitIP string) error {
+func (s *helperServer) reportBinding(ctx context.Context, origin string, launch *launchPayload, profile, templateProfile *adsPowerProfile, exitIP, deviceID string) error {
 	payload := map[string]any{
 		"binding_token":          launch.BindingToken,
-		"device_id":              s.cfg.DeviceID,
+		"device_id":              deviceID,
 		"profile_id":             profile.UserID,
 		"profile_no":             profile.SerialNumber,
 		"profile_name":           profile.Name,
@@ -389,7 +411,7 @@ func (s *helperServer) renderLaunch(w http.ResponseWriter, status int, view laun
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)

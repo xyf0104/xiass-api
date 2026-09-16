@@ -94,6 +94,10 @@
             <span v-if="authorizationBrowserMode === 'adspower'" class="authorization-mode-current">当前</span>
           </button>
         </div>
+        <button type="button" class="authorization-mode-settings" data-testid="adspower-helper-settings" title="安装和配置 Ads 指纹浏览器" @click="showAdsPowerSetup = true">
+          <Icon name="cog" size="sm" :stroke-width="2" />
+          <span>Ads 设置</span>
+        </button>
       </div>
       <div class="team-child-entry">
         <button type="button" class="team-child-entry-button" data-testid="team-child-creation-entry" @click="openTeamChildCreation">
@@ -103,6 +107,26 @@
         </button>
       </div>
     </nav>
+
+    <section v-if="activeWorkspace === 'reauthorization' || activeWorkspace === 'history'" class="oauth-workbench-filterbar" aria-label="授权账号筛选">
+      <SearchInput
+        v-model="workbenchSearch"
+        class="min-w-0 flex-1 sm:max-w-sm"
+        placeholder="搜索账号名称、邮箱、ID、节点或号池"
+        data-testid="authorization-account-search"
+      />
+      <Select
+        v-model="workbenchPoolFilter"
+        class="w-full sm:w-48"
+        :options="workbenchPoolOptions"
+        data-testid="authorization-account-pool-filter"
+      />
+      <span class="oauth-filter-summary">显示 {{ activeWorkspace === 'history' ? filteredHistoryAccounts.length : filteredReauthorizationAccounts.length }} / {{ activeWorkspace === 'history' ? historyAccounts.length : reauthorizationAccounts.length }}</span>
+      <button v-if="workbenchFiltersActive" type="button" class="btn btn-secondary btn-sm" data-testid="authorization-filter-reset" @click="resetWorkbenchFilters">
+        <Icon name="x" size="sm" :stroke-width="2" />
+        <span>清除筛选</span>
+      </button>
+    </section>
 
     <section v-show="activeWorkspace === 'batch'" class="oauth-workbench-surface min-w-0 overflow-hidden">
         <header class="oauth-module-header">
@@ -135,7 +159,7 @@
               <span class="oauth-module-icon"><Icon name="refresh" size="sm" :stroke-width="2" /></span>
               <h2 class="text-base font-semibold text-gray-950 dark:text-white">401 重新授权</h2>
             </div>
-            <span class="oauth-summary-chip"><b>{{ reauthorizationAccounts.length }}</b> 待处理</span>
+            <span class="oauth-summary-chip"><b>{{ filteredReauthorizationAccounts.length }}</b> 待处理</span>
             <span class="oauth-summary-chip oauth-summary-chip-active"><b>{{ visibleActiveCount }}</b> 进行中</span>
             <span v-if="pendingCount" class="oauth-summary-chip oauth-summary-chip-warning"><b>{{ pendingCount }}</b> 高风险</span>
           </div>
@@ -159,13 +183,13 @@
           正在读取待授权账号
         </div>
 
-        <div v-else-if="!reauthorizationAccounts.length" class="oauth-empty-state">
+        <div v-else-if="!filteredReauthorizationAccounts.length" class="oauth-empty-state">
           <Icon name="checkCircle" size="lg" class="text-green-500" :stroke-width="2" />
-          <p>当前没有待重授权账号</p>
+          <p>{{ reauthorizationAccounts.length ? '当前筛选下没有待重授权账号' : '当前没有待重授权账号' }}</p>
         </div>
 
         <div v-else class="oauth-account-list">
-          <article v-for="account in reauthorizationAccounts" :key="account.id" class="oauth-account-row" :data-testid="`reauthorization-account-${account.id}`">
+          <article v-for="account in filteredReauthorizationAccounts" :key="account.id" class="oauth-account-row" :data-testid="`reauthorization-account-${account.id}`">
             <div class="oauth-account-identity">
               <div class="flex min-w-0 items-center gap-2">
                 <span class="oauth-account-avatar">{{ accountAvatar(account) }}</span>
@@ -323,6 +347,12 @@
       @confirm="confirmAuthorization"
       @cancel="pendingAuthorization = null"
     />
+    <AdsPowerHelperSetupDialog
+      :show="showAdsPowerSetup"
+      :server-origin="adsPowerServerOrigin"
+      :environment-key="adsPowerEnvironmentKey"
+      @close="showAdsPowerSetup = false"
+    />
   </div>
 </template>
 
@@ -332,9 +362,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { Icon } from '@/components/icons'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import Select from '@/components/common/Select.vue'
 import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
+import AdsPowerHelperSetupDialog from '@/components/admin/account/AdsPowerHelperSetupDialog.vue'
 import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
-import { accountsAPI, groupsAPI, proxiesAPI } from '@/api/admin'
+import { accountsAPI, executionNodesAPI, groupsAPI, proxiesAPI } from '@/api/admin'
+import { accountPoolsAPI, buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 import {
   openAIReauthorizationAPI,
   type OpenAIReauthorizationAccountStatus,
@@ -361,10 +395,16 @@ const deletingAccountIDs = ref(new Set<number>())
 const localErrors = ref(new Map<number, string>())
 const groups = ref<AdminGroup[]>([])
 const proxies = ref<Proxy[]>([])
+const accountPools = ref<AccountPool[]>([])
 const batchOptionsLoading = ref(true)
 const batchOptionsError = ref('')
 const operationNotice = ref('')
 const pendingDeleteAccount = ref<Account | null>(null)
+const workbenchSearch = ref('')
+const workbenchPoolFilter = ref('')
+const showAdsPowerSetup = ref(false)
+const adsPowerServerOrigin = window.location.origin
+const adsPowerEnvironmentKey = ref(defaultAdsPowerEnvironmentKey())
 type AuthorizationBrowserMode = 'server' | 'adspower'
 const authorizationBrowserMode = ref<AuthorizationBrowserMode>('server')
 const queuedAuthorizationBrowserMode = ref<AuthorizationBrowserMode>('server')
@@ -395,6 +435,13 @@ function initialWorkspace(): WorkbenchWorkspace {
   return 'reauthorization'
 }
 
+function defaultAdsPowerEnvironmentKey(): string {
+  const hostname = window.location.hostname.toLowerCase()
+  if (hostname.startsWith('api2.')) return 'api2'
+  if (hostname.startsWith('api.')) return 'api'
+  return 'api'
+}
+
 const taskByAccountID = computed(() => {
   const result = new Map<number, OpenAIReauthorizationTask>()
   for (const task of tasks.value) {
@@ -406,6 +453,13 @@ const taskByAccountID = computed(() => {
 })
 
 const statusByAccountID = computed(() => new Map(accountStatuses.value.map(item => [item.account.id, item])))
+const accountPoolLookup = computed(() => buildAccountPoolLookup(accountPools.value))
+const workbenchPoolOptions = computed(() => [
+  { value: '', label: '全部号池' },
+  { value: '__none__', label: '未加入号池' },
+  ...accountPools.value.map(pool => ({ value: String(pool.id), label: `${pool.name} (${pool.account_count})` })),
+])
+const workbenchFiltersActive = computed(() => workbenchSearch.value.trim() !== '' || workbenchPoolFilter.value !== '')
 
 const activeCount = computed(() => tasks.value.filter(task => activeStatuses.has(task.status)).length + busyAccountIDs.value.size)
 const reauthorizationAccounts = computed(() => accounts.value
@@ -425,21 +479,23 @@ const reauthorizationAccounts = computed(() => accounts.value
     }
     return rank(left) - rank(right) || left.id - right.id
   }))
+const filteredReauthorizationAccounts = computed(() => reauthorizationAccounts.value.filter(workbenchAccountMatches))
 const historyAccounts = computed(() => accountStatuses.value
   .filter(status => status.has_history || status.has_attempted || status.attempt_count > 0 || status.success_count > 0 || Boolean(status.last_result))
   .sort((left, right) => historyTimestamp(right) - historyTimestamp(left) || right.account.id - left.account.id)
   .map(status => status.account))
+const filterMatchedHistoryAccounts = computed(() => historyAccounts.value.filter(workbenchAccountMatches))
 const filteredHistoryAccounts = computed(() => historyFilter.value === 'all'
-  ? historyAccounts.value
-  : historyAccounts.value.filter(account => historyAuthorizationBucket(account) === historyFilter.value))
-const visibleActiveCount = computed(() => reauthorizationAccounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
+  ? filterMatchedHistoryAccounts.value
+  : filterMatchedHistoryAccounts.value.filter(account => historyAuthorizationBucket(account) === historyFilter.value))
+const visibleActiveCount = computed(() => filteredReauthorizationAccounts.value.filter(account => activeStatuses.has(taskFor(account)?.status || '')).length)
 const pendingCount = computed(() =>
-  reauthorizationAccounts.value.filter(account => {
+  filteredReauthorizationAccounts.value.filter(account => {
     const risk = statusFor(account)?.risk_level
     return risk === 'cooldown' || risk === 'repeated' || risk === 'blocked' || risk === 'unknown'
   }).length
 )
-const batchStartableAccounts = computed(() => reauthorizationAccounts.value.filter(account => canStart(account) && statusFor(account)?.risk_level === 'first'))
+const batchStartableAccounts = computed(() => filteredReauthorizationAccounts.value.filter(account => canStart(account) && statusFor(account)?.risk_level === 'first'))
 
 const deleteConfirmationMessage = computed(() => {
   const account = pendingDeleteAccount.value
@@ -525,17 +581,55 @@ async function loadBatchOptions() {
   batchOptionsLoading.value = true
   batchOptionsError.value = ''
   try {
-    const [availableGroups, availableProxies] = await Promise.all([
+    const [availableGroups, availableProxies, availablePools] = await Promise.all([
       groupsAPI.getAll('openai'),
       proxiesAPI.getAll(),
+      accountPoolsAPI.list(),
     ])
     groups.value = availableGroups
     proxies.value = availableProxies
+    accountPools.value = availablePools.items
   } catch (error) {
     batchOptionsError.value = extractApiErrorMessage(error, '读取分组或代理配置失败。')
   } finally {
     batchOptionsLoading.value = false
   }
+}
+
+async function loadAdsPowerEnvironment() {
+  try {
+    const status = await executionNodesAPI.getStatus()
+    const nodeID = String(status.runtime?.node_id || status.runtime?.legacy_unassigned_node_id || '').trim()
+    if (nodeID) adsPowerEnvironmentKey.value = nodeID
+  } catch {
+    // The built-in authorization path remains available when node metadata cannot be read.
+  }
+}
+
+function workbenchAccountMatches(account: Account): boolean {
+  const pool = accountPoolLookup.value[String(account.id)]
+  if (workbenchPoolFilter.value === '__none__') {
+    if (pool) return false
+  } else if (workbenchPoolFilter.value && pool?.id !== Number(workbenchPoolFilter.value)) {
+    return false
+  }
+  const query = workbenchSearch.value.trim().toLowerCase()
+  if (!query) return true
+  const values = [
+    account.id,
+    `#${account.id}`,
+    account.name,
+    accountEmail(account),
+    account.notes || '',
+    account.execution_node_id || '',
+    pool?.name || '',
+  ]
+  return values.some(value => String(value).toLowerCase().includes(query))
+}
+
+function resetWorkbenchFilters() {
+  workbenchSearch.value = ''
+  workbenchPoolFilter.value = ''
 }
 
 function taskFor(account: Account): OpenAIReauthorizationTask | undefined {
@@ -757,8 +851,8 @@ function historyAuthorizationBucket(account: Account): Exclude<HistoryFilter, 'a
 }
 
 function historyFilterCount(filter: HistoryFilter): number {
-  if (filter === 'all') return historyAccounts.value.length
-  return historyAccounts.value.filter(account => historyAuthorizationBucket(account) === filter).length
+  if (filter === 'all') return filterMatchedHistoryAccounts.value.length
+  return filterMatchedHistoryAccounts.value.filter(account => historyAuthorizationBucket(account) === filter).length
 }
 
 function authorizationRoundLabel(account: Account): string {
@@ -1138,7 +1232,7 @@ function openTeamChildCreation() {
 onMounted(async () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
   try {
-    await Promise.all([loadAccounts(), syncTasks(), loadBatchOptions()])
+    await Promise.all([loadAccounts(), syncTasks(), loadBatchOptions(), loadAdsPowerEnvironment()])
   } catch (error) {
     loadError.value = extractApiErrorMessage(error, '读取待授权账号失败。')
   } finally {
@@ -1163,6 +1257,7 @@ onBeforeUnmount(() => {
 
 .oauth-workbench-heading,
 .oauth-workbench-nav,
+.oauth-workbench-filterbar,
 .oauth-workbench-surface {
   width: 100%;
   max-width: 1360px;
@@ -1185,6 +1280,7 @@ onBeforeUnmount(() => {
 }
 
 .oauth-workbench-nav,
+.oauth-workbench-filterbar,
 .oauth-workbench-surface {
   border: 1px solid var(--xiass-console-light-border, rgb(255 255 255 / 0.74));
   border-radius: 8px;
@@ -1195,12 +1291,33 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .oauth-workbench-nav),
+:global(.dark .oauth-workbench-filterbar),
 :global(.dark .oauth-workbench-surface) {
   border-color: var(--xiass-console-border, rgb(255 255 255 / 0.13));
   background: var(--xiass-console-surface-deep, rgb(3 14 25 / 0.22));
   box-shadow: 0 14px 34px rgb(0 0 0 / 0.12);
   backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
   -webkit-backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
+}
+
+.oauth-workbench-filterbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem;
+}
+
+.oauth-filter-summary {
+  flex-shrink: 0;
+  color: rgb(100 116 139);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+:global(.dark .oauth-filter-summary) {
+  color: rgb(148 163 184);
 }
 
 .oauth-workbench-nav {
@@ -1286,6 +1403,27 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
+.authorization-mode-settings {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid rgb(148 163 184 / 0.34);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.2);
+  padding-inline: 0.65rem;
+  color: rgb(71 85 105);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.authorization-mode-settings:hover {
+  border-color: rgb(14 165 233 / 0.46);
+  background: rgb(255 255 255 / 0.32);
+  color: rgb(3 105 161);
+}
+
 :global(.dark .authorization-mode-selector) {
   border-color: rgb(123 178 199 / 0.26);
   background: rgb(3 25 40 / 0.52);
@@ -1315,6 +1453,18 @@ onBeforeUnmount(() => {
 :global(.dark .authorization-mode-current) {
   background: rgb(34 211 238 / 0.15);
   color: rgb(207 250 254);
+}
+
+:global(.dark .authorization-mode-settings) {
+  border-color: rgb(123 178 199 / 0.24);
+  background: rgb(3 25 40 / 0.52);
+  color: rgb(186 230 253);
+}
+
+:global(.dark .authorization-mode-settings:hover) {
+  border-color: rgb(56 189 248 / 0.42);
+  background: rgb(8 39 56 / 0.58);
+  color: rgb(224 242 254);
 }
 
 .team-child-entry {

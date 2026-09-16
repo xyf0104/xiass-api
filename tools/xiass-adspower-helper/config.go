@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -25,7 +27,11 @@ type config struct {
 
 type serverConfig struct {
 	EnvironmentKey    string `json:"environment_key"`
-	TemplateProfileID string `json:"template_profile_id"`
+	TemplateProfileID string `json:"template_profile_id,omitempty"`
+	ProxyHost         string `json:"proxy_host,omitempty"`
+	ProxyPort         string `json:"proxy_port,omitempty"`
+	ProxyUser         string `json:"proxy_user,omitempty"`
+	ProxyPassword     string `json:"proxy_password,omitempty"`
 }
 
 func defaultConfigPath() (string, error) {
@@ -45,6 +51,16 @@ func loadConfig(path string) (*config, error) {
 		}
 	}
 	payload, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		cfg := &config{path: path}
+		if _, err := cfg.normalize(); err != nil {
+			return nil, err
+		}
+		if err := saveConfig(cfg); err != nil {
+			return nil, err
+		}
+		return cfg, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
@@ -109,11 +125,21 @@ func (c *config) normalize() (bool, error) {
 		}
 		server.EnvironmentKey = strings.TrimSpace(server.EnvironmentKey)
 		server.TemplateProfileID = strings.TrimSpace(server.TemplateProfileID)
-		if server.EnvironmentKey == "" || !validOpaqueID(server.TemplateProfileID) {
+		server.ProxyHost = normalizeProxyHost(server.ProxyHost)
+		server.ProxyPort = strings.TrimSpace(server.ProxyPort)
+		server.ProxyUser = strings.TrimSpace(server.ProxyUser)
+		server.ProxyPassword = strings.TrimSpace(server.ProxyPassword)
+		if !validOpaqueID(server.EnvironmentKey) {
 			return false, fmt.Errorf("server %s has an invalid environment or template profile", origin)
 		}
+		if server.TemplateProfileID != "" && !validOpaqueID(server.TemplateProfileID) {
+			return false, fmt.Errorf("server %s has an invalid template profile", origin)
+		}
+		if server.TemplateProfileID == "" && !server.validDirectProxy() {
+			return false, fmt.Errorf("server %s must configure a template profile or SOCKS5 proxy", origin)
+		}
 		normalizedServers[origin] = server
-		if origin != rawOrigin {
+		if origin != rawOrigin || server != c.Servers[rawOrigin] {
 			changed = true
 		}
 	}
@@ -124,6 +150,39 @@ func (c *config) normalize() (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+func (s serverConfig) validDirectProxy() bool {
+	if s.ProxyHost == "" {
+		return false
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(s.ProxyPort))
+	return err == nil && port > 0 && port <= 65535
+}
+
+func (s serverConfig) adsPowerProxy() (adsPowerProxyConfig, bool) {
+	if !s.validDirectProxy() {
+		return adsPowerProxyConfig{}, false
+	}
+	return adsPowerProxyConfig{
+		ProxySoft:     "other",
+		ProxyType:     "socks5",
+		ProxyHost:     s.ProxyHost,
+		ProxyPort:     s.ProxyPort,
+		ProxyUser:     s.ProxyUser,
+		ProxyPassword: s.ProxyPassword,
+	}, true
+}
+
+func normalizeProxyHost(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if value == "" || strings.ContainsAny(value, "/:@?#") {
+		return value
+	}
+	if net.ParseIP(value) != nil {
+		return value
+	}
+	return strings.ToLower(value)
 }
 
 func saveConfig(c *config) error {

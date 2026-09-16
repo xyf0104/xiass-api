@@ -16,6 +16,28 @@ profile.
   IP-based timezone/language, and disabled WebRTC. Chromium is also launched
   with non-proxied WebRTC UDP disabled.
 
+## Install and configure
+
+The XIASS workbench links to the fixed `adspower-helper-latest` downloads for
+macOS and Windows. Start AdsPower first, then start the helper and open:
+
+```text
+http://127.0.0.1:34987/setup
+```
+
+The local setup page accepts the AdsPower Local API key and one SOCKS5 route
+for each XIASS server/execution-node environment. It checks the AdsPower API
+and the real SOCKS5 exit IP before saving. A missing config file is created
+automatically on first launch; administrators do not need to create JSON by
+hand.
+
+The fixed release assets are:
+
+```text
+xiass-adspower-helper-macos-universal.zip
+xiass-adspower-helper-windows-x64.exe
+```
+
 ## Config
 
 The default macOS config path is:
@@ -33,17 +55,27 @@ Example without secrets:
   "adspower_base_url": "http://local.adspower.net:50325",
   "device_id": "random-device-id",
   "servers": {
-    "https://api.xiass.com": {
+    "https://api.example.com": {
       "environment_key": "api",
-      "template_profile_id": "template-profile-id"
+      "proxy_host": "api.example.com",
+      "proxy_port": "1104",
+      "proxy_user": "local-user",
+      "proxy_password": "local-password"
     },
-    "https://api2.xiass.com": {
+    "https://api2.example.com": {
       "environment_key": "api2",
-      "template_profile_id": "template-profile-id"
+      "proxy_host": "api2.example.com",
+      "proxy_port": "1104",
+      "proxy_user": "local-user",
+      "proxy_password": "local-password"
     }
   }
 }
 ```
+
+Existing installations may continue using `template_profile_id`. New
+installations should use the local setup page and direct SOCKS5 fields; the
+helper creates each account profile with that route automatically.
 
 When AdsPower API security verification is enabled, place the key in
 `api_key` and keep the file mode at `0600`, or provide `ADSPOWER_API_KEY` to

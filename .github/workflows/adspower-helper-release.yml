@@ -1,0 +1,119 @@
+name: AdsPower Helper Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/xiass-adspower-helper/**'
+      - '.github/workflows/adspower-helper-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: adspower-helper-release
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/xiass-adspower-helper/go.mod
+          cache-dependency-path: tools/xiass-adspower-helper/go.sum
+
+      - name: Build universal macOS helper
+        working-directory: tools/xiass-adspower-helper
+        run: |
+          VERSION=$(tr -d '\r\n' < VERSION)
+          go test ./...
+          mkdir -p build/macos/arm64 build/macos/amd64 "build/XIASS AdsPower Helper.app/Contents/MacOS"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o build/macos/arm64/xiass-adspower-helper .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o build/macos/amd64/xiass-adspower-helper .
+          lipo -create build/macos/arm64/xiass-adspower-helper build/macos/amd64/xiass-adspower-helper -output "build/XIASS AdsPower Helper.app/Contents/MacOS/xiass-adspower-helper"
+          cp package/macos/Info.plist "build/XIASS AdsPower Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "build/XIASS AdsPower Helper.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "build/XIASS AdsPower Helper.app/Contents/Info.plist"
+          codesign --force --deep --sign - "build/XIASS AdsPower Helper.app"
+          ditto -c -k --keepParent "build/XIASS AdsPower Helper.app" build/xiass-adspower-helper-macos-universal.zip
+
+      - name: Upload macOS helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-adspower-helper-macos
+          path: tools/xiass-adspower-helper/build/xiass-adspower-helper-macos-universal.zip
+          retention-days: 1
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/xiass-adspower-helper/go.mod
+          cache-dependency-path: tools/xiass-adspower-helper/go.sum
+
+      - name: Build Windows helper
+        working-directory: tools/xiass-adspower-helper
+        shell: pwsh
+        run: |
+          go test ./...
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o build/xiass-adspower-helper-windows-x64.exe .
+
+      - name: Upload Windows helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiass-adspower-helper-windows
+          path: tools/xiass-adspower-helper/build/xiass-adspower-helper-windows-x64.exe
+          retention-days: 1
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download helper assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: xiass-adspower-helper-*
+          path: helper-assets
+          merge-multiple: true
+
+      - name: Publish fixed helper downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION=$(tr -d '\r\n' < tools/xiass-adspower-helper/VERSION)
+          TAG="adspower-helper-latest"
+          TITLE="XIASS AdsPower 助手 v${VERSION}"
+          NOTES="XIASS AdsPower 本机助手。支持 macOS 与 Windows；首次启动自动创建本机配置，通过 127.0.0.1 设置页保存 AdsPower API Key 和各 XIASS 节点的 SOCKS5 出口。每个 OpenAI 账号固定独立随机 Mac 指纹环境，关闭 WebRTC，并自动把 localhost OAuth 回调返回对应 XIASS 授权任务。所有 AdsPower 密钥、SOCKS 凭据、Cookie 与 OAuth Token 仅保存在管理员电脑。"
+          git tag --force "$TAG" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes "$NOTES" --prerelease
+          fi
+          gh release upload "$TAG" helper-assets/xiass-adspower-helper-macos-universal.zip helper-assets/xiass-adspower-helper-windows-x64.exe --clobber
+          ASSETS=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
+          echo "$ASSETS" | grep -q 'xiass-adspower-helper-macos-universal.zip'
+          echo "$ASSETS" | grep -q 'xiass-adspower-helper-windows-x64.exe'
+          PRERELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.prerelease')
+          test "$PRERELEASE" = "true"

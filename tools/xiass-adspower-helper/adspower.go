@@ -236,13 +236,16 @@ func (c *adsPowerClient) createProfile(ctx context.Context, name string, templat
 		ProfileID string `json:"profile_id"`
 		UserID    string `json:"user_id"`
 	}
-	err := c.do(ctx, http.MethodPost, "/api/v2/browser-profile/create", map[string]any{
-		"group_id":           template.GroupID,
+	payload := map[string]any{
 		"name":               sanitizeProfileName(name),
 		"domain_name":        "https://auth.openai.com",
 		"user_proxy_config":  proxyConfig,
 		"fingerprint_config": randomizedFingerprintConfig(true),
-	}, &data)
+	}
+	if strings.TrimSpace(template.GroupID) != "" {
+		payload["group_id"] = template.GroupID
+	}
+	err := c.do(ctx, http.MethodPost, "/api/v2/browser-profile/create", payload, &data)
 	if err != nil {
 		return nil, err
 	}

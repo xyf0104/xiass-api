@@ -54,7 +54,7 @@ func runDoctor(cfg *config) error {
 	sort.Strings(origins)
 	for _, origin := range origins {
 		server := cfg.Servers[origin]
-		profile, err := client.profile(ctx, server.TemplateProfileID)
+		profile, err := resolveAdsPowerTemplate(ctx, client, server)
 		if err != nil {
 			return fmt.Errorf("%s template: %w", origin, err)
 		}

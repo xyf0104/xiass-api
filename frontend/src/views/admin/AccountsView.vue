@@ -14,7 +14,7 @@
             @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
-            v-if="teamChildSettingsReady && !pairingUnavailable"
+            v-if="accountActionsReady && !pairingUnavailable"
             :loading="loading"
             @refresh="handleManualRefresh"
             @create="allowAccountWrite() && (showCreate = true)"
@@ -31,18 +31,6 @@
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="pelican-benchmark" @click="showPelicanBenchmark = true">
                 <Icon name="lightbulb" size="sm" />
                 <span>{{ t('admin.accounts.pelicanBenchmark.title') }}</span>
-              </button>
-              <button
-                v-if="teamChildCreationEnabled"
-                type="button"
-                class="btn flex items-center gap-2"
-                :class="teamChildNeedsReauth ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/70 dark:bg-red-950/25 dark:text-red-300 dark:hover:bg-red-950/40' : 'btn-primary'"
-                :title="teamChildNeedsReauth ? '最新 Team 子号检测到 401，需要重新授权' : '创建 Team 子号'"
-                data-testid="create-team-child"
-                @click="openTeamChildCreation"
-              >
-                <Icon :name="teamChildNeedsReauth ? 'exclamationTriangle' : 'userPlus'" size="sm" :class="teamChildNeedsReauth ? 'text-red-600 dark:text-red-400' : ''" :stroke-width="teamChildNeedsReauth ? 2.75 : 2" />
-                <span>创建 Team 子号</span>
               </button>
             </template>
             <template #after>
@@ -730,20 +718,11 @@ const authStore = useAuthStore()
 const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const router = useRouter() as ReturnType<typeof useRouter> | undefined
 
-function openTeamChildCreation() {
-  if (!allowAccountWrite()) return
-  const account = latestTeamChildAccount.value
-  void router?.push({
-    name: 'AdminTeamChildCreation',
-    ...(teamChildNeedsReauth.value && account ? { query: { reauthorize: String(account.id) } } : {})
-  })
-}
-
 function openOpenAIAccountWorkbench() {
   if (!allowAccountWrite()) return
   void router?.push({
     name: 'AdminOpenAIReauthorization',
-    query: { workspace: 'batch' }
+    query: { workspace: 'reauthorization' }
   })
 }
 
@@ -827,8 +806,7 @@ const selTypes = computed<AccountType[]>(() => {
 const showCreate = ref(false)
 const usageReauthAccountIDs = ref(new Set<number>())
 const announcedReauthAccountIDs = new Set<number>()
-const teamChildCreationEnabled = ref(false)
-const teamChildSettingsReady = ref(false)
+const accountActionsReady = ref(false)
 const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
 const pairedFullAccess = computed(() => executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && executionNodeStatus.value.admin_write_allowed === true)
 const pairingUnavailable = computed(() => executionNodeStatus.value?.admin_write_mode === 'pairing_unavailable' || (executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && !pairedFullAccess.value))
@@ -1231,38 +1209,6 @@ const hasDynamicAccountFilter = computed(() => hasActiveConcurrencyFilter.value 
 const activeConcurrencyGroupLabel = computed(() => {
   const groupID = Number(params.active_concurrency_group)
   return groups.value.find(group => group.id === groupID)?.name || `#${groupID}`
-})
-
-const isTeamChildAccount = (account: Account) => {
-  const extra = account.extra as Record<string, unknown> | undefined
-  if (extra?.xiass_team_child === true) return true
-  const email = accountDisplayEmail(account)
-  return /^(?:team\d+)@/i.test(email) || /^(?:team\d+)@/i.test(account.name)
-}
-
-const latestTeamChildAccount = computed(() => {
-  const candidates = accounts.value.filter(isTeamChildAccount)
-  return candidates.reduce<Account | null>((latest, candidate) => {
-    if (!latest) return candidate
-    const latestTime = Date.parse(latest.created_at) || 0
-    const candidateTime = Date.parse(candidate.created_at) || 0
-    if (candidateTime !== latestTime) return candidateTime > latestTime ? candidate : latest
-    return candidate.id > latest.id ? candidate : latest
-  }, null)
-})
-
-const teamChildNeedsReauth = computed(() => {
-  const account = latestTeamChildAccount.value
-  if (!account) return false
-  const extra = account.extra as Record<string, unknown> | undefined
-  const errorText = [
-    account.error_message || '',
-    typeof extra?.error === 'string' ? extra.error : '',
-    typeof extra?.error_code === 'string' ? extra.error_code : ''
-  ].join(' ')
-  return extra?.needs_reauth === true
-    || extra?.error_code === 'unauthenticated'
-    || /\b401\b|unauthori[sz]ed|token\s*(?:expired|invalid|失效|过期)/i.test(errorText)
 })
 
 const accountNeedsOpenAIReauthorization = (account: Account) => {
@@ -2873,23 +2819,19 @@ onMounted(async () => {
   void loadAccountPools()
   loadUpstreamBillingProbeGlobalState()
   try {
-    const [p, g, settings, executionNodes] = await Promise.allSettled([
+    const [p, g, executionNodes] = await Promise.allSettled([
       adminAPI.proxies.getAll(),
       adminAPI.groups.getAll(),
-      adminAPI.settings.getSettings(),
       adminAPI.executionNodes?.getStatus?.()
     ])
     if (p.status === 'fulfilled') proxies.value = p.value
     if (g.status === 'fulfilled') groups.value = g.value
-    if (settings.status === 'fulfilled') teamChildCreationEnabled.value = settings.value.team_child_creation_enabled === true
     if (executionNodes.status === 'fulfilled') executionNodeStatus.value = executionNodes.value
   } catch (error) {
     console.error('Failed to load proxies/groups:', error)
   } finally {
-    // The Team entry is feature-gated by the same settings response. Keep the
-    // whole action group in one loading state so "创建 Team 子号" and "添加账号"
-    // never pop into the toolbar at different times.
-    teamChildSettingsReady.value = true
+    // Keep the workbench and account actions in one loading state.
+    accountActionsReady.value = true
   }
   window.addEventListener('scroll', handleScroll, true)
   window.addEventListener('resize', handleViewportResize)
