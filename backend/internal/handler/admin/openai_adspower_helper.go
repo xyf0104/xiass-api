@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -393,19 +392,4 @@ func openAIAdsPowerHelperPairingURL(serverOrigin, environmentKey, ticket string)
 	query.Set("environment", environmentKey)
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
-}
-
-func (s *openAIAdsPowerLaunchStore) helperDeviceStatus(ctx context.Context, adminUserID int64, environmentKey string) (*openAIAdsPowerHelperDevice, error) {
-	deviceID, err := s.defaultDevice(ctx, adminUserID, environmentKey)
-	if err != nil || deviceID == "" {
-		return nil, err
-	}
-	device, ok, err := s.device(ctx, deviceID, environmentKey)
-	if err != nil || !ok {
-		return nil, err
-	}
-	if device.AdminUserID != adminUserID || device.EnvironmentKey != environmentKey {
-		return nil, fmt.Errorf("AdsPower helper device does not match this administrator")
-	}
-	return &device, nil
 }
