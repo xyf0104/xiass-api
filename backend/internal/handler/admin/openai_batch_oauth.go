@@ -728,8 +728,11 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 	}
 	if t.usesAdsPower() {
 		if t.externalCallbackURL == "" {
-			t.Status, t.Stage, t.Reason = "running", "external_browser", ""
-			return &batchOAuthSidecarTask{ID: t.ID, OwnerID: t.ownerID, Status: "running", Stage: "external_browser"}, nil
+			t.Status = "running"
+			if t.Stage == "" || t.Stage == "queued" || t.Stage == "external_browser" {
+				t.Stage, t.Reason = "external_browser", ""
+			}
+			return &batchOAuthSidecarTask{ID: t.ID, OwnerID: t.ownerID, Status: t.Status, Stage: t.Stage, Reason: t.Reason}, nil
 		}
 		t.Status, t.Stage, t.Reason = "ready", "callback_received", ""
 		return &batchOAuthSidecarTask{ID: t.ID, OwnerID: t.ownerID, Status: "completed", Stage: "callback_received", CallbackURL: t.externalCallbackURL}, nil

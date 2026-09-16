@@ -39,6 +39,28 @@ func TestBatchOAuthPublicReasonPreservesRetryableOpenAIErrors(t *testing.T) {
 	}
 }
 
+func TestBatchOAuthAdsPowerRefreshPreservesReportedAutomationStage(t *testing.T) {
+	task := &batchOAuthTask{
+		ID:          "ads-task",
+		ownerID:     42,
+		BrowserMode: batchOAuthBrowserAdsPower,
+		Status:      "running",
+		Stage:       "totp",
+		ExpiresAt:   time.Now().Add(time.Minute),
+		config:      batchOAuthConfig{BrowserMode: batchOAuthBrowserAdsPower},
+	}
+	sidecar, err := task.refresh(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "totp", task.Stage)
+	require.Equal(t, "totp", sidecar.Stage)
+
+	task.Stage = "queued"
+	sidecar, err = task.refresh(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "external_browser", task.Stage)
+	require.Equal(t, "external_browser", sidecar.Stage)
+}
+
 func (batchOAuthTestEncryptor) Encrypt(value string) (string, error) {
 	return "enc:" + base64.RawStdEncoding.EncodeToString([]byte(value)), nil
 }

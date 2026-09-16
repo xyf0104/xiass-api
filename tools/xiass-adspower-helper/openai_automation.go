@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/pquerna/otp/totp"
 )
@@ -97,24 +99,106 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	allocator, cancelAllocator := chromedp.NewRemoteAllocator(ctx, endpoint)
-	defer cancelAllocator()
-	browser, cancelBrowser := chromedp.NewContext(allocator)
-	defer cancelBrowser()
-
 	s.progress(origin, launch, "running", "opening", "")
-	if err := chromedp.Run(browser, chromedp.Navigate(launch.AuthURL)); err != nil {
+	browser, closeBrowser, err := attachAdsPowerOAuthTarget(ctx, endpoint, launch.AuthURL)
+	if err != nil {
+		log.Printf("AdsPower OAuth automation failed at opening: %s", automationErrorReason(err, "opening"))
 		s.finishAutomation(origin, launch, profileID, "failed", "failed", automationErrorReason(err, "opening"))
 		return
 	}
+	defer closeBrowser()
 	if err := s.automateOpenAI(ctx, browser, origin, launch); err != nil {
 		failure := automationFailure(err)
 		stage := "blocked"
 		if failure.Status == "failed" {
 			stage = "failed"
 		}
+		log.Printf("AdsPower OAuth automation stopped at %s: %s", stage, failure.Reason)
 		s.finishAutomation(origin, launch, profileID, failure.Status, stage, failure.Reason)
 	}
+}
+
+func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (context.Context, func(), error) {
+	allocator, cancelAllocator := chromedp.NewRemoteAllocator(parent, endpoint)
+	root, cancelRoot := chromedp.NewContext(allocator)
+	attachCtx, cancelAttach := context.WithTimeout(root, 30*time.Second)
+
+	cleanup := func() {
+		cancelAttach()
+		cancelRoot()
+		cancelAllocator()
+	}
+
+	var matched *target.Info
+	for matched == nil {
+		targets, err := chromedp.Targets(attachCtx)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+		matched = matchingOAuthTarget(targets, authURL)
+		if matched != nil {
+			break
+		}
+		select {
+		case <-attachCtx.Done():
+			cleanup()
+			return nil, func() {}, attachCtx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	browser, cancelBrowser := chromedp.NewContext(root, chromedp.WithTargetID(matched.TargetID))
+	cancelAttach()
+	if err := chromedp.Run(browser); err != nil {
+		cancelBrowser()
+		cleanup()
+		return nil, func() {}, err
+	}
+	return browser, func() {
+		cancelBrowser()
+		cleanup()
+	}, nil
+}
+
+func matchingOAuthTarget(targets []*target.Info, authURL string) *target.Info {
+	expected, err := url.Parse(strings.TrimSpace(authURL))
+	if err != nil {
+		return nil
+	}
+	expectedState := expected.Query().Get("state")
+	var fallback *target.Info
+	for _, candidate := range targets {
+		if candidate == nil || candidate.Type != "page" {
+			continue
+		}
+		candidateURL := strings.TrimSpace(candidate.URL)
+		if candidateURL == authURL {
+			return candidate
+		}
+		parsed, parseErr := url.Parse(candidateURL)
+		if parseErr != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Hostname())
+		path := strings.ToLower(parsed.Path)
+		if host != "auth.openai.com" || strings.Contains(path, "/error") {
+			continue
+		}
+		candidateState := parsed.Query().Get("state")
+		if expectedState != "" {
+			if subtle.ConstantTimeCompare([]byte(candidateState), []byte(expectedState)) == 1 {
+				return candidate
+			}
+			if candidateState != "" {
+				continue
+			}
+		}
+		if fallback == nil {
+			fallback = candidate
+		}
+	}
+	return fallback
 }
 
 type automationFailureResult struct {

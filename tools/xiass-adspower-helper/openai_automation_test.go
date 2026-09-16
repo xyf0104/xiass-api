@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/chromedp/cdproto/target"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,4 +51,26 @@ func TestValidCallbackChecksStateAndCode(t *testing.T) {
 	require.True(t, validCallback("http://localhost:1455/auth/callback?code=abc&state=state", "state"))
 	require.False(t, validCallback("http://localhost:1455/auth/callback?code=abc&state=other", "state"))
 	require.False(t, validCallback("https://example.com/auth/callback?code=abc&state=state", "state"))
+}
+
+func TestMatchingOAuthTargetPrefersExactStateAndSkipsErrorPages(t *testing.T) {
+	targets := []*target.Info{
+		{TargetID: "error", Type: "page", URL: "https://chatgpt.com/api/auth/error"},
+		{TargetID: "stale", Type: "page", URL: "https://auth.openai.com/oauth/authorize?state=stale"},
+		{TargetID: "expected", Type: "page", URL: "https://auth.openai.com/oauth/authorize?client_id=codex&state=expected"},
+	}
+	matched := matchingOAuthTarget(targets, "https://auth.openai.com/oauth/authorize?state=expected&client_id=codex")
+	require.NotNil(t, matched)
+	require.Equal(t, target.ID("expected"), matched.TargetID)
+}
+
+func TestMatchingOAuthTargetFallsBackToRedirectedLoginPage(t *testing.T) {
+	targets := []*target.Info{
+		{TargetID: "blank", Type: "page", URL: "about:blank"},
+		{TargetID: "stale", Type: "page", URL: "https://auth.openai.com/oauth/authorize?state=stale"},
+		{TargetID: "login", Type: "page", URL: "https://auth.openai.com/log-in/password"},
+	}
+	matched := matchingOAuthTarget(targets, "https://auth.openai.com/oauth/authorize?state=expected")
+	require.NotNil(t, matched)
+	require.Equal(t, target.ID("login"), matched.TargetID)
 }
