@@ -578,7 +578,12 @@
     <CreateAccountModal v-if="showCreate" :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal v-if="showEdit" :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal
+      :show="showTest"
+      :account="testingAcc"
+      @close="closeTestModal"
+      @account-state-changed="handleAccountTestStateChanged"
+    />
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
     <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="handleAccountPoolsUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
@@ -1561,6 +1566,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
 }
 
 const syncAccountRefs = (nextAccount: Account) => {
+  if (testingAcc.value?.id === nextAccount.id) testingAcc.value = nextAccount
   if (edAcc.value?.id === nextAccount.id) edAcc.value = nextAccount
   if (reAuthAcc.value?.id === nextAccount.id) reAuthAcc.value = nextAccount
   if (tempUnschedAcc.value?.id === nextAccount.id) tempUnschedAcc.value = nextAccount
@@ -2613,6 +2619,11 @@ const handleExportData = async () => {
 }
 const accountExportStepUp = useStepUp()
 const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
+const handleAccountTestStateChanged = async (accountID: number) => {
+  await refreshAccountsIncrementally()
+  const refreshed = accounts.value.find(account => account.id === accountID)
+  if (refreshed && testingAcc.value?.id === accountID) testingAcc.value = refreshed
+}
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeOAuthBillingDetails = () => { showOAuthBillingDetails.value = false; oauthBillingAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }

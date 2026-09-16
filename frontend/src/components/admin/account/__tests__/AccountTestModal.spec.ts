@@ -263,4 +263,32 @@ describe('AccountTestModal', () => {
       mode: 'compact'
     })
   })
+
+  it('测试返回错误后通知账号列表立即刷新状态', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' }
+    ])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"test_start","model":"gpt-5.6-sol"}\n',
+        'data: {"type":"error","error":"API returned 401: token_revoked"}\n'
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 449,
+      name: 'OpenAI OAuth',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.6-sol'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(wrapper.emitted('account-state-changed')).toEqual([[449]])
+  })
 })

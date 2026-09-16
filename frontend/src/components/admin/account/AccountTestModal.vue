@@ -278,6 +278,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'account-state-changed', accountID: number): void
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
@@ -290,6 +291,7 @@ const selectedModelId = ref('')
 const testPrompt = ref('')
 const loadingModels = ref(false)
 let abortController: AbortController | null = null
+let accountStateChangeEmitted = false
 const generatedImages = ref<PreviewImage[]>([])
 const previewImageUrl = ref('')
 const testMode = ref<'default' | 'compact'>('default')
@@ -439,6 +441,13 @@ const resetState = () => {
   errorMessage.value = ''
   generatedImages.value = []
   previewImageUrl.value = ''
+  accountStateChangeEmitted = false
+}
+
+const notifyAccountStateChanged = () => {
+  if (accountStateChangeEmitted || !props.account) return
+  accountStateChangeEmitted = true
+  emit('account-state-changed', props.account.id)
 }
 
 const handleClose = () => {
@@ -612,6 +621,7 @@ const handleEvent = (event: {
         status.value = 'error'
         errorMessage.value = event.error || 'Test failed'
       }
+      notifyAccountStateChanged()
       break
 
     case 'error':
@@ -621,6 +631,7 @@ const handleEvent = (event: {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
+      notifyAccountStateChanged()
       break
   }
 }

@@ -572,6 +572,45 @@ func TestAccountTestService_OpenAIOAuth401WithRefreshTokenSchedulesRecovery(t *t
 	require.NotNil(t, account.TempUnschedulableUntil)
 }
 
+func TestAccountTestService_OpenAIOAuthRevokedTokenSetsPermanentError(t *testing.T) {
+	for _, errorCode := range []string{"token_revoked", "token_invalidated"} {
+		t.Run(errorCode, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, _ := newTestContext()
+
+			resp := newJSONResponse(http.StatusUnauthorized, fmt.Sprintf(
+				`{"error":{"message":"Encountered invalidated oauth token for user, failing request","code":%q}}`,
+				errorCode,
+			))
+			repo := &openAIAccountTestRepo{}
+			upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+			svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+			account := &Account{
+				ID:          82,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"access_token":  "revoked-token",
+					"refresh_token": "refresh-token",
+				},
+			}
+
+			err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+			require.Error(t, err)
+			require.Equal(t, account.ID, repo.setErrorID)
+			require.Contains(t, repo.setErrorMsg, "Token revoked (401)")
+			require.Contains(t, repo.setErrorMsg, "invalidated oauth token")
+			require.Zero(t, repo.tempUnschedulableID)
+			require.Equal(t, StatusError, account.Status)
+			require.False(t, account.Schedulable)
+			require.Equal(t, repo.setErrorMsg, account.ErrorMessage)
+		})
+	}
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesUsesCodexProbeHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()

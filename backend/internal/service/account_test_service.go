@@ -991,6 +991,23 @@ func (s *AccountTestService) reconcileOpenAIUnauthorized(ctx context.Context, ac
 	if s == nil || s.accountRepo == nil || account == nil {
 		return
 	}
+	upstreamCode := strings.ToLower(strings.TrimSpace(extractUpstreamErrorCode(body)))
+	upstreamMessage := strings.TrimSpace(sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body)))
+	if account.Platform == PlatformOpenAI &&
+		account.Type == AccountTypeOAuth &&
+		(upstreamCode == "token_invalidated" || upstreamCode == "token_revoked") {
+		errorMessage := "Token revoked (401): account authentication permanently revoked"
+		if upstreamMessage != "" {
+			errorMessage = "Token revoked (401): " + upstreamMessage
+		}
+		_ = s.accountRepo.SetError(ctx, account.ID, errorMessage)
+		account.Status = StatusError
+		account.ErrorMessage = errorMessage
+		account.Schedulable = false
+		account.TempUnschedulableUntil = nil
+		account.TempUnschedulableReason = ""
+		return
+	}
 	if account.Platform == PlatformOpenAI &&
 		account.Type == AccountTypeOAuth &&
 		!account.IsOpenAIPersonalAccessToken() &&
