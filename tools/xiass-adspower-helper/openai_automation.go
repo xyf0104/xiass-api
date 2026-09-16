@@ -87,7 +87,11 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 	}()
 	endpoint := ""
 	if session != nil {
-		endpoint = strings.TrimSpace(session.WebSocket.Puppeteer)
+		if port := strings.TrimSpace(session.DebugPort); port != "" {
+			endpoint = "http://127.0.0.1:" + port
+		} else {
+			endpoint = strings.TrimSpace(session.WebSocket.Puppeteer)
+		}
 	}
 	if endpoint == "" {
 		s.finishAutomation(origin, launch, profileID, "failed", "failed", "browser_context_lost")
@@ -121,35 +125,59 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (context.Context, func(), error) {
 	allocator, cancelAllocator := chromedp.NewRemoteAllocator(parent, endpoint)
 	root, cancelRoot := chromedp.NewContext(allocator)
-	attachCtx, cancelAttach := context.WithTimeout(root, 30*time.Second)
 
 	cleanup := func() {
-		cancelAttach()
 		cancelRoot()
 		cancelAllocator()
 	}
 
+	type targetResult struct {
+		info *target.Info
+		err  error
+	}
+	result := make(chan targetResult, 1)
+	go func() {
+		loggedTargets := false
+		for {
+			targets, err := chromedp.Targets(root)
+			if err != nil {
+				result <- targetResult{err: err}
+				return
+			}
+			if matched := matchingOAuthTarget(targets, authURL); matched != nil {
+				result <- targetResult{info: matched}
+				return
+			}
+			if !loggedTargets {
+				log.Printf("AdsPower CDP connected but OAuth target is not ready: %s", summarizeOAuthTargets(targets))
+				loggedTargets = true
+			}
+			select {
+			case <-root.Done():
+				result <- targetResult{err: root.Err()}
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}()
+
 	var matched *target.Info
-	for matched == nil {
-		targets, err := chromedp.Targets(attachCtx)
-		if err != nil {
+	select {
+	case found := <-result:
+		if found.err != nil {
 			cleanup()
-			return nil, func() {}, err
+			return nil, func() {}, found.err
 		}
-		matched = matchingOAuthTarget(targets, authURL)
-		if matched != nil {
-			break
-		}
-		select {
-		case <-attachCtx.Done():
-			cleanup()
-			return nil, func() {}, attachCtx.Err()
-		case <-time.After(200 * time.Millisecond):
-		}
+		matched = found.info
+	case <-time.After(30 * time.Second):
+		cleanup()
+		return nil, func() {}, context.DeadlineExceeded
+	case <-parent.Done():
+		cleanup()
+		return nil, func() {}, parent.Err()
 	}
 
 	browser, cancelBrowser := chromedp.NewContext(root, chromedp.WithTargetID(matched.TargetID))
-	cancelAttach()
 	if err := chromedp.Run(browser); err != nil {
 		cancelBrowser()
 		cleanup()
@@ -159,6 +187,26 @@ func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string)
 		cancelBrowser()
 		cleanup()
 	}, nil
+}
+
+func summarizeOAuthTargets(targets []*target.Info) string {
+	if len(targets) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(targets))
+	for _, candidate := range targets {
+		if candidate == nil {
+			continue
+		}
+		parsed, err := url.Parse(candidate.URL)
+		if err != nil {
+			parts = append(parts, candidate.Type+":invalid-url")
+			continue
+		}
+		location := parsed.Scheme + "://" + parsed.Host + parsed.Path
+		parts = append(parts, candidate.Type+":"+location)
+	}
+	return strings.Join(parts, ",")
 }
 
 func matchingOAuthTarget(targets []*target.Info, authURL string) *target.Info {
@@ -223,11 +271,11 @@ func automationFailure(err error) automationFailureResult {
 
 func automationErrorReason(err error, stage string) string {
 	message := strings.ToLower(fmt.Sprint(err))
+	if stage == "opening" && (strings.Contains(message, "timeout") || strings.Contains(message, "context deadline")) {
+		return "navigation_timeout"
+	}
 	if strings.Contains(message, "context deadline") {
 		return "task_expired"
-	}
-	if stage == "opening" && strings.Contains(message, "timeout") {
-		return "navigation_timeout"
 	}
 	if strings.Contains(message, "target closed") || strings.Contains(message, "browser") && strings.Contains(message, "closed") {
 		return "browser_context_lost"

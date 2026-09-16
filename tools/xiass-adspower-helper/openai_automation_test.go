@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/chromedp/cdproto/target"
@@ -73,4 +74,9 @@ func TestMatchingOAuthTargetFallsBackToRedirectedLoginPage(t *testing.T) {
 	matched := matchingOAuthTarget(targets, "https://auth.openai.com/oauth/authorize?state=expected")
 	require.NotNil(t, matched)
 	require.Equal(t, target.ID("login"), matched.TargetID)
+}
+
+func TestAutomationErrorReasonTreatsOpeningDeadlineAsNavigationTimeout(t *testing.T) {
+	require.Equal(t, "navigation_timeout", automationErrorReason(context.DeadlineExceeded, "opening"))
+	require.Equal(t, "task_expired", automationErrorReason(context.DeadlineExceeded, "password"))
 }
