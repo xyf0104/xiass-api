@@ -15,7 +15,7 @@ export const BATCH_OAUTH_REASONS = Object.freeze([
   'captcha_required', 'account_blocked', 'account_deleted_or_disabled', 'manual_challenge', 'task_expired',
   'invalid_credentials', 'authenticator_required', 'phone_rejected',
   'proxy_unavailable', 'navigation_timeout', 'browser_context_lost',
-  'page_interaction_failed', 'invalid_totp', 'invalid_sms_code',
+  'page_interaction_failed', 'sms_channel_selection_failed', 'invalid_totp', 'invalid_sms_code',
   'openai_route_error', 'oauth_session_expired'
 ])
 const reasons = new Set(BATCH_OAUTH_REASONS)

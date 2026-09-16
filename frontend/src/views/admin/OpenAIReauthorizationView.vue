@@ -784,6 +784,7 @@ const reasonLabels: Record<string, string> = {
   navigation_timeout: '打开 OpenAI 授权页超时。',
   browser_context_lost: '独立隐私浏览器上下文意外关闭。',
   page_interaction_failed: 'OpenAI 页面控件发生变化或操作失败。',
+  sms_channel_selection_failed: '无法确认已选择短信验证，未继续发送验证码。',
   oauth_exchange_failed: 'OAuth 回调换取凭据失败。',
   oauth_identity_mismatch: '授权完成后的 OpenAI 身份与目标账号不一致。',
   account_update_failed: 'OAuth 已完成，但凭据未能保存到原账号。',

@@ -404,7 +404,9 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if err := fillOAuthInput(browser, state.Input, phoneSubmitted); err != nil {
 				return err
 			}
-			_ = clickOAuthText(browser, []string{"text message", "短信"})
+			if err := selectOAuthTextMessage(browser); err != nil {
+				return automationFailureError{Status: "failed", Reason: "sms_channel_selection_failed"}
+			}
 			if err := clickOAuthContinue(browser); err != nil {
 				return err
 			}
@@ -977,6 +979,24 @@ func clickOAuthText(browser context.Context, patterns []string) error {
 	payload, _ := json.Marshal(patterns)
 	expression := fmt.Sprintf(`(() => { const wanted=%s.map(v=>String(v).toLowerCase()); const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0}; const items=Array.from(document.querySelectorAll('button,a,[role="button"],[role="link"],[role="radio"],[role="option"]')).filter(visible); const action=items.find(e=>{const text=String(e.innerText||e.textContent||e.getAttribute('aria-label')||'').replace(/\s+/g,' ').trim().toLowerCase();return wanted.some(v=>text===v||text.includes(v))}); if(!action) throw new Error('action missing'); action.click(); return true; })()`, payload)
 	return chromedp.Run(browser, chromedp.Evaluate(expression, nil))
+}
+
+const oauthSelectTextMessageJS = `(() => {
+  const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0};
+  const text=e=>String(e.innerText||e.textContent||e.getAttribute('aria-label')||'').replace(/\s+/g,' ').trim().toLowerCase();
+  const selected=e=>e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-selected')==='true'||e.getAttribute('aria-pressed')==='true'||e.checked===true||e.getAttribute('data-state')==='checked'||e.matches(':checked');
+  const labels=Array.from(document.querySelectorAll('label')).filter(visible);
+  const radios=Array.from(document.querySelectorAll('input[type="radio"],[role="radio"],button,option,[role="option"]')).filter(visible);
+  const candidate=radios.find(e=>/text message|sms|短信/.test(text(e))) || labels.find(e=>/text message|sms|短信/.test(text(e)));
+  if(!candidate) throw new Error('text message option missing');
+  candidate.click();
+  const control=candidate.matches('label') ? (candidate.control || candidate.querySelector('input,[role="radio"]')) : candidate;
+  if(!selected(candidate) && (!control || !selected(control))) throw new Error('text message option not selected');
+  return true;
+})()`
+
+func selectOAuthTextMessage(browser context.Context) error {
+	return chromedp.Run(browser, chromedp.Evaluate(oauthSelectTextMessageJS, nil))
 }
 
 func (s *helperServer) progress(origin string, launch *launchPayload, status, stage, reason string) {

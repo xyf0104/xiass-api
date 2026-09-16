@@ -1934,10 +1934,19 @@ async function submitPhoneOnOpenAI(current, rawPhone) {
   ))
   await input.fill(phone)
 
-  const textMessage = await firstVisibleRole(current, 'radio', [/text message|短信/i])
-    || await firstVisibleRole(current, 'button', [/text message|短信/i])
-    || await firstVisibleRole(current, 'option', [/text message|短信/i])
-  if (textMessage) await textMessage.click().catch(() => undefined)
+  const textMessage = await firstVisibleRole(current, 'radio', [/text message|sms|短信/i])
+    || await firstVisibleRole(current, 'button', [/text message|sms|短信/i])
+    || await firstVisibleRole(current, 'option', [/text message|sms|短信/i])
+  if (!textMessage) throw batchOAuthPageError('sms_channel_selection_failed', '无法找到短信验证选项，未继续发送验证码')
+  await textMessage.click()
+  const selected = await textMessage.evaluate(e => e.checked === true
+    || e.getAttribute('aria-checked') === 'true'
+    || e.getAttribute('aria-selected') === 'true'
+    || e.getAttribute('aria-pressed') === 'true'
+    || e.getAttribute('data-state') === 'checked')
+  if (!selected) {
+    throw batchOAuthPageError('sms_channel_selection_failed', '无法确认已选择短信验证，未继续发送验证码')
+  }
 
   const submit = await firstVisibleRole(current, 'button', [/send (?:a )?code|send sms|text me|continue|next|发送.*验证码|发送短信|继续|下一步/i])
   if (!submit) throw new Error('OpenAI 手机号页面中找不到发送短信按钮')
@@ -3550,6 +3559,7 @@ export {
   selectLoginForAnotherAccount,
   setWorkflowNode,
   submitInviteDialog,
+  submitPhoneOnOpenAI,
   validateOAuthSessionID,
   validateWorkflowCode,
   workflowProtocolVersion,

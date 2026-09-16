@@ -701,7 +701,7 @@ func batchOAuthPublicReason(reason string) string {
 	switch reason {
 	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "email_code_timeout", "email_code_access_denied", "email_code_unavailable", "invalid_email_code", "reauthorization_phone_required", "captcha_required", "captcha", "account_blocked", "account_banned", "account_deleted_or_disabled", "unknown_error", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
-	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
+	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "sms_channel_selection_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
 		return reason
 	case "oauth_exchange_failed", "oauth_identity_mismatch", "account_update_failed", "account_configuration_changed", "account_state_recovery_failed", "invalid_configuration", "automation_start_failed", "oauth_session_failed":
 		return reason
