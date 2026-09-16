@@ -36,7 +36,8 @@ const mountFlow = (authUrl = '') =>
       showMobileRefreshTokenOption: true,
       showCodexSessionImportOption: true,
       showAgentIdentityOption: true,
-      showCodexPatOption: true
+      showCodexPatOption: true,
+      showAdsPowerOption: true
     },
     global: {
       stubs: {
@@ -79,5 +80,15 @@ describe('OAuthAuthorizationFlow mobile layout', () => {
     expect(urlRow.get('button').classes()).toEqual(
       expect.arrayContaining(['self-end', 'sm:self-auto'])
     )
+  })
+
+  it('offers the account-bound AdsPower launcher after generating an OpenAI URL', async () => {
+    const wrapper = mountFlow('https://auth.openai.com/oauth/authorize?state=test')
+    const launch = wrapper.get('[data-testid="launch-adspower-browser"]')
+
+    expect(launch.text()).toContain('用固定指纹浏览器打开')
+    expect(launch.classes()).toEqual(expect.arrayContaining(['w-full', 'sm:w-auto']))
+    await launch.trigger('click')
+    expect(wrapper.emitted('launch-adspower')).toHaveLength(1)
   })
 })

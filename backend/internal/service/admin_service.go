@@ -394,6 +394,10 @@ type CreateAccountInput struct {
 	// by the state-bound Team OAuth import. Generic account creation must not
 	// accept private login-only credentials from arbitrary import payloads.
 	AllowOpenAIReauthorizationCredentials bool
+	// AllowOpenAIAdsPowerBinding permits one already-verified browser binding to
+	// enter through a state-bound OAuth workflow. Generic create/import payloads
+	// must not be able to forge or copy this system-managed account identity.
+	AllowOpenAIAdsPowerBinding bool
 	// PreserveOAuthWorkflowProxy keeps the proxy already verified by a trusted
 	// OpenAI OAuth workflow. It is not exposed by generic creation/import APIs.
 	PreserveOAuthWorkflowProxy bool

@@ -5,7 +5,7 @@ import { createPinia } from 'pinia'
 import BatchOpenAIOAuthModal from '../BatchOpenAIOAuthModal.vue'
 import { batchOAuthAPI, type BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
 
-vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), sms: vi.fn(), cancel: vi.fn(), complete: vi.fn(), restart: vi.fn() } }))
+vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), sms: vi.fn(), cancel: vi.fn(), complete: vi.fn(), restart: vi.fn(), launchAdsPower: vi.fn() } }))
 vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(async () => ({ data: { items: [{ id: 4, name: '号池分组1', proxy_id: 9 }] } })) } }))
 const SelectStub = defineComponent({ props: ['modelValue', 'options'], emits: ['update:modelValue'], template: `<select :value="modelValue ?? ''" @change="$emit('update:modelValue', $event.target.value === '' ? null : Number.isNaN(Number($event.target.value)) ? $event.target.value : Number($event.target.value))"><option v-for="o in options" :value="o.value ?? ''">{{ o.label }}</option></select>` })
 const base = { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' }
@@ -47,6 +47,25 @@ describe('batch OAuth modal', () => {
     }))
     expect(wrapper.find('[data-testid="batch-credentials-password"]').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('MyPrivatePassword')
+  })
+  it('creates AdsPower tasks explicitly and opens the task-bound helper URL', async () => {
+    vi.mocked(batchOAuthAPI.create).mockResolvedValue({ ...task('external_browser'), browser_mode: 'adspower' })
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=fixed', expires_at: '' })
+    const popup = { opener: window, location: { href: 'about:blank' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    await render()
+    expect(wrapper.get('[data-testid="batch-browser-server"]').text()).toContain('内置浏览器授权')
+    expect(wrapper.get('[data-testid="batch-browser-adspower"]').text()).toContain('Ads 指纹浏览器授权')
+    await wrapper.get('[data-testid="batch-browser-adspower"]').trigger('click')
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-start"]').trigger('click')
+    await flushPromises()
+
+    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({ browser_mode: 'adspower' }))
+    await wrapper.get('[data-testid="launch-adspower-person@example.test"]').trigger('click')
+    await flushPromises()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledWith('task-00000000000001')
+    expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=fixed')
   })
   it('shows an existing account as skipped without announcing a new account', async () => {
     vi.mocked(batchOAuthAPI.create).mockResolvedValue({

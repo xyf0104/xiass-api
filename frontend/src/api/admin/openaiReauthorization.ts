@@ -49,11 +49,12 @@ export const openAIReauthorizationAPI = {
     const query = accountIDs.length ? `?account_ids=${encodeURIComponent(accountIDs.join(','))}` : ''
     return (await apiClient.get<{ items: OpenAIReauthorizationAccountStatus[]; cooldown_seconds: number }>(`${accountsPath}${query}`)).data
   },
-  async start(accountID: number, acknowledgeRisk = false) {
+  async start(accountID: number, acknowledgeRisk = false, browserMode?: 'server' | 'adspower') {
     return (await apiClient.post<OpenAIReauthorizationTask>(path, {
       account_id: accountID,
       confirmed: true,
       acknowledged_second_reauthorization_risk: acknowledgeRisk,
+      ...(browserMode ? { browser_mode: browserMode } : {}),
     })).data
   },
   async complete(id: string) {
@@ -62,11 +63,15 @@ export const openAIReauthorizationAPI = {
   async cancel(id: string) {
     return (await apiClient.post<OpenAIReauthorizationTask>(`${path}/${encodeURIComponent(id)}/cancel`, { confirmed: true })).data
   },
-  async restart(id: string, acknowledgeRisk = false) {
+  async restart(id: string, acknowledgeRisk = false, browserMode?: 'server' | 'adspower') {
     return (await apiClient.post<OpenAIReauthorizationTask>(`${path}/${encodeURIComponent(id)}/restart`, {
       confirmed: true,
       acknowledged_second_reauthorization_risk: acknowledgeRisk,
+      ...(browserMode ? { browser_mode: browserMode } : {}),
     })).data
+  },
+  async launchAdsPower(id: string) {
+    return (await apiClient.post<{ helper_url: string; expires_at: string }>(`${path}/${encodeURIComponent(id)}/adspower-launch`)).data
   },
   async remove(id: string) {
     return (await apiClient.delete<{ task_id: string; account_id?: number }>(`${path}/${encodeURIComponent(id)}`)).data

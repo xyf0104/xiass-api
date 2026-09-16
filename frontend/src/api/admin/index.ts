@@ -39,6 +39,7 @@ import teamChildAPI from './teamChild'
 import executionNodesAPI from './executionNodes'
 import { accountPoolsAPI } from './accountPools'
 import openAIReauthorizationAPI from './openaiReauthorization'
+import adsPowerAPI from './adspower'
 
 /**
  * Unified admin API object for convenient access
@@ -79,7 +80,8 @@ export const adminAPI = {
   teamChild: teamChildAPI,
   executionNodes: executionNodesAPI,
   accountPools: accountPoolsAPI,
-  openAIReauthorization: openAIReauthorizationAPI
+  openAIReauthorization: openAIReauthorizationAPI,
+  adsPower: adsPowerAPI
 }
 
 export {
@@ -118,7 +120,8 @@ export {
   teamChildAPI,
   executionNodesAPI,
   accountPoolsAPI,
-  openAIReauthorizationAPI
+  openAIReauthorizationAPI,
+  adsPowerAPI
 }
 
 export default adminAPI

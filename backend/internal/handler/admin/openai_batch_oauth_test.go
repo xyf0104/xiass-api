@@ -190,8 +190,12 @@ func batchOAuthRouter(h *OpenAIOAuthHandler, owner int64, role string) *gin.Engi
 	r.POST("/tasks/:task_id/complete", h.CompleteBatchOAuthTask)
 	r.POST("/tasks/:task_id/cancel", h.CancelBatchOAuthTask)
 	r.POST("/tasks/:task_id/restart", h.RestartBatchOAuthTask)
+	r.POST("/tasks/:task_id/adspower-launch", h.LaunchBatchOAuthTaskInAdsPower)
 	r.GET("/tasks/:task_id/sms", h.BatchOAuthSMSAction)
 	r.POST("/tasks/:task_id/sms/:action", h.BatchOAuthSMSAction)
+	r.POST("/tools/adspower/launch-tickets/redeem", h.RedeemOpenAIAdsPowerLaunchTicket)
+	r.POST("/tools/adspower/bindings/report", h.ReportOpenAIAdsPowerBinding)
+	r.POST("/tools/adspower/callbacks/report", h.ReportOpenAIAdsPowerCallback)
 	return r
 }
 
@@ -240,6 +244,84 @@ func TestBatchOAuthTaskOwnershipAndSecretRedaction(t *testing.T) {
 	require.Equal(t, before, f.sidecarCalls.Load())
 	member := batchOAuthRouter(f.h, 42, "user")
 	require.Equal(t, 403, batchOAuthRequest(member, "GET", "/tasks/"+id, "").Code)
+}
+
+func TestBatchOAuthAdsPowerModeUsesOneTaskBoundCallbackAndPersistsProfile(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	r := batchOAuthRouter(f.h, 42, "admin")
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"email":"owner@example.test","password":"login-secret","totp_secret":"JBSWY3DPEHPK3PXP","browser_mode":"adspower","idempotency_key":"adspower-batch-0001"}`)
+	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
+	var started struct {
+		Data batchOAuthTask `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(start.Body.Bytes(), &started))
+	require.Equal(t, batchOAuthBrowserAdsPower, started.Data.BrowserMode)
+	require.Equal(t, "external_browser", started.Data.Stage)
+	require.Zero(t, f.sidecarCalls.Load())
+
+	launch := httptest.NewRecorder()
+	launchRequest := httptest.NewRequest(http.MethodPost, "/tasks/"+started.Data.ID+"/adspower-launch", strings.NewReader(`{}`))
+	launchRequest.Host = "127.0.0.1"
+	launchRequest.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(launch, launchRequest)
+	require.Equal(t, http.StatusOK, launch.Code, launch.Body.String())
+	require.Equal(t, http.StatusConflict, batchOAuthRequest(r, http.MethodPost, "/tasks/"+started.Data.ID+"/adspower-launch", `{}`).Code)
+	var launchEnvelope struct {
+		Data openAIAdsPowerLaunchResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(launch.Body.Bytes(), &launchEnvelope))
+	helperURL, err := url.Parse(launchEnvelope.Data.HelperURL)
+	require.NoError(t, err)
+	ticket := helperURL.Query().Get("ticket")
+	require.NotEmpty(t, ticket)
+
+	redeem := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/launch-tickets/redeem", `{"ticket":"`+ticket+`"}`)
+	require.Equal(t, http.StatusOK, redeem.Code, redeem.Body.String())
+	var redeemed struct {
+		Data openAIAdsPowerRedeemResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(redeem.Body.Bytes(), &redeemed))
+	require.NotEmpty(t, redeemed.Data.BindingToken)
+	require.NotEmpty(t, redeemed.Data.CallbackToken)
+	require.Equal(t, "api", redeemed.Data.EnvironmentKey)
+
+	bindingBody := `{"binding_token":"` + redeemed.Data.BindingToken + `","device_id":"device-1","profile_id":"profile-1","profile_no":"7","profile_name":"XIASS owner","environment_key":"api","proxy_type":"socks5","proxy_host":"proxy.example.test","proxy_port":"1104","proxy_exit_ip":"203.0.113.42","webrtc_disabled":true,"fingerprint_randomized":true}`
+	binding := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/bindings/report", bindingBody)
+	require.Equal(t, http.StatusOK, binding.Code, binding.Body.String())
+	pendingBinding, err := f.h.adsPowerLaunchStore.pendingBinding(context.Background(), redeemed.Data.SessionID, 42)
+	require.NoError(t, err)
+	require.NotNil(t, pendingBinding)
+	f.admin.getAccountResult = &service.Account{
+		ID: 300, Name: "owner@example.test", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
+		Credentials: map[string]any{
+			"email": "owner@example.test",
+			service.OpenAIOAuthReauthorizationEmailCredentialKey:      "owner@example.test",
+			service.OpenAIOAuthReauthorizationPasswordCredentialKey:   "enc:bG9naW4tc2VjcmV0",
+			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "enc:SkJTV1kzRFBFSFBLM1BYUA",
+		},
+		Extra: map[string]any{"codex_fingerprint_mode": "off", service.OpenAIAdsPowerBindingExtraKey: pendingBinding},
+	}
+
+	task := f.h.batchOAuthStore.tasks[started.Data.ID]
+	task.mu.Lock()
+	callbackURL := openai.DefaultRedirectURI + "?code=private-code&state=" + task.state
+	task.mu.Unlock()
+	callbackBody, err := json.Marshal(openAIAdsPowerCallbackReport{CallbackToken: redeemed.Data.CallbackToken, CallbackURL: callbackURL})
+	require.NoError(t, err)
+	callback := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/callbacks/report", string(callbackBody))
+	require.Equal(t, http.StatusOK, callback.Code, callback.Body.String())
+	require.Equal(t, http.StatusGone, batchOAuthRequest(r, http.MethodPost, "/tools/adspower/callbacks/report", string(callbackBody)).Code)
+
+	completed := batchOAuthRequest(r, http.MethodPost, "/tasks/"+started.Data.ID+"/complete", `{}`)
+	require.Equal(t, http.StatusOK, completed.Code, completed.Body.String())
+	require.Contains(t, completed.Body.String(), `"status":"completed"`)
+	require.Len(t, f.admin.createdAccounts, 1)
+	stored := service.ParseOpenAIAdsPowerBinding(f.admin.createdAccounts[0].Extra[service.OpenAIAdsPowerBindingExtraKey])
+	require.NotNil(t, stored)
+	require.Equal(t, "profile-1", stored.ProfileID)
+	require.Equal(t, "api", stored.EnvironmentKey)
+	require.Zero(t, f.sidecarCalls.Load())
 }
 
 func TestBatchOAuthStartIdempotencyAndCapacity(t *testing.T) {

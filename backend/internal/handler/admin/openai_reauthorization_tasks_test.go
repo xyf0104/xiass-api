@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,7 @@ func openAIReauthorizationRouter(h *OpenAIOAuthHandler, owner int64) *gin.Engine
 	r.POST("/tasks/:task_id/complete", h.CompleteOpenAIReauthorizationTask)
 	r.POST("/tasks/:task_id/cancel", h.CancelOpenAIReauthorizationTask)
 	r.POST("/tasks/:task_id/restart", h.RestartOpenAIReauthorizationTask)
+	r.POST("/tasks/:task_id/adspower-launch", h.LaunchOpenAIReauthorizationTaskInAdsPower)
 	return r
 }
 
@@ -107,6 +109,35 @@ func TestOpenAIReauthorizationTaskUsesSavedLoginAndAccountProxy(t *testing.T) {
 	require.Equal(t, 1, f.admin.openAIReauthorizationState.last.AttemptCount)
 	require.Equal(t, service.OpenAIReauthorizationResultRunning, f.admin.openAIReauthorizationState.last.LastResult)
 	require.Equal(t, service.OpenAIReauthorizationHistoryExact, f.admin.openAIReauthorizationState.last.HistoryConfidence)
+}
+
+func TestOpenAIReauthorizationAdsPowerModeKeepsHistoryAndSkipsServerBrowser(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Name: "account-egress", Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	r := openAIReauthorizationRouter(f.h, 42)
+
+	started := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"browser_mode":"adspower"}`)
+	require.Equal(t, http.StatusOK, started.Code, started.Body.String())
+	require.Contains(t, started.Body.String(), `"browser_mode":"adspower"`)
+	require.Contains(t, started.Body.String(), `"stage":"external_browser"`)
+	require.Zero(t, f.sidecarCalls.Load())
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.last.AttemptCount)
+
+	var envelope struct {
+		Data batchOAuthTask `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(started.Body.Bytes(), &envelope))
+	launch := httptest.NewRecorder()
+	launchRequest := httptest.NewRequest(http.MethodPost, "/tasks/"+envelope.Data.ID+"/adspower-launch", strings.NewReader(`{}`))
+	launchRequest.Host = "127.0.0.1"
+	launchRequest.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(launch, launchRequest)
+	require.Equal(t, http.StatusOK, launch.Code, launch.Body.String())
+	require.Equal(t, http.StatusConflict, batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/adspower-launch", `{}`).Code)
 }
 
 func TestOpenAIReauthorizationTaskRequiresConfirmation(t *testing.T) {

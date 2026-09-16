@@ -50,7 +50,7 @@ func openAIReauthorizationAccountConfig(account *service.Account) batchOAuthConf
 	}
 }
 
-func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64) (*service.Account, *openAIReauthorizationLoginMaterial, map[string]string, error) {
+func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64, browserMode string) (*service.Account, *openAIReauthorizationLoginMaterial, map[string]string, error) {
 	if h == nil || h.adminService == nil || h.secretEncryptor == nil {
 		return nil, nil, nil, errors.New("OpenAI reauthorization is unavailable")
 	}
@@ -75,7 +75,11 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 		if decryptErr != nil || validateBatchEmailCodeLogin(email, emailCodeToken) != nil {
 			return nil, nil, nil, errors.New("saved OpenAI email-code token cannot be decrypted")
 		}
-		proxy, proxyErr := h.batchOAuthBrowserProxy(ctx, account.ProxyID)
+		var proxy map[string]string
+		var proxyErr error
+		if normalizeBatchOAuthBrowserMode(browserMode) != batchOAuthBrowserAdsPower {
+			proxy, proxyErr = h.batchOAuthBrowserProxy(ctx, account.ProxyID)
+		}
 		if proxyErr != nil {
 			return nil, nil, nil, errors.New("the account proxy is unavailable for browser authorization")
 		}
@@ -100,9 +104,12 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	if err := validateBatchLogin(email, password, totpSecret); err != nil {
 		return nil, nil, nil, errors.New("saved OpenAI login information is invalid")
 	}
-	proxy, err := h.batchOAuthBrowserProxy(ctx, account.ProxyID)
-	if err != nil {
-		return nil, nil, nil, errors.New("the account proxy is unavailable for browser authorization")
+	var proxy map[string]string
+	if normalizeBatchOAuthBrowserMode(browserMode) != batchOAuthBrowserAdsPower {
+		proxy, err = h.batchOAuthBrowserProxy(ctx, account.ProxyID)
+		if err != nil {
+			return nil, nil, nil, errors.New("the account proxy is unavailable for browser authorization")
+		}
 	}
 	return account, &openAIReauthorizationLoginMaterial{
 		Email: email, Method: batchOAuthLoginPassword, Password: password, TOTPSecret: totpSecret,
@@ -128,7 +135,12 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), req.AccountID)
+	browserMode := normalizeBatchOAuthBrowserMode(req.BrowserMode)
+	if browserMode != batchOAuthBrowserServer && browserMode != batchOAuthBrowserAdsPower {
+		response.BadRequest(c, "Invalid browser mode")
+		return
+	}
+	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), req.AccountID, browserMode)
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
@@ -181,9 +193,11 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
+	taskConfig := openAIReauthorizationAccountConfig(account)
+	taskConfig.BrowserMode = browserMode
 	task := &batchOAuthTask{
 		ID: id, Mode: batchOAuthModeReauthorization, Email: login.Email, LoginMethod: login.Method, TargetAccountID: req.AccountID,
-		ownerID: owner, sidecarID: id, config: openAIReauthorizationAccountConfig(account),
+		ownerID: owner, sidecarID: id, config: taskConfig, BrowserMode: browserMode,
 		executionNodeID: strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)),
 		Status:          "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
 		ReauthorizationNumber: authorizationNumber,
@@ -283,6 +297,13 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		response.Success(c, task)
 		return
 	}
+	if task.usesAdsPower() {
+		binding := service.OpenAIAdsPowerBindingFromAccount(account)
+		if binding == nil || binding.EnvironmentKey != openAIAdsPowerAccountEnvironment(account) {
+			response.Error(c, http.StatusConflict, "AdsPower browser binding has not been verified")
+			return
+		}
+	}
 	code, err := validateBatchCallback(sidecar.CallbackURL, task.state)
 	if err != nil {
 		response.BadRequest(c, "Invalid OAuth callback")
@@ -342,6 +363,7 @@ func finishOpenAIReauthorizationTask(task *batchOAuthTask, account *service.Acco
 	task.AccountID = account.ID
 	task.Status, task.Stage, task.Reason = "completed", "completed", ""
 	config := openAIReauthorizationAccountConfig(account)
+	config.BrowserMode = task.BrowserMode
 	task.AccountConfig = &config
 }
 
@@ -367,6 +389,15 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, "OpenAI 页面显示账号受限、删除或停用；手动重试需要高风险二次确认")
 		return
 	}
+	previousUsesAdsPower := task.usesAdsPower()
+	browserMode := normalizeBatchOAuthBrowserMode(req.BrowserMode)
+	if req.BrowserMode == "" {
+		browserMode = normalizeBatchOAuthBrowserMode(task.config.BrowserMode)
+	}
+	if browserMode != batchOAuthBrowserServer && browserMode != batchOAuthBrowserAdsPower {
+		response.BadRequest(c, "Invalid browser mode")
+		return
+	}
 	if !task.terminal() {
 		response.Error(c, http.StatusConflict, "Stop the current task before restarting")
 		return
@@ -375,7 +406,7 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID)
+	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID, browserMode)
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
@@ -399,9 +430,11 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, err.Error())
 		return
 	}
-	if _, err := task.sidecar(ctx, "cancel", nil); err != nil {
-		response.Error(c, http.StatusBadGateway, "Browser cancellation not confirmed")
-		return
+	if !previousUsesAdsPower {
+		if _, err := task.sidecar(ctx, "cancel", nil); err != nil {
+			response.Error(c, http.StatusBadGateway, "Browser cancellation not confirmed")
+			return
+		}
 	}
 	h.openaiOAuthService.RevokeWorkflowSession(task.sessionID)
 	id, err := newTeamChildBrowserToken()
@@ -413,6 +446,8 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	task.Email = login.Email
 	task.LoginMethod = login.Method
 	task.config = openAIReauthorizationAccountConfig(account)
+	task.config.BrowserMode = browserMode
+	task.BrowserMode = browserMode
 	task.executionNodeID = strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
 	task.submittedPhone = ""
 	task.RestartCount++

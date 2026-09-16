@@ -691,6 +691,20 @@
                     </button>
                   </div>
                   <button
+                    v-if="showAdsPowerOption"
+                    type="button"
+                    class="btn btn-primary flex w-full items-center justify-center gap-2 sm:w-auto"
+                    :disabled="adsPowerLaunching"
+                    data-testid="launch-adspower-browser"
+                    @click="$emit('launch-adspower')"
+                  >
+                    <Icon name="globe" size="sm" :class="adsPowerLaunching ? 'animate-pulse' : ''" :stroke-width="2" />
+                    <span>{{ adsPowerLaunching ? '正在唤起固定环境' : '用固定指纹浏览器打开' }}</span>
+                  </button>
+                  <p v-if="showAdsPowerOption" class="text-xs text-blue-700 dark:text-blue-300">
+                    首次登录和以后重新授权都会复用该账号绑定的环境与服务器出口。
+                  </p>
+                  <button
                     type="button"
                     class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
                     @click="handleRegenerate"
@@ -854,6 +868,8 @@ interface Props {
   initialInputMethod?: AuthInputMethod
   platform?: AccountPlatform // Platform type for different UI/text
   showProjectId?: boolean // New prop to control project ID visibility
+  showAdsPowerOption?: boolean
+  adsPowerLaunching?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -877,7 +893,9 @@ const props = withDefaults(defineProps<Props>(), {
   showManualOption: true,
   initialInputMethod: 'manual',
   platform: 'anthropic',
-  showProjectId: true
+  showProjectId: true,
+  showAdsPowerOption: false,
+  adsPowerLaunching: false
 })
 
 const emit = defineEmits<{
@@ -892,6 +910,7 @@ const emit = defineEmits<{
   'import-codex-pat': [accessToken: string]
   'import-sso': [content: string]
   'update:inputMethod': [method: AuthInputMethod]
+  'launch-adspower': []
 }>()
 
 const { t } = useI18n()

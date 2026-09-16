@@ -45,6 +45,30 @@ func RegisterToolRoutes(
 		)
 	}
 
+	// AdsPower runs on the administrator's own computer. A short-lived ticket
+	// minted by the authenticated admin page is the only authority accepted by
+	// these endpoints; the local AdsPower API key never reaches XIASS.
+	adsPower := tools.Group("/adspower")
+	adsPower.Use(publicAdsPowerHelperSecurity())
+	adsPower.Use(panelRateLimiter.PublicIP())
+	{
+		adsPower.POST(
+			"/launch-tickets/redeem",
+			rateLimiter.LimitWithOptions("public-adspower-ticket-redeem", 30, time.Minute, strict),
+			h.Admin.OpenAIOAuth.RedeemOpenAIAdsPowerLaunchTicket,
+		)
+		adsPower.POST(
+			"/bindings/report",
+			rateLimiter.LimitWithOptions("public-adspower-binding-report", 30, time.Minute, strict),
+			h.Admin.OpenAIOAuth.ReportOpenAIAdsPowerBinding,
+		)
+		adsPower.POST(
+			"/callbacks/report",
+			rateLimiter.LimitWithOptions("public-adspower-callback-report", 30, time.Minute, strict),
+			h.Admin.OpenAIOAuth.ReportOpenAIAdsPowerCallback,
+		)
+	}
+
 	// This is intentionally a separate, no-login surface rather than an
 	// extension of the XIASS admin UI. A long-lived random bearer token scopes
 	// each request to one Team mailbox; rate limits and no-store headers apply
@@ -71,6 +95,17 @@ func RegisterToolRoutes(
 			rateLimiter.LimitWithOptions("public-team-mailbox-message-hourly", 1000, time.Hour, strict),
 			h.Admin.OpenAIOAuth.GetPublicTeamChildMailboxShareMessage,
 		)
+	}
+}
+
+func publicAdsPowerHelperSecurity() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store, max-age=0")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("Cross-Origin-Resource-Policy", "same-origin")
+		c.Next()
 	}
 }
 

@@ -1,4 +1,5 @@
 <template>
+  <DarkVideoBackground blurred />
   <div class="openai-account-workbench mx-auto w-full min-w-0 space-y-4 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
     <header class="oauth-workbench-heading">
       <button type="button" class="oauth-icon-button oauth-workbench-back" title="返回账号管理" aria-label="返回账号管理" @click="backToAccounts">
@@ -112,7 +113,7 @@
             </button>
             <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!batchStartableAccounts.length || startingAll" @click="requestStartAll">
               <Icon name="play" size="sm" :stroke-width="2" />
-              <span>{{ startingAll ? '正在启动' : `一键授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
+              <span>{{ startingAll ? '正在启动' : `一键内置授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
             </button>
           </div>
         </header>
@@ -143,6 +144,7 @@
               <div class="mt-2 flex flex-wrap items-center gap-1.5">
                 <span v-if="account.execution_node_id" class="oauth-mini-tag">{{ account.execution_node_id }}</span>
                 <span class="oauth-mini-tag" :class="loginMethodClass(account)">{{ loginMethodLabel(account) }}</span>
+                <span v-if="adsPowerBindingLabel(account)" class="oauth-mini-tag oauth-mini-tag-fingerprint">{{ adsPowerBindingLabel(account) }}</span>
               </div>
             </div>
 
@@ -175,10 +177,16 @@
                 <Icon name="key" size="sm" :stroke-width="2" />
                 <span>补充登录资料</span>
               </button>
-              <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="requestStartAccount(account)">
-                <Icon :name="taskFor(account)?.status === 'failed' || taskFor(account)?.status === 'blocked' || taskFor(account)?.status === 'canceled' ? 'refresh' : 'play'" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
-                <span>{{ retryLabel(account) }}</span>
-              </button>
+              <template v-else-if="canStart(account)">
+                <button type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="requestStartAccount(account, 'server')">
+                  <Icon name="server" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
+                  <span>内置 · {{ retryLabel(account) }}</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`manual-fingerprint-reauthorization-${account.id}`" @click="requestStartAccount(account, 'adspower')">
+                  <Icon name="globe" size="sm" :stroke-width="2" />
+                  <span>Ads · {{ retryLabel(account) }}</span>
+                </button>
+              </template>
               <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
                 <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
               </span>
@@ -296,6 +304,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from '@/components/icons'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import DarkVideoBackground from '@/components/common/DarkVideoBackground.vue'
 import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
 import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
 import { accountsAPI, groupsAPI, proxiesAPI } from '@/api/admin'
@@ -329,7 +338,8 @@ const batchOptionsLoading = ref(true)
 const batchOptionsError = ref('')
 const operationNotice = ref('')
 const pendingDeleteAccount = ref<Account | null>(null)
-const pendingAuthorization = ref<{ accounts: Account[]; batch: boolean } | null>(null)
+type AuthorizationBrowserMode = 'server' | 'adspower'
+const pendingAuthorization = ref<{ accounts: Account[]; batch: boolean; browserMode: AuthorizationBrowserMode } | null>(null)
 type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'history' | 'credentials'
 type HistoryFilter = 'all' | 'unauthorized' | 'first' | 'second'
 const activeWorkspace = ref<WorkbenchWorkspace>(initialWorkspace())
@@ -431,21 +441,25 @@ const authorizationConfirmationMessage = computed(() => {
   }
   const account = pending.accounts[0]
   const status = statusFor(account)
+  const browserNote = pending.browserMode === 'adspower' ? ' 本次会打开该账号固定的 AdsPower 环境。' : ''
   if (status?.risk_level === 'cooldown') {
     const nextAt = nextAuthorizationAt(status)
     const recommendation = nextAt ? `，建议等到 ${formatHistoryDate(nextAt)}` : ''
-    return `#${account.id} ${account.name} 仍在 7 天冷静期内，剩余 ${formatDuration(status.cooldown_remaining_seconds)}${recommendation}。现在继续会强制启动第 ${status.current_authorization_number} 次授权，存在较高封号风险；仅在你已确认风险时继续。`
+    return `#${account.id} ${account.name} 仍在 7 天冷静期内，剩余 ${formatDuration(status.cooldown_remaining_seconds)}${recommendation}。现在继续会强制启动第 ${status.current_authorization_number} 次授权，存在较高封号风险；仅在你已确认风险时继续。${browserNote}`
   }
   if (status?.risk_level === 'blocked') {
-    return `#${account.id} ${account.name} 的 OpenAI 页面检测结果为“${accountRestrictionLabel(account)}”。自动重试已停止；现在继续可能再次失败或导致更严格限制，只能在你已确认风险后手动启动。`
+    return `#${account.id} ${account.name} 的 OpenAI 页面检测结果为“${accountRestrictionLabel(account)}”。自动重试已停止；现在继续可能再次失败或导致更严格限制，只能在你已确认风险后手动启动。${browserNote}`
   }
   if (status?.requires_risk_confirmation) {
-    return `#${account.id} ${account.name} 已经成功进行过 401 重新授权，现在是第 ${status.current_authorization_number} 次掉授权。建议不要再授权，继续可能导致封号。仅在你已确认风险时继续。`
+    return `#${account.id} ${account.name} 已经成功进行过 401 重新授权，现在是第 ${status.current_authorization_number} 次掉授权。建议不要再授权，继续可能导致封号。仅在你已确认风险时继续。${browserNote}`
   }
-  return `#${account.id} ${account.name} 将开始第一次 401 重新授权。授权结果、失败原因和是否封号都会保存在本工作台。`
+  return `#${account.id} ${account.name} 将开始第一次 401 重新授权。授权结果、失败原因和是否封号都会保存在本工作台。${browserNote}`
 })
 
-const authorizationConfirmationButton = computed(() => authorizationConfirmationDanger.value ? '我已知风险，继续授权' : '确认开始')
+const authorizationConfirmationButton = computed(() => {
+  if (pendingAuthorization.value?.browserMode === 'adspower') return authorizationConfirmationDanger.value ? '我已知风险，打开固定环境' : '确认并打开固定环境'
+  return authorizationConfirmationDanger.value ? '我已知风险，继续授权' : '确认开始'
+})
 
 function queryAccountIDs(): number[] {
   const raw = Array.isArray(route.query.account_ids) ? route.query.account_ids[0] : route.query.account_ids
@@ -510,6 +524,16 @@ function accountAvatar(account: Account): string {
   return (source.match(/[a-z0-9]/i)?.[0] || source.charAt(0) || '?').toUpperCase()
 }
 
+function adsPowerBindingLabel(account: Account): string {
+  const value = (account.extra as Record<string, unknown> | undefined)?.xiass_openai_adspower_binding
+  if (!value || typeof value !== 'object') return ''
+  const binding = value as Record<string, unknown>
+  const environment = typeof binding.environment_key === 'string' ? binding.environment_key.trim() : ''
+  const profileNo = typeof binding.profile_no === 'string' ? binding.profile_no.trim() : ''
+  if (!environment) return ''
+  return `固定环境${profileNo ? ` #${profileNo}` : ''} · ${environment}`
+}
+
 function accountLoginMethod(account: Account): 'password' | 'email_code' | '' {
   const status = account.credentials_status
   if (status?.has_xiass_openai_oauth_reauth_email !== true) return ''
@@ -559,6 +583,7 @@ function retryLabel(account: Account): string {
 
 const stageDetails: Record<string, { step: number; label: string }> = {
   queued: { step: 1, label: '等待独立隐私上下文' },
+  external_browser: { step: 1, label: '等待 Ads 指纹浏览器完成登录，成功后自动关闭' },
   opening: { step: 1, label: '打开 OpenAI OAuth 授权页' },
   login: { step: 1, label: '进入 OpenAI 登录' },
   email: { step: 2, label: '填写登录邮箱' },
@@ -895,7 +920,7 @@ async function confirmDeleteAccount() {
   }
 }
 
-async function startAccount(account: Account, acknowledgeRisk = false) {
+async function startAccount(account: Account, acknowledgeRisk = false, browserMode: AuthorizationBrowserMode = 'server', popup: Window | null = null) {
   if (!canStart(account)) return
   setBusy(account.id, true)
   const errors = new Map(localErrors.value)
@@ -903,13 +928,28 @@ async function startAccount(account: Account, acknowledgeRisk = false) {
   localErrors.value = errors
   try {
     const current = taskFor(account)
+    const requestedBrowserMode = browserMode === 'adspower' ? 'adspower' : undefined
+    const restartCurrent = (taskID: string) => requestedBrowserMode
+      ? openAIReauthorizationAPI.restart(taskID, acknowledgeRisk, requestedBrowserMode)
+      : openAIReauthorizationAPI.restart(taskID, acknowledgeRisk)
+    const startCurrent = () => requestedBrowserMode
+      ? openAIReauthorizationAPI.start(account.id, acknowledgeRisk, requestedBrowserMode)
+      : openAIReauthorizationAPI.start(account.id, acknowledgeRisk)
     const task = current?.reason === 'account_state_recovery_failed' && current.account_id
       ? await openAIReauthorizationAPI.complete(current.task_id)
       : current && terminalFailureStatuses.has(current.status)
-        ? await openAIReauthorizationAPI.restart(current.task_id, acknowledgeRisk)
-        : await openAIReauthorizationAPI.start(account.id, acknowledgeRisk)
+        ? await restartCurrent(current.task_id)
+        : await startCurrent()
     mergeTask(task)
+    if (browserMode === 'adspower' && task.browser_mode === 'adspower' && task.stage === 'external_browser') {
+      const launch = await openAIReauthorizationAPI.launchAdsPower(task.task_id)
+      if (popup) popup.location.href = launch.helper_url
+      else window.location.assign(launch.helper_url)
+    } else if (popup) {
+      popup.close()
+    }
   } catch (error) {
+    popup?.close()
     const next = new Map(localErrors.value)
     next.set(account.id, extractApiErrorMessage(error, '无法启动该账号的 401 重新授权。'))
     localErrors.value = next
@@ -936,15 +976,15 @@ async function stopAccount(account: Account) {
   }
 }
 
-function requestStartAccount(account: Account) {
+function requestStartAccount(account: Account, browserMode: AuthorizationBrowserMode = 'server') {
   if (!canStart(account)) return
-  pendingAuthorization.value = { accounts: [account], batch: false }
+  pendingAuthorization.value = { accounts: [account], batch: false, browserMode }
 }
 
 function requestStartAll() {
   const candidates = batchStartableAccounts.value
   if (!candidates.length) return
-  pendingAuthorization.value = { accounts: [...candidates], batch: true }
+  pendingAuthorization.value = { accounts: [...candidates], batch: true, browserMode: 'server' }
 }
 
 function confirmAuthorization() {
@@ -953,7 +993,9 @@ function confirmAuthorization() {
   pendingAuthorization.value = null
   if (!pending.batch) {
     const account = pending.accounts[0]
-    void startAccount(account, statusFor(account)?.requires_risk_confirmation === true)
+    const popup = pending.browserMode === 'adspower' ? window.open('about:blank', '_blank') : null
+    if (popup) popup.opener = null
+    void startAccount(account, statusFor(account)?.requires_risk_confirmation === true, pending.browserMode, popup)
     return
   }
   queuedAccountIDs.value = pending.accounts.map(account => account.id)
@@ -966,7 +1008,7 @@ async function pumpQueue() {
     const accountID = queuedAccountIDs.value.shift()!
     const account = accounts.value.find(candidate => candidate.id === accountID)
     if (!account || !canStart(account)) continue
-    void startAccount(account, false)
+    void startAccount(account, false, 'server')
   }
   if (!queuedAccountIDs.value.length) startingAll.value = false
 }

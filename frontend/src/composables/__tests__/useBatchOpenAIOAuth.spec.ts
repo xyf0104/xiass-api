@@ -5,7 +5,7 @@ import { batchOAuthAPI, type BatchOAuthTask, type BatchOAuthConfig } from '@/api
 import { batchTaskWillAutoRestart, useBatchOpenAIOAuth } from '../useBatchOpenAIOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 
-vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), remove: vi.fn(), sms: vi.fn() } }))
+vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), remove: vi.fn(), sms: vi.fn(), launchAdsPower: vi.fn() } }))
 const settings: BatchOAuthConfig = { group_ids: [4, 9], proxy_id: 3, pool_id: 2, concurrency: 3, priority: 1, codex_fingerprint_mode: 'off' }
 const credentials = parseAccountCredentials(Array.from({ length: 5 }, (_, i) => `person${i}@example.test----password-${i}----JBSWY3DPEHPK3PXP`).join('\n')).rows.map(row => ({
   account: row.account,

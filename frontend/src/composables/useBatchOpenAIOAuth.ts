@@ -275,6 +275,18 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     })
   }
 
+  async function launchAdsPower(row: OAuthQueueRow) {
+    if (!row.task || row.task.browser_mode !== 'adspower' || row.task.stage !== 'external_browser') return
+    const popup = window.open('about:blank', '_blank')
+    if (popup) popup.opener = null
+    await operation(row, async () => {
+      const result = await batchOAuthAPI.launchAdsPower(row.task!.task_id)
+      if (popup) popup.location.href = result.helper_url
+      else window.location.assign(result.helper_url)
+    })
+    if (row.error && popup) popup.close()
+  }
+
   function retry(row: OAuthQueueRow) {
     if (disposed || row.retryPending) return
     if (!secrets.has(row.key)) {
@@ -322,7 +334,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   }
   onScopeDispose(dispose)
   void sync()
-  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch,
+  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower,
     hasSecret: (row: OAuthQueueRow) => secrets.has(row.key),
     emailCodeToken: (row: OAuthQueueRow) => {
       const login = secrets.get(row.key)

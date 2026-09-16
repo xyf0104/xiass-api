@@ -127,8 +127,12 @@ func (h *OpenAIOAuthHandler) ConfigureTeamChildSessionStore(redisClient *rediscl
 	if h.teamBrowserStore == nil {
 		h.teamBrowserStore = newOpenAITeamBrowserStore()
 	}
+	if h.adsPowerLaunchStore == nil {
+		h.adsPowerLaunchStore = newOpenAIAdsPowerLaunchStore()
+	}
 	h.teamMailboxStore.configureRedis(redisClient)
 	h.teamBrowserStore.configureRedis(redisClient)
+	h.adsPowerLaunchStore.configureRedis(redisClient)
 }
 
 func (s *openAITeamBrowserStore) configureRedis(redisClient *redisclient.Client) {

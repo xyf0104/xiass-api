@@ -48,6 +48,24 @@
         </div>
       </div>
 
+      <div v-if="adsPowerBinding" class="rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 dark:border-cyan-900/60 dark:bg-cyan-950/20">
+        <div class="flex min-w-0 items-start gap-3">
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-950/70 dark:text-cyan-300">
+            <Icon name="globe" size="sm" :stroke-width="2" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-cyan-900 dark:text-cyan-100">已绑定固定指纹环境</p>
+            <p class="mt-1 truncate text-xs text-cyan-800/80 dark:text-cyan-200/80">
+              {{ adsPowerBinding.profile_name || adsPowerBinding.profile_id }} · {{ adsPowerBinding.environment_key }}<template v-if="adsPowerBinding.proxy_exit_ip"> · {{ adsPowerBinding.proxy_exit_ip }}</template>
+            </p>
+            <p class="mt-1 text-xs text-cyan-700 dark:text-cyan-300">随机指纹 · WebRTC 已关闭 · 后续授权继续复用</p>
+          </div>
+          <button type="button" class="btn btn-secondary flex h-9 w-9 shrink-0 items-center justify-center p-0" title="解除固定环境绑定" aria-label="解除固定环境绑定" @click="showAdsPowerUnbindConfirm = true">
+            <Icon name="trash" size="sm" class="text-red-500" :stroke-width="2" />
+          </button>
+        </div>
+      </div>
+
       <div v-if="isTeamChildAccount" class="rounded-lg border border-primary-200 bg-primary-50/50 p-4 dark:border-primary-900/60 dark:bg-primary-950/15">
         <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
@@ -154,7 +172,10 @@
         :method-label="t('admin.accounts.inputMethod')"
         :platform="isOpenAI ? 'openai' : isGemini ? 'gemini' : isAntigravity ? 'antigravity' : isGrok ? 'grok' : 'anthropic'"
         :show-project-id="isGemini && geminiOAuthType === 'code_assist'"
+        :show-ads-power-option="adsPowerEligible"
+        :ads-power-launching="adsPowerLaunching"
         @generate-url="handleGenerateUrl"
+        @launch-adspower="handleLaunchAdsPower"
         @cookie-auth="handleCookieAuth"
         @validate-refresh-token="handleValidateRefreshToken"
       />
@@ -202,6 +223,16 @@
       </div>
     </template>
   </BaseDialog>
+  <ConfirmDialog
+    :show="showAdsPowerUnbindConfirm"
+    title="解除固定环境绑定"
+    message="解除后，下次固定环境授权会创建新的账号专属浏览器。AdsPower 中原有环境不会自动删除。"
+    confirm-text="解除绑定"
+    cancel-text="取消"
+    danger
+    @confirm="handleUnbindAdsPower"
+    @cancel="showAdsPowerUnbindConfirm = false"
+  />
   <TotpStepUpDialog :controller="teamPasswordStepUp" />
 </template>
 
@@ -223,6 +254,7 @@ import { useGrokOAuth } from '@/composables/useGrokOAuth'
 import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import type { Account } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OAuthAuthorizationFlow from '@/components/account/OAuthAuthorizationFlow.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
@@ -268,6 +300,11 @@ const addMethod = ref<AddMethod>('oauth')
 const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('code_assist')
 const revealedTeamPassword = ref('')
 const teamPasswordLoading = ref(false)
+const adsPowerLaunching = ref(false)
+const adsPowerSessionId = ref('')
+const adsPowerBindingCleared = ref(false)
+const adsPowerUnbinding = ref(false)
+const showAdsPowerUnbindConfirm = ref(false)
 
 // Computed - check platform
 const isOpenAI = computed(() => props.account?.platform === 'openai')
@@ -276,6 +313,20 @@ const isGemini = computed(() => props.account?.platform === 'gemini')
 const isAnthropic = computed(() => props.account?.platform === 'anthropic')
 const isAntigravity = computed(() => props.account?.platform === 'antigravity')
 const isGrok = computed(() => props.account?.platform === 'grok')
+const adsPowerEligible = computed(
+  () => isOpenAI.value && props.account?.type === 'oauth' && !props.account?.parent_account_id
+)
+const adsPowerBinding = computed(() => {
+  if (adsPowerBindingCleared.value) return null
+  const value = (props.account?.extra as Record<string, unknown> | undefined)?.xiass_openai_adspower_binding
+  if (!value || typeof value !== 'object') return null
+  return value as {
+    profile_id: string
+    profile_name?: string
+    environment_key: string
+    proxy_exit_ip?: string
+  }
+})
 const teamChildEmail = computed(() => {
   const value = (props.account?.extra as Record<string, unknown> | undefined)?.xiass_team_child_email
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -333,6 +384,7 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal && props.account) {
+      adsPowerBindingCleared.value = false
       // Initialize addMethod based on current account type (Claude only)
       if (
         isAnthropic.value &&
@@ -361,6 +413,10 @@ const resetState = () => {
   geminiOAuthType.value = 'code_assist'
   claudeOAuth.resetState()
   openaiOAuth.resetState()
+  adsPowerSessionId.value = ''
+  adsPowerBindingCleared.value = false
+  adsPowerUnbinding.value = false
+  showAdsPowerUnbindConfirm.value = false
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   grokOAuth.resetState()
@@ -369,7 +425,7 @@ const resetState = () => {
 }
 
 const handleClose = () => {
-	clearTeamPassword()
+  clearTeamPassword()
   emit('close')
 }
 
@@ -410,6 +466,7 @@ const handleGenerateUrl = async () => {
   if (!props.account) return
 
   if (isOpenAILike.value) {
+    adsPowerSessionId.value = ''
     await openaiOAuth.generateAuthUrl(props.account.proxy_id)
   } else if (isGemini.value) {
     const creds = (props.account.credentials || {}) as Record<string, unknown>
@@ -422,6 +479,52 @@ const handleGenerateUrl = async () => {
     await grokOAuth.generateAuthUrl(props.account.proxy_id)
   } else {
     await claudeOAuth.generateAuthUrl(addMethod.value, props.account.proxy_id)
+  }
+}
+
+const handleLaunchAdsPower = async () => {
+  if (!props.account || !adsPowerEligible.value || !currentAuthUrl.value || !currentSessionId.value || adsPowerLaunching.value) return
+  const helperWindow = window.open('', '_blank')
+  adsPowerLaunching.value = true
+  try {
+    await openaiOAuth.generateAuthUrl(null)
+    const sessionId = currentSessionId.value
+    const authUrl = currentAuthUrl.value
+    if (!sessionId || !authUrl) throw new Error('无法创建固定环境授权会话')
+    const result = await adminAPI.adsPower.launch({
+      account_id: props.account.id,
+      session_id: sessionId,
+      auth_url: authUrl,
+      profile_label: props.account.name
+    })
+    adsPowerSessionId.value = sessionId
+    if (helperWindow) {
+      helperWindow.opener = null
+      helperWindow.location.replace(result.helper_url)
+    } else {
+      window.location.assign(result.helper_url)
+    }
+    appStore.showSuccess('已交给该账号绑定的 AdsPower 指纹环境')
+  } catch (error: any) {
+    helperWindow?.close()
+    appStore.showError(error?.response?.data?.detail || error?.message || '无法启动 AdsPower 指纹环境')
+  } finally {
+    adsPowerLaunching.value = false
+  }
+}
+
+const handleUnbindAdsPower = async () => {
+  if (!props.account || adsPowerUnbinding.value) return
+  adsPowerUnbinding.value = true
+  showAdsPowerUnbindConfirm.value = false
+  try {
+    await adminAPI.adsPower.unbind(props.account.id)
+    adsPowerBindingCleared.value = true
+    appStore.showSuccess('固定指纹环境绑定已解除')
+  } catch (error: any) {
+    appStore.showError(error?.response?.data?.detail || error?.message || '无法解除固定指纹环境绑定')
+  } finally {
+    adsPowerUnbinding.value = false
   }
 }
 
@@ -447,7 +550,7 @@ const handleExchangeCode = async () => {
       authCode.trim(),
       sessionId,
       stateToUse,
-      props.account.proxy_id
+      adsPowerSessionId.value === sessionId ? null : props.account.proxy_id
     )
     if (!tokenInfo) return
 

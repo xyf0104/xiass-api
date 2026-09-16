@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     complete: vi.fn(),
     cancel: vi.fn(),
     restart: vi.fn(),
+    launchAdsPower: vi.fn(),
     remove: vi.fn(),
     sms: vi.fn(),
   },
@@ -107,6 +108,7 @@ async function mountView() {
     global: {
       stubs: {
         Icon: { template: '<span />' },
+        DarkVideoBackground: { template: '<div data-testid="native-theme-background" />' },
         BatchOpenAIOAuthModal: { template: '<div data-testid="batch-oauth" />' },
         ConfirmDialog: {
           props: ['show', 'title', 'message', 'confirmText', 'danger'],
@@ -141,6 +143,7 @@ describe('OpenAIReauthorizationView', () => {
     openAIReauthorizationAPI.complete.mockReset()
     openAIReauthorizationAPI.cancel.mockReset()
     openAIReauthorizationAPI.restart.mockReset()
+    openAIReauthorizationAPI.launchAdsPower.mockReset()
     openAIReauthorizationAPI.remove.mockReset()
     openAIReauthorizationAPI.sms.mockReset()
     vi.stubGlobal('scrollTo', vi.fn())
@@ -158,6 +161,7 @@ describe('OpenAIReauthorizationView', () => {
 
     expect(wrapper.text()).toContain('XIASS工作台')
     expect(wrapper.get('[data-testid="reauthorization-workspace-tab"]').text()).toContain('401 重新授权')
+    expect(wrapper.get('[data-testid="reauthorize-all"]').text()).toContain('一键内置授权')
     expect(wrapper.get('[data-testid="reauthorization-account-448"]').text()).toContain('account-448')
     expect(wrapper.text()).toContain('尚未启动')
     expect(wrapper.get('[data-testid="team-child-creation-entry"]').text()).toContain('创建 Team 子号')
@@ -209,6 +213,36 @@ describe('OpenAIReauthorizationView', () => {
     expect(wrapper.text()).toContain('补充登录资料')
     expect(wrapper.find('[data-testid="start-reauthorization-12"]').exists()).toBe(false)
     expect(mocks.openAIReauthorizationAPI.start).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('starts the tracked task and opens its fixed fingerprint environment', async () => {
+    const bound = account(18)
+    bound.extra.xiass_openai_adspower_binding = {
+      profile_id: 'profile-18', profile_no: '18', environment_key: 'api2',
+      device_id: 'device-1', webrtc_disabled: true, fingerprint_randomized: true,
+    }
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [reauthorizationStatus(18, { account: bound })],
+      cooldown_seconds: 604800,
+    })
+    const fixedTask = { ...task(18, 'running', 'external_browser'), browser_mode: 'adspower' }
+    openAIReauthorizationAPI.start.mockResolvedValue(fixedTask)
+    openAIReauthorizationAPI.launchAdsPower.mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=one', expires_at: new Date(Date.now() + 60_000).toISOString() })
+    const popup = { opener: window, location: { href: 'about:blank' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-testid="reauthorization-account-18"]').text()).toContain('固定环境 #18 · api2')
+    expect(wrapper.get('[data-testid="start-reauthorization-18"]').text()).toContain('内置')
+    expect(wrapper.get('[data-testid="manual-fingerprint-reauthorization-18"]').text()).toContain('Ads')
+    await wrapper.get('[data-testid="manual-fingerprint-reauthorization-18"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('固定的 AdsPower 环境')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(18, false, 'adspower')
+    expect(openAIReauthorizationAPI.launchAdsPower).toHaveBeenCalledWith(fixedTask.task_id)
+    expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=one')
     wrapper.unmount()
   })
 

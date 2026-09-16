@@ -142,6 +142,9 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"crs_account_id": {},
 	"crs_kind":       {},
 	"crs_synced_at":  {},
+	// Browser profiles are account identities. A duplicated account must create
+	// and bind its own AdsPower environment instead of sharing the source one.
+	OpenAIAdsPowerBindingExtraKey: {},
 	// Local quota usage and derived window timestamps must start fresh.
 	"quota_used":            {},
 	"quota_daily_used":      {},
@@ -640,6 +643,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if input.PreserveOAuthWorkflowProxy && (!input.AllowOpenAIReauthorizationCredentials || input.Platform != PlatformOpenAI || input.Type != AccountTypeOAuth) {
 		return nil, infraerrors.BadRequest("INVALID_OAUTH_WORKFLOW_PROXY", "Proxy preservation requires a trusted OpenAI OAuth workflow")
 	}
+	if input.AllowOpenAIAdsPowerBinding && (input.Platform != PlatformOpenAI || input.Type != AccountTypeOAuth) {
+		return nil, infraerrors.BadRequest("INVALID_ADSPOWER_BINDING", "AdsPower bindings require a trusted OpenAI OAuth workflow")
+	}
 	if !input.AllowOpenAIReauthorizationCredentials && containsOpenAIReauthorizationCredentials(input.Credentials) {
 		return nil, infraerrors.BadRequest("OPENAI_REAUTH_CREDENTIALS_MANAGED", "OpenAI reauthorization credentials must be saved through the dedicated encrypted endpoint")
 	}
@@ -650,6 +656,15 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	accountExtra, err = normalizeGrokMediaEligibilityExtra(input.Platform, accountExtra)
 	if err != nil {
 		return nil, err
+	}
+	if input.AllowOpenAIAdsPowerBinding {
+		binding := ParseOpenAIAdsPowerBinding(accountExtra[OpenAIAdsPowerBindingExtraKey])
+		if binding == nil {
+			return nil, infraerrors.BadRequest("INVALID_ADSPOWER_BINDING", "AdsPower binding is incomplete or unsafe")
+		}
+		accountExtra[OpenAIAdsPowerBindingExtraKey] = binding
+	} else {
+		delete(accountExtra, OpenAIAdsPowerBindingExtraKey)
 	}
 	if s.settingService != nil {
 		if input.PreserveOAuthWorkflowProxy {
@@ -851,6 +866,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OpenAITeamChildExtraKey)
 		delete(normalizedExtra, OpenAITeamChildEmailExtraKey)
 		delete(normalizedExtra, OpenAIReauthorizationStateExtraKey)
+		delete(normalizedExtra, OpenAIAdsPowerBindingExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -869,6 +885,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenAITeamChildExtraKey,
 			OpenAITeamChildEmailExtraKey,
 			OpenAIReauthorizationStateExtraKey,
+			OpenAIAdsPowerBindingExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -1249,6 +1266,7 @@ func (s *adminServiceImpl) ApplyAntigravityOAuthCredentials(
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripOpenAIQuotaRuntimeExtra(updates)
 	delete(updates, OpenAIReauthorizationStateExtraKey)
+	delete(updates, OpenAIAdsPowerBindingExtraKey)
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
@@ -1289,6 +1307,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	delete(input.Extra, AccountExecutionNodeExtraKey)
 	delete(input.Extra, AccountExecutionProxyExtraKey)
+	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
 	fingerprintModeValue, hasFingerprintModeUpdate := input.Extra[codexFingerprintModeExtraKey]
 	if hasFingerprintModeUpdate {
 		mode, ok := fingerprintModeValue.(string)

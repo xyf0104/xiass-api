@@ -35,6 +35,20 @@
           <span v-if="duplicates">已忽略 {{ duplicates }} 个重复邮箱</span>
           <span v-if="invalidLines.length" role="alert" class="text-red-600 dark:text-red-300">格式错误：第 {{ invalidLines.join('、') }} 行</span>
         </div>
+        <div>
+          <label class="input-label">授权浏览器</label>
+          <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="group" aria-label="授权浏览器模式">
+            <button type="button" class="batch-mode-tab" :class="settings.browser_mode === 'server' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-pressed="settings.browser_mode === 'server'" data-testid="batch-browser-server" @click="settings.browser_mode = 'server'">
+              <Icon name="server" size="sm" />内置浏览器授权
+            </button>
+            <button type="button" class="batch-mode-tab" :class="settings.browser_mode === 'adspower' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-pressed="settings.browser_mode === 'adspower'" data-testid="batch-browser-adspower" @click="settings.browser_mode = 'adspower'">
+              <Icon name="globe" size="sm" />Ads 指纹浏览器授权
+            </button>
+          </div>
+          <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+            {{ settings.browser_mode === 'adspower' ? '一个账号固定一个 AdsPower 环境，出口跟随账号所属 XIASS 节点。' : '沿用 XIASS 服务器端自动授权流程。' }}
+          </p>
+        </div>
         <div v-if="credentials.length" class="max-h-28 overflow-y-auto border-y border-gray-200 py-2 dark:border-dark-700">
           <div v-for="row in credentials" :key="row.account" class="flex gap-3 py-1 text-sm">
             <span class="min-w-0 flex-1 break-all">{{ row.account }}</span>
@@ -120,6 +134,7 @@
               <p v-if="row.error || (row.task?.reason && !isSkipped(row))" class="mt-1 break-words text-xs text-red-600 dark:text-red-300" role="alert">{{ row.error || reasonText(row.task) }}</p>
             </div>
             <div class="col-span-2 flex flex-wrap items-start justify-end gap-2 sm:col-span-1">
+              <button v-if="row.task?.browser_mode === 'adspower' && row.task.stage === 'external_browser' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" :data-testid="`launch-adspower-${row.email}`" @click="launchAdsPower(row)"><Icon name="globe" size="sm" />打开固定环境</button>
               <button v-if="row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
               <button v-if="row.task?.status === 'ready' && row.error" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="complete(row)">核验并添加</button>
               <button v-if="canRetry(row)" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重新授权</button>
@@ -164,7 +179,7 @@ withDefaults(defineProps<{ show?: boolean; embedded?: boolean; groups: AdminGrou
   embedded: false,
 })
 const emit = defineEmits<{ close: []; created: [] }>()
-const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
+const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
 const { copied: failedCredentialsCopied, copyToClipboard } = useClipboard()
 const loginMode = ref<'password' | 'email_code'>('password')
 const passwordInput = ref('')
@@ -173,7 +188,7 @@ const emailCodeProvider = OPENAI_EMAIL_CODE_PROVIDER
 const localError = ref('')
 const pools = ref<{ id: number; name: string; proxy_id: number | null }[]>([])
 const poolsReady = ref(false)
-const settings = reactive<BatchOAuthConfig>({ group_ids: [], proxy_id: null, pool_id: null, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off' })
+const settings = reactive<BatchOAuthConfig>({ group_ids: [], proxy_id: null, pool_id: null, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off', browser_mode: 'server' })
 const passwordParsed = computed(() => parseAccountCredentials(passwordInput.value))
 const emailCodeParsed = computed(() => parseOpenAIEmailCodeCredentials(emailCodeInput.value))
 const passwordRows = computed(() => {
@@ -331,7 +346,7 @@ function statusText(row: OAuthQueueRow) {
   }
   if (isSkipped(row)) return '已存在，已跳过'
   if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加成功', failed: '授权失败', blocked: '授权失败', canceled: '已停止' }[task.status] || task.status
-  return ({ opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', email_code_waiting: '正在查询邮箱验证码', email_code_submitting: '正在填写邮箱验证码', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
+  return ({ external_browser: '等待打开固定指纹环境', opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', email_code_waiting: '正在查询邮箱验证码', email_code_submitting: '正在填写邮箱验证码', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
 }
 function reasonText(task?: BatchOAuthTask) {
   const reason = task?.reason
@@ -342,6 +357,7 @@ function normalizedStage(row: OAuthQueueRow) {
   if (row.task?.status === 'ready') return 'verify'
   if (row.task?.status === 'completed') return 'verify'
   const stage = row.task?.stage || 'opening'
+  if (stage === 'external_browser') return 'browser'
   if (['login', 'email'].includes(stage)) return 'email'
   if (['email_code_waiting', 'email_code_submitting'].includes(stage)) return 'email_code'
   if (['phone_required', 'phone_submitting'].includes(stage)) return 'phone'
@@ -350,7 +366,10 @@ function normalizedStage(row: OAuthQueueRow) {
   const flow = flowStages(row)
   return flow.some(item => item === stage) ? stage : 'opening'
 }
-function flowStages(row: OAuthQueueRow): readonly string[] { return row.task?.login_method === 'email_code' ? emailCodeFlowStages : passwordFlowStages }
+function flowStages(row: OAuthQueueRow): readonly string[] {
+  if (row.task?.browser_mode === 'adspower') return ['browser', 'callback', 'verify'] as const
+  return row.task?.login_method === 'email_code' ? emailCodeFlowStages : passwordFlowStages
+}
 function flowStepCount(row: OAuthQueueRow) { return flowStages(row).length }
 function progressStep(row: OAuthQueueRow) { return Math.max(1, flowStages(row).indexOf(normalizedStage(row)) + 1) }
 function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'completed' ? 100 : Math.round((progressStep(row) / flowStepCount(row)) * 100) }
@@ -361,7 +380,7 @@ function progressClass(row: OAuthQueueRow) {
   return 'bg-primary-500'
 }
 function stageText(row: OAuthQueueRow) {
-  return ({ opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', email_code: '查询并提交邮箱验证码', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
+  return ({ browser: '打开固定指纹环境', opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', email_code: '查询并提交邮箱验证码', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
 }
 function elapsedText(row: OAuthQueueRow) {
   const startedAt = Date.parse(row.task?.created_at || '')

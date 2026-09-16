@@ -7,6 +7,7 @@ export interface BatchOAuthConfig {
   concurrency: number
   priority: number
   codex_fingerprint_mode: 'off' | 'device' | 'session' | 'full'
+  browser_mode?: 'server' | 'adspower'
 }
 
 export interface BatchOAuthTask {
@@ -18,6 +19,7 @@ export interface BatchOAuthTask {
   reason?: string
   account_id?: number
   restart_count: number
+  browser_mode?: 'server' | 'adspower'
   requires_sms_confirmation: boolean
   created_at: string
   expires_at: string
@@ -59,8 +61,15 @@ export const batchOAuthAPI = {
   async cancel(id: string) {
     return (await apiClient.post<BatchOAuthTask>(`${path}/${encodeURIComponent(id)}/cancel`, { confirmed: true })).data
   },
-  async restart(id: string, login?: BatchOAuthLogin) {
-    return (await apiClient.post<BatchOAuthTask>(`${path}/${encodeURIComponent(id)}/restart`, { ...login, confirmed: true })).data
+  async restart(id: string, login?: BatchOAuthLogin, browserMode?: 'server' | 'adspower') {
+    return (await apiClient.post<BatchOAuthTask>(`${path}/${encodeURIComponent(id)}/restart`, {
+      ...login,
+      confirmed: true,
+      ...(browserMode ? { browser_mode: browserMode } : {}),
+    })).data
+  },
+  async launchAdsPower(id: string) {
+    return (await apiClient.post<{ helper_url: string; expires_at: string }>(`${path}/${encodeURIComponent(id)}/adspower-launch`)).data
   },
   async sms(id: string, action: 'check' | 'acquire' | 'change' | 'cancel') {
     const url = `${path}/${encodeURIComponent(id)}/sms`

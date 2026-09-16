@@ -37,6 +37,8 @@ const (
 	batchOAuthModeReauthorization = "reauthorization"
 	batchOAuthLoginPassword       = "password"
 	batchOAuthLoginEmailCode      = "email_code"
+	batchOAuthBrowserServer       = "server"
+	batchOAuthBrowserAdsPower     = "adspower"
 )
 
 var errBatchOAuthMissing = errors.New("batch task unavailable")
@@ -61,6 +63,7 @@ type batchOAuthConfig struct {
 	Concurrency     int     `json:"concurrency"`
 	Priority        int     `json:"priority"`
 	FingerprintMode string  `json:"codex_fingerprint_mode"`
+	BrowserMode     string  `json:"browser_mode,omitempty"`
 }
 
 type batchOAuthStartRequest struct {
@@ -90,6 +93,7 @@ type batchOAuthTask struct {
 	AccountConfig           *batchOAuthConfig `json:"account_config,omitempty"`
 	RestartCount            int               `json:"restart_count"`
 	ReauthorizationNumber   int               `json:"reauthorization_number,omitempty"`
+	BrowserMode             string            `json:"browser_mode,omitempty"`
 	RequiresSMSConfirmation bool              `json:"requires_sms_confirmation"`
 	CreatedAt               time.Time         `json:"created_at"`
 	ExpiresAt               time.Time         `json:"expires_at"`
@@ -101,6 +105,9 @@ type batchOAuthTask struct {
 	sidecarID               string
 	sessionID               string
 	state                   string
+	authURL                 string
+	externalCallbackURL     string
+	adsPowerLaunchIssued    bool
 	createAttempted         bool
 	submittedPhone          string
 	rejectedPhones          map[string]bool
@@ -360,6 +367,17 @@ func (t *batchOAuthTask) normalizedMode() string {
 	return batchOAuthModeCreate
 }
 
+func normalizeBatchOAuthBrowserMode(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return batchOAuthBrowserServer
+	}
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func (t *batchOAuthTask) usesAdsPower() bool {
+	return t != nil && normalizeBatchOAuthBrowserMode(t.config.BrowserMode) == batchOAuthBrowserAdsPower
+}
+
 func (t *batchOAuthTask) duplicateKey() string {
 	if t.normalizedMode() == batchOAuthModeReauthorization && t.TargetAccountID > 0 {
 		return batchOAuthModeReauthorization + ":" + strconv.FormatInt(t.TargetAccountID, 10)
@@ -403,6 +421,10 @@ func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batch
 	if cfg.FingerprintMode == "" {
 		cfg.FingerprintMode = "off"
 	}
+	cfg.BrowserMode = normalizeBatchOAuthBrowserMode(cfg.BrowserMode)
+	if cfg.BrowserMode != batchOAuthBrowserServer && cfg.BrowserMode != batchOAuthBrowserAdsPower {
+		return nil, errors.New("invalid browser mode")
+	}
 	switch cfg.FingerprintMode {
 	case "off", "device", "session", "full":
 	default:
@@ -437,7 +459,14 @@ func (h *OpenAIOAuthHandler) validateBatchConfig(ctx context.Context, cfg *batch
 			cfg.ProxyID = &id
 		}
 	}
-	return h.batchOAuthBrowserProxy(ctx, cfg.ProxyID)
+	proxy, err := h.batchOAuthBrowserProxy(ctx, cfg.ProxyID)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.BrowserMode == batchOAuthBrowserAdsPower {
+		return nil, nil
+	}
+	return proxy, nil
 }
 
 func (h *OpenAIOAuthHandler) batchOAuthBrowserProxy(ctx context.Context, proxyID *int64) (map[string]string, error) {
@@ -661,7 +690,7 @@ func batchOAuthPublicStage(stage string) string {
 	switch stage {
 	case "queued", "opening", "login", "email", "password", "totp", "phone_required", "phone_submitting",
 		"email_code_waiting", "email_code_submitting", "sms_waiting", "sms_submitting", "workspace", "callback_waiting", "callback_received", "completed",
-		"failed", "blocked", "canceled":
+		"external_browser", "failed", "blocked", "canceled":
 		return stage
 	default:
 		return "login"
@@ -692,8 +721,18 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 	if !t.ExpiresAt.IsZero() && time.Now().After(t.ExpiresAt) {
 		t.Status, t.Stage, t.Reason = "failed", "failed", "task_expired"
 		t.RequiresSMSConfirmation = false
-		_, _ = t.sidecar(ctx, "cancel", nil)
+		if !t.usesAdsPower() {
+			_, _ = t.sidecar(ctx, "cancel", nil)
+		}
 		return nil, nil
+	}
+	if t.usesAdsPower() {
+		if t.externalCallbackURL == "" {
+			t.Status, t.Stage, t.Reason = "running", "external_browser", ""
+			return &batchOAuthSidecarTask{ID: t.ID, OwnerID: t.ownerID, Status: "running", Stage: "external_browser"}, nil
+		}
+		t.Status, t.Stage, t.Reason = "ready", "callback_received", ""
+		return &batchOAuthSidecarTask{ID: t.ID, OwnerID: t.ownerID, Status: "completed", Stage: "callback_received", CallbackURL: t.externalCallbackURL}, nil
 	}
 	r, err := t.sidecar(ctx, "", nil)
 	if err != nil {
@@ -726,17 +765,32 @@ func (t *batchOAuthTask) refresh(ctx context.Context) (*batchOAuthSidecarTask, e
 
 func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAuthTask, password, secret, emailCodeToken string, proxy map[string]string) error {
 	t.Status, t.Stage, t.Reason = "failed", "failed", "oauth_session_failed"
-	auth, err := h.openaiOAuthService.GenerateAuthURL(ctx, t.config.ProxyID, openai.DefaultRedirectURI, service.PlatformOpenAI)
+	oauthProxyID := t.config.ProxyID
+	if t.usesAdsPower() {
+		// The local AdsPower profile exits through the current XIASS server's
+		// dedicated SOCKS route. Keep the OAuth code exchange on that same server
+		// instead of silently switching to an unrelated account runtime proxy.
+		oauthProxyID = nil
+	}
+	auth, err := h.openaiOAuthService.GenerateAuthURL(ctx, oauthProxyID, openai.DefaultRedirectURI, service.PlatformOpenAI)
 	if err != nil {
 		return errors.New("OAuth session creation failed")
 	}
 	u, err := url.Parse(auth.AuthURL)
-	if err != nil {
+	if err != nil || u.Query().Get("state") == "" {
 		h.openaiOAuthService.RevokeWorkflowSession(auth.SessionID)
 		return errors.New("OAuth URL invalid")
 	}
-	t.sessionID, t.state = auth.SessionID, u.Query().Get("state")
+	t.sessionID, t.state, t.authURL = auth.SessionID, u.Query().Get("state"), auth.AuthURL
+	t.externalCallbackURL = ""
+	t.adsPowerLaunchIssued = false
 	t.ExpiresAt = time.Now().Add(openai.SessionTTL).UTC()
+	t.BrowserMode = normalizeBatchOAuthBrowserMode(t.config.BrowserMode)
+	if t.usesAdsPower() {
+		t.Status, t.Stage, t.Reason = "running", "external_browser", ""
+		t.FinishedAt = nil
+		return nil
+	}
 	payload := map[string]any{"task_id": t.sidecarID, "owner_id": t.ownerID, "email": t.Email, "expected_email": t.Email,
 		"workflow_mode": t.normalizedMode(),
 		"login_method":  t.LoginMethod, "password": password, "totp_secret": secret, "email_code_token": emailCodeToken,
@@ -858,7 +912,7 @@ func (h *OpenAIOAuthHandler) StartBatchOAuthTask(c *gin.Context) {
 	}
 	t := &batchOAuthTask{ID: id, Mode: batchOAuthModeCreate, sidecarID: id, ownerID: owner, Email: req.Email, LoginMethod: req.LoginMethod, config: req.batchOAuthConfig,
 		loginPasswordEncrypted: passwordEncrypted, loginTOTPEncrypted: totpEncrypted, loginEmailCodeEncrypted: emailCodeEncrypted, loginTOTPConfigured: req.TOTPSecret != "",
-		Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
+		BrowserMode: normalizeBatchOAuthBrowserMode(req.BrowserMode), Status: "queued", Stage: "queued", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), requestHash: hash, idempotencyKey: req.IdempotencyKey}
 	if existingAccount != nil {
 		now := time.Now().UTC()
 		t.Status, t.Stage, t.Reason, t.AccountID = "completed", "completed", batchOAuthAlreadyExistsReason, existingAccount.ID
@@ -1024,6 +1078,18 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Error(c, 409, "Pool proxy changed; restart OAuth")
 		return
 	}
+	var pendingAdsPowerBinding *service.OpenAIAdsPowerBinding
+	if t.usesAdsPower() {
+		pendingAdsPowerBinding, err = h.adsPowerLaunchStore.pendingBinding(c.Request.Context(), t.sessionID, t.ownerID)
+		if err != nil {
+			response.Error(c, http.StatusServiceUnavailable, "AdsPower browser binding is temporarily unavailable")
+			return
+		}
+		if pendingAdsPowerBinding == nil {
+			response.Error(c, http.StatusConflict, "AdsPower browser binding has not been verified")
+			return
+		}
+	}
 	if existing, err := h.existingBatchOAuthAccount(c.Request.Context(), t.Email); err != nil {
 		response.InternalError(c, "Unable to check existing OpenAI accounts")
 		return
@@ -1093,8 +1159,12 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		name = t.Email
 	}
 	t.createAttempted = true
+	extra := map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode}
+	if pendingAdsPowerBinding != nil {
+		extra[service.OpenAIAdsPowerBindingExtraKey] = pendingAdsPowerBinding
+	}
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, PreserveOAuthWorkflowProxy: true, Extra: map[string]any{"codex_fingerprint_mode": t.config.FingerprintMode},
+		Credentials: credentials, AllowOpenAIReauthorizationCredentials: true, AllowOpenAIAdsPowerBinding: pendingAdsPowerBinding != nil, PreserveOAuthWorkflowProxy: true, Extra: extra,
 		GroupIDs: t.config.GroupIDs, ProxyID: t.config.ProxyID, Concurrency: t.config.Concurrency, Priority: t.config.Priority, SkipDefaultGroupBind: true, Schedulable: &schedulable})
 	token = nil
 	if errors.Is(err, service.ErrOpenAIOAuthEmailExists) {
@@ -1108,6 +1178,9 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		t.Reason = "account_creation_requires_review"
 		response.Success(c, t)
 		return
+	}
+	if pendingAdsPowerBinding != nil {
+		h.adsPowerLaunchStore.deletePending(ctx, t.sessionID)
 	}
 	t.AccountID = account.ID
 	if t.config.PoolID != nil {
@@ -1184,6 +1257,9 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 			return
 		}
 	}
+	if t.usesAdsPower() && service.OpenAIAdsPowerBindingFromAccount(a) == nil {
+		return
+	}
 	if t.config.PoolID != nil {
 		poolService, ok := h.adminService.(service.AccountPoolService)
 		if !ok {
@@ -1202,7 +1278,7 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 	}
 	t.Status, t.Stage, t.Reason = "completed", "completed", ""
 	t.AccountConfig = &batchOAuthConfig{Name: a.Name, GroupIDs: slices.Clone(a.GroupIDs), ProxyID: a.ProxyID,
-		PoolID: t.config.PoolID, Concurrency: a.Concurrency, Priority: a.Priority, FingerprintMode: a.GetExtraString("codex_fingerprint_mode")}
+		PoolID: t.config.PoolID, Concurrency: a.Concurrency, Priority: a.Priority, FingerprintMode: a.GetExtraString("codex_fingerprint_mode"), BrowserMode: t.BrowserMode}
 }
 
 func batchProxyEqual(a, b *int64) bool {
@@ -1261,9 +1337,11 @@ func (h *OpenAIOAuthHandler) cancelBatchOAuthTask(c *gin.Context, mode string) {
 		return
 	}
 	if t.Status != "canceled" {
-		if _, err := t.sidecar(ctx, "cancel", nil); err != nil {
-			response.Error(c, 502, "Browser cancellation not confirmed")
-			return
+		if !t.usesAdsPower() {
+			if _, err := t.sidecar(ctx, "cancel", nil); err != nil {
+				response.Error(c, 502, "Browser cancellation not confirmed")
+				return
+			}
 		}
 	}
 	h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
@@ -1341,6 +1419,7 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 		TOTPSecret     *string `json:"totp_secret"`
 		EmailCodeToken *string `json:"email_code_token"`
 		Confirmed      bool    `json:"confirmed"`
+		BrowserMode    *string `json:"browser_mode"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		response.BadRequest(c, "Valid login credentials required")
@@ -1354,9 +1433,14 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 		response.Error(c, 503, "Login encryption unavailable")
 		return
 	}
+	previousUsesAdsPower := t.usesAdsPower()
 	method := normalizeBatchOAuthLoginMethod(t.LoginMethod)
 	if req.LoginMethod != nil {
 		method = normalizeBatchOAuthLoginMethod(*req.LoginMethod)
+	}
+	nextConfig := t.config
+	if req.BrowserMode != nil {
+		nextConfig.BrowserMode = normalizeBatchOAuthBrowserMode(*req.BrowserMode)
 	}
 	password := ""
 	if req.Password != nil {
@@ -1394,7 +1478,7 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 			t.Status = previousStatus
 		}
 	}()
-	proxy, err := h.validateBatchConfig(c.Request.Context(), &t.config)
+	proxy, err := h.validateBatchConfig(c.Request.Context(), &nextConfig)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -1405,9 +1489,11 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 		response.Error(c, 409, err.Error())
 		return
 	}
-	if _, err := t.sidecar(ctx, "cancel", nil); err != nil {
-		response.Error(c, 502, "Browser cancellation not confirmed")
-		return
+	if !previousUsesAdsPower {
+		if _, err := t.sidecar(ctx, "cancel", nil); err != nil {
+			response.Error(c, 502, "Browser cancellation not confirmed")
+			return
+		}
 	}
 	h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
 	id, err := newTeamChildBrowserToken()
@@ -1416,6 +1502,10 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 		return
 	}
 	t.sidecarID = id
+	t.config = nextConfig
+	t.authURL = ""
+	t.externalCallbackURL = ""
+	t.adsPowerLaunchIssued = false
 	t.submittedPhone = ""
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false
@@ -1439,6 +1529,10 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 	}
 	defer t.mu.Unlock()
 	defer h.revokeTerminalBatchSession(t)
+	if t.usesAdsPower() {
+		response.Error(c, http.StatusConflict, "Phone automation is unavailable in the fixed AdsPower browser")
+		return
+	}
 	if h.batchSMSService == nil {
 		response.Error(c, 503, "SMS unavailable")
 		return

@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,7 @@ type OpenAIOAuthHandler struct {
 	teamMailboxShareStore    *openAITeamMailboxShareStore
 	teamMailboxShareRegistry *openAITeamMailboxShareRegistry
 	teamBrowserStore         *openAITeamBrowserStore
+	adsPowerLaunchStore      *openAIAdsPowerLaunchStore
 	batchOAuthStore          *batchOAuthStore
 	batchSMSService          batchOAuthSMS
 	tokenCacheInvalidator    service.TokenCacheInvalidator
@@ -140,6 +142,7 @@ func NewOpenAIOAuthHandler(
 		teamMailboxShareStore:    newOpenAITeamMailboxShareStore(),
 		teamMailboxShareRegistry: newOpenAITeamMailboxShareRegistry(),
 		teamBrowserStore:         newOpenAITeamBrowserStore(),
+		adsPowerLaunchStore:      newOpenAIAdsPowerLaunchStore(),
 		batchOAuthStore:          newBatchOAuthStore(),
 	}
 	// Assign through explicit nil checks: storing a nil *Service in an interface
@@ -492,6 +495,17 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		return
 	}
 
+	var pendingAdsPowerBinding *service.OpenAIAdsPowerBinding
+	if h.adsPowerLaunchStore != nil {
+		subject, _ := middleware.GetAuthSubjectFromContext(c)
+		var err error
+		pendingAdsPowerBinding, err = h.adsPowerLaunchStore.pendingBinding(c.Request.Context(), strings.TrimSpace(req.SessionID), subject.UserID)
+		if err != nil {
+			response.Error(c, http.StatusServiceUnavailable, "AdsPower browser binding is temporarily unavailable")
+			return
+		}
+	}
+
 	var teamSecret *openAITeamChildWorkflowSecret
 	var encryptedTeamPassword string
 	if req.TeamChild {
@@ -571,6 +585,12 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 			service.OpenAITeamChildEmailExtraKey: teamSecret.Email,
 		}
 	}
+	if pendingAdsPowerBinding != nil {
+		if extra == nil {
+			extra = make(map[string]any, 1)
+		}
+		extra[service.OpenAIAdsPowerBindingExtraKey] = pendingAdsPowerBinding
+	}
 	skipDefaultGroupBind := req.TeamChild
 	if req.SkipDefaultGroupBind != nil {
 		skipDefaultGroupBind = *req.SkipDefaultGroupBind
@@ -593,6 +613,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		GroupIDs:                              req.GroupIDs,
 		Schedulable:                           &schedulable,
 		AllowOpenAIReauthorizationCredentials: teamSecret != nil,
+		AllowOpenAIAdsPowerBinding:            pendingAdsPowerBinding != nil,
 		SkipDefaultGroupBind:                  skipDefaultGroupBind,
 	})
 	if err != nil {
@@ -606,6 +627,9 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		if bindErr := h.ensureTeamMailboxShareRegistry().attachAccount(teamSecret.Email, account.ID); bindErr != nil {
 			slog.Warn("team_mailbox_share_account_bind_failed", "account_id", account.ID, "email", teamSecret.Email, "error", bindErr)
 		}
+	}
+	if pendingAdsPowerBinding != nil {
+		h.adsPowerLaunchStore.deletePending(c.Request.Context(), strings.TrimSpace(req.SessionID))
 	}
 
 	response.Success(c, dto.AccountFromService(account))

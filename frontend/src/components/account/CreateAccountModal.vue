@@ -3481,7 +3481,10 @@
         :initial-input-method="'manual'"
         :platform="form.platform"
         :show-project-id="geminiOAuthType === 'code_assist'"
+        :show-ads-power-option="form.platform === 'openai'"
+        :ads-power-launching="adsPowerLaunching"
         @generate-url="handleGenerateUrl"
+        @launch-adspower="handleLaunchAdsPower"
         @cookie-auth="handleCookieAuth"
         @validate-refresh-token="handleValidateRefreshToken"
         @validate-mobile-refresh-token="handleOpenAIValidateMobileRT"
@@ -4033,6 +4036,8 @@ const parsedBatchItems = computed(() => {
   return items
 })
 const submitting = ref(false)
+const adsPowerLaunching = ref(false)
+const adsPowerSessionId = ref('')
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
@@ -4873,6 +4878,7 @@ watch(
     // Reset OAuth states
     oauth.resetState()
     openaiOAuth.resetState()
+    adsPowerSessionId.value = ''
 
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
@@ -5342,6 +5348,7 @@ const resetForm = () => {
   geminiTierAIStudio.value = 'aistudio_free'
   oauth.resetState()
   openaiOAuth.resetState()
+  adsPowerSessionId.value = ''
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   grokOAuth.resetState()
@@ -5913,6 +5920,7 @@ const goBackToBasicInfo = () => {
 
 const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
+    adsPowerSessionId.value = ''
     await openaiOAuth.generateAuthUrl(form.proxy_id)
   } else if (form.platform === 'gemini') {
     await geminiOAuth.generateAuthUrl(
@@ -5927,6 +5935,36 @@ const handleGenerateUrl = async () => {
     await grokOAuth.generateAuthUrl(form.proxy_id)
   } else {
     await oauth.generateAuthUrl(addMethod.value, form.proxy_id)
+  }
+}
+
+const handleLaunchAdsPower = async () => {
+  if (form.platform !== 'openai' || !currentAuthUrl.value || !currentSessionId.value || adsPowerLaunching.value) return
+  const helperWindow = window.open('', '_blank')
+  adsPowerLaunching.value = true
+  try {
+    await openaiOAuth.generateAuthUrl(null)
+    const sessionId = currentSessionId.value
+    const authUrl = currentAuthUrl.value
+    if (!sessionId || !authUrl) throw new Error('无法创建固定环境授权会话')
+    const result = await adminAPI.adsPower.launch({
+      session_id: sessionId,
+      auth_url: authUrl,
+      profile_label: form.name || 'OpenAI OAuth'
+    })
+    adsPowerSessionId.value = sessionId
+    if (helperWindow) {
+      helperWindow.opener = null
+      helperWindow.location.replace(result.helper_url)
+    } else {
+      window.location.assign(result.helper_url)
+    }
+    appStore.showSuccess('已用账号专属 AdsPower 指纹环境打开授权页')
+  } catch (error: any) {
+    helperWindow?.close()
+    appStore.showError(error?.response?.data?.detail || error?.message || '无法启动 AdsPower 指纹环境')
+  } finally {
+    adsPowerLaunching.value = false
   }
 }
 
@@ -6215,7 +6253,7 @@ const handleOpenAIExchange = async (authCode: string) => {
       authCode.trim(),
       oauthClient.sessionId.value,
       stateToUse,
-      form.proxy_id
+      adsPowerSessionId.value === oauthClient.sessionId.value ? null : form.proxy_id
     )
     if (!tokenInfo) return
 
@@ -6244,7 +6282,7 @@ const handleOpenAIExchange = async (authCode: string) => {
     }
 
     if (shouldCreateOpenAI) {
-      await adminAPI.accounts.create({
+      const createdAccount = await adminAPI.accounts.create({
         name: form.name,
         notes: form.notes,
         platform: 'openai',
@@ -6260,6 +6298,13 @@ const handleOpenAIExchange = async (authCode: string) => {
         expires_at: form.expires_at,
         auto_pause_on_expired: autoPauseOnExpired.value
       })
+      if (adsPowerSessionId.value === oauthClient.sessionId.value) {
+        try {
+          await adminAPI.adsPower.claim(createdAccount.id, oauthClient.sessionId.value)
+        } catch {
+          appStore.showWarning('账号已创建，但固定指纹环境绑定未确认；请在账号编辑中重新打开固定环境。')
+        }
+      }
       appStore.showSuccess(t('admin.accounts.accountCreated'))
     }
 

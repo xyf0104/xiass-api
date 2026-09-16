@@ -26,8 +26,9 @@ type openAIReauthorizationStateUpdater interface {
 }
 
 type openAIReauthorizationAuthorizationRequest struct {
-	Confirmed                             bool `json:"confirmed"`
-	AcknowledgedSecondReauthorizationRisk bool `json:"acknowledged_second_reauthorization_risk"`
+	Confirmed                             bool   `json:"confirmed"`
+	AcknowledgedSecondReauthorizationRisk bool   `json:"acknowledged_second_reauthorization_risk"`
+	BrowserMode                           string `json:"browser_mode,omitempty"`
 }
 
 type openAIReauthorizationAccountStatus struct {
