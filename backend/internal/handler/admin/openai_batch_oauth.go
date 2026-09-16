@@ -787,6 +787,20 @@ func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAut
 	t.ExpiresAt = time.Now().Add(openai.SessionTTL).UTC()
 	t.BrowserMode = normalizeBatchOAuthBrowserMode(t.config.BrowserMode)
 	if t.usesAdsPower() {
+		if (t.LoginMethod == batchOAuthLoginEmailCode && t.loginEmailCodeEncrypted == "") ||
+			(t.LoginMethod != batchOAuthLoginEmailCode && t.loginPasswordEncrypted == "") {
+			passwordEncrypted, totpEncrypted, emailCodeEncrypted, encryptErr := h.encryptBatchLogin(
+				t.LoginMethod, password, secret, emailCodeToken,
+			)
+			if encryptErr != nil {
+				h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
+				return errors.New("AdsPower login encryption failed")
+			}
+			t.loginPasswordEncrypted = passwordEncrypted
+			t.loginTOTPEncrypted = totpEncrypted
+			t.loginEmailCodeEncrypted = emailCodeEncrypted
+			t.loginTOTPConfigured = secret != ""
+		}
 		t.Status, t.Stage, t.Reason = "running", "external_browser", ""
 		t.FinishedAt = nil
 		return nil

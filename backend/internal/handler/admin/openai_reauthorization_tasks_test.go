@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,7 @@ func openAIReauthorizationRouter(h *OpenAIOAuthHandler, owner int64) *gin.Engine
 	r.POST("/tasks/:task_id/cancel", h.CancelOpenAIReauthorizationTask)
 	r.POST("/tasks/:task_id/restart", h.RestartOpenAIReauthorizationTask)
 	r.POST("/tasks/:task_id/adspower-launch", h.LaunchOpenAIReauthorizationTaskInAdsPower)
+	r.POST("/tools/adspower/launch-tickets/redeem", h.RedeemOpenAIAdsPowerLaunchTicket)
 	return r
 }
 
@@ -138,6 +140,21 @@ func TestOpenAIReauthorizationAdsPowerModeKeepsHistoryAndSkipsServerBrowser(t *t
 	r.ServeHTTP(launch, launchRequest)
 	require.Equal(t, http.StatusOK, launch.Code, launch.Body.String())
 	require.Equal(t, http.StatusConflict, batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/adspower-launch", `{}`).Code)
+	var launchEnvelope struct {
+		Data openAIAdsPowerLaunchResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(launch.Body.Bytes(), &launchEnvelope))
+	helperURL, err := url.Parse(launchEnvelope.Data.HelperURL)
+	require.NoError(t, err)
+	redeem := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/launch-tickets/redeem", `{"ticket":"`+helperURL.Query().Get("ticket")+`"}`)
+	require.Equal(t, http.StatusOK, redeem.Code, redeem.Body.String())
+	var redeemed struct {
+		Data openAIAdsPowerRedeemResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(redeem.Body.Bytes(), &redeemed))
+	require.Equal(t, "owner@example.test", redeemed.Data.LoginEmail)
+	require.Equal(t, "stored-password", redeemed.Data.Password)
+	require.Equal(t, "JBSWY3DPEHPK3PXP", redeemed.Data.TOTPSecret)
 }
 
 func TestOpenAIReauthorizationTaskRequiresConfirmation(t *testing.T) {
