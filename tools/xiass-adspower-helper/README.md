@@ -4,6 +4,13 @@ The helper keeps AdsPower control local while allowing an authenticated XIASS
 administrator to open an OpenAI OAuth URL in the account's persistent browser
 profile.
 
+For XIASS workbench tasks, it also connects to AdsPower's loopback CDP endpoint
+and completes the same supported OpenAI login steps as the built-in browser:
+email, saved password, authenticator code or saved mailbox code, workspace
+selection, and the localhost OAuth callback. Login material is delivered only
+inside the one-time launch response, remains in helper memory for the active
+run, and is cleared when the run finishes.
+
 ## Security boundary
 
 - The AdsPower API key and SOCKS credentials stay in the local config file.

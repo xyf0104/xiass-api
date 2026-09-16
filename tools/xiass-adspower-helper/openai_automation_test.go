@@ -1,0 +1,53 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestInspectOAuthPageRecognizesLoginStages(t *testing.T) {
+	tests := []struct {
+		name string
+		page oauthPageSnapshot
+		kind string
+	}{
+		{name: "email", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in", Inputs: []oauthPageInput{{Index: 0, Metadata: "email username"}}}, kind: "email"},
+		{name: "password", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in/password", Body: "owner@example.test", Inputs: []oauthPageInput{{Index: 0, Metadata: "password current-password"}}}, kind: "password"},
+		{name: "totp", page: oauthPageSnapshot{URL: "https://auth.openai.com/mfa", Body: "Enter the code from your authenticator app", Inputs: []oauthPageInput{{Index: 0, Metadata: "one-time-code numeric"}}}, kind: "totp"},
+		{name: "email code", page: oauthPageSnapshot{URL: "https://auth.openai.com/email-verification", Body: "Check your inbox for a verification code", Inputs: []oauthPageInput{{Index: 0, Metadata: "one-time-code numeric"}}}, kind: "email_code"},
+		{name: "workspace", page: oauthPageSnapshot{URL: "https://auth.openai.com/authorize", Body: "Continue to Codex using your default workspace"}, kind: "workspace"},
+		{name: "deleted", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in", Body: "This account has been deleted or disabled"}, kind: "account_deleted_or_disabled"},
+		{name: "callback", page: oauthPageSnapshot{URL: "http://localhost:1455/auth/callback?code=abc&state=state"}, kind: "callback"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := inspectOAuthPage(test.page)
+			require.Equal(t, test.kind, state.Kind)
+		})
+	}
+}
+
+func TestInspectOAuthPageRejectsDifferentVisibleAccount(t *testing.T) {
+	state := inspectOAuthPage(oauthPageSnapshot{
+		URL:  "https://auth.openai.com/authorize",
+		Body: "Continue with other@example.test to your workspace",
+	})
+	require.Equal(t, "workspace", state.Kind)
+	require.Equal(t, "other@example.test", state.VisibleMail)
+}
+
+func TestExtractEmailCodeRequiresOpenAIContext(t *testing.T) {
+	require.Equal(t, "543604", extractEmailCode(emailCodeMessage{
+		From: "OpenAI", Subject: "Your verification code is 543604",
+	}))
+	require.Empty(t, extractEmailCode(emailCodeMessage{
+		From: "Unrelated", Subject: "Your verification code is 543604",
+	}))
+}
+
+func TestValidCallbackChecksStateAndCode(t *testing.T) {
+	require.True(t, validCallback("http://localhost:1455/auth/callback?code=abc&state=state", "state"))
+	require.False(t, validCallback("http://localhost:1455/auth/callback?code=abc&state=other", "state"))
+	require.False(t, validCallback("https://example.com/auth/callback?code=abc&state=state", "state"))
+}

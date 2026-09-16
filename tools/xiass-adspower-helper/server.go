@@ -36,8 +36,24 @@ type launchPayload struct {
 	Existing          *existingBinding `json:"existing_binding"`
 	BindingToken      string           `json:"binding_token"`
 	CallbackToken     string           `json:"callback_token"`
+	LoginEmail        string           `json:"login_email"`
+	LoginMethod       string           `json:"login_method"`
+	Password          string           `json:"password"`
+	TOTPSecret        string           `json:"totp_secret"`
+	EmailCodeToken    string           `json:"email_code_token"`
+	WorkflowMode      string           `json:"workflow_mode"`
 	ExpiresAt         time.Time        `json:"expires_at"`
 	CallbackExpiresAt time.Time        `json:"callback_expires_at"`
+}
+
+func (p *launchPayload) automated() bool {
+	if p == nil || strings.TrimSpace(p.CallbackToken) == "" || strings.TrimSpace(p.LoginEmail) == "" {
+		return false
+	}
+	if strings.TrimSpace(p.LoginMethod) == "email_code" {
+		return strings.TrimSpace(p.EmailCodeToken) != ""
+	}
+	return strings.TrimSpace(p.Password) != ""
 }
 
 type callbackRegistration struct {
@@ -161,16 +177,27 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "授权回调无法绑定", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
-	if err := adsPower.startProfile(ctx, profile.UserID, payload.AuthURL); err != nil {
+	browserSession, err := adsPower.startProfile(ctx, profile.UserID, payload.AuthURL)
+	if err != nil {
 		if registered {
 			s.removeCallback(state)
 		}
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "AdsPower 启动失败", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
+	if payload.automated() {
+		automationPayload := *payload
+		go s.runOpenAIAutomation(serverOrigin, &automationPayload, profile.UserID, browserSession)
+	}
+	title := "固定指纹环境已打开"
+	message := "此账号以后会继续使用同一个 AdsPower 环境。完成登录后，授权结果会自动返回 XIASS。"
+	if payload.automated() {
+		title = "固定指纹自动授权已启动"
+		message = "XIASS 正在此账号的固定 AdsPower 环境中自动登录、授权并等待回调。"
+	}
 	s.renderLaunch(w, http.StatusOK, launchView{
-		Success: true, Title: "固定指纹环境已打开",
-		Message:     "此账号以后会继续使用同一个 AdsPower 环境。完成登录后，授权结果会自动返回 XIASS。",
+		Success: true, Title: title,
+		Message:     message,
 		ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP,
 	})
 }
@@ -311,6 +338,19 @@ func (s *helperServer) reportCallback(ctx context.Context, registration callback
 	return s.serverRequest(ctx, registration.ServerOrigin, "/api/v1/tools/adspower/callbacks/report", map[string]string{
 		"callback_token": registration.Token,
 		"callback_url":   callbackURL,
+	}, &result)
+}
+
+func (s *helperServer) reportProgress(ctx context.Context, origin string, launch *launchPayload, status, stage, reason string) error {
+	if launch == nil || strings.TrimSpace(launch.CallbackToken) == "" {
+		return nil
+	}
+	var result apiEnvelope[map[string]any]
+	return s.serverRequest(ctx, origin, "/api/v1/tools/adspower/progress/report", map[string]string{
+		"callback_token": launch.CallbackToken,
+		"status":         status,
+		"stage":          stage,
+		"reason":         reason,
 	}, &result)
 }
 

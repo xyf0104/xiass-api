@@ -35,6 +35,16 @@ type adsPowerProfile struct {
 	UserProxyConfig adsPowerProxyConfig `json:"user_proxy_config"`
 }
 
+type adsPowerBrowserSession struct {
+	Status    string `json:"status"`
+	DebugPort string `json:"debug_port"`
+	WebDriver string `json:"webdriver"`
+	WebSocket struct {
+		Puppeteer string `json:"puppeteer"`
+		Selenium  string `json:"selenium"`
+	} `json:"ws"`
+}
+
 type adsPowerProxyConfig struct {
 	ProxySoft     string `json:"proxy_soft"`
 	ProxyType     string `json:"proxy_type"`
@@ -272,7 +282,8 @@ func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsP
 	}, nil)
 }
 
-func (c *adsPowerClient) startProfile(ctx context.Context, profileID, authURL string) error {
+func (c *adsPowerClient) startProfile(ctx context.Context, profileID, authURL string) (*adsPowerBrowserSession, error) {
+	var session adsPowerBrowserSession
 	err := c.do(ctx, http.MethodPost, "/api/v2/browser-profile/start", map[string]any{
 		"profile_id": profileID,
 		"open_tabs":  []string{authURL},
@@ -280,15 +291,18 @@ func (c *adsPowerClient) startProfile(ctx context.Context, profileID, authURL st
 			"--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 			"--webrtc-ip-handling-policy=disable_non_proxied_udp",
 		},
-	}, nil)
+	}, &session)
 	if err == nil {
-		return nil
+		return &session, nil
 	}
-	active, activeErr := c.profileActive(ctx, profileID)
-	if activeErr == nil && active {
-		return nil
+	active, activeErr := c.activeProfile(ctx, profileID)
+	if activeErr == nil && strings.EqualFold(strings.TrimSpace(active.Status), "active") {
+		return active, nil
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("AdsPower did not return a browser automation endpoint")
 }
 
 func (c *adsPowerClient) stopProfile(ctx context.Context, profileID string) error {
@@ -302,14 +316,20 @@ func (c *adsPowerClient) stopProfile(ctx context.Context, profileID string) erro
 }
 
 func (c *adsPowerClient) profileActive(ctx context.Context, profileID string) (bool, error) {
-	var data struct {
-		Status string `json:"status"`
-	}
-	path := "/api/v1/browser/active?user_id=" + url.QueryEscape(profileID)
-	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+	data, err := c.activeProfile(ctx, profileID)
+	if err != nil {
 		return false, err
 	}
 	return strings.EqualFold(strings.TrimSpace(data.Status), "active"), nil
+}
+
+func (c *adsPowerClient) activeProfile(ctx context.Context, profileID string) (*adsPowerBrowserSession, error) {
+	var data adsPowerBrowserSession
+	path := "/api/v1/browser/active?user_id=" + url.QueryEscape(profileID)
+	if err := c.do(ctx, http.MethodGet, path, nil, &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
 }
 
 func verifyProxyExitIP(ctx context.Context, cfg adsPowerProxyConfig) (string, error) {

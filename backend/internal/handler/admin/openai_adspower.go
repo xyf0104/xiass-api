@@ -55,19 +55,24 @@ type openAIAdsPowerPendingBinding struct {
 }
 
 type openAIAdsPowerLaunchRecord struct {
-	AdminUserID       int64                          `json:"admin_user_id"`
-	AccountID         int64                          `json:"account_id,omitempty"`
-	AccountName       string                         `json:"account_name,omitempty"`
-	SessionID         string                         `json:"session_id"`
-	AuthURL           string                         `json:"auth_url"`
-	EnvironmentKey    string                         `json:"environment_key"`
-	Existing          *service.OpenAIAdsPowerBinding `json:"existing_binding,omitempty"`
-	BindingToken      string                         `json:"binding_token"`
-	CallbackToken     string                         `json:"callback_token,omitempty"`
-	TaskID            string                         `json:"task_id,omitempty"`
-	TaskMode          string                         `json:"task_mode,omitempty"`
-	ExpiresAt         time.Time                      `json:"expires_at"`
-	CallbackExpiresAt time.Time                      `json:"callback_expires_at,omitempty"`
+	AdminUserID        int64                          `json:"admin_user_id"`
+	AccountID          int64                          `json:"account_id,omitempty"`
+	AccountName        string                         `json:"account_name,omitempty"`
+	SessionID          string                         `json:"session_id"`
+	AuthURL            string                         `json:"auth_url"`
+	EnvironmentKey     string                         `json:"environment_key"`
+	Existing           *service.OpenAIAdsPowerBinding `json:"existing_binding,omitempty"`
+	BindingToken       string                         `json:"binding_token"`
+	CallbackToken      string                         `json:"callback_token,omitempty"`
+	TaskID             string                         `json:"task_id,omitempty"`
+	TaskMode           string                         `json:"task_mode,omitempty"`
+	LoginEmail         string                         `json:"login_email,omitempty"`
+	LoginMethod        string                         `json:"login_method,omitempty"`
+	PasswordEncrypted  string                         `json:"password_encrypted,omitempty"`
+	TOTPEncrypted      string                         `json:"totp_encrypted,omitempty"`
+	EmailCodeEncrypted string                         `json:"email_code_encrypted,omitempty"`
+	ExpiresAt          time.Time                      `json:"expires_at"`
+	CallbackExpiresAt  time.Time                      `json:"callback_expires_at,omitempty"`
 }
 
 type openAIAdsPowerLaunchRequest struct {
@@ -99,6 +104,12 @@ type openAIAdsPowerRedeemResponse struct {
 	Existing          *service.OpenAIAdsPowerBinding `json:"existing_binding,omitempty"`
 	BindingToken      string                         `json:"binding_token"`
 	CallbackToken     string                         `json:"callback_token,omitempty"`
+	LoginEmail        string                         `json:"login_email,omitempty"`
+	LoginMethod       string                         `json:"login_method,omitempty"`
+	Password          string                         `json:"password,omitempty"`
+	TOTPSecret        string                         `json:"totp_secret,omitempty"`
+	EmailCodeToken    string                         `json:"email_code_token,omitempty"`
+	WorkflowMode      string                         `json:"workflow_mode,omitempty"`
 	ExpiresAt         time.Time                      `json:"expires_at"`
 	CallbackExpiresAt time.Time                      `json:"callback_expires_at,omitempty"`
 }
@@ -121,6 +132,13 @@ type openAIAdsPowerBindingReport struct {
 type openAIAdsPowerCallbackReport struct {
 	CallbackToken string `json:"callback_token"`
 	CallbackURL   string `json:"callback_url"`
+}
+
+type openAIAdsPowerProgressReport struct {
+	CallbackToken string `json:"callback_token"`
+	Status        string `json:"status"`
+	Stage         string `json:"stage"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 func newOpenAIAdsPowerLaunchStore() *openAIAdsPowerLaunchStore {
@@ -216,6 +234,31 @@ func (s *openAIAdsPowerLaunchStore) consumeCallback(ctx context.Context, token s
 	s.pruneLocked(s.now())
 	record, ok := s.callbacks[token]
 	delete(s.callbacks, token)
+	return record, ok, nil
+}
+
+func (s *openAIAdsPowerLaunchStore) callbackRecord(ctx context.Context, token string) (openAIAdsPowerLaunchRecord, bool, error) {
+	if s == nil || token == "" {
+		return openAIAdsPowerLaunchRecord{}, false, nil
+	}
+	if client := s.redisClient(); client != nil {
+		payload, err := client.Get(ctx, openAIAdsPowerCallbackRedisPrefix+token).Bytes()
+		if errors.Is(err, redisclient.Nil) {
+			return openAIAdsPowerLaunchRecord{}, false, nil
+		}
+		if err != nil {
+			return openAIAdsPowerLaunchRecord{}, false, err
+		}
+		var record openAIAdsPowerLaunchRecord
+		if json.Unmarshal(payload, &record) != nil || !record.CallbackExpiresAt.After(s.now()) {
+			return openAIAdsPowerLaunchRecord{}, false, nil
+		}
+		return record, true, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked(s.now())
+	record, ok := s.callbacks[token]
 	return record, ok, nil
 }
 
@@ -482,6 +525,9 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 	record := openAIAdsPowerLaunchRecord{
 		AdminUserID: task.ownerID, AccountName: sanitizeOpenAIAdsPowerLabel(task.Email), SessionID: task.sessionID,
 		AuthURL: task.authURL, TaskID: task.ID, TaskMode: task.normalizedMode(), CallbackExpiresAt: task.ExpiresAt,
+		LoginEmail: task.Email, LoginMethod: task.LoginMethod,
+		PasswordEncrypted: task.loginPasswordEncrypted, TOTPEncrypted: task.loginTOTPEncrypted,
+		EmailCodeEncrypted: task.loginEmailCodeEncrypted,
 	}
 	if mode == batchOAuthModeReauthorization {
 		account, err := h.adminService.GetAccount(c.Request.Context(), task.TargetAccountID)
@@ -532,12 +578,92 @@ func (h *OpenAIOAuthHandler) RedeemOpenAIAdsPowerLaunchTicket(c *gin.Context) {
 		response.Error(c, http.StatusGone, "AdsPower launch ticket has expired or was already used")
 		return
 	}
+	var password, totpSecret, emailCodeToken string
+	if record.TaskID != "" {
+		if h.secretEncryptor == nil {
+			response.Error(c, http.StatusServiceUnavailable, "AdsPower login automation is unavailable")
+			return
+		}
+		var decryptErr error
+		switch normalizeBatchOAuthLoginMethod(record.LoginMethod) {
+		case batchOAuthLoginEmailCode:
+			if record.EmailCodeEncrypted == "" {
+				decryptErr = errors.New("saved email login is unavailable")
+			} else {
+				emailCodeToken, decryptErr = h.secretEncryptor.Decrypt(record.EmailCodeEncrypted)
+			}
+		default:
+			if record.PasswordEncrypted == "" {
+				decryptErr = errors.New("saved password is unavailable")
+			} else {
+				password, decryptErr = h.secretEncryptor.Decrypt(record.PasswordEncrypted)
+			}
+			if decryptErr == nil && record.TOTPEncrypted != "" {
+				totpSecret, decryptErr = h.secretEncryptor.Decrypt(record.TOTPEncrypted)
+			}
+		}
+		if decryptErr != nil {
+			response.Error(c, http.StatusConflict, "Saved login credentials could not be read")
+			return
+		}
+	}
 	response.Success(c, openAIAdsPowerRedeemResponse{
 		AccountID: record.AccountID, AccountName: record.AccountName, SessionID: record.SessionID,
 		AuthURL: record.AuthURL, EnvironmentKey: record.EnvironmentKey, Existing: record.Existing,
 		BindingToken: record.BindingToken, CallbackToken: record.CallbackToken, ExpiresAt: record.ExpiresAt.Add(openAIAdsPowerBindingTTL),
-		CallbackExpiresAt: record.CallbackExpiresAt,
+		CallbackExpiresAt: record.CallbackExpiresAt, LoginEmail: record.LoginEmail,
+		LoginMethod: normalizeBatchOAuthLoginMethod(record.LoginMethod), Password: password, TOTPSecret: totpSecret,
+		EmailCodeToken: emailCodeToken, WorkflowMode: record.TaskMode,
 	})
+}
+
+func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerProgress(c *gin.Context) {
+	if h == nil || h.adsPowerLaunchStore == nil || h.batchOAuthStore == nil {
+		response.Error(c, http.StatusServiceUnavailable, "AdsPower progress service is unavailable")
+		return
+	}
+	var req openAIAdsPowerProgressReport
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "Invalid AdsPower progress report")
+		return
+	}
+	req.CallbackToken = strings.TrimSpace(req.CallbackToken)
+	req.Stage = batchOAuthPublicStage(strings.TrimSpace(req.Stage))
+	req.Reason = batchOAuthPublicReason(strings.TrimSpace(req.Reason))
+	if req.Status != "running" && req.Status != "failed" && req.Status != "blocked" {
+		response.BadRequest(c, "Invalid AdsPower progress status")
+		return
+	}
+	record, ok, err := h.adsPowerLaunchStore.callbackRecord(c.Request.Context(), req.CallbackToken)
+	if err != nil {
+		response.InternalError(c, "AdsPower progress ticket could not be read")
+		return
+	}
+	if !ok {
+		response.Error(c, http.StatusGone, "AdsPower progress ticket has expired")
+		return
+	}
+	h.batchOAuthStore.mu.Lock()
+	task := h.batchOAuthStore.tasks[record.TaskID]
+	h.batchOAuthStore.mu.Unlock()
+	if task == nil {
+		response.Error(c, http.StatusGone, "Authorization task is no longer available")
+		return
+	}
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	if task.ownerID != record.AdminUserID || !task.matchesMode(record.TaskMode) || !task.usesAdsPower() ||
+		task.terminal() || task.sessionID != record.SessionID || task.authURL != record.AuthURL {
+		response.Error(c, http.StatusConflict, "AdsPower progress does not match the active authorization task")
+		return
+	}
+	task.Status, task.Stage, task.Reason = req.Status, req.Stage, req.Reason
+	if req.Status != "running" {
+		task.markFinishedIfTerminal()
+	}
+	task.snapshotJSONLocked()
+	response.Success(c, gin.H{"accepted": true})
 }
 
 func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerCallback(c *gin.Context) {

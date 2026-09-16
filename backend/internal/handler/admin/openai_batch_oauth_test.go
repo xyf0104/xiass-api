@@ -195,6 +195,7 @@ func batchOAuthRouter(h *OpenAIOAuthHandler, owner int64, role string) *gin.Engi
 	r.POST("/tasks/:task_id/sms/:action", h.BatchOAuthSMSAction)
 	r.POST("/tools/adspower/launch-tickets/redeem", h.RedeemOpenAIAdsPowerLaunchTicket)
 	r.POST("/tools/adspower/bindings/report", h.ReportOpenAIAdsPowerBinding)
+	r.POST("/tools/adspower/progress/report", h.ReportOpenAIAdsPowerProgress)
 	r.POST("/tools/adspower/callbacks/report", h.ReportOpenAIAdsPowerCallback)
 	return r
 }
@@ -284,6 +285,23 @@ func TestBatchOAuthAdsPowerModeUsesOneTaskBoundCallbackAndPersistsProfile(t *tes
 	require.NotEmpty(t, redeemed.Data.BindingToken)
 	require.NotEmpty(t, redeemed.Data.CallbackToken)
 	require.Equal(t, "api", redeemed.Data.EnvironmentKey)
+	require.Equal(t, "owner@example.test", redeemed.Data.LoginEmail)
+	require.Equal(t, batchOAuthLoginPassword, redeemed.Data.LoginMethod)
+	require.Equal(t, "login-secret", redeemed.Data.Password)
+	require.Equal(t, "JBSWY3DPEHPK3PXP", redeemed.Data.TOTPSecret)
+	require.NotContains(t, launch.Body.String(), "login-secret")
+	require.NotContains(t, launch.Body.String(), "JBSWY3DPEHPK3PXP")
+
+	progressBody, err := json.Marshal(openAIAdsPowerProgressReport{
+		CallbackToken: redeemed.Data.CallbackToken, Status: "running", Stage: "password",
+	})
+	require.NoError(t, err)
+	progress := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/progress/report", string(progressBody))
+	require.Equal(t, http.StatusOK, progress.Code, progress.Body.String())
+	task := f.h.batchOAuthStore.tasks[started.Data.ID]
+	task.mu.Lock()
+	require.Equal(t, "password", task.Stage)
+	task.mu.Unlock()
 
 	bindingBody := `{"binding_token":"` + redeemed.Data.BindingToken + `","device_id":"device-1","profile_id":"profile-1","profile_no":"7","profile_name":"XIASS owner","environment_key":"api","proxy_type":"socks5","proxy_host":"proxy.example.test","proxy_port":"1104","proxy_exit_ip":"203.0.113.42","webrtc_disabled":true,"fingerprint_randomized":true}`
 	binding := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/bindings/report", bindingBody)
@@ -303,7 +321,6 @@ func TestBatchOAuthAdsPowerModeUsesOneTaskBoundCallbackAndPersistsProfile(t *tes
 		Extra: map[string]any{"codex_fingerprint_mode": "off", service.OpenAIAdsPowerBindingExtraKey: pendingBinding},
 	}
 
-	task := f.h.batchOAuthStore.tasks[started.Data.ID]
 	task.mu.Lock()
 	callbackURL := openai.DefaultRedirectURI + "?code=private-code&state=" + task.state
 	task.mu.Unlock()

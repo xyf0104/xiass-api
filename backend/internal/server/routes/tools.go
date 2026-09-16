@@ -63,6 +63,11 @@ func RegisterToolRoutes(
 			h.Admin.OpenAIOAuth.ReportOpenAIAdsPowerBinding,
 		)
 		adsPower.POST(
+			"/progress/report",
+			rateLimiter.LimitWithOptions("public-adspower-progress-report", 120, time.Minute, strict),
+			h.Admin.OpenAIOAuth.ReportOpenAIAdsPowerProgress,
+		)
+		adsPower.POST(
 			"/callbacks/report",
 			rateLimiter.LimitWithOptions("public-adspower-callback-report", 30, time.Minute, strict),
 			h.Admin.OpenAIOAuth.ReportOpenAIAdsPowerCallback,
