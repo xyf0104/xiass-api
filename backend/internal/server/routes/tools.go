@@ -53,6 +53,16 @@ func RegisterToolRoutes(
 	adsPower.Use(panelRateLimiter.PublicIP())
 	{
 		adsPower.POST(
+			"/helpers/pairings/redeem",
+			rateLimiter.LimitWithOptions("public-adspower-helper-pairing", 20, time.Minute, strict),
+			h.Admin.OpenAIOAuth.RedeemOpenAIAdsPowerHelperPairing,
+		)
+		adsPower.POST(
+			"/helpers/commands/next",
+			rateLimiter.LimitWithOptions("public-adspower-helper-poll", 180, time.Minute, strict),
+			h.Admin.OpenAIOAuth.PollOpenAIAdsPowerHelperCommand,
+		)
+		adsPower.POST(
 			"/launch-tickets/redeem",
 			rateLimiter.LimitWithOptions("public-adspower-ticket-redeem", 30, time.Minute, strict),
 			h.Admin.OpenAIOAuth.RedeemOpenAIAdsPowerLaunchTicket,

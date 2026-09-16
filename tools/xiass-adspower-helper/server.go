@@ -25,6 +25,7 @@ type helperServer struct {
 	callbacksMu  sync.Mutex
 	callbacks    map[string]callbackRegistration
 	closeDelay   time.Duration
+	remoteSlots  chan struct{}
 }
 
 type launchPayload struct {
@@ -64,9 +65,10 @@ type callbackRegistration struct {
 }
 
 type existingBinding struct {
-	DeviceID       string `json:"device_id"`
-	ProfileID      string `json:"profile_id"`
-	EnvironmentKey string `json:"environment_key"`
+	DeviceID        string `json:"device_id"`
+	ProfileID       string `json:"profile_id"`
+	EnvironmentKey  string `json:"environment_key"`
+	FingerprintSlot int    `json:"fingerprint_slot,omitempty"`
 }
 
 type apiEnvelope[T any] struct {
@@ -99,6 +101,7 @@ func newHelperServer(cfg *config) *helperServer {
 		verifyProxy: verifyProxyExitIP,
 		callbacks:   make(map[string]callbackRegistration),
 		closeDelay:  1500 * time.Millisecond,
+		remoteSlots: make(chan struct{}, 3),
 	}
 }
 
@@ -108,6 +111,7 @@ func (s *helperServer) routes() http.Handler {
 	mux.HandleFunc("GET /setup", s.setupPage)
 	mux.HandleFunc("GET /api/setup", s.setupState)
 	mux.HandleFunc("POST /api/setup", s.saveSetup)
+	mux.HandleFunc("GET /pair", s.pair)
 	mux.HandleFunc("GET /launch", s.launch)
 	return loopbackOnly(securityHeaders(mux))
 }
@@ -137,7 +141,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusBadRequest, launchView{Title: "XIASS 地址无效", Message: err.Error()})
 		return
 	}
-	serverCfg, ok := cfg.Servers[serverOrigin]
+	_, ok := cfg.Servers[serverOrigin]
 	if !ok {
 		s.renderLaunch(w, http.StatusForbidden, launchView{Title: "未授权的 XIASS 服务器", Message: "请先在本机助手配置中登记该服务器。"})
 		return
@@ -155,7 +159,8 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "无法读取启动任务", Message: err.Error()})
 		return
 	}
-	if payload.EnvironmentKey != serverCfg.EnvironmentKey {
+	targetConfigOrigin, serverCfg, ok := cfg.serverForEnvironment(serverOrigin, payload.EnvironmentKey)
+	if !ok {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "服务器出口不匹配", Message: "当前账号不属于这个 AdsPower 出口环境。"})
 		return
 	}
@@ -163,7 +168,19 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	lock := s.profileLock(payload)
 	lock.Lock()
 	defer lock.Unlock()
-	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, adsPower)
+	fingerprintSlot := 0
+	if payload.Existing != nil {
+		fingerprintSlot = payload.Existing.FingerprintSlot
+	}
+	if fingerprintSlot < 1 || fingerprintSlot > 52 {
+		fingerprintSlot, err = s.allocateFingerprintSlot(targetConfigOrigin)
+		if err != nil {
+			s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
+			s.renderLaunch(w, http.StatusInternalServerError, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
+			return
+		}
+	}
+	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, fingerprintSlot, adsPower)
 	if err != nil {
 		reason := "automation_start_failed"
 		if strings.Contains(err.Error(), "出口代理不可用") {
@@ -173,7 +190,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
 		return
 	}
-	if err := s.reportBinding(ctx, serverOrigin, payload, profile, templateProfile, exitIP, cfg.DeviceID); err != nil {
+	if err := s.reportBinding(ctx, serverOrigin, payload, profile, templateProfile, exitIP, cfg.DeviceID, fingerprintSlot); err != nil {
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "环境绑定未保存", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
@@ -207,7 +224,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig, deviceID string, adsPower *adsPowerClient) (*adsPowerProfile, *adsPowerProfile, string, error) {
+func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig, deviceID string, fingerprintSlot int, adsPower *adsPowerClient) (*adsPowerProfile, *adsPowerProfile, string, error) {
 	templateProfile, err := resolveAdsPowerTemplate(ctx, adsPower, serverCfg)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("读取 %s 出口模板失败: %w", serverCfg.EnvironmentKey, err)
@@ -230,7 +247,7 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		if err != nil {
 			return nil, nil, "", errors.New("账号原有 AdsPower 环境已不存在；请先解除绑定后再创建新环境")
 		}
-		if err := adsPower.enforceProfilePolicy(ctx, profile, templateProfile); err != nil {
+		if err := adsPower.enforceProfilePolicy(ctx, profile, templateProfile, fingerprintSlot); err != nil {
 			return nil, nil, "", fmt.Errorf("刷新既有环境安全策略失败: %w", err)
 		}
 		profile, err = adsPower.profile(ctx, payload.Existing.ProfileID)
@@ -249,7 +266,7 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		}
 		return profile, templateProfile, profileExitIP, nil
 	}
-	profile, err := adsPower.createProfile(ctx, payload.AccountName, templateProfile)
+	profile, err := adsPower.createProfile(ctx, payload.AccountName, templateProfile, fingerprintSlot)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("创建账号专属环境失败: %w", err)
 	}
@@ -264,6 +281,27 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		}
 	}
 	return profile, templateProfile, profileExitIP, nil
+}
+
+func (s *helperServer) allocateFingerprintSlot(origin string) (int, error) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	server, ok := s.cfg.Servers[origin]
+	if !ok {
+		return 0, errors.New("XIASS 节点尚未配置")
+	}
+	slot := server.NextFingerprintSlot
+	if slot < 1 || slot > 52 {
+		slot = 1
+	}
+	server.NextFingerprintSlot = slot%52 + 1
+	next := cloneConfig(s.cfg)
+	next.Servers[origin] = server
+	if err := saveConfig(next); err != nil {
+		return 0, fmt.Errorf("保存指纹槽失败: %w", err)
+	}
+	s.cfg = next
+	return slot, nil
 }
 
 func resolveAdsPowerTemplate(ctx context.Context, adsPower *adsPowerClient, serverCfg serverConfig) (*adsPowerProfile, error) {
@@ -411,7 +449,7 @@ func (s *helperServer) stopProfileAfterCallback(profileID string) {
 	}()
 }
 
-func (s *helperServer) reportBinding(ctx context.Context, origin string, launch *launchPayload, profile, templateProfile *adsPowerProfile, exitIP, deviceID string) error {
+func (s *helperServer) reportBinding(ctx context.Context, origin string, launch *launchPayload, profile, templateProfile *adsPowerProfile, exitIP, deviceID string, fingerprintSlot int) error {
 	payload := map[string]any{
 		"binding_token":          launch.BindingToken,
 		"device_id":              deviceID,
@@ -425,6 +463,7 @@ func (s *helperServer) reportBinding(ctx context.Context, origin string, launch 
 		"proxy_exit_ip":          exitIP,
 		"webrtc_disabled":        true,
 		"fingerprint_randomized": true,
+		"fingerprint_slot":       fingerprintSlot,
 	}
 	var result apiEnvelope[map[string]any]
 	return s.serverRequest(ctx, origin, "/api/v1/tools/adspower/bindings/report", payload, &result)
@@ -509,6 +548,7 @@ func runServers(ctx context.Context, cfg *config) error {
 	errorsCh := make(chan error, 2)
 	go func() { errorsCh <- mainServer.ListenAndServe() }()
 	go func() { errorsCh <- callbackServer.ListenAndServe() }()
+	go helper.runRemoteWorker(ctx)
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

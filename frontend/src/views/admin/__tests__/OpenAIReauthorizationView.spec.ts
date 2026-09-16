@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getById: vi.fn(),
     list: vi.fn(),
     delete: vi.fn(),
+    clearError: vi.fn(),
   },
   groupsAPI: { getAll: vi.fn() },
   proxiesAPI: { getAll: vi.fn() },
@@ -466,21 +467,35 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
-  it('allows a deleted or disabled account to retry only after red high-risk confirmation', async () => {
+  it('does not offer retry or recovery for an explicitly deleted or disabled account', async () => {
     mocks.route.query = { account_ids: '10' }
     openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(10, { can_start: true, requires_risk_confirmation: true, risk_level: 'blocked', last_result: 'blocked', last_reason: 'account_deleted_or_disabled' })], cooldown_seconds: 604800 })
     openAIReauthorizationAPI.list.mockResolvedValue({ items: [task(10, 'blocked', 'blocked', 'account_deleted_or_disabled')], max_concurrency: 3, max_restarts: 2 })
-    openAIReauthorizationAPI.restart.mockResolvedValue(task(10, 'running', 'opening'))
     const wrapper = await mountView()
 
     expect(wrapper.text()).toContain('账号已删除或停用')
-    const retry = wrapper.get('[data-testid="start-reauthorization-10"]')
-    expect(retry.text()).toContain('继续授权')
-    await retry.trigger('click')
-    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('账号已删除或停用')
-    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    expect(wrapper.find('[data-testid="start-reauthorization-10"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="recover-reauthorization-account-10"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows legacy restricted results as an unknown retryable error', async () => {
+    mocks.route.query = { account_ids: '11' }
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [reauthorizationStatus(11, { has_history: true, has_attempted: true, attempt_count: 1, risk_level: 'failed', last_result: 'failed', last_reason: 'account_blocked' })],
+      cooldown_seconds: 604800,
+    })
+    openAIReauthorizationAPI.list.mockResolvedValue({ items: [task(11, 'blocked', 'blocked', 'account_blocked')], max_concurrency: 3, max_restarts: 2 })
+    openAIReauthorizationAPI.restart.mockResolvedValue(task(11, 'running', 'opening'))
+    accountsAPI.clearError.mockResolvedValue({ ...account(11), status: 'active' })
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('未知错误，可以恢复状态后重试。')
+    expect(wrapper.text()).not.toContain('账号受限')
+    expect(wrapper.get('[data-testid="start-reauthorization-11"]').text()).toContain('重试本次授权')
+    await wrapper.get('[data-testid="recover-reauthorization-account-11"]').trigger('click')
     await flushPromises()
-    expect(openAIReauthorizationAPI.restart).toHaveBeenCalledWith(task(10, 'blocked', 'blocked', 'account_deleted_or_disabled').task_id, true)
+    expect(accountsAPI.clearError).toHaveBeenCalledWith(11)
     wrapper.unmount()
   })
 

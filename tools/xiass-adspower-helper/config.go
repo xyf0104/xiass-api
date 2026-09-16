@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -26,13 +27,37 @@ type config struct {
 }
 
 type serverConfig struct {
-	EnvironmentKey    string `json:"environment_key"`
-	TemplateProfileID string `json:"template_profile_id,omitempty"`
-	ProxyID           string `json:"proxy_id,omitempty"`
-	ProxyHost         string `json:"proxy_host,omitempty"`
-	ProxyPort         string `json:"proxy_port,omitempty"`
-	ProxyUser         string `json:"proxy_user,omitempty"`
-	ProxyPassword     string `json:"proxy_password,omitempty"`
+	EnvironmentKey      string `json:"environment_key"`
+	DeviceSecret        string `json:"device_secret,omitempty"`
+	NextFingerprintSlot int    `json:"next_fingerprint_slot,omitempty"`
+	TemplateProfileID   string `json:"template_profile_id,omitempty"`
+	ProxyID             string `json:"proxy_id,omitempty"`
+	ProxyHost           string `json:"proxy_host,omitempty"`
+	ProxyPort           string `json:"proxy_port,omitempty"`
+	ProxyUser           string `json:"proxy_user,omitempty"`
+	ProxyPassword       string `json:"proxy_password,omitempty"`
+}
+
+func (c *config) serverForEnvironment(preferredOrigin, environmentKey string) (string, serverConfig, bool) {
+	if c == nil {
+		return "", serverConfig{}, false
+	}
+	environmentKey = strings.TrimSpace(environmentKey)
+	if server, ok := c.Servers[preferredOrigin]; ok && server.EnvironmentKey == environmentKey {
+		return preferredOrigin, server, true
+	}
+	origins := make([]string, 0, len(c.Servers))
+	for origin := range c.Servers {
+		origins = append(origins, origin)
+	}
+	sort.Strings(origins)
+	for _, origin := range origins {
+		server := c.Servers[origin]
+		if server.EnvironmentKey == environmentKey {
+			return origin, server, true
+		}
+	}
+	return "", serverConfig{}, false
 }
 
 func defaultConfigPath() (string, error) {
@@ -125,6 +150,11 @@ func (c *config) normalize() (bool, error) {
 			return false, err
 		}
 		server.EnvironmentKey = strings.TrimSpace(server.EnvironmentKey)
+		server.DeviceSecret = strings.TrimSpace(server.DeviceSecret)
+		if server.NextFingerprintSlot < 1 || server.NextFingerprintSlot > 52 {
+			server.NextFingerprintSlot = 1
+			changed = true
+		}
 		server.TemplateProfileID = strings.TrimSpace(server.TemplateProfileID)
 		server.ProxyID = strings.TrimSpace(server.ProxyID)
 		server.ProxyHost = normalizeProxyHost(server.ProxyHost)
@@ -149,7 +179,14 @@ func (c *config) normalize() (bool, error) {
 		}
 	}
 	c.Servers = normalizedServers
-	if c.APIKey != "" {
+	hasDeviceSecret := false
+	for _, server := range c.Servers {
+		if server.DeviceSecret != "" {
+			hasDeviceSecret = true
+			break
+		}
+	}
+	if c.APIKey != "" || hasDeviceSecret {
 		if info, statErr := os.Stat(c.path); statErr == nil && runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 			return false, errors.New("config containing api_key must have file mode 0600")
 		}

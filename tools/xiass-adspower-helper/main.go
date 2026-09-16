@@ -35,6 +35,9 @@ func main() {
 		fatalIf(runServers(ctx, cfg))
 	case "doctor":
 		fatalIf(runDoctor(cfg))
+	case "install":
+		fatalIf(installResidentHelper(cfg))
+		fmt.Println("XIASS 授权助手后台服务已安装")
 	default:
 		log.Fatalf("unknown command %q", command)
 	}

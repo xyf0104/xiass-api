@@ -69,7 +69,7 @@ export const batchOAuthAPI = {
     })).data
   },
   async launchAdsPower(id: string) {
-    return (await apiClient.post<{ helper_url: string; expires_at: string }>(`${path}/${encodeURIComponent(id)}/adspower-launch`)).data
+    return (await apiClient.post<{ helper_url: string; expires_at: string; delivery?: 'queued' | 'local' }>(`${path}/${encodeURIComponent(id)}/adspower-launch`)).data
   },
   async sms(id: string, action: 'check' | 'acquire' | 'change' | 'cancel') {
     const url = `${path}/${encodeURIComponent(id)}/sms`

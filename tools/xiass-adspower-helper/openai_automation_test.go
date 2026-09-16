@@ -20,6 +20,9 @@ func TestInspectOAuthPageRecognizesLoginStages(t *testing.T) {
 		{name: "email code", page: oauthPageSnapshot{URL: "https://auth.openai.com/email-verification", Body: "Check your inbox for a verification code", Inputs: []oauthPageInput{{Index: 0, Metadata: "one-time-code numeric"}}}, kind: "email_code"},
 		{name: "workspace", page: oauthPageSnapshot{URL: "https://auth.openai.com/authorize", Body: "Continue to Codex using your default workspace"}, kind: "workspace"},
 		{name: "deleted", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in", Body: "This account has been deleted or disabled"}, kind: "account_deleted_or_disabled"},
+		{name: "banned", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in", Body: "This account has been suspended"}, kind: "account_banned"},
+		{name: "restricted", page: oauthPageSnapshot{URL: "https://auth.openai.com/log-in", Body: "This account is restricted"}, kind: "unknown_error"},
+		{name: "proxy failure", page: oauthPageSnapshot{URL: "chrome-error://chromewebdata/", Body: "ERR_PROXY_CONNECTION_FAILED"}, kind: "proxy_unavailable"},
 		{name: "callback", page: oauthPageSnapshot{URL: "http://localhost:1455/auth/callback?code=abc&state=state"}, kind: "callback"},
 	}
 	for _, test := range tests {
@@ -27,6 +30,17 @@ func TestInspectOAuthPageRecognizesLoginStages(t *testing.T) {
 			state := inspectOAuthPage(test.page)
 			require.Equal(t, test.kind, state.Kind)
 		})
+	}
+}
+
+func TestBlockedOnlyMakesDeletedOrBannedAccountsTerminal(t *testing.T) {
+	for _, reason := range []string{"account_banned", "account_deleted_or_disabled"} {
+		result := automationFailure(blocked(reason))
+		require.Equal(t, "blocked", result.Status)
+	}
+	for _, reason := range []string{"manual_challenge", "unknown_error", "proxy_unavailable", "captcha_required"} {
+		result := automationFailure(blocked(reason))
+		require.Equal(t, "failed", result.Status)
 	}
 }
 

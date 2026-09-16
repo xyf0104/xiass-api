@@ -134,12 +134,14 @@ func (s *helperServer) saveSetup(w http.ResponseWriter, r *http.Request) {
 		proxyPassword = existing.ProxyPassword
 	}
 	server := serverConfig{
-		EnvironmentKey: request.EnvironmentKey,
-		ProxyID:        request.ProxyID,
-		ProxyHost:      request.ProxyHost,
-		ProxyPort:      request.ProxyPort,
-		ProxyUser:      request.ProxyUser,
-		ProxyPassword:  proxyPassword,
+		EnvironmentKey:      request.EnvironmentKey,
+		DeviceSecret:        existing.DeviceSecret,
+		NextFingerprintSlot: existing.NextFingerprintSlot,
+		ProxyID:             request.ProxyID,
+		ProxyHost:           request.ProxyHost,
+		ProxyPort:           request.ProxyPort,
+		ProxyUser:           request.ProxyUser,
+		ProxyPassword:       proxyPassword,
 	}
 	next.Servers[serverOrigin] = server
 	if _, err := next.normalize(); err != nil {

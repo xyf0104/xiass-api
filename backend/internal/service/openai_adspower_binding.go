@@ -26,6 +26,7 @@ type OpenAIAdsPowerBinding struct {
 	ProxyExitIP           string     `json:"proxy_exit_ip,omitempty"`
 	WebRTCDisabled        bool       `json:"webrtc_disabled"`
 	FingerprintRandomized bool       `json:"fingerprint_randomized"`
+	FingerprintSlot       int        `json:"fingerprint_slot,omitempty"`
 	BoundAt               *time.Time `json:"bound_at,omitempty"`
 	LastVerifiedAt        *time.Time `json:"last_verified_at,omitempty"`
 	LastLaunchedAt        *time.Time `json:"last_launched_at,omitempty"`
@@ -72,6 +73,9 @@ func (b *OpenAIAdsPowerBinding) Normalize() {
 	b.ProxyHost = strings.ToLower(strings.TrimSpace(b.ProxyHost))
 	b.ProxyPort = strings.TrimSpace(b.ProxyPort)
 	b.ProxyExitIP = strings.TrimSpace(b.ProxyExitIP)
+	if b.FingerprintSlot < 0 || b.FingerprintSlot > 52 {
+		b.FingerprintSlot = 0
+	}
 	b.BoundAt = normalizeAdsPowerTime(b.BoundAt)
 	b.LastVerifiedAt = normalizeAdsPowerTime(b.LastVerifiedAt)
 	b.LastLaunchedAt = normalizeAdsPowerTime(b.LastLaunchedAt)

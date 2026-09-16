@@ -50,7 +50,8 @@ var (
 	emailAddressPattern       = regexp.MustCompile(`(?i)[A-Z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}`)
 	invalidCredentialsPattern = regexp.MustCompile(`(?i)incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password`)
 	deletedAccountPattern     = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)`)
-	blockedAccountPattern     = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned|restricted|limited)|account_(?:suspended|restricted|limited)|账号.*(?:封禁|受限|限制)`)
+	bannedAccountPattern      = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned)|account_(?:suspended|banned)|账号.*(?:封禁|封号)`)
+	restrictedAccountPattern  = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:restricted|limited)|account_(?:restricted|limited)|账号.*(?:受限|限制)`)
 	invalidCodePattern        = regexp.MustCompile(`(?i)incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)`)
 	diagnosticCodePattern     = regexp.MustCompile(`\b\d{6,8}\b`)
 	diagnosticTokenPattern    = regexp.MustCompile(`\b[A-Za-z0-9_-]{24,}\b`)
@@ -167,7 +168,7 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 	}
 	navigationCtx, cancelNavigation := context.WithTimeout(browser, 10*time.Second)
 	err := chromedp.Run(navigationCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		_, _, _, navigateErr := page.Navigate(authURL).Do(ctx)
+		_, _, _, _, navigateErr := page.Navigate(authURL).Do(ctx)
 		return navigateErr
 	}))
 	cancelNavigation()
@@ -256,7 +257,13 @@ func automationErrorReason(err error, stage string) string {
 	return "page_interaction_failed"
 }
 
-func blocked(reason string) error { return automationFailureError{Status: "blocked", Reason: reason} }
+func blocked(reason string) error {
+	status := "failed"
+	if reason == "account_banned" || reason == "account_deleted_or_disabled" {
+		status = "blocked"
+	}
+	return automationFailureError{Status: status, Reason: reason}
+}
 
 func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin string, launch *launchPayload) error {
 	attempted := make(map[string]time.Time)
@@ -303,7 +310,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			return automationFailureError{Status: "failed", Reason: state.Kind}
 		case "captcha":
 			return blocked("captcha_required")
-		case "account_deleted_or_disabled", "account_blocked", "invalid_credentials", "invalid_email_code", "invalid_totp", "invalid_sms_code":
+		case "account_deleted_or_disabled", "account_banned", "unknown_error", "proxy_unavailable", "invalid_credentials", "invalid_email_code", "invalid_totp", "invalid_sms_code":
 			return blocked(state.Kind)
 		case "phone", "phone_rejected", "sms_code":
 			return blocked("reauthorization_phone_required")
@@ -503,8 +510,12 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 		state.Kind = "captcha"
 	case deletedAccountPattern.MatchString(body):
 		state.Kind = "account_deleted_or_disabled"
-	case blockedAccountPattern.MatchString(body):
-		state.Kind = "account_blocked"
+	case bannedAccountPattern.MatchString(body):
+		state.Kind = "account_banned"
+	case restrictedAccountPattern.MatchString(body):
+		state.Kind = "unknown_error"
+	case strings.Contains(lower, "err_proxy_connection_failed") || strings.Contains(lower, "there is something wrong with the proxy server"):
+		state.Kind = "proxy_unavailable"
 	case invalidCredentialsPattern.MatchString(body):
 		state.Kind = "invalid_credentials"
 	default:

@@ -42,8 +42,15 @@ The fixed release assets are:
 
 ```text
 xiass-adspower-helper-macos-universal.zip
+xiass-adspower-helper-macos-universal.dmg
 xiass-adspower-helper-windows-x64.exe
 ```
+
+The macOS app installs a per-user LaunchAgent. It starts automatically after
+login, restarts after a crash, and uses a macOS idle-sleep assertion so the
+display may turn off while authorization jobs continue in the background.
+Closing the Mac lid or shutting the computer down still pauses the local
+AdsPower runtime; the helper resumes automatically after the next login/wake.
 
 ## Config
 

@@ -5953,13 +5953,16 @@ const handleLaunchAdsPower = async () => {
       profile_label: form.name || 'OpenAI OAuth'
     })
     adsPowerSessionId.value = sessionId
-    if (helperWindow) {
+    if (result.delivery === 'queued') {
+      helperWindow?.close()
+      appStore.showSuccess('授权任务已发送到 XIASS 常驻助手')
+    } else if (helperWindow) {
       helperWindow.opener = null
       helperWindow.location.replace(result.helper_url)
     } else {
       window.location.assign(result.helper_url)
     }
-    appStore.showSuccess('已用账号专属 AdsPower 指纹环境打开授权页')
+    if (result.delivery !== 'queued') appStore.showSuccess('已用账号专属 AdsPower 指纹环境打开授权页')
   } catch (error: any) {
     helperWindow?.close()
     appStore.showError(error?.response?.data?.detail || error?.message || '无法启动 AdsPower 指纹环境')

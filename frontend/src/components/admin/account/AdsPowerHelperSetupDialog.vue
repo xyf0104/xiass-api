@@ -17,7 +17,7 @@
         <span class="adspower-setup-step">2</span>
         <div class="min-w-0 flex-1">
           <h3 class="font-semibold text-gray-950 dark:text-white">安装 XIASS AdsPower 助手</h3>
-          <p class="mt-1 text-gray-500 dark:text-gray-400">助手仅监听本机地址，负责创建固定环境、关闭 WebRTC、接收 localhost OAuth 回调和调用 AdsPower。</p>
+          <p class="mt-1 text-gray-500 dark:text-gray-400">助手安装后随电脑登录自动启动并在后台常驻，负责接收 XIASS 任务、创建固定环境、关闭 WebRTC、接收 OAuth 回调和调用 AdsPower。</p>
           <div class="mt-3 flex flex-wrap gap-2">
             <a class="btn btn-secondary btn-sm" :href="macDownloadURL" data-testid="adspower-helper-download-macos">
               <Icon name="download" size="sm" />macOS 下载
@@ -46,6 +46,18 @@
         </div>
       </section>
 
+      <section class="adspower-setup-section">
+        <span class="adspower-setup-step">4</span>
+        <div class="min-w-0 flex-1">
+          <h3 class="font-semibold text-gray-950 dark:text-white">配对常驻助手</h3>
+          <p class="mt-1 text-gray-500 dark:text-gray-400">在安装助手的电脑上完成一次配对。以后从手机或其他电脑点击 Ads 授权，任务会由 XIASS 服务器安全下发到这台电脑，不再打开 127.0.0.1。</p>
+          <button type="button" class="btn btn-primary mt-3" data-testid="pair-adspower-helper" :disabled="pairing" @click="pairResidentHelper">
+            <Icon name="link" size="sm" />{{ pairing ? '正在配对' : '配对常驻助手' }}
+          </button>
+          <p v-if="pairingError" class="mt-2 text-xs text-red-600 dark:text-red-300">{{ pairingError }}</p>
+        </div>
+      </section>
+
       <p class="border-t border-gray-200 pt-3 text-xs leading-5 text-gray-500 dark:border-dark-700 dark:text-gray-400">
         AdsPower API Key、SOCKS5 账号密码、浏览器 Cookie 和 OAuth Token 均保存在管理员电脑本地；XIASS 服务器只保存账号对应的设备、环境和已验证出口信息。
       </p>
@@ -54,9 +66,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { adsPowerAPI } from '@/api/admin/adspower'
 
 const props = defineProps<{
   show: boolean
@@ -67,8 +80,10 @@ const props = defineProps<{
 defineEmits<{ close: [] }>()
 
 const helperReleaseBase = 'https://github.com/xyf0104/xiass-api/releases/download/adspower-helper-latest'
-const macDownloadURL = `${helperReleaseBase}/xiass-adspower-helper-macos-universal.zip`
+const macDownloadURL = `${helperReleaseBase}/xiass-adspower-helper-macos-universal.dmg`
 const windowsDownloadURL = `${helperReleaseBase}/xiass-adspower-helper-windows-x64.exe`
+const pairing = ref(false)
+const pairingError = ref('')
 const setupURL = computed(() => {
   const query = new URLSearchParams({ server: props.serverOrigin, environment: props.environmentKey })
   return `http://127.0.0.1:34987/setup?${query.toString()}`
@@ -78,6 +93,21 @@ function openLocalSetup() {
   const helperWindow = window.open(setupURL.value, '_blank')
   if (helperWindow) helperWindow.opener = null
   else window.location.assign(setupURL.value)
+}
+
+async function pairResidentHelper() {
+  pairing.value = true
+  pairingError.value = ''
+  try {
+    const result = await adsPowerAPI.pairHelper(props.environmentKey)
+    const helperWindow = window.open(result.helper_url, '_blank')
+    if (helperWindow) helperWindow.opener = null
+    else window.location.assign(result.helper_url)
+  } catch (error) {
+    pairingError.value = error instanceof Error ? error.message : '无法创建常驻助手配对。'
+  } finally {
+    pairing.value = false
+  }
 }
 </script>
 

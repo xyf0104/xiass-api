@@ -13,6 +13,7 @@ export interface OpenAIAdsPowerBinding {
   proxy_exit_ip?: string
   webrtc_disabled: boolean
   fingerprint_randomized: boolean
+  fingerprint_slot?: number
   bound_at?: string
   last_verified_at?: string
   last_launched_at?: string
@@ -28,11 +29,24 @@ export interface OpenAIAdsPowerLaunchRequest {
 export interface OpenAIAdsPowerLaunchResult {
   helper_url: string
   expires_at: string
+  delivery?: 'queued' | 'local'
+}
+
+export interface OpenAIAdsPowerPairingResult {
+  helper_url: string
+  environment_key: string
+  expires_at: string
 }
 
 export const adsPowerAPI = {
   async launch(payload: OpenAIAdsPowerLaunchRequest): Promise<OpenAIAdsPowerLaunchResult> {
     return (await apiClient.post<OpenAIAdsPowerLaunchResult>('/admin/openai/adspower/launch-tickets', payload)).data
+  },
+
+  async pairHelper(environmentKey: string): Promise<OpenAIAdsPowerPairingResult> {
+    return (await apiClient.post<OpenAIAdsPowerPairingResult>('/admin/openai/adspower/helpers/pairing-tickets', {
+      environment_key: environmentKey,
+    })).data
   },
 
   async unbind(accountID: number): Promise<{ account_id: number; unbound: boolean }> {

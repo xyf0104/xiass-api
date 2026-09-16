@@ -89,6 +89,7 @@ func TestSetupUsesAdsPowerSavedProxyWithoutHostProbe(t *testing.T) {
 	cfg, err := loadConfig(path)
 	require.NoError(t, err)
 	cfg.AdsPowerBaseURL = adsPower.URL
+	cfg.Servers["https://api2.example.test"] = serverConfig{EnvironmentKey: "api2", DeviceSecret: "paired-secret", NextFingerprintSlot: 17, ProxyID: "7"}
 	require.NoError(t, saveConfig(cfg))
 	helper := newHelperServer(cfg)
 	helper.adsPower.minInterval = 0
@@ -108,6 +109,8 @@ func TestSetupUsesAdsPowerSavedProxyWithoutHostProbe(t *testing.T) {
 	require.NoError(t, err)
 	server := saved.Servers["https://api2.example.test"]
 	require.Equal(t, "7", server.ProxyID)
+	require.Equal(t, "paired-secret", server.DeviceSecret)
+	require.Equal(t, 17, server.NextFingerprintSlot)
 	require.Empty(t, server.ProxyHost)
 	require.Empty(t, server.ProxyPort)
 }

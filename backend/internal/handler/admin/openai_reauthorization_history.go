@@ -98,8 +98,8 @@ func (h *OpenAIOAuthHandler) validateOpenAIReauthorizationStart(ctx context.Cont
 	if !openAIAccountNeedsReauthorization(account) {
 		return state, 0, errors.New("该账号当前没有检测到需要重新授权的 401 状态")
 	}
-	if openAIReauthorizationBlocked(account, state) && !req.AcknowledgedSecondReauthorizationRisk {
-		return state, 0, errors.New("OpenAI 页面显示该账号受限、删除或停用；如仍要手动授权，必须完成高风险二次确认")
+	if openAIReauthorizationBlocked(account, state) {
+		return state, 0, errors.New("OpenAI 页面明确显示该账号已删除、停用或封禁，不能重新授权")
 	}
 	if state.SuccessCount > 0 {
 		if cooldownUntil := state.CooldownUntil(); cooldownUntil != nil && now.Before(*cooldownUntil) {
@@ -152,7 +152,7 @@ func (h *OpenAIOAuthHandler) persistOpenAIReauthorizationTaskState(ctx context.C
 	result := service.OpenAIReauthorizationResultFailed
 	if task.Status == "completed" || (task.AccountID > 0 && task.Reason == "account_state_recovery_failed") {
 		result = service.OpenAIReauthorizationResultSuccess
-	} else if task.Status == "blocked" || task.Reason == "account_blocked" {
+	} else if openAIReauthorizationTerminalReason(task.Reason) {
 		result = service.OpenAIReauthorizationResultBlocked
 	} else if task.Status == "canceled" {
 		result = service.OpenAIReauthorizationResultCanceled
@@ -302,20 +302,32 @@ func openAIAccountNeedsReauthorization(account *service.Account) bool {
 }
 
 func openAIReauthorizationBlocked(account *service.Account, state service.OpenAIReauthorizationState) bool {
-	if state.LastResult == service.OpenAIReauthorizationResultBlocked ||
-		state.LastReason == "account_blocked" || state.LastReason == "account_deleted_or_disabled" {
+	if openAIReauthorizationTerminalReason(state.LastReason) {
 		return true
 	}
 	if account == nil {
 		return false
 	}
 	text := strings.ToLower(account.ErrorMessage + " " + account.GetExtraString("error") + " " + account.GetExtraString("error_code"))
-	for _, marker := range []string{"account_blocked", "account blocked", "account_deleted_or_disabled", "deactivated", "disabled", "suspended", "封号", "账号受限", "账号已删除", "账号已停用"} {
+	for _, marker := range []string{
+		"account_banned", "account_deleted_or_disabled", "account banned", "account suspended",
+		"account deleted", "account deactivated", "account disabled", "banned", "suspended",
+		"deactivated", "disabled", "封号", "封禁", "账号已删除", "账号已停用",
+	} {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+func openAIReauthorizationTerminalReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "account_banned", "account_deleted_or_disabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildOpenAIReauthorizationAccountStatus(account *service.Account, state service.OpenAIReauthorizationState, needsReauthorization bool, now time.Time) openAIReauthorizationAccountStatus {
@@ -407,7 +419,9 @@ func inferOpenAIReauthorizationState(account *service.Account, evidence openAIRe
 	}
 	if openAIReauthorizationBlocked(account, state) {
 		state.LastResult = service.OpenAIReauthorizationResultBlocked
-		state.LastReason = "account_blocked"
+		if !openAIReauthorizationTerminalReason(state.LastReason) {
+			state.LastReason = "account_banned"
+		}
 		state.HistoryConfidence = service.OpenAIReauthorizationHistoryInferred
 	}
 	state.Normalize()

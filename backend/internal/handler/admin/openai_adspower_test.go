@@ -49,6 +49,43 @@ func TestOpenAIAdsPowerPendingBindingIsScopedToAdministrator(t *testing.T) {
 	require.Equal(t, binding.ProfileID, got.ProfileID)
 }
 
+func TestOpenAIAdsPowerResidentHelperQueueIsPairedAndEnvironmentScoped(t *testing.T) {
+	store := newOpenAIAdsPowerLaunchStore()
+	now := time.Now().UTC()
+	store.now = func() time.Time { return now }
+	pairing := openAIAdsPowerHelperPairing{AdminUserID: 42, EnvironmentKey: "api2", ExpiresAt: now.Add(time.Minute)}
+	require.NoError(t, store.savePairing(context.Background(), "pair-ticket", pairing))
+	consumed, ok, err := store.consumePairing(context.Background(), "pair-ticket")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, pairing.EnvironmentKey, consumed.EnvironmentKey)
+
+	device := openAIAdsPowerHelperDevice{
+		AdminUserID: 42, DeviceID: "device-1", EnvironmentKey: "api2",
+		SecretHash: openAIAdsPowerHashSecret("device-secret"), PairedAt: now, LastSeenAt: now,
+	}
+	require.NoError(t, store.saveDevice(context.Background(), device))
+	_, authenticated, err := store.authenticateDevice(context.Background(), "device-1", "api2", "device-secret")
+	require.NoError(t, err)
+	require.True(t, authenticated)
+	_, authenticated, err = store.authenticateDevice(context.Background(), "device-1", "api", "device-secret")
+	require.NoError(t, err)
+	require.False(t, authenticated)
+
+	// The command is delivered through the current api2 control server while
+	// the account itself keeps its api-node proxy assignment.
+	record := openAIAdsPowerLaunchRecord{AdminUserID: 42, EnvironmentKey: "api"}
+	queued, err := store.enqueueHelperCommand(context.Background(), record, "launch-ticket", "api2")
+	require.NoError(t, err)
+	require.True(t, queued)
+	ticket, err := store.nextHelperCommand(context.Background(), "device-1", "api2")
+	require.NoError(t, err)
+	require.Equal(t, "launch-ticket", ticket)
+	ticket, err = store.nextHelperCommand(context.Background(), "device-1", "api2")
+	require.NoError(t, err)
+	require.Empty(t, ticket)
+}
+
 func TestNormalizeOpenAIAdsPowerBindingReportRequiresSafeProfile(t *testing.T) {
 	record := openAIAdsPowerLaunchRecord{EnvironmentKey: "api2"}
 	request := openAIAdsPowerBindingReport{

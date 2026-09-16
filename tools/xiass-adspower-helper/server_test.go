@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,8 +80,10 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.NoError(t, err)
 	cfg := &config{
 		AdsPowerBaseURL: adsPower.URL, DeviceID: "device-1",
-		Servers: map[string]serverConfig{origin: {EnvironmentKey: "api2", TemplateProfileID: "template-api2"}},
+		Servers: map[string]serverConfig{origin: {EnvironmentKey: "api2", NextFingerprintSlot: 1, TemplateProfileID: "template-api2"}},
+		path:    filepath.Join(t.TempDir(), "config.json"),
 	}
+	require.NoError(t, saveConfig(cfg))
 	helper := newHelperServer(cfg)
 	helper.adsPower.minInterval = 0
 	helper.closeDelay = 0
@@ -95,6 +98,7 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.NotContains(t, startedBody, "open_tabs")
 	require.Contains(t, startedBody["launch_args"], "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
 	require.Equal(t, "device-1", report["device_id"])
+	require.Equal(t, float64(1), report["fingerprint_slot"])
 	require.Equal(t, "203.0.113.42", report["proxy_exit_ip"])
 	require.NotContains(t, report, "proxy_user")
 	require.NotContains(t, report, "proxy_password")
@@ -182,17 +186,56 @@ func TestNormalizeServerOrigin(t *testing.T) {
 }
 
 func TestRandomizedFingerprintConfigPrefersMacAndDisablesWebRTC(t *testing.T) {
-	config := randomizedFingerprintConfig(true)
+	config := randomizedFingerprintConfig(1, true)
 	require.Equal(t, "disabled", config["webrtc"])
-	require.Equal(t, "random", config["screen_resolution"])
+	require.Equal(t, "1920_1080", config["screen_resolution"])
+	require.Equal(t, "4", config["hardware_concurrency"])
 
 	randomUA, ok := config["random_ua"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, []string{"chrome"}, randomUA["ua_browser"])
-	require.Equal(t, []string{"Mac OS X 12", "Mac OS X 13"}, randomUA["ua_system_version"])
+	require.Equal(t, []string{"Mac OS X 12"}, randomUA["ua_system_version"])
 
-	updateConfig := randomizedFingerprintConfig(false)
+	updateConfig := randomizedFingerprintConfig(1, false)
 	require.NotContains(t, updateConfig, "random_ua")
+	require.Equal(t, randomizedFingerprintConfig(1, true)["screen_resolution"], randomizedFingerprintConfig(53, true)["screen_resolution"])
+}
+
+func TestFingerprintSlotsWrapAfterFiftyTwoWithoutSharingProfiles(t *testing.T) {
+	origin := "https://api2.example.test"
+	cfg := &config{
+		AdsPowerBaseURL: "http://127.0.0.1:50325",
+		DeviceID:        "device-1",
+		Servers: map[string]serverConfig{
+			origin: {EnvironmentKey: "api2", NextFingerprintSlot: 52, ProxyID: "7"},
+		},
+		path: filepath.Join(t.TempDir(), "config.json"),
+	}
+	require.NoError(t, saveConfig(cfg))
+	helper := newHelperServer(cfg)
+
+	first, err := helper.allocateFingerprintSlot(origin)
+	require.NoError(t, err)
+	second, err := helper.allocateFingerprintSlot(origin)
+	require.NoError(t, err)
+
+	require.Equal(t, 52, first)
+	require.Equal(t, 1, second)
+	reloaded, err := loadConfig(cfg.path)
+	require.NoError(t, err)
+	require.Equal(t, 2, reloaded.Servers[origin].NextFingerprintSlot)
+}
+
+func TestServerForEnvironmentUsesAccountNodeBehindDifferentControlServer(t *testing.T) {
+	cfg := &config{Servers: map[string]serverConfig{
+		"https://api.example.test":  {EnvironmentKey: "api", ProxyID: "8"},
+		"https://api2.example.test": {EnvironmentKey: "api2", ProxyID: "7"},
+	}}
+
+	origin, server, ok := cfg.serverForEnvironment("https://api2.example.test", "api")
+	require.True(t, ok)
+	require.Equal(t, "https://api.example.test", origin)
+	require.Equal(t, "8", server.ProxyID)
 }
 
 func TestDirectSOCKSTemplateUsesAdsPowerDefaultGroup(t *testing.T) {

@@ -281,7 +281,9 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (popup) popup.opener = null
     await operation(row, async () => {
       const result = await batchOAuthAPI.launchAdsPower(row.task!.task_id)
-      if (popup) popup.location.href = result.helper_url
+      if (result.delivery === 'queued') {
+        popup?.close()
+      } else if (popup) popup.location.href = result.helper_url
       else window.location.assign(result.helper_url)
     })
     if (row.error && popup) popup.close()

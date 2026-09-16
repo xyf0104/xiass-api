@@ -19,7 +19,7 @@ describe('AdsPowerHelperSetupDialog', () => {
       global: { stubs: { BaseDialog: BaseDialogStub, Icon: true } },
     })
 
-    expect(wrapper.get('[data-testid="adspower-helper-download-macos"]').attributes('href')).toBe('https://github.com/xyf0104/xiass-api/releases/download/adspower-helper-latest/xiass-adspower-helper-macos-universal.zip')
+    expect(wrapper.get('[data-testid="adspower-helper-download-macos"]').attributes('href')).toBe('https://github.com/xyf0104/xiass-api/releases/download/adspower-helper-latest/xiass-adspower-helper-macos-universal.dmg')
     expect(wrapper.get('[data-testid="adspower-helper-download-windows"]').attributes('href')).toBe('https://github.com/xyf0104/xiass-api/releases/download/adspower-helper-latest/xiass-adspower-helper-windows-x64.exe')
     await wrapper.get('[data-testid="open-adspower-helper-setup"]').trigger('click')
 

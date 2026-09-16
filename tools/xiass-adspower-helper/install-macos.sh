@@ -41,6 +41,8 @@ import plistlib
 payload = {
     "Label": os.environ["LABEL"],
     "ProgramArguments": [
+        "/usr/bin/caffeinate",
+        "-i",
         os.environ["BIN_PATH"],
         "-config",
         os.environ["CONFIG_PATH"],

@@ -498,13 +498,16 @@ const handleLaunchAdsPower = async () => {
       profile_label: props.account.name
     })
     adsPowerSessionId.value = sessionId
-    if (helperWindow) {
+    if (result.delivery === 'queued') {
+      helperWindow?.close()
+      appStore.showSuccess('重新授权任务已发送到 XIASS 常驻助手')
+    } else if (helperWindow) {
       helperWindow.opener = null
       helperWindow.location.replace(result.helper_url)
     } else {
       window.location.assign(result.helper_url)
     }
-    appStore.showSuccess('已交给该账号绑定的 AdsPower 指纹环境')
+    if (result.delivery !== 'queued') appStore.showSuccess('已交给该账号绑定的 AdsPower 指纹环境')
   } catch (error: any) {
     helperWindow?.close()
     appStore.showError(error?.response?.data?.detail || error?.message || '无法启动 AdsPower 指纹环境')

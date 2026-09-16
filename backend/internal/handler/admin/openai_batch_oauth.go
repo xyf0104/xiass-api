@@ -699,7 +699,7 @@ func batchOAuthPublicStage(stage string) string {
 
 func batchOAuthPublicReason(reason string) string {
 	switch reason {
-	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "email_code_timeout", "email_code_access_denied", "email_code_unavailable", "invalid_email_code", "reauthorization_phone_required", "captcha_required", "captcha", "account_blocked", "account_deleted_or_disabled", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
+	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "email_code_timeout", "email_code_access_denied", "email_code_unavailable", "invalid_email_code", "reauthorization_phone_required", "captcha_required", "captcha", "account_blocked", "account_banned", "account_deleted_or_disabled", "unknown_error", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
 	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
 		return reason

@@ -31,6 +31,10 @@ const (
 	openAIAdsPowerBindingRedisPrefix  = "xiass:openai:adspower:binding:"
 	openAIAdsPowerCallbackRedisPrefix = "xiass:openai:adspower:callback:"
 	openAIAdsPowerPendingRedisPrefix  = "xiass:openai:adspower:pending:"
+	openAIAdsPowerPairingRedisPrefix  = "xiass:openai:adspower:pairing:"
+	openAIAdsPowerDeviceRedisPrefix   = "xiass:openai:adspower:device:"
+	openAIAdsPowerDefaultRedisPrefix  = "xiass:openai:adspower:default:"
+	openAIAdsPowerCommandRedisPrefix  = "xiass:openai:adspower:commands:"
 )
 
 type openAIAdsPowerBindingUpdater interface {
@@ -44,6 +48,10 @@ type openAIAdsPowerLaunchStore struct {
 	bindings  map[string]openAIAdsPowerLaunchRecord
 	callbacks map[string]openAIAdsPowerLaunchRecord
 	pending   map[string]openAIAdsPowerPendingBinding
+	pairings  map[string]openAIAdsPowerHelperPairing
+	devices   map[string]openAIAdsPowerHelperDevice
+	defaults  map[string]string
+	commands  map[string][]string
 	redis     *redisclient.Client
 	now       func() time.Time
 }
@@ -89,6 +97,7 @@ type openAIAdsPowerBindingClaimRequest struct {
 type openAIAdsPowerLaunchResponse struct {
 	HelperURL string    `json:"helper_url"`
 	ExpiresAt time.Time `json:"expires_at"`
+	Delivery  string    `json:"delivery"`
 }
 
 type openAIAdsPowerRedeemRequest struct {
@@ -127,6 +136,7 @@ type openAIAdsPowerBindingReport struct {
 	ProxyExitIP           string `json:"proxy_exit_ip"`
 	WebRTCDisabled        bool   `json:"webrtc_disabled"`
 	FingerprintRandomized bool   `json:"fingerprint_randomized"`
+	FingerprintSlot       int    `json:"fingerprint_slot,omitempty"`
 }
 
 type openAIAdsPowerCallbackReport struct {
@@ -147,6 +157,10 @@ func newOpenAIAdsPowerLaunchStore() *openAIAdsPowerLaunchStore {
 		bindings:  make(map[string]openAIAdsPowerLaunchRecord),
 		callbacks: make(map[string]openAIAdsPowerLaunchRecord),
 		pending:   make(map[string]openAIAdsPowerPendingBinding),
+		pairings:  make(map[string]openAIAdsPowerHelperPairing),
+		devices:   make(map[string]openAIAdsPowerHelperDevice),
+		defaults:  make(map[string]string),
+		commands:  make(map[string][]string),
 		now:       time.Now,
 	}
 }
@@ -428,11 +442,17 @@ func (h *OpenAIOAuthHandler) issueOpenAIAdsPowerLaunch(ctx context.Context, c *g
 	if err := h.adsPowerLaunchStore.create(ctx, ticket, record); err != nil {
 		return nil, errors.New("AdsPower launch ticket could not be stored")
 	}
+	delivery := "local"
+	if queued, queueErr := h.adsPowerLaunchStore.enqueueHelperCommand(ctx, record, ticket, openAIAdsPowerLocalEnvironment(c)); queueErr != nil {
+		return nil, errors.New("AdsPower helper command could not be queued")
+	} else if queued {
+		delivery = "queued"
+	}
 	helperURL, err := openAIAdsPowerHelperURL(openAIAdsPowerRequestOrigin(c), ticket)
 	if err != nil {
 		return nil, errors.New("AdsPower helper URL is invalid")
 	}
-	return &openAIAdsPowerLaunchResponse{HelperURL: helperURL, ExpiresAt: record.ExpiresAt}, nil
+	return &openAIAdsPowerLaunchResponse{HelperURL: helperURL, ExpiresAt: record.ExpiresAt, Delivery: delivery}, nil
 }
 
 // CreateOpenAIAdsPowerLaunchTicket produces an authenticated, one-time bridge
@@ -874,6 +894,9 @@ func normalizeOpenAIAdsPowerBindingReport(req openAIAdsPowerBindingReport, recor
 	if !req.WebRTCDisabled || !req.FingerprintRandomized {
 		return nil, errors.New("AdsPower profile must use a randomized fingerprint with WebRTC disabled")
 	}
+	if req.FingerprintSlot < 0 || req.FingerprintSlot > 52 {
+		return nil, errors.New("AdsPower fingerprint slot is invalid")
+	}
 	now := time.Now().UTC()
 	boundAt := now
 	if record.Existing != nil && record.Existing.BoundAt != nil {
@@ -883,7 +906,7 @@ func normalizeOpenAIAdsPowerBindingReport(req openAIAdsPowerBindingReport, recor
 		Version: 1, DeviceID: req.DeviceID, ProfileID: req.ProfileID, ProfileNo: req.ProfileNo,
 		ProfileName: req.ProfileName, EnvironmentKey: req.EnvironmentKey, ProxyType: req.ProxyType,
 		ProxyHost: req.ProxyHost, ProxyPort: req.ProxyPort, ProxyExitIP: req.ProxyExitIP,
-		WebRTCDisabled: true, FingerprintRandomized: true, BoundAt: &boundAt,
+		WebRTCDisabled: true, FingerprintRandomized: true, FingerprintSlot: req.FingerprintSlot, BoundAt: &boundAt,
 		LastVerifiedAt: &now, LastLaunchedAt: &now,
 	}, nil
 }

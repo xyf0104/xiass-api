@@ -247,12 +247,28 @@ func (c *adsPowerClient) savedProxy(ctx context.Context, proxyID string) (*adsPo
 	return nil, errors.New("AdsPower saved proxy was not found")
 }
 
-func randomizedFingerprintConfig(forCreate bool) map[string]any {
+func randomizedFingerprintConfig(slot int, forCreate bool) map[string]any {
+	if slot < 1 || slot > 52 {
+		slot = 1
+	}
+	resolutions := []string{
+		"1920_1080", "1680_1050", "1600_900", "1536_864", "1440_900", "1366_768", "1280_800",
+		"1280_720", "2560_1440", "2560_1600", "2048_1152", "1728_1117", "1512_982",
+	}
+	cores := []string{"4", "6", "8", "16"}
+	resolution := resolutions[(slot-1)%len(resolutions)]
+	coreCount := cores[(slot-1)/len(resolutions)]
+	deviceMemory := "4"
+	if coreCount == "8" || coreCount == "16" {
+		deviceMemory = "8"
+	}
 	config := map[string]any{
 		"automatic_timezone":   "1",
 		"language_switch":      "1",
 		"page_language_switch": "1",
-		"screen_resolution":    "random",
+		"screen_resolution":    resolution,
+		"hardware_concurrency": coreCount,
+		"device_memory":        deviceMemory,
 		"canvas":               "1",
 		"webgl_image":          "1",
 		"audio":                "1",
@@ -264,11 +280,8 @@ func randomizedFingerprintConfig(forCreate bool) map[string]any {
 	}
 	if forCreate {
 		config["random_ua"] = map[string]any{
-			"ua_browser": []string{"chrome"},
-			"ua_system_version": []string{
-				"Mac OS X 12",
-				"Mac OS X 13",
-			},
+			"ua_browser":        []string{"chrome"},
+			"ua_system_version": []string{[]string{"Mac OS X 12", "Mac OS X 13"}[(slot-1)%2]},
 		}
 		// Value 3 asks AdsPower to generate matching WebGL metadata during
 		// profile creation. AdsPower does not accept that value on updates.
@@ -277,7 +290,7 @@ func randomizedFingerprintConfig(forCreate bool) map[string]any {
 	return config
 }
 
-func (c *adsPowerClient) createProfile(ctx context.Context, name string, template *adsPowerProfile) (*adsPowerProfile, error) {
+func (c *adsPowerClient) createProfile(ctx context.Context, name string, template *adsPowerProfile, fingerprintSlot int) (*adsPowerProfile, error) {
 	if template == nil {
 		return nil, errors.New("AdsPower template profile is unavailable")
 	}
@@ -290,7 +303,7 @@ func (c *adsPowerClient) createProfile(ctx context.Context, name string, templat
 	payload := map[string]any{
 		"name":               sanitizeProfileName(name),
 		"domain_name":        "https://auth.openai.com",
-		"fingerprint_config": randomizedFingerprintConfig(true),
+		"fingerprint_config": randomizedFingerprintConfig(fingerprintSlot, true),
 	}
 	if strings.TrimSpace(template.ProxyID) != "" {
 		payload["proxyid"] = template.ProxyID
@@ -314,7 +327,7 @@ func (c *adsPowerClient) createProfile(ctx context.Context, name string, templat
 	return c.profile(ctx, profileID)
 }
 
-func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsPowerProfile, template *adsPowerProfile) error {
+func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsPowerProfile, template *adsPowerProfile, fingerprintSlot int) error {
 	if profile == nil || template == nil {
 		return errors.New("AdsPower profile policy cannot be applied")
 	}
@@ -322,7 +335,7 @@ func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsP
 	proxyConfig.LatestIP = ""
 	payload := map[string]any{
 		"profile_id":         profile.UserID,
-		"fingerprint_config": randomizedFingerprintConfig(false),
+		"fingerprint_config": randomizedFingerprintConfig(fingerprintSlot, false),
 	}
 	if strings.TrimSpace(template.ProxyID) != "" {
 		payload["proxyid"] = template.ProxyID

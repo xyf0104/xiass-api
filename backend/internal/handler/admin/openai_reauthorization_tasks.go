@@ -63,7 +63,7 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	}
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
 	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
-	if localNodeID != "" && accountNodeID != "" && accountNodeID != localNodeID {
+	if normalizeBatchOAuthBrowserMode(browserMode) != batchOAuthBrowserAdsPower && localNodeID != "" && accountNodeID != "" && accountNodeID != localNodeID {
 		return nil, nil, nil, errors.New("open this account on its assigned XIASS server")
 	}
 	email, ciphertext, _ := openAIAccountReauthorizationLogin(account)
@@ -384,9 +384,8 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, "Task cannot restart")
 		return
 	}
-	if (task.Reason == "account_blocked" || task.Reason == "account_deleted_or_disabled") &&
-		!req.AcknowledgedSecondReauthorizationRisk {
-		response.Error(c, http.StatusConflict, "OpenAI 页面显示账号受限、删除或停用；手动重试需要高风险二次确认")
+	if openAIReauthorizationTerminalReason(task.Reason) {
+		response.Error(c, http.StatusConflict, "OpenAI 页面明确显示账号已删除、停用或封禁，不能重试")
 		return
 	}
 	previousUsesAdsPower := task.usesAdsPower()

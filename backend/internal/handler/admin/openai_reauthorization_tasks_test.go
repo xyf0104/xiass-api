@@ -258,13 +258,26 @@ func TestOpenAIReauthorizationTaskUsesSeparateSavedEmailCodeLogin(t *testing.T) 
 	require.Empty(t, f.requests[0]["totp_secret"])
 }
 
-func TestOpenAIReauthorizationTaskRejectsAnotherExecutionNode(t *testing.T) {
+func TestOpenAIReauthorizationBuiltInTaskRejectsAnotherExecutionNode(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
 	f.admin.getAccountResult = reauthorizationAccount(448)
 	r := openAIReauthorizationRouter(f.h, 42)
 	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Empty(t, f.requests)
+}
+
+func TestOpenAIReauthorizationAdsPowerTaskUsesAssignedProxyAcrossExecutionNodes(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	r := openAIReauthorizationRouter(f.h, 42)
+
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"browser_mode":"adspower"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"browser_mode":"adspower"`)
+	require.Contains(t, w.Body.String(), `"stage":"external_browser"`)
 	require.Empty(t, f.requests)
 }
 
@@ -451,7 +464,7 @@ func TestOpenAIReauthorizationRepeatedStartReturnsExistingTask(t *testing.T) {
 	require.Equal(t, int32(1), f.sidecarCalls.Load())
 }
 
-func TestOpenAIReauthorizationRestrictedTaskRestartsOnlyAfterHighRiskConfirmation(t *testing.T) {
+func TestOpenAIReauthorizationUnknownBlockedTaskCanRetry(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 	f.admin.getAccountResult = reauthorizationAccount(448)
@@ -472,11 +485,32 @@ func TestOpenAIReauthorizationRestrictedTaskRestartsOnlyAfterHighRiskConfirmatio
 	task.Status, task.Stage, task.Reason = "blocked", "blocked", "account_blocked"
 	task.mu.Unlock()
 	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true}`)
-	require.Equal(t, http.StatusConflict, restart.Code, restart.Body.String())
-	require.Contains(t, restart.Body.String(), "高风险二次确认")
-	require.Len(t, f.requests, 1)
-
-	restart = batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
 	require.Equal(t, http.StatusOK, restart.Code, restart.Body.String())
 	require.Len(t, f.requests, 2)
+}
+
+func TestOpenAIReauthorizationExplicitlyBannedTaskCannotRetry(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	r := openAIReauthorizationRouter(f.h, 42)
+	start := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusOK, start.Code, start.Body.String())
+	var envelope struct {
+		Data struct {
+			ID string `json:"task_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(start.Body.Bytes(), &envelope))
+	task := f.h.batchOAuthStore.tasks[envelope.Data.ID]
+	task.mu.Lock()
+	task.Status, task.Stage, task.Reason = "blocked", "blocked", "account_banned"
+	task.mu.Unlock()
+	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true,"acknowledged_second_reauthorization_risk":true}`)
+	require.Equal(t, http.StatusConflict, restart.Code, restart.Body.String())
+	require.Contains(t, restart.Body.String(), "不能重试")
+	require.Len(t, f.requests, 1)
 }

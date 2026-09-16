@@ -459,6 +459,7 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers, step
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
 		openai.POST("/accounts/:id/refresh", h.Admin.OpenAIOAuth.RefreshAccountToken)
 		openai.POST("/adspower/launch-tickets", h.Admin.OpenAIOAuth.CreateOpenAIAdsPowerLaunchTicket)
+		openai.POST("/adspower/helpers/pairing-tickets", h.Admin.OpenAIOAuth.CreateOpenAIAdsPowerHelperPairing)
 		openai.DELETE("/accounts/:id/adspower-binding", h.Admin.OpenAIOAuth.DeleteOpenAIAdsPowerBinding)
 		openai.POST("/accounts/:id/adspower-binding/claim", h.Admin.OpenAIOAuth.ClaimOpenAIAdsPowerBinding)
 		openai.POST("/accounts/:id/reauthorization-credentials", h.Admin.OpenAIOAuth.SaveOpenAIAccountReauthorizationCredentials)

@@ -228,6 +228,10 @@
             </div>
 
             <div class="oauth-account-actions">
+              <button v-if="canRecoverAccountState(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" :data-testid="`recover-reauthorization-account-${account.id}`" @click="recoverAccountState(account)">
+                <Icon name="refresh" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-spin' : ''" :stroke-width="2" />
+                <span>恢复状态</span>
+              </button>
               <button v-if="isActive(account)" type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :disabled="busyAccountIDs.has(account.id)" @click="stopAccount(account)">
                 <Icon name="x" size="sm" :stroke-width="2" />
                 <span>停止</span>
@@ -429,7 +433,7 @@ let disposed = false
 
 const activeStatuses = new Set(['queued', 'running', 'ready'])
 const terminalFailureStatuses = new Set(['failed', 'blocked', 'canceled'])
-const restrictionReasons = new Set(['account_blocked', 'account_deleted_or_disabled'])
+const restrictionReasons = new Set(['account_banned', 'account_deleted_or_disabled'])
 
 function initialWorkspace(): WorkbenchWorkspace {
   const raw = Array.isArray(route.query.workspace) ? route.query.workspace[0] : route.query.workspace
@@ -516,7 +520,7 @@ const authorizationConfirmationTitle = computed(() => {
   if (pending.batch) return `确认批量授权 ${pending.accounts.length} 个账号`
   const status = statusFor(pending.accounts[0])
   if (status?.risk_level === 'cooldown') return '高风险：冷静期内再次授权'
-  if (status?.risk_level === 'blocked') return '高风险：受限账号再次授权'
+  if (status?.risk_level === 'blocked') return '账号已停用或封禁'
   return status?.requires_risk_confirmation ? '高风险：再次 401 重新授权' : '确认首次 401 重新授权'
 })
 
@@ -538,7 +542,7 @@ const authorizationConfirmationMessage = computed(() => {
     return `#${account.id} ${account.name} 仍在 7 天冷静期内，剩余 ${formatDuration(status.cooldown_remaining_seconds)}${recommendation}。现在继续会强制启动第 ${status.current_authorization_number} 次授权，存在较高封号风险；仅在你已确认风险时继续。${browserNote}`
   }
   if (status?.risk_level === 'blocked') {
-    return `#${account.id} ${account.name} 的 OpenAI 页面检测结果为“${accountRestrictionLabel(account)}”。自动重试已停止；现在继续可能再次失败或导致更严格限制，只能在你已确认风险后手动启动。${browserNote}`
+    return `#${account.id} ${account.name} 的 OpenAI 页面已明确显示“${accountRestrictionLabel(account)}”，不能重新授权。${browserNote}`
   }
   if (status?.requires_risk_confirmation) {
     return `#${account.id} ${account.name} 已经成功进行过 401 重新授权，现在是第 ${status.current_authorization_number} 次掉授权。建议不要再授权，继续可能导致封号。仅在你已确认风险时继续。${browserNote}`
@@ -688,12 +692,40 @@ function canStart(account: Account): boolean {
   if (!accountLoginMethod(account)) return false
   const status = statusFor(account)
   if (!status) return false
-  if (!status.can_start && status.risk_level !== 'cooldown' && status.risk_level !== 'blocked') return false
+  if (status.risk_level === 'blocked') return false
+  if (!status.can_start && status.risk_level !== 'cooldown') return false
   const task = taskFor(account)
   if (!task) return true
   if (task.account_id) return task.reason === 'account_state_recovery_failed'
   if (task.status === 'completed' || activeStatuses.has(task.status)) return false
   return task.restart_count < maxRestarts.value
+}
+
+function canRecoverAccountState(account: Account): boolean {
+  if (busyAccountIDs.value.has(account.id) || isActive(account)) return false
+  const status = statusFor(account)
+  if (!status || status.risk_level === 'blocked') return false
+  const task = taskFor(account)
+  return account.status === 'error' || Boolean(task && terminalFailureStatuses.has(task.status))
+}
+
+async function recoverAccountState(account: Account) {
+  if (!canRecoverAccountState(account)) return
+  setBusy(account.id, true)
+  try {
+    await accountsAPI.clearError(account.id)
+    operationNotice.value = `#${account.id} ${account.name} 的可恢复错误状态已清理。`
+    const next = new Map(localErrors.value)
+    next.delete(account.id)
+    localErrors.value = next
+  } catch (error) {
+    const next = new Map(localErrors.value)
+    next.set(account.id, extractApiErrorMessage(error, '恢复账号状态失败。'))
+    localErrors.value = next
+  } finally {
+    setBusy(account.id, false)
+    await Promise.all([syncTasks(false), loadAccounts()])
+  }
 }
 
 function isActive(account: Account): boolean {
@@ -736,8 +768,10 @@ const reasonLabels: Record<string, string> = {
   invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。',
   invalid_totp: '2FA 验证码未通过验证。',
   authenticator_required: 'OpenAI 要求 2FA，但该账号没有可用的已保存密钥。',
-  account_blocked: 'OpenAI 页面显示当前账号受限，系统不会自动重试。',
+  account_blocked: '未知错误，可以恢复状态后重试。',
+  account_banned: 'OpenAI 页面明确显示账号已封禁，不能重新授权。',
   account_deleted_or_disabled: 'OpenAI 页面明确显示账号已删除或停用，系统不会自动重试。',
+  unknown_error: '未知错误，可以恢复状态后重试。',
   captcha_required: 'OpenAI 要求完成人机验证。',
   email_code_required: 'OpenAI 要求邮箱验证码，当前自动流程未继续。',
   email_code_timeout: '等待邮箱验证码超过 60 秒，任务已停止。',
@@ -873,7 +907,7 @@ function authorizationRoundClass(account: Account): string {
 function authorizationRiskHint(account: Account): string {
   const status = statusFor(account)
   if (!status) return ''
-  if (status.risk_level === 'blocked') return '账号受限'
+  if (status.risk_level === 'blocked') return accountRestrictionLabel(account)
   if (status.risk_level === 'repeated') return '高风险，需二次确认'
   if (status.risk_level === 'unknown') return ''
   if (status.risk_level === 'cooldown') {
@@ -903,7 +937,9 @@ function reauthorizationRowNotice(account: Account): string {
 
 function accountRestrictionLabel(account: Account): string {
   const reason = taskFor(account)?.reason || statusFor(account)?.last_reason || ''
-  return reason === 'account_deleted_or_disabled' ? '账号已删除或停用' : '账号受限'
+  if (reason === 'account_deleted_or_disabled') return '账号已删除或停用'
+  if (reason === 'account_banned') return '账号已封禁'
+  return '未知错误'
 }
 
 function reauthorizationRowNoticeClass(account: Account): string {
@@ -992,7 +1028,7 @@ function historyResultLabel(account: Account): string {
 function historyResultClass(account: Account): string {
   const result = historyResultLabel(account)
   if (result === '成功') return 'oauth-tone-success'
-  if (result === '账号已删除或停用' || result === '账号受限' || result === '失败') return 'oauth-tone-danger'
+  if (result === '账号已删除或停用' || result === '账号已封禁' || result === '失败') return 'oauth-tone-danger'
   if (result === '已停止' || result === '待确认') return 'oauth-tone-warning'
   return 'oauth-tone-info'
 }
@@ -1071,7 +1107,10 @@ async function startAccount(account: Account, acknowledgeRisk = false, browserMo
     mergeTask(task)
     if (browserMode === 'adspower' && task.browser_mode === 'adspower' && task.stage === 'external_browser') {
       const launch = await openAIReauthorizationAPI.launchAdsPower(task.task_id)
-      if (popup) popup.location.href = launch.helper_url
+      if (launch.delivery === 'queued') {
+        popup?.close()
+        operationNotice.value = `#${account.id} ${account.name} 已发送到 XIASS 常驻助手。`
+      } else if (popup) popup.location.href = launch.helper_url
       else window.location.assign(launch.helper_url)
     } else if (popup) {
       popup.close()
