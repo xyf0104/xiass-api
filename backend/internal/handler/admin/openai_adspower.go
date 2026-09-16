@@ -551,8 +551,17 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 		return
 	}
 	if task.adsPowerLaunchIssued {
-		response.Error(c, http.StatusConflict, "This authorization task already has an AdsPower browser")
-		return
+		if task.adsPowerLaunchHelperURL != "" && task.adsPowerLaunchExpiresAt.After(time.Now()) {
+			response.Success(c, openAIAdsPowerLaunchResponse{
+				HelperURL: task.adsPowerLaunchHelperURL, Delivery: task.adsPowerLaunchDelivery,
+				ExpiresAt: task.adsPowerLaunchExpiresAt,
+			})
+			return
+		}
+		task.adsPowerLaunchIssued = false
+		task.adsPowerLaunchHelperURL = ""
+		task.adsPowerLaunchDelivery = ""
+		task.adsPowerLaunchExpiresAt = time.Time{}
 	}
 	record := openAIAdsPowerLaunchRecord{
 		AdminUserID: task.ownerID, AccountName: sanitizeOpenAIAdsPowerLabel(task.Email), SessionID: task.sessionID,
@@ -586,6 +595,9 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 		return
 	}
 	task.adsPowerLaunchIssued = true
+	task.adsPowerLaunchHelperURL = result.HelperURL
+	task.adsPowerLaunchDelivery = result.Delivery
+	task.adsPowerLaunchExpiresAt = result.ExpiresAt
 	task.snapshotJSONLocked()
 	response.Success(c, result)
 }

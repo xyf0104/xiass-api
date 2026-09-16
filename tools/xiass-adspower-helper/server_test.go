@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	var createdBody map[string]any
 	var startedBody map[string]any
 	var stoppedBody map[string]any
+	creations := 0
 	adsPower := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -34,11 +38,14 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 			defer mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"list": profiles}})
 		case "/api/v2/browser-profile/create":
+			creations++
 			_ = json.NewDecoder(r.Body).Decode(&createdBody)
 			mu.Lock()
 			profiles = append(profiles, adsPowerProfile{UserID: "created-profile", SerialNumber: "7", Name: "XIASS new-account", GroupID: "0", UserProxyConfig: profiles[0].UserProxyConfig})
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"profile_id": "created-profile"}})
+		case "/api/v2/browser-profile/update":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
 		case "/api/v2/browser-profile/start":
 			_ = json.NewDecoder(r.Body).Decode(&startedBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
@@ -114,6 +121,124 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 		defer mu.Unlock()
 		return stoppedBody != nil && stoppedBody["profile_id"] == "created-profile"
 	}, time.Second, 10*time.Millisecond)
+
+	// Receipt is not account creation: keep the identity cache through token
+	// exchange failures and helper restarts so the next attempt reuses the slot.
+	saved, err := loadConfig(cfg.path)
+	require.NoError(t, err)
+	key := pendingProfileKey(origin, "api2", "new-account")
+	require.Equal(t, "created-profile", saved.PendingProfiles[key].ProfileID)
+	require.Equal(t, 2, saved.Servers[origin].NextFingerprintSlot)
+	restarted := newHelperServer(saved)
+	restarted.adsPower.minInterval = 0
+	restarted.verifyProxy = helper.verifyProxy
+	second := httptest.NewRecorder()
+	restarted.routes().ServeHTTP(second, localHelperRequest(http.MethodGet, launchURLFor(origin, "new-ticket"), nil))
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	require.Equal(t, 1, creations)
+	require.Equal(t, "created-profile", startedBody["profile_id"])
+	require.Equal(t, float64(1), report["fingerprint_slot"])
+	require.Equal(t, 2, restarted.cfg.Servers[origin].NextFingerprintSlot)
+}
+
+func TestCallbackReceiverAndObserverShareOneDelivery(t *testing.T) {
+	var reports, stops atomic.Int32
+	xiass := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reports.Add(1)
+		time.Sleep(10 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":0,"data":{"accepted":true}}`)
+	}))
+	defer xiass.Close()
+	ads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stops.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":0,"data":{}}`)
+	}))
+	defer ads.Close()
+	helper := newHelperServer(&config{AdsPowerBaseURL: ads.URL})
+	helper.closeDelay = 0
+	helper.adsPower.minInterval = 0
+	launch := &launchPayload{AuthURL: "https://auth.openai.com/oauth/authorize?state=one-state", CallbackToken: "one-token", CallbackExpiresAt: time.Now().Add(time.Minute)}
+	_, _, err := helper.registerCallback(xiass.URL, launch, "one-profile")
+	require.NoError(t, err)
+	var wg sync.WaitGroup
+	errors := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		result := httptest.NewRecorder()
+		helper.callbackRoutes().ServeHTTP(result, localHelperRequest(http.MethodGet, "/auth/callback?code=abc&state=one-state", nil))
+		if !strings.Contains(result.Body.String(), "授权已返回 XIASS") {
+			errors <- fmt.Errorf("callback receiver did not acknowledge delivery")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		errors <- helper.submitObservedCallback(context.Background(), launch, "http://localhost:1455/auth/callback?code=abc&state=one-state")
+	}()
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int32(1), reports.Load())
+	require.Eventually(t, func() bool { return stops.Load() == 1 }, time.Second, 5*time.Millisecond)
+	receipt, ok := helper.callbackRegistration("one-state")
+	require.True(t, ok)
+	require.True(t, receipt.Delivered)
+	require.Empty(t, receipt.Token)
+	_, err = helper.deliverCallback(context.Background(), "one-state", "http://localhost:1455/auth/callback?code=abc&state=other-state")
+	require.Error(t, err)
+	require.Equal(t, int32(1), reports.Load())
+}
+
+func TestLaunchTicketRetryOnlyAllowsConnectionEstablishmentFailure(t *testing.T) {
+	require.True(t, retryableServerNetworkError(&url.Error{Err: &net.OpError{Op: "dial", Err: context.DeadlineExceeded}}))
+	require.False(t, retryableServerNetworkError(&url.Error{Err: &net.OpError{Op: "read", Err: context.DeadlineExceeded}}))
+	require.False(t, retryableServerNetworkError(context.DeadlineExceeded))
+}
+
+func TestPendingProfileKeyAndCloneKeepAccountsAndNodesIsolated(t *testing.T) {
+	key := pendingProfileKey("https://api.example.test", "api", " Owner@Example.Test ")
+	require.Equal(t, key, pendingProfileKey("https://api.example.test", "api.example.test", "owner@example.test"))
+	require.NotEqual(t, key, pendingProfileKey("https://api.example.test", "api2", "owner@example.test"))
+	require.NotEqual(t, key, pendingProfileKey("https://api.example.test", "api", "other@example.test"))
+	require.NotContains(t, key, "owner")
+	original := &config{PendingProfiles: map[string]pendingProfileBinding{key: {ProfileID: "original", EnvironmentKey: "api"}}}
+	cloned := cloneConfig(original)
+	cloned.PendingProfiles[key] = pendingProfileBinding{ProfileID: "changed", EnvironmentKey: "api"}
+	require.Equal(t, "original", original.PendingProfiles[key].ProfileID)
+}
+
+func TestUnknownFingerprintSlotOnlyUpdatesPrivacyPolicy(t *testing.T) {
+	var payload map[string]any
+	ads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		_, _ = io.WriteString(w, `{"code":0,"data":{}}`)
+	}))
+	defer ads.Close()
+	client := newAdsPowerClient(&config{AdsPowerBaseURL: ads.URL})
+	client.minInterval = 0
+	err := client.enforceProfilePolicy(context.Background(), &adsPowerProfile{UserID: "existing"}, &adsPowerProfile{ProxyID: "assigned-proxy"}, 0)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"webrtc": "disabled"}, payload["fingerprint_config"])
+	require.Equal(t, "assigned-proxy", payload["proxyid"])
+}
+
+func TestPendingProfileProxyMatchRejectsWrongNodeAndCredentials(t *testing.T) {
+	template := &adsPowerProfile{UserProxyConfig: adsPowerProxyConfig{ProxyType: "socks5", ProxyHost: "node.example.test", ProxyPort: "1089", ProxyUser: "user", ProxyPassword: "password"}}
+	profile := *template
+	require.True(t, adsPowerProfileUsesTemplate(&profile, template))
+	profile.UserProxyConfig.ProxyPort = "1085"
+	require.False(t, adsPowerProfileUsesTemplate(&profile, template))
+	profile = *template
+	profile.UserProxyConfig.ProxyPassword = "wrong"
+	require.False(t, adsPowerProfileUsesTemplate(&profile, template))
+	template.ProxyID = "assigned"
+	profile = *template
+	profile.ProxyID = "other"
+	require.False(t, adsPowerProfileUsesTemplate(&profile, template))
 }
 
 func TestProfileLookupPaginatesBeyondFirstHundred(t *testing.T) {

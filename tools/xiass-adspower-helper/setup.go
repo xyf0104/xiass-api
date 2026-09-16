@@ -61,12 +61,16 @@ func (s *helperServer) replaceRuntime(cfg *config) {
 
 func cloneConfig(source *config) *config {
 	if source == nil {
-		return &config{Servers: make(map[string]serverConfig)}
+		return &config{Servers: make(map[string]serverConfig), PendingProfiles: make(map[string]pendingProfileBinding)}
 	}
 	cloned := *source
 	cloned.Servers = make(map[string]serverConfig, len(source.Servers))
 	for origin, server := range source.Servers {
 		cloned.Servers[origin] = server
+	}
+	cloned.PendingProfiles = make(map[string]pendingProfileBinding, len(source.PendingProfiles))
+	for key, binding := range source.PendingProfiles {
+		cloned.PendingProfiles[key] = binding
 	}
 	return &cloned
 }

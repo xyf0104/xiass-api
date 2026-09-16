@@ -100,6 +100,49 @@ func TestAccountSwitchActionRecognizesAlternateAccountControls(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestOAuthPhoneInputMatchesRequiresCompleteNumber(t *testing.T) {
+	require.False(t, oauthPhoneInputMatches("+1 26", "12605550123", "1"))
+	require.False(t, oauthPhoneInputMatches("26", "12605550123", "1"))
+	require.True(t, oauthPhoneInputMatches("(260) 555-0123", "12605550123", "1"))
+	require.True(t, oauthPhoneInputMatches("+1 260 555 0123", "12605550123", "1"))
+	require.True(t, oauthPhoneInputMatches("532 357 21 27", "905323572127", "90"))
+	require.True(t, oauthPhoneInputMatches("+90 532 357 21 27", "905323572127", "90"))
+	require.False(t, oauthPhoneInputMatches("532 357 21 27", "905323572127", "1"))
+}
+
+func TestInspectOAuthPageDoesNotTreatSMSRadioAsVerificationCode(t *testing.T) {
+	state := inspectOAuthPage(oauthPageSnapshot{
+		URL:  "https://auth.openai.com/add-phone",
+		Body: "Phone number required Text message WhatsApp",
+		Inputs: []oauthPageInput{
+			{Index: 0, Metadata: "tel phone"},
+			{Index: 1, Metadata: "radio text-message code"},
+			{Index: 2, Metadata: "radio whatsapp"},
+		},
+	})
+	require.Equal(t, "phone", state.Kind)
+	require.Equal(t, 0, state.Input)
+}
+
+func TestInspectOAuthPageDoesNotTreatNumericPhoneAsOTP(t *testing.T) {
+	state := inspectOAuthPage(oauthPageSnapshot{
+		URL:    "https://auth.openai.com/add-phone",
+		Body:   "Phone number required",
+		Inputs: []oauthPageInput{{Index: 0, Metadata: "tel phone inputmode numeric"}},
+	})
+	require.Equal(t, "phone", state.Kind)
+	require.Equal(t, 0, state.Input)
+}
+
+func TestInspectOAuthPageRequiresExplicitProfileFields(t *testing.T) {
+	state := inspectOAuthPage(oauthPageSnapshot{
+		URL:    "https://auth.openai.com/about-you",
+		Body:   "Tell us about yourself",
+		Inputs: []oauthPageInput{{Index: 0, Metadata: "text"}, {Index: 1, Metadata: "numeric"}},
+	})
+	require.Equal(t, "unknown", state.Kind)
+}
+
 func TestOAuthSnapshotDiagnosticRedactsCredentials(t *testing.T) {
 	diagnostic := summarizeOAuthSnapshot(oauthPageSnapshot{
 		URL:     "https://auth.openai.com/oauth/authorize?state=secret-state-value-1234567890",

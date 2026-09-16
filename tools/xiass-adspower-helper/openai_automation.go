@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	cdpinput "github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -53,7 +55,7 @@ var (
 	bannedAccountPattern      = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned)|account_(?:suspended|banned)|账号.*(?:封禁|封号)`)
 	restrictedAccountPattern  = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:restricted|limited)|account_(?:restricted|limited)|账号.*(?:受限|限制)`)
 	invalidCodePattern        = regexp.MustCompile(`(?i)incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)`)
-	phoneRejectedPattern      = regexp.MustCompile(`(?i)phone.*(?:invalid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)`)
+	phoneRejectedPattern      = regexp.MustCompile(`(?i)phone.*(?:invalid|not valid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)`)
 	automationPhonePattern    = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
 	automationSMSCodePattern  = regexp.MustCompile(`^\d{4,10}$`)
 	diagnosticCodePattern     = regexp.MustCompile(`\b\d{6,8}\b`)
@@ -91,6 +93,10 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 		launch.Password = ""
 		launch.TOTPSecret = ""
 		launch.EmailCodeToken = ""
+		if launch.emailSession != nil {
+			launch.emailSession.token = ""
+			launch.emailSession = nil
+		}
 	}()
 	endpoint := ""
 	if session != nil {
@@ -111,6 +117,16 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	s.progress(origin, launch, "running", "opening", "")
+	if strings.TrimSpace(launch.LoginMethod) == "email_code" {
+		emailSession, err := newEmailCodeSession(ctx, launch.LoginEmail, launch.EmailCodeToken)
+		launch.EmailCodeToken = ""
+		if err != nil {
+			s.finishAutomation(origin, launch, profileID, "failed", "failed", emailCodeReason(err))
+			return
+		}
+		launch.emailSession = emailSession
+	}
+	launch.oauthStartedAt = time.Now()
 	browser, closeBrowser, err := openAdsPowerOAuthTarget(ctx, endpoint, launch.AuthURL)
 	if err != nil {
 		log.Printf("AdsPower OAuth automation failed at opening: %s", automationErrorReason(err, "opening"))
@@ -185,10 +201,39 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 		}
 		log.Printf("AdsPower OAuth navigation returned before page load completed; continuing at %s", safeTargetLocation(currentURL))
 	}
+	if err := closeOtherOAuthPages(root, browser); err != nil {
+		log.Printf("AdsPower OAuth cleanup of extra pages failed: %v", err)
+	}
 	return browser, func() {
 		cancelBrowser()
 		cleanup()
 	}, nil
+}
+
+func closeOtherOAuthPages(root, browser context.Context) error {
+	browserContext := chromedp.FromContext(browser)
+	if browserContext == nil || browserContext.Target == nil {
+		return errors.New("OAuth browser target is unavailable")
+	}
+	if browserContext.Browser == nil {
+		return errors.New("OAuth browser connection is unavailable")
+	}
+	targets, err := chromedp.Targets(root)
+	if err != nil {
+		return err
+	}
+	keep := browserContext.Target.TargetID
+	closeCtx, cancel := context.WithTimeout(root, 8*time.Second)
+	defer cancel()
+	for _, candidate := range targets {
+		if candidate == nil || candidate.Type != "page" || candidate.TargetID == keep {
+			continue
+		}
+		if err := target.CloseTarget(candidate.TargetID).Do(cdp.WithExecutor(closeCtx, browserContext.Browser)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func browserTargetURL(browser context.Context, targets []*target.Info) string {
@@ -302,15 +347,9 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		_, _ = s.smsAction(cancelCtx, origin, launch, "cancel")
 	}()
 	var snapshotFailureSince time.Time
-	var emailSession *emailCodeSession
-	if strings.TrimSpace(launch.LoginMethod) == "email_code" {
-		var err error
-		emailSession, err = newEmailCodeSession(ctx, launch.LoginEmail, launch.EmailCodeToken)
-		launch.EmailCodeToken = ""
-		if err != nil {
-			return blocked(emailCodeReason(err))
-		}
-	}
+	emailSession := launch.emailSession
+	emailCodeRequestedAt := launch.oauthStartedAt
+	lastPageKind := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -332,6 +371,10 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		}
 		snapshotFailureSince = time.Time{}
 		state := inspectOAuthPage(snapshot)
+		if state.Kind != lastPageKind {
+			log.Printf("AdsPower OAuth stage: kind=%s location=%s", state.Kind, safeTargetLocation(snapshot.URL))
+			lastPageKind = state.Kind
+		}
 		if state.Kind == "callback" {
 			if err := s.submitObservedCallback(ctx, launch, snapshot.URL); err != nil {
 				return err
@@ -354,7 +397,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 					return err
 				}
 				emailSubmitted = false
-				for _, key := range []string{"login", "email", "password", "totp", "email_code", "email_code_switch", "workspace", "unknown"} {
+				for _, key := range []string{"login", "email", "password", "totp", "email_code_submitted", "email_code_switch", "workspace", "unknown"} {
 					delete(attempted, key)
 				}
 				continue
@@ -401,13 +444,16 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			phoneSubmitted = normalizeAutomationPhone(result.Number)
 			smsDeadline = time.Now().Add(3 * time.Minute)
 			reportProgress("running", "phone_submitting", "")
-			if err := fillOAuthInput(browser, state.Input, phoneSubmitted); err != nil {
+			if err := fillOAuthPhone(browser, state.Input, phoneSubmitted); err != nil {
+				log.Printf("AdsPower phone input failed: %v", err)
 				return err
 			}
 			if err := selectOAuthTextMessage(browser); err != nil {
+				log.Printf("AdsPower SMS channel selection failed: %v", err)
 				return automationFailureError{Status: "failed", Reason: "sms_channel_selection_failed"}
 			}
 			if err := clickOAuthContinue(browser); err != nil {
+				log.Printf("AdsPower phone Continue failed: %v", err)
 				return err
 			}
 			delete(attempted, "phone_transition")
@@ -515,6 +561,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if err := fillOAuthInput(browser, state.Input, launch.LoginEmail); err != nil {
 				return err
 			}
+			emailCodeRequestedAt = time.Now()
 			if err := clickOAuthContinue(browser); err != nil {
 				return err
 			}
@@ -530,6 +577,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 					}
 					break
 				}
+				emailCodeRequestedAt = time.Now()
 				if err := clickOAuthText(browser, []string{"continue with code", "use a code", "use verification code", "email me a code", "send login code", "使用验证码", "发送验证码"}); err != nil {
 					return blocked("email_code_required")
 				}
@@ -570,14 +618,21 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if emailSession == nil {
 				return blocked("email_code_required")
 			}
-			if recentAttempt(attempted, state.Kind) {
-				if attemptExpired(attempted, state.Kind) {
-					return blocked("invalid_email_code")
+			if emailCodeRequestedAt.IsZero() {
+				emailCodeRequestedAt = time.Now()
+			}
+			if !attempted["email_code_submitted"].IsZero() {
+				if attemptExpired(attempted, "email_code_submitted") {
+					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
 				}
 				break
 			}
 			reportProgress("running", "email_code_waiting", "")
-			code, err := emailSession.waitForCode(ctx, time.Now())
+			requestedAt := emailCodeRequestedAt
+			if requestedAt.IsZero() {
+				requestedAt = time.Now()
+			}
+			code, err := emailSession.waitForCode(ctx, requestedAt)
 			if err != nil {
 				return blocked(emailCodeReason(err))
 			}
@@ -585,6 +640,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if err := fillOAuthCode(browser, state.Inputs, code); err != nil {
 				return err
 			}
+			attempted["email_code_submitted"] = time.Now()
 			emailSubmitted = true
 		case "workspace":
 			if recentAttempt(attempted, state.Kind) {
@@ -670,19 +726,15 @@ func (s *helperServer) submitObservedCallback(ctx context.Context, launch *launc
 	if !validCallback(callbackURL, state) {
 		return errors.New("OpenAI callback URL is invalid")
 	}
-	registration, ok := s.callbackRegistration(state)
-	if !ok {
-		// The loopback callback handler normally reports and removes the
-		// registration before the browser renders the receipt page.
-		return nil
-	}
 	reportCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := s.reportCallback(reportCtx, registration, callbackURL); err != nil {
+	delivered, err := s.deliverCallback(reportCtx, state, callbackURL)
+	if err != nil {
 		return err
 	}
-	s.removeCallback(state)
-	s.stopProfileAfterCallback(registration.ProfileID)
+	if !delivered {
+		return errors.New("OpenAI callback registration is unavailable")
+	}
 	return nil
 }
 
@@ -784,6 +836,19 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 	case invalidCredentialsPattern.MatchString(body):
 		state.Kind = "invalid_credentials"
 	default:
+		// Phone pages contain numeric inputs and SMS radios whose names may
+		// include "code". Identify the actual phone field before OTP/profile.
+		phoneInput, hasPhoneInput := firstMatchingInput(snapshot.Inputs, func(value string) bool {
+			return oauthEditableInput(value) && (strings.Contains(value, "tel") || strings.Contains(value, "phone") || strings.Contains(value, "mobile"))
+		})
+		phonePage := parsed != nil && parsed.Path == "/add-phone"
+		if hasPhoneInput && (phonePage || strings.Contains(lower, "phone number required") || phoneRejectedPattern.MatchString(body)) {
+			state.Kind, state.Input = "phone", phoneInput
+			if phoneRejectedPattern.MatchString(body) {
+				state.Kind = "phone_rejected"
+			}
+			return state
+		}
 		if (parsed != nil && (strings.Contains(parsed.Path, "/about-you") || strings.Contains(parsed.Path, "/profile"))) ||
 			strings.Contains(lower, "tell us about yourself") || strings.Contains(lower, "about you") ||
 			(strings.Contains(lower, "name") && (strings.Contains(lower, "age") || strings.Contains(lower, "birth"))) ||
@@ -794,7 +859,7 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 			}
 		}
 		codeInputs := matchingInputs(snapshot.Inputs, func(value string) bool {
-			return strings.Contains(value, "one-time-code") || strings.Contains(value, "inputmode numeric") || strings.Contains(value, "code") || strings.Contains(value, "otp")
+			return oauthEditableInput(value) && (strings.Contains(value, "one-time-code") || strings.Contains(value, "code") || strings.Contains(value, "otp"))
 		})
 		if len(codeInputs) > 0 {
 			invalid := invalidCodePattern.MatchString(body)
@@ -821,7 +886,7 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 			state.Inputs = codeInputs
 			return state
 		}
-		if phoneRejectedPattern.MatchString(body) {
+		if hasPhoneInput && phoneRejectedPattern.MatchString(body) {
 			state.Kind = "phone_rejected"
 			if input, ok := firstMatchingInput(snapshot.Inputs, func(value string) bool {
 				return strings.Contains(value, "tel") || strings.Contains(value, "phone") || strings.Contains(value, "mobile")
@@ -831,7 +896,7 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 			return state
 		}
 		if input, ok := firstMatchingInput(snapshot.Inputs, func(value string) bool {
-			return strings.Contains(value, "tel") || strings.Contains(value, "phone") || strings.Contains(value, "mobile")
+			return oauthEditableInput(value) && (strings.Contains(value, "tel") || strings.Contains(value, "phone") || strings.Contains(value, "mobile"))
 		}); ok {
 			state.Kind, state.Input = "phone", input
 			return state
@@ -870,27 +935,28 @@ func oauthProfileInputs(inputs []oauthPageInput) []int {
 		return nil
 	}
 	nameIndex, nameFound := firstMatchingInput(inputs, func(value string) bool {
-		return strings.Contains(value, "name") || strings.Contains(value, "姓名")
+		return oauthEditableInput(value) && !strings.Contains(value, "username") && (strings.Contains(value, "name") || strings.Contains(value, "姓名"))
 	})
 	ageIndex, ageFound := firstMatchingInput(inputs, func(value string) bool {
-		return strings.Contains(value, "age") || strings.Contains(value, "birth") || strings.Contains(value, "年龄") || strings.Contains(value, "出生")
+		return oauthEditableInput(value) && (strings.Contains(value, "age") || strings.Contains(value, "birth") || strings.Contains(value, "年龄") || strings.Contains(value, "出生"))
 	})
-	if !nameFound {
-		nameIndex = inputs[0].Index
-	}
-	if !ageFound {
-		for _, input := range inputs {
-			if input.Index != nameIndex {
-				ageIndex = input.Index
-				ageFound = true
-				break
-			}
-		}
-	}
-	if !ageFound || nameIndex == ageIndex {
+	if !nameFound || !ageFound || nameIndex == ageIndex {
 		return nil
 	}
 	return []int{nameIndex, ageIndex}
+}
+
+func oauthEditableInput(metadata string) bool {
+	fields := strings.Fields(metadata)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "radio", "checkbox", "hidden", "button", "submit", "reset", "file":
+		return false
+	default:
+		return true
+	}
 }
 
 func matchingInputs(inputs []oauthPageInput, match func(string) bool) []int {
@@ -929,6 +995,99 @@ func fillOAuthInput(browser context.Context, index int, value string) error {
 	payload, _ := json.Marshal(value)
 	expression := fmt.Sprintf(`(() => { const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0}; const items=Array.from(document.querySelectorAll('input')).filter(visible); const input=items[%d]; if(!input) throw new Error('input missing'); input.focus(); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,%s); input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); return true; })()`, index, payload)
 	return chromedp.Run(browser, chromedp.Evaluate(expression, nil))
+}
+
+func fillOAuthPhone(browser context.Context, index int, value string) error {
+	normalized := normalizeAutomationPhone(value)
+	if !validAutomationPhone(normalized) {
+		return errors.New("phone number is invalid")
+	}
+	digits := strings.TrimPrefix(normalized, "+")
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := replaceOAuthInputText(browser, index, normalized); err != nil {
+			return err
+		}
+		if err := sleepWithContext(browser, 1200*time.Millisecond); err != nil {
+			return err
+		}
+		actual, dialCode, err := readOAuthPhoneValue(browser, index)
+		if err != nil {
+			return err
+		}
+		if oauthPhoneInputMatches(actual, digits, dialCode) {
+			return nil
+		}
+		actualDigits := strings.Map(func(char rune) rune {
+			if char >= '0' && char <= '9' {
+				return char
+			}
+			return -1
+		}, actual)
+		log.Printf("AdsPower phone input incomplete: attempt=%d actual_digits=%d expected_digits=%d", attempt+1, len(actualDigits), len(digits))
+	}
+	return errors.New("phone input did not retain the complete number")
+}
+
+func replaceOAuthInputText(browser context.Context, index int, value string) error {
+	clearExpression := fmt.Sprintf(`(() => {
+  const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0};
+  const input=Array.from(document.querySelectorAll('input')).filter(visible)[%d];
+  if(!input) throw new Error('input missing');
+  input.focus();
+  input.select();
+  return true;
+})()`, index)
+	commitExpression := fmt.Sprintf(`(() => {
+  const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0};
+  const input=Array.from(document.querySelectorAll('input')).filter(visible)[%d];
+  if(!input) throw new Error('input missing');
+  input.dispatchEvent(new Event('change',{bubbles:true}));
+  input.blur();
+  return input.value;
+})()`, index)
+	return chromedp.Run(browser,
+		chromedp.Evaluate(clearExpression, nil),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			return cdpinput.InsertText(value).Do(ctx)
+		}),
+		chromedp.Evaluate(commitExpression, nil),
+	)
+}
+
+func readOAuthPhoneValue(browser context.Context, index int) (string, string, error) {
+	expression := fmt.Sprintf(`(() => {
+  const visible=e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0};
+  const input=Array.from(document.querySelectorAll('input')).filter(visible)[%d];
+  if(!input) throw new Error('phone input missing');
+  const form=input.closest('form')||document.body;
+  const controls=Array.from(form.querySelectorAll('button,[role="combobox"],select')).filter(visible);
+  const codes=controls.map(e=>String(e.tagName==='SELECT'?e.selectedOptions[0]?.textContent:e.innerText||e.getAttribute('aria-label')||'').match(/\(\+\s*(\d{1,3})\)/)?.[1]).filter(Boolean);
+  return {value:String(input.value||''),dialCode:codes.length===1?codes[0]:''};
+})()`, index)
+	var value struct {
+		Value    string `json:"value"`
+		DialCode string `json:"dialCode"`
+	}
+	if err := chromedp.Run(browser, chromedp.Evaluate(expression, &value)); err != nil {
+		return "", "", err
+	}
+	return value.Value, value.DialCode, nil
+}
+
+func oauthPhoneInputMatches(actual, phoneDigits, dialCode string) bool {
+	actualDigits := strings.Map(func(char rune) rune {
+		if char >= '0' && char <= '9' {
+			return char
+		}
+		return -1
+	}, actual)
+	if len(actualDigits) < 7 {
+		return false
+	}
+	if actualDigits == phoneDigits {
+		return true
+	}
+	return dialCode != "" && dialCode+actualDigits == phoneDigits
 }
 
 func fillOAuthCode(browser context.Context, inputs []int, code string) error {

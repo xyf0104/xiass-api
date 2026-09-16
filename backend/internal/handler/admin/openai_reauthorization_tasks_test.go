@@ -139,11 +139,17 @@ func TestOpenAIReauthorizationAdsPowerModeKeepsHistoryAndSkipsServerBrowser(t *t
 	launchRequest.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(launch, launchRequest)
 	require.Equal(t, http.StatusOK, launch.Code, launch.Body.String())
-	require.Equal(t, http.StatusConflict, batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/adspower-launch", `{}`).Code)
 	var launchEnvelope struct {
 		Data openAIAdsPowerLaunchResponse `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(launch.Body.Bytes(), &launchEnvelope))
+	repeatedLaunch := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/adspower-launch", `{}`)
+	require.Equal(t, http.StatusOK, repeatedLaunch.Code, repeatedLaunch.Body.String())
+	var repeatedEnvelope struct {
+		Data openAIAdsPowerLaunchResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(repeatedLaunch.Body.Bytes(), &repeatedEnvelope))
+	require.Equal(t, launchEnvelope.Data, repeatedEnvelope.Data)
 	helperURL, err := url.Parse(launchEnvelope.Data.HelperURL)
 	require.NoError(t, err)
 	redeem := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/launch-tickets/redeem", `{"ticket":"`+helperURL.Query().Get("ticket")+`"}`)

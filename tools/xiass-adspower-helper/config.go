@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,13 +18,20 @@ import (
 )
 
 type config struct {
-	ListenAddress   string                  `json:"listen_address"`
-	CallbackAddress string                  `json:"callback_address"`
-	AdsPowerBaseURL string                  `json:"adspower_base_url"`
-	APIKey          string                  `json:"api_key,omitempty"`
-	DeviceID        string                  `json:"device_id"`
-	Servers         map[string]serverConfig `json:"servers"`
+	ListenAddress   string                           `json:"listen_address"`
+	CallbackAddress string                           `json:"callback_address"`
+	AdsPowerBaseURL string                           `json:"adspower_base_url"`
+	APIKey          string                           `json:"api_key,omitempty"`
+	DeviceID        string                           `json:"device_id"`
+	Servers         map[string]serverConfig          `json:"servers"`
+	PendingProfiles map[string]pendingProfileBinding `json:"pending_profiles,omitempty"`
 	path            string
+}
+
+type pendingProfileBinding struct {
+	ProfileID       string `json:"profile_id"`
+	EnvironmentKey  string `json:"environment_key"`
+	FingerprintSlot int    `json:"fingerprint_slot"`
 }
 
 type serverConfig struct {
@@ -158,6 +166,23 @@ func (c *config) normalize() (bool, error) {
 		c.Servers = make(map[string]serverConfig)
 		changed = true
 	}
+	if c.PendingProfiles == nil {
+		c.PendingProfiles = make(map[string]pendingProfileBinding)
+		changed = true
+	}
+	for key, binding := range c.PendingProfiles {
+		binding.ProfileID = strings.TrimSpace(binding.ProfileID)
+		binding.EnvironmentKey = canonicalEnvironmentKey(binding.EnvironmentKey)
+		if !validOpaqueID(key) || !validOpaqueID(binding.ProfileID) || !validOpaqueID(binding.EnvironmentKey) || binding.FingerprintSlot < 0 || binding.FingerprintSlot > 52 {
+			delete(c.PendingProfiles, key)
+			changed = true
+			continue
+		}
+		if binding != c.PendingProfiles[key] {
+			c.PendingProfiles[key] = binding
+			changed = true
+		}
+	}
 	normalizedServers := make(map[string]serverConfig, len(c.Servers))
 	for rawOrigin, server := range c.Servers {
 		origin, err := normalizeServerOrigin(rawOrigin)
@@ -207,6 +232,15 @@ func (c *config) normalize() (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+func pendingProfileKey(origin, environmentKey, accountIdentity string) string {
+	identity := strings.ToLower(strings.TrimSpace(accountIdentity))
+	if identity == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(origin)) + "\x00" + canonicalEnvironmentKey(environmentKey) + "\x00" + identity))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s serverConfig) validDirectProxy() bool {

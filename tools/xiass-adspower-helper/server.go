@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,16 +17,17 @@ import (
 )
 
 type helperServer struct {
-	cfg          *config
-	adsPower     *adsPowerClient
-	runtimeMu    sync.RWMutex
-	client       *http.Client
-	verifyProxy  func(context.Context, adsPowerProxyConfig) (string, error)
-	profileLocks sync.Map
-	callbacksMu  sync.Mutex
-	callbacks    map[string]callbackRegistration
-	closeDelay   time.Duration
-	remoteSlots  chan struct{}
+	cfg                *config
+	adsPower           *adsPowerClient
+	runtimeMu          sync.RWMutex
+	client             *http.Client
+	verifyProxy        func(context.Context, adsPowerProxyConfig) (string, error)
+	profileLocks       sync.Map
+	callbacksMu        sync.Mutex
+	callbacks          map[string]callbackRegistration
+	callbackDeliveryMu sync.Mutex
+	closeDelay         time.Duration
+	remoteSlots        chan struct{}
 }
 
 type launchPayload struct {
@@ -45,6 +47,8 @@ type launchPayload struct {
 	WorkflowMode      string           `json:"workflow_mode"`
 	ExpiresAt         time.Time        `json:"expires_at"`
 	CallbackExpiresAt time.Time        `json:"callback_expires_at"`
+	oauthStartedAt    time.Time
+	emailSession      *emailCodeSession
 }
 
 func (p *launchPayload) automated() bool {
@@ -62,6 +66,7 @@ type callbackRegistration struct {
 	Token        string
 	ProfileID    string
 	ExpiresAt    time.Time
+	Delivered    bool
 }
 
 type existingBinding struct {
@@ -172,22 +177,37 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var pending *pendingProfileBinding
+	identity := payload.LoginEmail
+	if strings.TrimSpace(identity) == "" {
+		identity = payload.AccountName
+	}
+	pendingKey := pendingProfileKey(targetConfigOrigin, payload.EnvironmentKey, identity)
 	lock := s.profileLock(payload)
 	lock.Lock()
 	defer lock.Unlock()
+	if payload.Existing == nil {
+		pending = s.pendingProfile(pendingKey)
+	}
 	fingerprintSlot := 0
 	if payload.Existing != nil {
 		fingerprintSlot = payload.Existing.FingerprintSlot
+	} else if pending != nil {
+		fingerprintSlot = pending.FingerprintSlot
 	}
 	if fingerprintSlot < 1 || fingerprintSlot > 52 {
-		fingerprintSlot, err = s.allocateFingerprintSlot(targetConfigOrigin)
-		if err != nil {
-			s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
-			s.renderLaunch(w, http.StatusInternalServerError, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
-			return
+		if payload.Existing != nil || pending != nil {
+			fingerprintSlot = 0
+		} else {
+			fingerprintSlot, err = s.allocateFingerprintSlot(targetConfigOrigin)
+			if err != nil {
+				s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
+				s.renderLaunch(w, http.StatusInternalServerError, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
+				return
+			}
 		}
 	}
-	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, fingerprintSlot, adsPower)
+	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, fingerprintSlot, pending, adsPower)
 	if err != nil {
 		reason := "automation_start_failed"
 		if strings.Contains(err.Error(), "出口代理不可用") {
@@ -197,12 +217,21 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
 		return
 	}
+	if payload.Existing == nil {
+		if err := s.rememberPendingProfile(pendingKey, pendingProfileBinding{ProfileID: profile.UserID, EnvironmentKey: payload.EnvironmentKey, FingerprintSlot: fingerprintSlot}); err != nil {
+			s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
+			s.renderLaunch(w, http.StatusInternalServerError, launchView{Title: "环境绑定未保存", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
+			return
+		}
+	}
 	if err := s.reportBinding(ctx, serverOrigin, payload, profile, templateProfile, exitIP, cfg.DeviceID, fingerprintSlot); err != nil {
+		s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "环境绑定未保存", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
 	state, registered, err := s.registerCallback(serverOrigin, payload, profile.UserID)
 	if err != nil {
+		s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "授权回调无法绑定", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
@@ -211,6 +240,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		if registered {
 			s.removeCallback(state)
 		}
+		s.progress(serverOrigin, payload, "failed", "failed", "automation_start_failed")
 		s.renderLaunch(w, http.StatusBadGateway, launchView{Title: "AdsPower 启动失败", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
@@ -231,7 +261,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig, deviceID string, fingerprintSlot int, adsPower *adsPowerClient) (*adsPowerProfile, *adsPowerProfile, string, error) {
+func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayload, serverCfg serverConfig, deviceID string, fingerprintSlot int, pending *pendingProfileBinding, adsPower *adsPowerClient) (*adsPowerProfile, *adsPowerProfile, string, error) {
 	templateProfile, err := resolveAdsPowerTemplate(ctx, adsPower, serverCfg)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("读取 %s 出口模板失败: %w", serverCfg.EnvironmentKey, err)
@@ -258,8 +288,8 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 			return nil, nil, "", fmt.Errorf("刷新既有环境安全策略失败: %w", err)
 		}
 		profile, err = adsPower.profile(ctx, payload.Existing.ProfileID)
-		if err != nil {
-			return nil, nil, "", errors.New("刷新后的 AdsPower 环境无法读取")
+		if err != nil || !adsPowerProfileUsesTemplate(profile, templateProfile) {
+			return nil, nil, "", errors.New("刷新后的 AdsPower 环境没有使用当前服务器代理")
 		}
 		profileExitIP := strings.TrimSpace(profile.IP)
 		if profileExitIP == "" {
@@ -269,6 +299,36 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 			profileExitIP, err = s.verifyProxy(ctx, profile.UserProxyConfig)
 			if err != nil || profileExitIP != exitIP {
 				return nil, nil, "", errors.New("账号固定环境没有使用当前服务器出口")
+			}
+		}
+		return profile, templateProfile, profileExitIP, nil
+	}
+	if pending != nil {
+		if canonicalEnvironmentKey(pending.EnvironmentKey) != canonicalEnvironmentKey(serverCfg.EnvironmentKey) {
+			return nil, nil, "", errors.New("待重试 AdsPower 环境与当前服务器出口不一致")
+		}
+		profile, err := adsPower.profile(ctx, pending.ProfileID)
+		if err != nil {
+			return nil, nil, "", errors.New("待重试 AdsPower 环境已不存在；请清理该任务后重新添加")
+		}
+		if profile.Name != sanitizeProfileName(payload.AccountName) || !adsPowerProfileUsesTemplate(profile, templateProfile) {
+			return nil, nil, "", errors.New("待重试 AdsPower 环境与当前账号或服务器代理不匹配")
+		}
+		if err := adsPower.enforceProfilePolicy(ctx, profile, templateProfile, pending.FingerprintSlot); err != nil {
+			return nil, nil, "", fmt.Errorf("刷新待重试环境安全策略失败: %w", err)
+		}
+		profile, err = adsPower.profile(ctx, pending.ProfileID)
+		if err != nil || !adsPowerProfileUsesTemplate(profile, templateProfile) {
+			return nil, nil, "", errors.New("刷新后的待重试 AdsPower 环境没有使用当前服务器代理")
+		}
+		profileExitIP := strings.TrimSpace(profile.IP)
+		if profileExitIP == "" {
+			profileExitIP = strings.TrimSpace(profile.UserProxyConfig.LatestIP)
+		}
+		if templateProfile.ProxyID == "" {
+			profileExitIP, err = s.verifyProxy(ctx, profile.UserProxyConfig)
+			if err != nil || profileExitIP != exitIP {
+				return nil, nil, "", errors.New("待重试 AdsPower 环境没有使用当前服务器出口")
 			}
 		}
 		return profile, templateProfile, profileExitIP, nil
@@ -288,6 +348,63 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		}
 	}
 	return profile, templateProfile, profileExitIP, nil
+}
+
+func adsPowerProfileUsesTemplate(profile, templateProfile *adsPowerProfile) bool {
+	if profile == nil || templateProfile == nil {
+		return false
+	}
+	if strings.TrimSpace(templateProfile.ProxyID) != "" {
+		if strings.TrimSpace(profile.ProxyID) != "" && strings.TrimSpace(profile.ProxyID) != strings.TrimSpace(templateProfile.ProxyID) {
+			return false
+		}
+		if strings.TrimSpace(profile.ProxyID) == strings.TrimSpace(templateProfile.ProxyID) {
+			return true
+		}
+		// Some AdsPower builds omit proxyid from /user/list even though the
+		// profile was created from a saved proxy. Compare the resolved SOCKS
+		// endpoint as a compatibility fallback.
+	}
+	actual := profile.UserProxyConfig
+	expected := templateProfile.UserProxyConfig
+	return strings.EqualFold(strings.TrimSpace(actual.ProxyType), strings.TrimSpace(expected.ProxyType)) &&
+		normalizeProxyHost(actual.ProxyHost) == normalizeProxyHost(expected.ProxyHost) &&
+		strings.TrimSpace(actual.ProxyPort) == strings.TrimSpace(expected.ProxyPort) &&
+		strings.TrimSpace(actual.ProxyUser) == strings.TrimSpace(expected.ProxyUser) &&
+		(templateProfile.ProxyID != "" || actual.ProxyPassword == expected.ProxyPassword)
+}
+
+func (s *helperServer) pendingProfile(key string) *pendingProfileBinding {
+	if key == "" {
+		return nil
+	}
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	binding, ok := s.cfg.PendingProfiles[key]
+	if !ok {
+		return nil
+	}
+	copy := binding
+	return &copy
+}
+
+func (s *helperServer) rememberPendingProfile(key string, binding pendingProfileBinding) error {
+	if key == "" || !validOpaqueID(binding.ProfileID) || binding.FingerprintSlot < 0 || binding.FingerprintSlot > 52 {
+		return errors.New("待重试 AdsPower 环境无效")
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	next := cloneConfig(s.cfg)
+	if next.PendingProfiles == nil {
+		next.PendingProfiles = make(map[string]pendingProfileBinding)
+	}
+	binding.EnvironmentKey = canonicalEnvironmentKey(binding.EnvironmentKey)
+	next.PendingProfiles[key] = binding
+	if err := saveConfig(next); err != nil {
+		return fmt.Errorf("保存待重试 AdsPower 环境失败: %w", err)
+	}
+	s.cfg = next
+	return nil
 }
 
 func (s *helperServer) allocateFingerprintSlot(origin string) (int, error) {
@@ -350,20 +467,42 @@ func (s *helperServer) profileLock(payload *launchPayload) *sync.Mutex {
 	key := payload.SessionID
 	if payload.Existing != nil && payload.Existing.ProfileID != "" {
 		key = payload.Existing.ProfileID
+	} else if identity := strings.TrimSpace(payload.LoginEmail); identity != "" {
+		key = canonicalEnvironmentKey(payload.EnvironmentKey) + "\x00" + strings.ToLower(identity)
+	} else if identity := strings.TrimSpace(payload.AccountName); identity != "" {
+		key = canonicalEnvironmentKey(payload.EnvironmentKey) + "\x00" + strings.ToLower(identity)
 	}
 	value, _ := s.profileLocks.LoadOrStore(key, &sync.Mutex{})
 	return value.(*sync.Mutex)
 }
 
 func (s *helperServer) redeem(ctx context.Context, origin, ticket string) (*launchPayload, error) {
-	var result apiEnvelope[launchPayload]
-	if err := s.serverRequest(ctx, origin, "/api/v1/tools/adspower/launch-tickets/redeem", map[string]string{"ticket": ticket}, &result); err != nil {
-		return nil, err
+	for attempt := 0; attempt < 3; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		var result apiEnvelope[launchPayload]
+		err := s.serverRequest(attemptCtx, origin, "/api/v1/tools/adspower/launch-tickets/redeem", map[string]string{"ticket": ticket}, &result)
+		cancel()
+		if err == nil {
+			if result.Data.SessionID == "" || result.Data.BindingToken == "" || result.Data.AuthURL == "" {
+				return nil, errors.New("XIASS returned an incomplete AdsPower launch task")
+			}
+			return &result.Data, nil
+		}
+		if attempt == 2 || !retryableServerNetworkError(err) {
+			return nil, err
+		}
+		if err := sleepWithContext(ctx, time.Duration(attempt+1)*700*time.Millisecond); err != nil {
+			return nil, err
+		}
 	}
-	if result.Data.SessionID == "" || result.Data.BindingToken == "" || result.Data.AuthURL == "" {
-		return nil, errors.New("XIASS returned an incomplete AdsPower launch task")
-	}
-	return &result.Data, nil
+	return nil, errors.New("XIASS launch ticket could not be redeemed")
+}
+
+func retryableServerNetworkError(err error) bool {
+	// Launch tickets are single-use. Retry only connection establishment,
+	// never an ambiguous timeout after the POST might have been delivered.
+	var operation *net.OpError
+	return errors.As(err, &operation) && operation.Op == "dial"
 }
 
 func (s *helperServer) registerCallback(origin string, launch *launchPayload, profileID string) (string, bool, error) {
@@ -424,6 +563,32 @@ func (s *helperServer) reportCallback(ctx context.Context, registration callback
 		"callback_token": registration.Token,
 		"callback_url":   callbackURL,
 	}, &result)
+}
+
+func (s *helperServer) deliverCallback(ctx context.Context, state, callbackURL string) (bool, error) {
+	if !validCallback(callbackURL, state) {
+		return false, errors.New("OpenAI callback URL is invalid")
+	}
+	// The loopback receiver and CDP observer can see the same redirect at once.
+	// Keep a settled receipt until expiry so both paths acknowledge it without
+	// consuming the server's one-time callback token a second time.
+	s.callbackDeliveryMu.Lock()
+	defer s.callbackDeliveryMu.Unlock()
+	registration, ok := s.callbackRegistration(state)
+	if !ok {
+		return false, nil
+	}
+	if registration.Delivered {
+		return true, nil
+	}
+	if err := s.reportCallback(ctx, registration, callbackURL); err != nil {
+		return false, err
+	}
+	s.callbacksMu.Lock()
+	s.callbacks[state] = callbackRegistration{ExpiresAt: registration.ExpiresAt, Delivered: true}
+	s.callbacksMu.Unlock()
+	s.stopProfileAfterCallback(registration.ProfileID)
+	return true, nil
 }
 
 func (s *helperServer) reportProgress(ctx context.Context, origin string, launch *launchPayload, status, stage, reason string) error {
@@ -521,13 +686,11 @@ func (s *helperServer) callback(w http.ResponseWriter, r *http.Request) {
 	fullURL := "http://localhost:1455" + r.URL.RequestURI()
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	view := callbackView{Title: "授权回调已收到", Message: "未找到对应的 XIASS 任务，请复制完整地址后手动粘贴。", URL: fullURL}
-	if registration, ok := s.callbackRegistration(state); ok {
+	if _, ok := s.callbackRegistration(state); ok {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-		err := s.reportCallback(ctx, registration, fullURL)
+		delivered, err := s.deliverCallback(ctx, state, fullURL)
 		cancel()
-		if err == nil {
-			s.removeCallback(state)
-			s.stopProfileAfterCallback(registration.ProfileID)
+		if err == nil && delivered {
 			view.Success = true
 			view.Title = "授权已返回 XIASS"
 			view.Message = "XIASS 会继续核验并保存账号，固定指纹浏览器将自动关闭。"

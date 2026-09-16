@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -238,32 +239,26 @@ func (s *emailCodeSession) waitForCode(ctx context.Context, notBefore time.Time)
 	case <-timer.C:
 	}
 	deadline := time.Now().Add(2 * time.Minute)
-	processed := make(map[string]bool, len(s.baseline))
-	for id := range s.baseline {
-		processed[id] = true
-	}
 	for time.Now().Before(deadline) {
 		messages, err := s.list(ctx)
 		if err != nil {
 			return "", err
 		}
-		sort.Slice(messages, func(i, j int) bool {
-			return parseMessageTime(messages[i].Date).After(parseMessageTime(messages[j].Date))
-		})
-		for _, message := range messages {
-			if message.ID == "" || processed[message.ID] {
-				continue
-			}
-			processed[message.ID] = true
-			if messagePredates(message.Date, notBefore.Add(-2*time.Minute)) {
-				continue
-			}
-			if code := extractEmailCode(message); code != "" {
+		now := time.Now()
+		candidate, ok := latestEmailCodeCandidate(messages, s.baseline, notBefore, now)
+		if ok {
+			if code := extractEmailCode(candidate); code != "" {
+				log.Printf("email code candidate accepted: age=%s", now.Sub(parseMessageTime(candidate.Date)).Round(time.Second))
 				return code, nil
 			}
-			detail, err := s.detail(ctx, message.ID)
-			if err == nil {
+			// Do not fall back to an older message. The newest eligible message is
+			// the only one that can belong to this authorization attempt. A detail
+			// request may fail temporarily, so leave the candidate eligible for the
+			// next poll instead of permanently marking it as processed.
+			detail, detailErr := s.detail(ctx, candidate.ID)
+			if detailErr == nil {
 				if code := extractEmailCode(detail); code != "" {
+					log.Printf("email code detail accepted: age=%s", now.Sub(parseMessageTime(candidate.Date)).Round(time.Second))
 					return code, nil
 				}
 			}
@@ -277,6 +272,41 @@ func (s *emailCodeSession) waitForCode(ctx context.Context, notBefore time.Time)
 		}
 	}
 	return "", emailCodeError("email_code_timeout")
+}
+
+func latestEmailCodeCandidate(messages []emailCodeMessage, baseline map[string]bool, requestedAt, now time.Time) (emailCodeMessage, bool) {
+	ordered := append([]emailCodeMessage(nil), messages...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := parseMessageTime(ordered[i].Date), parseMessageTime(ordered[j].Date)
+		if left.IsZero() {
+			return false
+		}
+		if right.IsZero() {
+			return true
+		}
+		return left.After(right)
+	})
+	for _, message := range ordered {
+		if message.ID == "" || baseline[message.ID] || !eligibleEmailCodeMessage(message, requestedAt, now) {
+			continue
+		}
+		return message, true
+	}
+	return emailCodeMessage{}, false
+}
+
+func eligibleEmailCodeMessage(message emailCodeMessage, requestedAt, now time.Time) bool {
+	messageAt := parseMessageTime(message.Date)
+	if messageAt.IsZero() {
+		return false
+	}
+	if requestedAt.IsZero() || messageAt.Before(requestedAt.Add(-5*time.Second)) {
+		return false
+	}
+	if messageAt.After(now.Add(15 * time.Second)) {
+		return false
+	}
+	return now.Sub(messageAt) <= time.Minute
 }
 
 func parseMessageTime(value string) time.Time {

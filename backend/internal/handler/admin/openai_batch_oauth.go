@@ -108,6 +108,9 @@ type batchOAuthTask struct {
 	authURL                 string
 	externalCallbackURL     string
 	adsPowerLaunchIssued    bool
+	adsPowerLaunchHelperURL string    `json:"-"`
+	adsPowerLaunchDelivery  string    `json:"-"`
+	adsPowerLaunchExpiresAt time.Time `json:"-"`
 	createAttempted         bool
 	submittedPhone          string
 	rejectedPhones          map[string]bool
@@ -787,6 +790,9 @@ func (h *OpenAIOAuthHandler) startBatchAttempt(ctx context.Context, t *batchOAut
 	t.sessionID, t.state, t.authURL = auth.SessionID, u.Query().Get("state"), auth.AuthURL
 	t.externalCallbackURL = ""
 	t.adsPowerLaunchIssued = false
+	t.adsPowerLaunchHelperURL = ""
+	t.adsPowerLaunchDelivery = ""
+	t.adsPowerLaunchExpiresAt = time.Time{}
 	t.ExpiresAt = time.Now().Add(openai.SessionTTL).UTC()
 	t.BrowserMode = normalizeBatchOAuthBrowserMode(t.config.BrowserMode)
 	if t.usesAdsPower() {
@@ -1523,6 +1529,9 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 	t.authURL = ""
 	t.externalCallbackURL = ""
 	t.adsPowerLaunchIssued = false
+	t.adsPowerLaunchHelperURL = ""
+	t.adsPowerLaunchDelivery = ""
+	t.adsPowerLaunchExpiresAt = time.Time{}
 	t.submittedPhone = ""
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false

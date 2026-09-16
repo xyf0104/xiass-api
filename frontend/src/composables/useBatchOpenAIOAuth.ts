@@ -56,6 +56,10 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   // Login material never enters a reactive store, URL or browser persistence.
   const secrets = new Map<string, BatchOAuthLogin>()
   const announced = new Set<number>()
+  const adsLaunchAttempts = new Set<string>()
+  const adsLaunches = new Map<string, Awaited<ReturnType<typeof batchOAuthAPI.launchAdsPower>>>()
+  const helperWindows = new Map<string, Window>()
+  const freeHelperWindows: Window[] = []
   let config: BatchOAuthConfig | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
@@ -78,6 +82,31 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       onCreated()
     }
     if (['completed', 'canceled'].includes(task.status)) secrets.delete(row.key)
+    if (task.stage !== 'external_browser' && !row.retryPending) {
+      const popup = helperWindows.get(row.key)
+      if (popup) {
+        helperWindows.delete(row.key)
+        if (!popup.closed) freeHelperWindows.push(popup)
+      }
+    }
+  }
+
+  function adsLaunchKey(row: OAuthQueueRow) {
+    return `${row.task?.task_id}:${row.task?.restart_count}`
+  }
+
+  function prepareHelperWindow(row: OAuthQueueRow) {
+    if (helperWindows.has(row.key)) return
+    let popup: Window | null = null
+    while (freeHelperWindows.length > 0 && !popup) {
+      const candidate = freeHelperWindows.pop()!
+      if (!candidate.closed) popup = candidate
+    }
+    popup ||= window.open('about:blank', '_blank')
+    if (popup) {
+      popup.opener = null
+      helperWindows.set(row.key, popup)
+    }
   }
 
   async function operation(row: OAuthQueueRow, action: () => Promise<void>) {
@@ -145,7 +174,10 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       for (const row of rows.value) {
         if (disposed || stopping) break
         if (!row.task || busyKeys.value.has(row.key)) continue
-        if (row.task.status === 'ready' && !row.error) {
+        if (row.task.browser_mode === 'adspower' && row.task.status === 'running' && row.task.stage === 'external_browser'
+          && secrets.has(row.key) && !adsLaunchAttempts.has(adsLaunchKey(row)) && !row.error) {
+          await launchAdsPower(row, true)
+        } else if (row.task.status === 'ready' && !row.error) {
           await operation(row, async () => update(row, await batchOAuthAPI.complete(row.task!.task_id)))
         } else if (secrets.has(row.key) && batchTaskWillAutoRestart(row.task)) {
           const state = `restart:${row.task.restart_count}:${row.task.reason}`
@@ -198,6 +230,11 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       rows.value.push({ key, email, localStatus: 'pending' })
     }
     started.value = true
+    if (settings.browser_mode === 'adspower') {
+      // Reserve local helper windows while the start click still carries a
+      // user gesture. Paired remote delivery closes these unused placeholders.
+      for (const row of rows.value.filter(row => row.localStatus === 'pending').slice(0, 3)) prepareHelperWindow(row)
+    }
     clearTimeout(timer)
     void sync()
   }
@@ -241,6 +278,8 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (row.localStatus === 'pending') {
       row.localStatus = 'canceled'
       secrets.delete(row.key)
+      helperWindows.get(row.key)?.close()
+      helperWindows.delete(row.key)
       return
     }
     if (row.localStatus === 'uncertain') await create(row)
@@ -275,18 +314,29 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     })
   }
 
-  async function launchAdsPower(row: OAuthQueueRow) {
+  async function launchAdsPower(row: OAuthQueueRow, automaticLaunch = false) {
     if (!row.task || row.task.browser_mode !== 'adspower' || row.task.stage !== 'external_browser') return
-    const popup = window.open('about:blank', '_blank')
-    if (popup) popup.opener = null
+    const key = adsLaunchKey(row)
+    if (!helperWindows.has(row.key)) prepareHelperWindow(row)
+    adsLaunchAttempts.add(key)
     await operation(row, async () => {
-      const result = await batchOAuthAPI.launchAdsPower(row.task!.task_id)
+      const result = adsLaunches.get(key) || await batchOAuthAPI.launchAdsPower(row.task!.task_id)
+      if (disposed) return
+      adsLaunches.set(key, result)
+      const popup = helperWindows.get(row.key)
       if (result.delivery === 'queued') {
         popup?.close()
-      } else if (popup) popup.location.href = result.helper_url
-      else window.location.assign(result.helper_url)
+        helperWindows.delete(row.key)
+      } else if (popup && !popup.closed) {
+        popup.location.href = result.helper_url
+      } else {
+        row.error = '浏览器阻止了助手窗口，请点击“打开固定环境”。'
+      }
     })
-    if (row.error && popup) popup.close()
+    if (row.error) {
+      helperWindows.get(row.key)?.close()
+      helperWindows.delete(row.key)
+    }
   }
 
   function retry(row: OAuthQueueRow) {
@@ -300,6 +350,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (row.localStatus !== 'uncertain' && (!row.task || row.task.account_id || row.task.restart_count >= 2)) return
     row.error = ''
     row.retryPending = true
+    if (row.task?.browser_mode === 'adspower') prepareHelperWindow(row)
     clearTimeout(timer)
     if (!syncing) void sync()
   }
@@ -326,12 +377,20 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (hasWork.value) return
     started.value = false
     config = undefined
+    adsLaunches.clear()
+    adsLaunchAttempts.clear()
   }
 
   function dispose() {
     disposed = true
     clearTimeout(timer)
     secrets.clear()
+    for (const popup of helperWindows.values()) popup.close()
+    for (const popup of freeHelperWindows) popup.close()
+    helperWindows.clear()
+    freeHelperWindows.length = 0
+    adsLaunches.clear()
+    adsLaunchAttempts.clear()
     config = undefined
   }
   onScopeDispose(dispose)

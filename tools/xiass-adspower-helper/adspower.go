@@ -333,9 +333,13 @@ func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsP
 	}
 	proxyConfig := template.UserProxyConfig
 	proxyConfig.LatestIP = ""
+	fingerprintConfig := map[string]any{"webrtc": "disabled"}
+	if fingerprintSlot > 0 {
+		fingerprintConfig = randomizedFingerprintConfig(fingerprintSlot, false)
+	}
 	payload := map[string]any{
 		"profile_id":         profile.UserID,
-		"fingerprint_config": randomizedFingerprintConfig(fingerprintSlot, false),
+		"fingerprint_config": fingerprintConfig,
 	}
 	if strings.TrimSpace(template.ProxyID) != "" {
 		payload["proxyid"] = template.ProxyID

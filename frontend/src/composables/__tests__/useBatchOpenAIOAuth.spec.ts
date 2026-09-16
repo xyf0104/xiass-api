@@ -42,9 +42,125 @@ beforeEach(() => {
     return result
   })
 })
-afterEach(() => { scope?.stop(); vi.useRealTimers() })
+afterEach(() => { scope?.stop(); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('batch OAuth orchestration', () => {
+  function adsTasks() {
+    vi.mocked(batchOAuthAPI.create).mockImplementation(async input => {
+      const result = { ...task(input.idempotency_key, input.email), browser_mode: 'adspower' as const, stage: 'external_browser' }
+      server.push(result)
+      return result
+    })
+  }
+
+  it('starts selected AdsPower tasks automatically from the original start click and only once per attempt', async () => {
+    adsTasks()
+    const popups = Array.from({ length: 3 }, () => ({ opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }))
+    const open = vi.spyOn(window, 'open')
+    for (const popup of popups) open.mockReturnValueOnce(popup as unknown as Window)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockImplementation(async id => ({ helper_url: `http://127.0.0.1:34987/launch?ticket=${id}`, expires_at: '' }))
+    const c = await setup()
+    c.start(credentials, { ...settings, browser_mode: 'adspower' })
+    expect(open).toHaveBeenCalledTimes(3)
+    await flushPromises()
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledTimes(3)
+    for (let index = 0; index < 3; index++) {
+      expect(popups[index].opener).toBeNull()
+      expect(popups[index].location.href).toBe(`http://127.0.0.1:34987/launch?ticket=${server[index].task_id}`)
+    }
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledTimes(3)
+    expect(c.activeCount.value).toBe(3)
+    expect(c.pendingCount.value).toBe(2)
+  })
+
+  it('reuses a released AdsPower window for the fourth queued account', async () => {
+    adsTasks()
+    const popups = Array.from({ length: 3 }, () => ({ opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }))
+    const open = vi.spyOn(window, 'open')
+    for (const popup of popups) open.mockReturnValueOnce(popup as unknown as Window)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockImplementation(async id => ({ helper_url: `http://127.0.0.1:34987/launch?ticket=${id}`, expires_at: '' }))
+    const c = await setup()
+    c.start(credentials, { ...settings, browser_mode: 'adspower' })
+    await flushPromises()
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledTimes(3)
+    server[0] = { ...server[0], status: 'completed', stage: 'completed', account_id: 100 }
+    await c.refresh()
+    await flushPromises()
+    await c.refresh()
+    expect(batchOAuthAPI.create).toHaveBeenCalledTimes(4)
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledTimes(4)
+    expect(popups[0].location.href).toContain(`/launch?ticket=${server[3].task_id}`)
+    expect(open).toHaveBeenCalledTimes(3)
+  })
+
+  it('delivers paired AdsPower tasks remotely and closes unused local placeholders', async () => {
+    adsTasks()
+    const popup = { opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=queued', expires_at: '', delivery: 'queued' })
+    const c = await setup()
+    c.start(credentials.slice(0, 1), { ...settings, browser_mode: 'adspower' })
+    await flushPromises()
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledOnce()
+    expect(popup.close).toHaveBeenCalledOnce()
+    expect(popup.location.href).toBe('about:blank')
+  })
+
+  it('reuses an issued launch response after a blocked popup instead of consuming another launch ticket', async () => {
+    adsTasks()
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=original', expires_at: '' })
+    const c = await setup()
+    c.start(credentials.slice(0, 1), { ...settings, browser_mode: 'adspower' })
+    await flushPromises()
+    await c.refresh()
+    const row = c.rows.value[0]
+    expect(row.error).toContain('浏览器阻止了助手窗口')
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledOnce()
+    const popup = { opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }
+    open.mockReturnValue(popup as unknown as Window)
+    await c.launchAdsPower(row)
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledOnce()
+    expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=original')
+    expect(row.error).toBe('')
+  })
+
+  it('does not automatically launch historical AdsPower tasks without this browser session login material', async () => {
+    server = [{ ...task('historical'), stage: 'external_browser', browser_mode: 'adspower' }]
+    const c = await setup()
+    await c.refresh()
+    expect(batchOAuthAPI.launchAdsPower).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original retry click window available for the new AdsPower attempt', async () => {
+    adsTasks()
+    const open = vi.spyOn(window, 'open')
+    const initial = { opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }
+    const retried = { opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }
+    open.mockReturnValueOnce(initial as unknown as Window).mockReturnValueOnce(retried as unknown as Window)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=new', expires_at: '' })
+    const c = await setup()
+    c.start(credentials.slice(0, 1), { ...settings, browser_mode: 'adspower' })
+    await flushPromises()
+    await c.refresh()
+    server[0] = { ...server[0], status: 'failed', stage: 'failed', reason: 'proxy_unavailable' }
+    await c.refresh()
+    vi.mocked(batchOAuthAPI.restart).mockImplementationOnce(async () => {
+      server[0] = { ...server[0], status: 'running', stage: 'external_browser', reason: undefined, restart_count: 1 }
+      return { ...server[0] }
+    })
+    c.retry(c.rows.value[0])
+    await flushPromises()
+    await c.refresh()
+    expect(initial.close).not.toHaveBeenCalled()
+    expect(initial.location.href).toContain('/launch?ticket=new')
+    expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledTimes(2)
+  })
   it('never automatically retries an account explicitly restricted by OpenAI', () => {
     expect(batchTaskWillAutoRestart({
       ...task('restricted', 'restricted@example.test', 'blocked'),
