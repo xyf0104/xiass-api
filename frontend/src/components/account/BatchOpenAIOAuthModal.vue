@@ -35,7 +35,7 @@
           <span v-if="duplicates">已忽略 {{ duplicates }} 个重复邮箱</span>
           <span v-if="invalidLines.length" role="alert" class="text-red-600 dark:text-red-300">格式错误：第 {{ invalidLines.join('、') }} 行</span>
         </div>
-        <div>
+        <div v-if="showBrowserModeSelector">
           <label class="input-label">授权浏览器</label>
           <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="group" aria-label="授权浏览器模式">
             <button type="button" class="batch-mode-tab" :class="settings.browser_mode === 'server' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-pressed="settings.browser_mode === 'server'" data-testid="batch-browser-server" @click="settings.browser_mode = 'server'">
@@ -158,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -174,9 +174,13 @@ import { normalizeBase32Secret } from '@/features/token-converter/totp'
 import { useClipboard } from '@/composables/useClipboard'
 import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type BatchOAuthQueueCredential, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
 
-withDefaults(defineProps<{ show?: boolean; embedded?: boolean; groups: AdminGroup[]; proxies: Proxy[] }>(), {
+type AuthorizationBrowserMode = 'server' | 'adspower'
+
+const props = withDefaults(defineProps<{ show?: boolean; embedded?: boolean; groups: AdminGroup[]; proxies: Proxy[]; browserMode?: AuthorizationBrowserMode; showBrowserModeSelector?: boolean }>(), {
   show: true,
   embedded: false,
+  browserMode: 'server',
+  showBrowserModeSelector: true,
 })
 const emit = defineEmits<{ close: []; created: [] }>()
 const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
@@ -188,7 +192,10 @@ const emailCodeProvider = OPENAI_EMAIL_CODE_PROVIDER
 const localError = ref('')
 const pools = ref<{ id: number; name: string; proxy_id: number | null }[]>([])
 const poolsReady = ref(false)
-const settings = reactive<BatchOAuthConfig>({ group_ids: [], proxy_id: null, pool_id: null, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off', browser_mode: 'server' })
+const settings = reactive<BatchOAuthConfig>({ group_ids: [], proxy_id: null, pool_id: null, concurrency: 1, priority: 2, codex_fingerprint_mode: 'off', browser_mode: props.browserMode })
+watch(() => props.browserMode, (browserMode) => {
+  if (!started.value && !hasWork.value) settings.browser_mode = browserMode
+}, { immediate: true })
 const passwordParsed = computed(() => parseAccountCredentials(passwordInput.value))
 const emailCodeParsed = computed(() => parseOpenAIEmailCodeCredentials(emailCodeInput.value))
 const passwordRows = computed(() => {

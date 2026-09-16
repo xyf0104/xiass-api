@@ -109,7 +109,10 @@ async function mountView() {
       stubs: {
         Icon: { template: '<span />' },
         DarkVideoBackground: { template: '<div data-testid="native-theme-background" />' },
-        BatchOpenAIOAuthModal: { template: '<div data-testid="batch-oauth" />' },
+        BatchOpenAIOAuthModal: {
+          props: ['browserMode', 'showBrowserModeSelector'],
+          template: '<div data-testid="batch-oauth" :data-browser-mode="browserMode" :data-show-browser-mode-selector="String(showBrowserModeSelector)" />',
+        },
         ConfirmDialog: {
           props: ['show', 'title', 'message', 'confirmText', 'danger'],
           emits: ['confirm', 'cancel'],
@@ -161,7 +164,10 @@ describe('OpenAIReauthorizationView', () => {
 
     expect(wrapper.text()).toContain('XIASS工作台')
     expect(wrapper.get('[data-testid="reauthorization-workspace-tab"]').text()).toContain('401 重新授权')
-    expect(wrapper.get('[data-testid="reauthorize-all"]').text()).toContain('一键内置授权')
+    expect(wrapper.get('[data-testid="reauthorize-all"]').text()).toContain('一键授权')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-server"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-server"]').text()).toContain('内置浏览器')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-server"]').text()).toContain('当前')
     expect(wrapper.get('[data-testid="reauthorization-account-448"]').text()).toContain('account-448')
     expect(wrapper.text()).toContain('尚未启动')
     expect(wrapper.get('[data-testid="team-child-creation-entry"]').text()).toContain('创建 Team 子号')
@@ -234,15 +240,48 @@ describe('OpenAIReauthorizationView', () => {
     const wrapper = await mountView()
 
     expect(wrapper.get('[data-testid="reauthorization-account-18"]').text()).toContain('固定环境 #18 · api2')
-    expect(wrapper.get('[data-testid="start-reauthorization-18"]').text()).toContain('内置')
-    expect(wrapper.get('[data-testid="manual-fingerprint-reauthorization-18"]').text()).toContain('Ads')
-    await wrapper.get('[data-testid="manual-fingerprint-reauthorization-18"]').trigger('click')
+    expect(wrapper.get('[data-testid="start-reauthorization-18"]').text()).toContain('开始授权')
+    expect(wrapper.find('[data-testid="manual-fingerprint-reauthorization-18"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="batch-oauth"]').attributes('data-browser-mode')).toBe('server')
+    await wrapper.get('[data-testid="authorization-browser-mode-adspower"]').trigger('click')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-server"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-adspower"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-adspower"]').text()).toContain('Ads 指纹浏览器')
+    expect(wrapper.get('[data-testid="authorization-browser-mode-adspower"]').text()).toContain('当前')
+    expect(wrapper.get('[data-testid="batch-oauth"]').attributes('data-browser-mode')).toBe('adspower')
+    expect(wrapper.get('[data-testid="batch-oauth"]').attributes('data-show-browser-mode-selector')).toBe('false')
+    await wrapper.get('[data-testid="start-reauthorization-18"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('本次使用 Ads 指纹浏览器')
     expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('固定的 AdsPower 环境')
     await wrapper.get('[data-testid="confirm-action"]').trigger('click')
     await flushPromises()
     expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(18, false, 'adspower')
     expect(openAIReauthorizationAPI.launchAdsPower).toHaveBeenCalledWith(fixedTask.task_id)
     expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=one')
+    wrapper.unmount()
+  })
+
+  it('uses the selected Ads browser mode for one-click authorization', async () => {
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [reauthorizationStatus(19)],
+      cooldown_seconds: 604800,
+    })
+    const fixedTask = { ...task(19, 'running', 'external_browser'), browser_mode: 'adspower' }
+    openAIReauthorizationAPI.start.mockResolvedValue(fixedTask)
+    openAIReauthorizationAPI.launchAdsPower.mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=batch', expires_at: new Date(Date.now() + 60_000).toISOString() })
+    const popup = { opener: window, location: { href: 'about:blank' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-testid="authorization-browser-mode-adspower"]').trigger('click')
+    await wrapper.get('[data-testid="reauthorize-all"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('本次使用 Ads 指纹浏览器')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(19, false, 'adspower')
+    expect(openAIReauthorizationAPI.launchAdsPower).toHaveBeenCalledWith(fixedTask.task_id)
+    expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=batch')
     wrapper.unmount()
   })
 

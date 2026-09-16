@@ -1,6 +1,6 @@
 <template>
   <DarkVideoBackground blurred />
-  <div class="openai-account-workbench mx-auto w-full min-w-0 space-y-4 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
+  <div class="app-layout openai-account-workbench mx-auto w-full min-w-0 space-y-4 p-3 sm:p-4 md:p-6" data-testid="openai-reauthorization-view">
     <header class="oauth-workbench-heading">
       <button type="button" class="oauth-icon-button oauth-workbench-back" title="返回账号管理" aria-label="返回账号管理" @click="backToAccounts">
         <Icon name="arrowLeft" size="sm" :stroke-width="2" />
@@ -9,8 +9,9 @@
     </header>
 
     <nav class="oauth-workbench-nav" aria-label="XIASS 工作台导航">
-      <div class="oauth-workbench-tablist" role="tablist" aria-label="OpenAI OAuth 账号工作台">
-        <button
+      <div class="oauth-workbench-primary">
+        <div class="oauth-workbench-tablist" role="tablist" aria-label="OpenAI OAuth 账号工作台">
+          <button
           type="button"
           role="tab"
           :aria-selected="activeWorkspace === 'batch'"
@@ -59,10 +60,40 @@
           :class="activeWorkspace === 'credentials' ? 'workbench-tab-active' : 'workbench-tab-idle'"
           data-testid="credential-library-workspace-tab"
           @click="activeWorkspace = 'credentials'"
-        >
-          <Icon name="key" size="sm" :stroke-width="2" />
-          <span>账号库</span>
-        </button>
+          >
+            <Icon name="key" size="sm" :stroke-width="2" />
+            <span>账号库</span>
+          </button>
+        </div>
+        <div class="authorization-mode-selector" role="radiogroup" aria-label="当前授权浏览器">
+          <span class="authorization-mode-label">授权方式</span>
+          <button
+            type="button"
+            role="radio"
+            class="authorization-mode-option"
+            :class="authorizationBrowserMode === 'server' ? 'authorization-mode-option-active' : ''"
+            :aria-checked="authorizationBrowserMode === 'server'"
+            data-testid="authorization-browser-mode-server"
+            @click="setAuthorizationBrowserMode('server')"
+          >
+            <Icon name="server" size="sm" :stroke-width="2" />
+            <span>内置浏览器</span>
+            <span v-if="authorizationBrowserMode === 'server'" class="authorization-mode-current">当前</span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            class="authorization-mode-option"
+            :class="authorizationBrowserMode === 'adspower' ? 'authorization-mode-option-active' : ''"
+            :aria-checked="authorizationBrowserMode === 'adspower'"
+            data-testid="authorization-browser-mode-adspower"
+            @click="setAuthorizationBrowserMode('adspower')"
+          >
+            <Icon name="globe" size="sm" :stroke-width="2" />
+            <span>Ads 指纹浏览器</span>
+            <span v-if="authorizationBrowserMode === 'adspower'" class="authorization-mode-current">当前</span>
+          </button>
+        </div>
       </div>
       <div class="team-child-entry">
         <button type="button" class="team-child-entry-button" data-testid="team-child-creation-entry" @click="openTeamChildCreation">
@@ -90,6 +121,8 @@
             embedded
             :groups="groups"
             :proxies="proxies"
+            :browser-mode="authorizationBrowserMode"
+            :show-browser-mode-selector="false"
             @created="handleBatchAccountCreated"
           />
         </div>
@@ -113,7 +146,7 @@
             </button>
             <button type="button" class="btn btn-primary flex items-center gap-2" data-testid="reauthorize-all" :disabled="!batchStartableAccounts.length || startingAll" @click="requestStartAll">
               <Icon name="play" size="sm" :stroke-width="2" />
-              <span>{{ startingAll ? '正在启动' : `一键内置授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
+              <span>{{ startingAll ? '正在启动' : `一键授权${batchStartableAccounts.length ? ` (${batchStartableAccounts.length})` : ''}` }}</span>
             </button>
           </div>
         </header>
@@ -177,16 +210,10 @@
                 <Icon name="key" size="sm" :stroke-width="2" />
                 <span>补充登录资料</span>
               </button>
-              <template v-else-if="canStart(account)">
-                <button type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="requestStartAccount(account, 'server')">
-                  <Icon name="server" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
-                  <span>内置 · {{ retryLabel(account) }}</span>
-                </button>
-                <button type="button" class="btn btn-secondary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`manual-fingerprint-reauthorization-${account.id}`" @click="requestStartAccount(account, 'adspower')">
-                  <Icon name="globe" size="sm" :stroke-width="2" />
-                  <span>Ads · {{ retryLabel(account) }}</span>
-                </button>
-              </template>
+              <button v-else-if="canStart(account)" type="button" class="btn btn-primary btn-sm flex items-center gap-1.5" :class="statusFor(account)?.requires_risk_confirmation ? 'btn-danger' : ''" :disabled="busyAccountIDs.has(account.id) || activeCount >= maxConcurrency" :data-testid="`start-reauthorization-${account.id}`" @click="requestStartAccount(account)">
+                <Icon name="play" size="sm" :class="busyAccountIDs.has(account.id) ? 'animate-pulse' : ''" :stroke-width="2" />
+                <span>{{ retryLabel(account) }}</span>
+              </button>
               <span v-else-if="taskFor(account)?.status === 'completed'" class="flex items-center gap-1.5 text-sm font-medium text-green-600 dark:text-green-400">
                 <Icon name="check" size="sm" :stroke-width="2.5" />授权成功
               </span>
@@ -339,6 +366,8 @@ const batchOptionsError = ref('')
 const operationNotice = ref('')
 const pendingDeleteAccount = ref<Account | null>(null)
 type AuthorizationBrowserMode = 'server' | 'adspower'
+const authorizationBrowserMode = ref<AuthorizationBrowserMode>('server')
+const queuedAuthorizationBrowserMode = ref<AuthorizationBrowserMode>('server')
 const pendingAuthorization = ref<{ accounts: Account[]; batch: boolean; browserMode: AuthorizationBrowserMode } | null>(null)
 type WorkbenchWorkspace = 'batch' | 'reauthorization' | 'history' | 'credentials'
 type HistoryFilter = 'all' | 'unauthorized' | 'first' | 'second'
@@ -436,12 +465,15 @@ const authorizationConfirmationTitle = computed(() => {
 const authorizationConfirmationMessage = computed(() => {
   const pending = pendingAuthorization.value
   if (!pending) return ''
+  const browserLabel = pending.browserMode === 'adspower' ? 'Ads 指纹浏览器' : '内置浏览器'
   if (pending.batch) {
-    return `即将启动 ${pending.accounts.length} 个尚未成功重授权过的 401 账号。系统最多同时处理 ${maxConcurrency.value} 个，不会把第二次掉授权的高风险账号加入批量队列。`
+    return `本次使用 ${browserLabel}。即将启动 ${pending.accounts.length} 个尚未成功重授权过的 401 账号。系统最多同时处理 ${maxConcurrency.value} 个，不会把第二次掉授权的高风险账号加入批量队列。`
   }
   const account = pending.accounts[0]
   const status = statusFor(account)
-  const browserNote = pending.browserMode === 'adspower' ? ' 本次会打开该账号固定的 AdsPower 环境。' : ''
+  const browserNote = pending.browserMode === 'adspower'
+    ? ` 本次使用 ${browserLabel}，并会打开该账号固定的 AdsPower 环境。`
+    : ` 本次使用 ${browserLabel}。`
   if (status?.risk_level === 'cooldown') {
     const nextAt = nextAuthorizationAt(status)
     const recommendation = nextAt ? `，建议等到 ${formatHistoryDate(nextAt)}` : ''
@@ -976,15 +1008,19 @@ async function stopAccount(account: Account) {
   }
 }
 
-function requestStartAccount(account: Account, browserMode: AuthorizationBrowserMode = 'server') {
+function setAuthorizationBrowserMode(browserMode: AuthorizationBrowserMode) {
+  authorizationBrowserMode.value = browserMode
+}
+
+function requestStartAccount(account: Account) {
   if (!canStart(account)) return
-  pendingAuthorization.value = { accounts: [account], batch: false, browserMode }
+  pendingAuthorization.value = { accounts: [account], batch: false, browserMode: authorizationBrowserMode.value }
 }
 
 function requestStartAll() {
   const candidates = batchStartableAccounts.value
   if (!candidates.length) return
-  pendingAuthorization.value = { accounts: [...candidates], batch: true, browserMode: 'server' }
+  pendingAuthorization.value = { accounts: [...candidates], batch: true, browserMode: authorizationBrowserMode.value }
 }
 
 function confirmAuthorization() {
@@ -999,6 +1035,7 @@ function confirmAuthorization() {
     return
   }
   queuedAccountIDs.value = pending.accounts.map(account => account.id)
+  queuedAuthorizationBrowserMode.value = pending.browserMode
   startingAll.value = true
   void pumpQueue()
 }
@@ -1008,7 +1045,9 @@ async function pumpQueue() {
     const accountID = queuedAccountIDs.value.shift()!
     const account = accounts.value.find(candidate => candidate.id === accountID)
     if (!account || !canStart(account)) continue
-    void startAccount(account, false, 'server')
+    const popup = queuedAuthorizationBrowserMode.value === 'adspower' ? window.open('about:blank', '_blank') : null
+    if (popup) popup.opener = null
+    void startAccount(account, false, queuedAuthorizationBrowserMode.value, popup)
   }
   if (!queuedAccountIDs.value.length) startingAll.value = false
 }
@@ -1147,21 +1186,21 @@ onBeforeUnmount(() => {
 
 .oauth-workbench-nav,
 .oauth-workbench-surface {
-  border: 1px solid rgb(148 163 184 / 0.34);
+  border: 1px solid var(--xiass-console-light-border, rgb(255 255 255 / 0.74));
   border-radius: 8px;
-  background: rgb(247 250 252 / 0.52);
-  box-shadow: 0 18px 42px rgb(51 65 85 / 0.12);
-  backdrop-filter: blur(24px) saturate(122%);
-  -webkit-backdrop-filter: blur(24px) saturate(122%);
+  background: var(--xiass-console-light-surface, rgb(255 255 255 / 0.46));
+  box-shadow: 0 14px 34px rgb(71 85 105 / 0.1);
+  backdrop-filter: blur(22px) saturate(125%) brightness(1.04);
+  -webkit-backdrop-filter: blur(22px) saturate(125%) brightness(1.04);
 }
 
 :global(.dark .oauth-workbench-nav),
 :global(.dark .oauth-workbench-surface) {
-  border-color: rgb(123 178 199 / 0.28);
-  background: rgb(2 19 31 / 0.72);
-  box-shadow: 0 16px 42px rgb(0 7 14 / 0.24);
-  backdrop-filter: blur(8px) saturate(112%);
-  -webkit-backdrop-filter: blur(8px) saturate(112%);
+  border-color: var(--xiass-console-border, rgb(255 255 255 / 0.13));
+  background: var(--xiass-console-surface-deep, rgb(3 14 25 / 0.22));
+  box-shadow: 0 14px 34px rgb(0 0 0 / 0.12);
+  backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
+  -webkit-backdrop-filter: blur(22px) saturate(135%) brightness(1.1);
 }
 
 .oauth-workbench-nav {
@@ -1172,12 +1211,110 @@ onBeforeUnmount(() => {
   padding: 0.4rem;
 }
 
-.oauth-workbench-tablist {
+.oauth-workbench-primary {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 0.35rem;
   overflow-x: auto;
+}
+
+.oauth-workbench-tablist {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.authorization-mode-selector {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.65rem;
+  border: 1px solid rgb(148 163 184 / 0.38);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.18);
+  padding: 0.2rem;
+}
+
+.authorization-mode-label {
+  flex-shrink: 0;
+  padding-inline: 0.5rem 0.35rem;
+  color: rgb(71 85 105);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.authorization-mode-option {
+  display: inline-flex;
+  min-height: 2.2rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.38rem;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding-inline: 0.58rem;
+  color: rgb(100 116 139);
+  font-size: 0.76rem;
+  font-weight: 700;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.authorization-mode-option:hover {
+  border-color: rgb(148 163 184 / 0.32);
+  background: rgb(255 255 255 / 0.3);
+  color: rgb(3 105 161);
+}
+
+.authorization-mode-option-active {
+  border-color: rgb(14 165 233 / 0.42);
+  background: rgb(14 165 233 / 0.14);
+  color: rgb(3 105 161);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+}
+
+.authorization-mode-current {
+  display: inline-flex;
+  min-height: 1.2rem;
+  align-items: center;
+  border-radius: 999px;
+  background: rgb(14 165 233 / 0.16);
+  padding-inline: 0.38rem;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+:global(.dark .authorization-mode-selector) {
+  border-color: rgb(123 178 199 / 0.26);
+  background: rgb(3 25 40 / 0.52);
+}
+
+:global(.dark .authorization-mode-label) {
+  color: rgb(148 163 184);
+}
+
+:global(.dark .authorization-mode-option) {
+  color: rgb(186 230 253);
+}
+
+:global(.dark .authorization-mode-option:hover) {
+  border-color: rgb(123 178 199 / 0.28);
+  background: rgb(8 39 56 / 0.58);
+  color: rgb(224 242 254);
+}
+
+:global(.dark .authorization-mode-option-active) {
+  border-color: rgb(103 232 249 / 0.52);
+  background: rgb(8 145 178 / 0.24);
+  color: rgb(165 243 252);
+  box-shadow: 0 0 18px rgb(34 211 238 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.035);
+}
+
+:global(.dark .authorization-mode-current) {
+  background: rgb(34 211 238 / 0.15);
+  color: rgb(207 250 254);
 }
 
 .team-child-entry {
@@ -1558,8 +1695,8 @@ onBeforeUnmount(() => {
 
 :global(.dark .oauth-account-row),
 :global(.dark .oauth-history-row) {
-  border-color: rgb(123 178 199 / 0.2);
-  background: rgb(2 24 39 / 0.62);
+  border-color: var(--xiass-console-border, rgb(255 255 255 / 0.13));
+  background: var(--xiass-console-surface, rgb(6 18 32 / 0.28));
   box-shadow: inset 0 1px rgb(255 255 255 / 0.02);
 }
 

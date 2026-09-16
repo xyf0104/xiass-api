@@ -12,8 +12,8 @@ const base = { props: ['show'], template: '<div v-if="show"><slot/><slot name="f
 const confirm = { props: ['show', 'title', 'message'], emits: ['cancel', 'confirm'], template: '<div v-if="show" data-testid="confirmation"><h3>{{title}}</h3><p>{{message}}</p><slot/><button data-testid="confirm" @click="$emit(\'confirm\')">确认</button></div>' }
 let wrapper: VueWrapper
 function task(stage = 'login'): BatchOAuthTask { return { task_id: 'task-00000000000001', email: 'person@example.test', login_method: 'password', status: 'running', stage, restart_count: 0, requires_sms_confirmation: stage === 'phone_required', created_at: '', expires_at: '' } }
-async function render() {
-  wrapper = mount(BatchOpenAIOAuthModal, { props: { show: true, groups: [], proxies: [] }, global: { plugins: [createPinia()], stubs: { BaseDialog: base, ConfirmDialog: confirm, Select: SelectStub, ProxySelector: { props: ['modelValue'], template: '<span data-testid="proxy">{{modelValue}}</span>' }, GroupSelector: true, Icon: true } } })
+async function render(props: Record<string, unknown> = {}) {
+  wrapper = mount(BatchOpenAIOAuthModal, { props: { show: true, groups: [], proxies: [], ...props }, global: { plugins: [createPinia()], stubs: { BaseDialog: base, ConfirmDialog: confirm, Select: SelectStub, ProxySelector: { props: ['modelValue'], template: '<span data-testid="proxy">{{modelValue}}</span>' }, GroupSelector: true, Icon: true } } })
   await flushPromises()
   return wrapper
 }
@@ -66,6 +66,16 @@ describe('batch OAuth modal', () => {
     await flushPromises()
     expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledWith('task-00000000000001')
     expect(popup.location.href).toBe('http://127.0.0.1:34987/launch?ticket=fixed')
+  })
+  it('accepts a workbench-controlled browser mode without rendering a second selector', async () => {
+    await render({ browserMode: 'adspower', showBrowserModeSelector: false })
+    expect(wrapper.find('[data-testid="batch-browser-server"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="batch-browser-adspower"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="batch-credentials-password"]').setValue('person@example.test----MyPrivatePassword----JBSWY3DPEHPK3PXP')
+    await wrapper.get('[data-testid="batch-start"]').trigger('click')
+    await flushPromises()
+
+    expect(batchOAuthAPI.create).toHaveBeenCalledWith(expect.objectContaining({ browser_mode: 'adspower' }))
   })
   it('shows an existing account as skipped without announcing a new account', async () => {
     vi.mocked(batchOAuthAPI.create).mockResolvedValue({
