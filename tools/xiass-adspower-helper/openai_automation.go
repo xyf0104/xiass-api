@@ -52,6 +52,8 @@ var (
 	deletedAccountPattern     = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)`)
 	blockedAccountPattern     = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned|restricted|limited)|account_(?:suspended|restricted|limited)|账号.*(?:封禁|受限|限制)`)
 	invalidCodePattern        = regexp.MustCompile(`(?i)incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)`)
+	diagnosticCodePattern     = regexp.MustCompile(`\b\d{6,8}\b`)
+	diagnosticTokenPattern    = regexp.MustCompile(`\b[A-Za-z0-9_-]{24,}\b`)
 )
 
 const oauthSnapshotJS = `(() => {
@@ -423,6 +425,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if attempted["unknown"].IsZero() {
 				attempted["unknown"] = time.Now()
 			} else if time.Since(attempted["unknown"]) > 20*time.Second {
+				log.Printf("AdsPower OAuth page was not recognized: %s", summarizeOAuthSnapshot(snapshot))
 				return blocked("manual_challenge")
 			}
 		}
@@ -434,6 +437,36 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		case <-timer.C:
 		}
 	}
+}
+
+func summarizeOAuthSnapshot(snapshot oauthPageSnapshot) string {
+	body := redactOAuthDiagnostic(snapshot.Body)
+	if len(body) > 500 {
+		body = body[:500]
+	}
+	inputs := make([]string, 0, len(snapshot.Inputs))
+	for _, input := range snapshot.Inputs {
+		inputs = append(inputs, redactOAuthDiagnostic(input.Metadata))
+	}
+	actions := make([]string, 0, len(snapshot.Actions))
+	for _, action := range snapshot.Actions {
+		text := redactOAuthDiagnostic(action.Text)
+		if len(text) > 120 {
+			text = text[:120]
+		}
+		actions = append(actions, text)
+		if len(actions) == 12 {
+			break
+		}
+	}
+	return fmt.Sprintf("url=%s body=%q inputs=%q actions=%q", safeTargetLocation(snapshot.URL), body, inputs, actions)
+}
+
+func redactOAuthDiagnostic(value string) string {
+	value = emailAddressPattern.ReplaceAllString(value, "[email]")
+	value = diagnosticCodePattern.ReplaceAllString(value, "[code]")
+	value = diagnosticTokenPattern.ReplaceAllString(value, "[token]")
+	return strings.TrimSpace(value)
 }
 
 func recentAttempt(attempted map[string]time.Time, key string) bool {

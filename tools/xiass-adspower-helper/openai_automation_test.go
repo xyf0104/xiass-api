@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,21 @@ func TestValidCallbackChecksStateAndCode(t *testing.T) {
 func TestAutomationErrorReasonTreatsOpeningDeadlineAsNavigationTimeout(t *testing.T) {
 	require.Equal(t, "navigation_timeout", automationErrorReason(context.DeadlineExceeded, "opening"))
 	require.Equal(t, "task_expired", automationErrorReason(context.DeadlineExceeded, "password"))
+}
+
+func TestOAuthSnapshotDiagnosticRedactsCredentials(t *testing.T) {
+	diagnostic := summarizeOAuthSnapshot(oauthPageSnapshot{
+		URL:     "https://auth.openai.com/oauth/authorize?state=secret-state-value-1234567890",
+		Body:    "Continue as owner@example.test with code 123456 and token abcdefghijklmnopqrstuvwxyz123456",
+		Inputs:  []oauthPageInput{{Metadata: "email owner@example.test"}},
+		Actions: []oauthPageAction{{Text: "Use code 654321"}},
+	})
+	require.NotContains(t, diagnostic, "owner@example.test")
+	require.NotContains(t, diagnostic, "123456")
+	require.NotContains(t, diagnostic, "654321")
+	require.NotContains(t, diagnostic, "abcdefghijklmnopqrstuvwxyz123456")
+	require.False(t, strings.Contains(diagnostic, "secret-state-value"))
+	require.Contains(t, diagnostic, "[email]")
+	require.Contains(t, diagnostic, "[code]")
+	require.Contains(t, diagnostic, "[token]")
 }
