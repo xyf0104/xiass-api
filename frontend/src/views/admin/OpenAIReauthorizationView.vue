@@ -65,6 +65,8 @@
             <span>账号库</span>
           </button>
         </div>
+      </div>
+      <div class="oauth-workbench-actions">
         <div class="authorization-mode-selector" role="radiogroup" aria-label="当前授权浏览器">
           <span class="authorization-mode-label">授权方式</span>
           <button
@@ -1322,9 +1324,10 @@ onBeforeUnmount(() => {
 
 .oauth-workbench-nav {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.55fr);
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   min-width: 0;
   align-items: stretch;
+  column-gap: 0.75rem;
   padding: 0.4rem;
 }
 
@@ -1332,7 +1335,6 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 0.35rem;
   overflow-x: auto;
 }
 
@@ -1343,13 +1345,20 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
+.oauth-workbench-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
 .authorization-mode-selector {
   display: inline-flex;
   min-height: 2.75rem;
   flex-shrink: 0;
   align-items: center;
   gap: 0.2rem;
-  margin-left: 0.65rem;
   border: 1px solid rgb(148 163 184 / 0.38);
   border-radius: 7px;
   background: rgb(255 255 255 / 0.18);
@@ -1471,9 +1480,9 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   border-left: 1px solid rgb(148 163 184 / 0.22);
-  padding-inline: 0.75rem;
+  padding-left: 0.75rem;
 }
 
 :global(.dark .team-child-entry) {
@@ -1988,16 +1997,26 @@ onBeforeUnmount(() => {
   border-radius: 8px;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1199px) {
   .oauth-workbench-nav {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) max-content;
+    row-gap: 0.4rem;
+  }
+
+  .oauth-workbench-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-top: 1px solid rgb(148 163 184 / 0.22);
+    padding-top: 0.45rem;
   }
 
   .team-child-entry {
-    justify-content: flex-start;
-    border-top: 1px solid rgb(148 163 184 / 0.22);
     border-left: 0;
-    padding: 0.5rem 0.25rem 0.1rem;
+    padding-left: 0;
+  }
+
+  :global(.dark .oauth-workbench-actions) {
+    border-color: rgb(123 178 199 / 0.2);
   }
 
   .oauth-account-row,
@@ -2008,6 +2027,35 @@ onBeforeUnmount(() => {
   .oauth-account-actions,
   .oauth-history-row > :last-child {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 767px) {
+  .oauth-workbench-nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oauth-workbench-primary,
+  .oauth-workbench-actions {
+    overflow-x: auto;
+  }
+
+  .oauth-workbench-actions {
+    grid-column: 1;
+    grid-row: 3;
+    justify-content: flex-start;
+  }
+
+  .team-child-entry {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: flex-end;
+    border-top: 1px solid rgb(148 163 184 / 0.22);
+    padding-top: 0.4rem;
+  }
+
+  :global(.dark .team-child-entry) {
+    border-color: rgb(123 178 199 / 0.2);
   }
 }
 
