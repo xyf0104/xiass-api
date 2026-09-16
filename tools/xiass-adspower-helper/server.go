@@ -165,6 +165,11 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	defer lock.Unlock()
 	profile, templateProfile, exitIP, err := s.prepareProfile(ctx, payload, serverCfg, cfg.DeviceID, adsPower)
 	if err != nil {
+		reason := "automation_start_failed"
+		if strings.Contains(err.Error(), "出口代理不可用") {
+			reason = "proxy_unavailable"
+		}
+		s.progress(serverOrigin, payload, "failed", "failed", reason)
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "指纹环境未启动", Message: err.Error(), EnvironmentKey: payload.EnvironmentKey})
 		return
 	}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/pquerna/otp/totp"
@@ -157,8 +158,16 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 	}
 
 	browser, cancelBrowser := chromedp.NewContext(root)
-	navigationCtx, cancelNavigation := context.WithTimeout(browser, 30*time.Second)
-	err := chromedp.Run(navigationCtx, chromedp.Navigate(authURL))
+	if err := chromedp.Run(browser); err != nil {
+		cancelBrowser()
+		cleanup()
+		return nil, func() {}, err
+	}
+	navigationCtx, cancelNavigation := context.WithTimeout(browser, 10*time.Second)
+	err := chromedp.Run(navigationCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, _, _, navigateErr := page.Navigate(authURL).Do(ctx)
+		return navigateErr
+	}))
 	cancelNavigation()
 	if err != nil {
 		probeCtx, cancelProbe := context.WithTimeout(browser, 5*time.Second)
@@ -237,6 +246,7 @@ func blocked(reason string) error { return automationFailureError{Status: "block
 func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin string, launch *launchPayload) error {
 	attempted := make(map[string]time.Time)
 	emailSubmitted := false
+	var snapshotFailureSince time.Time
 	var emailSession *emailCodeSession
 	if strings.TrimSpace(launch.LoginMethod) == "email_code" {
 		var err error
@@ -254,8 +264,18 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		}
 		var snapshot oauthPageSnapshot
 		if err := chromedp.Run(browser, chromedp.Evaluate(oauthSnapshotJS, &snapshot)); err != nil {
+			if snapshotFailureSince.IsZero() {
+				snapshotFailureSince = time.Now()
+			}
+			if time.Since(snapshotFailureSince) < 20*time.Second {
+				if err := sleepWithContext(ctx, 300*time.Millisecond); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
+		snapshotFailureSince = time.Time{}
 		state := inspectOAuthPage(snapshot)
 		if state.Kind == "callback" {
 			return nil

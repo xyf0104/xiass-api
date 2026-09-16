@@ -343,36 +343,73 @@ func verifyProxyExitIP(ctx context.Context, cfg adsPowerProxyConfig) (string, er
 	if cfg.ProxyUser != "" || cfg.ProxyPassword != "" {
 		auth = &proxy.Auth{User: cfg.ProxyUser, Password: cfg.ProxyPassword}
 	}
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort(strings.TrimSpace(cfg.ProxyHost), strconv.Itoa(port)), auth, proxy.Direct)
+	probes := []struct {
+		url  string
+		json bool
+	}{
+		{url: "https://checkip.amazonaws.com"},
+		{url: "https://icanhazip.com"},
+		{url: "https://api.ipify.org?format=json", json: true},
+	}
+	var lastErr error
+	for _, probe := range probes {
+		attemptCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		exitIP, err := probeProxyExitIP(attemptCtx, cfg, auth, probe.url, probe.json)
+		cancel()
+		if err == nil {
+			return exitIP, nil
+		}
+		lastErr = err
+	}
+	return "", fmt.Errorf("SOCKS5 proxy check failed: %w", lastErr)
+}
+
+func probeProxyExitIP(ctx context.Context, cfg adsPowerProxyConfig, auth *proxy.Auth, endpoint string, jsonResponse bool) (string, error) {
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort(strings.TrimSpace(cfg.ProxyHost), strings.TrimSpace(cfg.ProxyPort)), auth, proxy.Direct)
 	if err != nil {
 		return "", err
 	}
 	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
 			return dialer.Dial(network, address)
 		},
 		ForceAttemptHTTP2: true,
 	}
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org?format=json", nil)
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("SOCKS5 proxy check failed: %w", err)
+		return "", err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("SOCKS5 proxy check returned %d", response.StatusCode)
+		return "", fmt.Errorf("proxy check returned %d", response.StatusCode)
 	}
-	var result struct {
-		IP string `json:"ip"`
+	var exitIP string
+	if jsonResponse {
+		var result struct {
+			IP string `json:"ip"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&result); err != nil {
+			return "", err
+		}
+		exitIP = result.IP
+	} else {
+		body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if err != nil {
+			return "", err
+		}
+		exitIP = string(body)
 	}
-	if json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&result) != nil || net.ParseIP(strings.TrimSpace(result.IP)) == nil {
+	exitIP = strings.TrimSpace(exitIP)
+	if net.ParseIP(exitIP) == nil {
 		return "", errors.New("SOCKS5 proxy did not return a valid exit IP")
 	}
-	return strings.TrimSpace(result.IP), nil
+	return exitIP, nil
 }
 
 func sanitizeProfileName(value string) string {
