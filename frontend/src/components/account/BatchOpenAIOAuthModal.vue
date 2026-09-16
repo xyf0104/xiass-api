@@ -135,7 +135,7 @@
             </div>
             <div class="col-span-2 flex flex-wrap items-start justify-end gap-2 sm:col-span-1">
               <button v-if="row.task?.browser_mode === 'adspower' && row.task.stage === 'external_browser' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" :data-testid="`launch-adspower-${row.email}`" @click="launchAdsPower(row)"><Icon name="globe" size="sm" />打开固定环境</button>
-              <button v-if="row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
+              <button v-if="row.task?.browser_mode !== 'adspower' && row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
               <button v-if="row.task?.status === 'ready' && row.error" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="complete(row)">核验并添加</button>
               <button v-if="canRetry(row)" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重新授权</button>
               <button v-if="batchTaskActive(row.task) || row.localStatus === 'pending' || row.localStatus === 'uncertain' || row.retryPending" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('stop', row)"><Icon name="x" size="sm" />停止</button>
@@ -274,8 +274,8 @@ const retryableRows = computed(() => rows.value.filter(canRetry))
 const selectedRetryRows = computed(() => retryableRows.value.filter(row => selectedRetryKeys.value.has(row.key)))
 const selectedRetryCount = computed(() => selectedRetryRows.value.length)
 const allRetryableSelected = computed(() => retryableRows.value.length > 0 && selectedRetryCount.value === retryableRows.value.length)
-const passwordFlowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
-const emailCodeFlowStages = ['opening', 'email', 'email_code', 'phone', 'sms', 'workspace', 'callback', 'verify'] as const
+const passwordFlowStages = ['opening', 'email', 'password', 'totp', 'phone', 'sms', 'profile', 'workspace', 'callback', 'verify'] as const
+const emailCodeFlowStages = ['opening', 'email', 'email_code', 'phone', 'sms', 'profile', 'workspace', 'callback', 'verify'] as const
 const now = ref(Date.now())
 let elapsedTimer: ReturnType<typeof setInterval> | undefined
 type Action = 'acquire' | 'change' | 'cancel' | 'stop' | 'stopAll' | 'close' | 'retry' | 'retrySelected' | 'delete' | 'clearFailed'
@@ -369,14 +369,12 @@ function normalizedStage(row: OAuthQueueRow) {
   if (['email_code_waiting', 'email_code_submitting'].includes(stage)) return 'email_code'
   if (['phone_required', 'phone_submitting'].includes(stage)) return 'phone'
   if (['sms_waiting', 'sms_submitting'].includes(stage)) return 'sms'
+  if (stage === 'profile') return 'profile'
   if (['callback_waiting', 'callback_received'].includes(stage)) return 'callback'
   const flow = flowStages(row)
   return flow.some(item => item === stage) ? stage : 'opening'
 }
-function flowStages(row: OAuthQueueRow): readonly string[] {
-  if (row.task?.browser_mode === 'adspower') return ['browser', 'callback', 'verify'] as const
-  return row.task?.login_method === 'email_code' ? emailCodeFlowStages : passwordFlowStages
-}
+function flowStages(row: OAuthQueueRow): readonly string[] { return row.task?.login_method === 'email_code' ? emailCodeFlowStages : passwordFlowStages }
 function flowStepCount(row: OAuthQueueRow) { return flowStages(row).length }
 function progressStep(row: OAuthQueueRow) { return Math.max(1, flowStages(row).indexOf(normalizedStage(row)) + 1) }
 function progressPercent(row: OAuthQueueRow) { return row.task?.status === 'completed' ? 100 : Math.round((progressStep(row) / flowStepCount(row)) * 100) }
@@ -387,7 +385,7 @@ function progressClass(row: OAuthQueueRow) {
   return 'bg-primary-500'
 }
 function stageText(row: OAuthQueueRow) {
-  return ({ browser: '打开固定指纹环境', opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', email_code: '查询并提交邮箱验证码', phone: '提交手机号', sms: '等待并提交短信', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
+  return ({ browser: '打开固定指纹环境', opening: '打开授权窗口', email: '登录邮箱', password: '登录密码', totp: '验证 2FA', email_code: '查询并提交邮箱验证码', phone: '提交手机号', sms: '等待并提交短信', profile: '填写姓名和年龄', workspace: '确认工作空间', callback: '等待回调链接', verify: '核验并保存账号' } as Record<string, string>)[normalizedStage(row)]
 }
 function elapsedText(row: OAuthQueueRow) {
   const startedAt = Date.parse(row.task?.created_at || '')

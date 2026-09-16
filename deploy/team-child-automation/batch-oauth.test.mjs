@@ -111,7 +111,7 @@ function harness(plans = [], overrides = {}) {
         ? page.plan.afterTOTP || 'workspace'
         : page.kind === 'email_code'
           ? page.plan.afterEmailCode || 'workspace'
-          : 'workspace'
+          : page.plan.afterSMS || 'workspace'
     },
     async switchToEmailCode(page) {
       page.calls.push(['email_code_switch'])
@@ -140,6 +140,7 @@ function harness(plans = [], overrides = {}) {
       }
       page.kind = 'sms_code'
     },
+    async fillProfile(page) { page.calls.push(['profile', 'black', '26']); page.kind = page.plan.afterProfile || 'workspace' },
     async chooseDefaultWorkspace(page) { page.calls.push(['workspace']); await page.finish() },
     ...overrides.helpers
   }
@@ -305,7 +306,7 @@ test('email-code login switches away from a password screen and stops on provide
   }
 })
 
-test('reauthorization never enters the phone or SMS acquisition flow', async () => {
+test('reauthorization continues through phone and SMS when OpenAI requires them', async () => {
   const h = harness([{ afterEmail: 'email_code', afterEmailCode: 'phone', emailCode: '543604' }])
   await h.runner.start(body('reauth-mail', 1, {
     workflow_mode: 'reauthorization',
@@ -314,11 +315,34 @@ test('reauthorization never enters the phone or SMS acquisition flow', async () 
     email_code_token: 'e'.repeat(64),
   }))
   await flush()
+  assert.equal(h.runner.get('reauth-mail', 1).stage, 'phone_required')
+  h.runner.phone('reauth-mail', 1, '+15555550101')
+  await flush()
+  assert.equal(h.runner.get('reauth-mail', 1).stage, 'sms_waiting')
+  h.runner.smsCode('reauth-mail', 1, '123456')
+  await flush()
 
   const result = h.runner.get('reauth-mail', 1)
-  assert.equal(result.status, 'blocked')
-  assert.equal(result.reason, 'reauthorization_phone_required')
-  assert.equal(h.contexts[0].page.calls.some(([kind]) => kind === 'phone'), false)
+  assert.equal(result.status, 'completed')
+  assert.deepEqual(h.contexts[0].page.calls, [
+    ['email', 'reauth-mail@example.com'], ['email_code', '543604'],
+    ['phone', '+15555550101'], ['sms_code', '123456'], ['workspace'],
+  ])
+})
+
+test('first authorization fills the OpenAI name and age page after SMS', async () => {
+  const h = harness([{ afterSMS: 'profile' }])
+  await h.runner.start(body('first-auth'))
+  await flush()
+  h.runner.phone('first-auth', 1, '+15555550102')
+  await flush()
+  h.runner.smsCode('first-auth', 1, '654321')
+  await flush()
+
+  assert.equal(h.runner.get('first-auth', 1).status, 'completed')
+  assert.deepEqual(h.contexts[0].page.calls.slice(-3), [
+    ['sms_code', '654321'], ['profile', 'black', '26'], ['workspace'],
+  ])
 })
 
 test('only exact callback authority/path, single code and matching single state can complete', async (t) => {

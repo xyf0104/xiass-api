@@ -218,6 +218,7 @@ func batchOAuthRouter(h *OpenAIOAuthHandler, owner int64, role string) *gin.Engi
 	r.POST("/tools/adspower/launch-tickets/redeem", h.RedeemOpenAIAdsPowerLaunchTicket)
 	r.POST("/tools/adspower/bindings/report", h.ReportOpenAIAdsPowerBinding)
 	r.POST("/tools/adspower/progress/report", h.ReportOpenAIAdsPowerProgress)
+	r.POST("/tools/adspower/sms/action", h.OpenAIAdsPowerSMSAction)
 	r.POST("/tools/adspower/callbacks/report", h.ReportOpenAIAdsPowerCallback)
 	return r
 }
@@ -324,6 +325,33 @@ func TestBatchOAuthAdsPowerModeUsesOneTaskBoundCallbackAndPersistsProfile(t *tes
 	task.mu.Lock()
 	require.Equal(t, "password", task.Stage)
 	task.mu.Unlock()
+
+	sms := &batchSMSStub{result: &service.PixlabSMSResult{Number: "+12025550123", Status: "WAITING"}}
+	f.h.batchSMSService = sms
+	phoneProgress, err := json.Marshal(openAIAdsPowerProgressReport{
+		CallbackToken: redeemed.Data.CallbackToken, Status: "running", Stage: "phone_required",
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, batchOAuthRequest(r, http.MethodPost, "/tools/adspower/progress/report", string(phoneProgress)).Code)
+	acquireBody, err := json.Marshal(openAIAdsPowerSMSActionRequest{CallbackToken: redeemed.Data.CallbackToken, Action: "acquire"})
+	require.NoError(t, err)
+	acquired := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/sms/action", string(acquireBody))
+	require.Equal(t, http.StatusOK, acquired.Code, acquired.Body.String())
+	require.Contains(t, acquired.Body.String(), `"number":"+12025550123"`)
+	require.Equal(t, http.StatusGone, batchOAuthRequest(r, http.MethodPost, "/tools/adspower/sms/action", `{"callback_token":"unknown-token","action":"acquire"}`).Code)
+
+	sms.session = "sms-session"
+	sms.result = &service.PixlabSMSResult{Number: "+12025550123", Code: "654321", Status: "RECEIVED"}
+	smsProgress, err := json.Marshal(openAIAdsPowerProgressReport{
+		CallbackToken: redeemed.Data.CallbackToken, Status: "running", Stage: "sms_waiting",
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, batchOAuthRequest(r, http.MethodPost, "/tools/adspower/progress/report", string(smsProgress)).Code)
+	checkBody, err := json.Marshal(openAIAdsPowerSMSActionRequest{CallbackToken: redeemed.Data.CallbackToken, Action: "check"})
+	require.NoError(t, err)
+	checked := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/sms/action", string(checkBody))
+	require.Equal(t, http.StatusOK, checked.Code, checked.Body.String())
+	require.Contains(t, checked.Body.String(), `"code":"654321"`)
 
 	bindingBody := `{"binding_token":"` + redeemed.Data.BindingToken + `","device_id":"device-1","profile_id":"profile-1","profile_no":"7","profile_name":"XIASS owner","environment_key":"api","proxy_type":"socks5","proxy_host":"proxy.example.test","proxy_port":"1104","proxy_exit_ip":"203.0.113.42","webrtc_disabled":true,"fingerprint_randomized":true}`
 	binding := batchOAuthRequest(r, http.MethodPost, "/tools/adspower/bindings/report", bindingBody)

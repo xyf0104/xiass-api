@@ -151,6 +151,18 @@ type openAIAdsPowerProgressReport struct {
 	Reason        string `json:"reason,omitempty"`
 }
 
+type openAIAdsPowerSMSActionRequest struct {
+	CallbackToken string `json:"callback_token"`
+	Action        string `json:"action"`
+}
+
+type openAIAdsPowerSMSActionResponse struct {
+	Status    string     `json:"status"`
+	Number    string     `json:"number,omitempty"`
+	Code      string     `json:"code,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
 func newOpenAIAdsPowerLaunchStore() *openAIAdsPowerLaunchStore {
 	return &openAIAdsPowerLaunchStore{
 		launches:  make(map[string]openAIAdsPowerLaunchRecord),
@@ -679,11 +691,121 @@ func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerProgress(c *gin.Context) {
 		return
 	}
 	task.Status, task.Stage, task.Reason = req.Status, req.Stage, req.Reason
+	if req.Reason == "phone_rejected" && task.submittedPhone != "" {
+		if task.rejectedPhones == nil {
+			task.rejectedPhones = make(map[string]bool)
+		}
+		task.rejectedPhones[task.submittedPhone] = true
+	}
+	// AdsPower tasks are driven by the resident helper. The browser page is the
+	// live confirmation surface, so the admin frontend must not issue a second
+	// SMS-provider action for the same task.
+	task.RequiresSMSConfirmation = false
 	if req.Status != "running" {
 		task.markFinishedIfTerminal()
 	}
 	task.snapshotJSONLocked()
 	response.Success(c, gin.H{"accepted": true})
+}
+
+func (h *OpenAIOAuthHandler) OpenAIAdsPowerSMSAction(c *gin.Context) {
+	if h == nil || h.adsPowerLaunchStore == nil || h.batchOAuthStore == nil || h.batchSMSService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "AdsPower SMS automation is unavailable")
+		return
+	}
+	var req openAIAdsPowerSMSActionRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "Invalid AdsPower SMS action")
+		return
+	}
+	req.CallbackToken = strings.TrimSpace(req.CallbackToken)
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	if req.Action != "acquire" && req.Action != "change" && req.Action != "check" && req.Action != "cancel" {
+		response.BadRequest(c, "Invalid AdsPower SMS action")
+		return
+	}
+	record, ok, err := h.adsPowerLaunchStore.callbackRecord(c.Request.Context(), req.CallbackToken)
+	if err != nil {
+		response.InternalError(c, "AdsPower SMS ticket could not be read")
+		return
+	}
+	if !ok {
+		response.Error(c, http.StatusGone, "AdsPower SMS ticket has expired")
+		return
+	}
+	h.batchOAuthStore.mu.Lock()
+	task := h.batchOAuthStore.tasks[record.TaskID]
+	h.batchOAuthStore.mu.Unlock()
+	if task == nil {
+		response.Error(c, http.StatusGone, "Authorization task is no longer available")
+		return
+	}
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	if task.ownerID != record.AdminUserID || !task.matchesMode(record.TaskMode) || !task.usesAdsPower() ||
+		task.terminal() || task.sessionID != record.SessionID || task.authURL != record.AuthURL {
+		response.Error(c, http.StatusConflict, "AdsPower SMS action does not match the active authorization task")
+		return
+	}
+	if req.Action != "cancel" {
+		if task.Status != "running" || (task.Stage != "phone_required" && task.Stage != "sms_waiting") {
+			response.Error(c, http.StatusConflict, "Authorization task is not at a phone verification node")
+			return
+		}
+		if (req.Action == "acquire" || req.Action == "change") && task.Stage != "phone_required" {
+			response.Error(c, http.StatusConflict, "Authorization task does not need a phone number")
+			return
+		}
+		if req.Action == "check" && task.Stage != "sms_waiting" {
+			response.Error(c, http.StatusConflict, "Authorization task is not waiting for an SMS code")
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 35*time.Second)
+	defer cancel()
+	sessionID, err := h.batchSMSService.WorkflowSession(ctx, task.ownerID, task.ID)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, "SMS reservation is unavailable")
+		return
+	}
+	if sessionID == "" && (req.Action == "check" || req.Action == "cancel") {
+		response.Success(c, openAIAdsPowerSMSActionResponse{Status: "WAITING"})
+		return
+	}
+	if req.Action == "change" && sessionID == "" {
+		response.Error(c, http.StatusConflict, "There is no submitted SMS reservation to replace")
+		return
+	}
+	result, err := h.batchSMSService.WorkflowAction(ctx, task.ownerID, task.ID, sessionID, req.Action, true)
+	if err != nil || result == nil {
+		response.Error(c, http.StatusBadGateway, "SMS action failed; reservation retained for retry")
+		return
+	}
+	phone := strings.TrimSpace(result.Number)
+	if phone != "" {
+		if !strings.HasPrefix(phone, "+") {
+			phone = "+" + phone
+		}
+		if !teamChildWorkflowPhonePattern.MatchString(phone) {
+			response.Error(c, http.StatusBadGateway, "SMS provider returned an invalid phone number")
+			return
+		}
+		if task.rejectedPhones[phone] || (task.Reason == "phone_rejected" && req.Action != "change") {
+			response.Error(c, http.StatusConflict, "SMS provider returned a previously rejected phone number")
+			return
+		}
+		task.submittedPhone = phone
+		task.Reason = ""
+	}
+	if req.Action == "cancel" {
+		task.submittedPhone = ""
+	}
+	task.snapshotJSONLocked()
+	response.Success(c, openAIAdsPowerSMSActionResponse{
+		Status: result.Status, Number: phone, Code: strings.TrimSpace(result.Code), ExpiresAt: result.ExpiresAt,
+	})
 }
 
 func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerCallback(c *gin.Context) {

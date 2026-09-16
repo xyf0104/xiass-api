@@ -410,8 +410,10 @@ export class BatchOAuthRunner {
     if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
       return { kind: 'invalid_credentials' }
     }
-    if (/\/create-account|\/signup|\/about-you/.test(new URL(page.url()).pathname)
-      || /tell us about yourself|create (?:a |your )password/i.test(body)) return { kind: 'signup' }
+    const path = new URL(page.url()).pathname
+    const visibleInputs = page.locator('input:visible')
+    if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body)
+      && await visibleInputs.count().catch(() => 0) > 1) return { kind: 'profile' }
     const inputs = await this.#h.verificationInputs(page)
     const invalidCode = /incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)/i.test(body)
     if (/check your (?:email|inbox)|code (?:we |was )?sent to (?:your )?email|verify your email|邮箱验证码/i.test(body)) {
@@ -431,6 +433,7 @@ export class BatchOAuthRunner {
     if (/select\s+(?:a\s+)?(?:workspace|organization)|choose\s+(?:a\s+)?(?:workspace|organization)|continue\s+to\s+codex|authorize\s+codex|选择.*(?:工作空间|组织)/i.test(body)) return { kind: 'workspace', email }
     const login = await this.#h.firstVisibleRole(page, 'button', [/^(?:log in|sign in|use another account)$/i])
       || await this.#h.firstVisibleRole(page, 'link', [/^(?:log in|sign in|use another account)$/i])
+    if (/\/create-account|\/signup|\/about-you/.test(path)) return { kind: 'signup' }
     return login ? { kind: 'login', action: login } : { kind: 'unknown' }
   }
 
@@ -476,6 +479,19 @@ export class BatchOAuthRunner {
 
   async #workspace(page) {
     if (this.#h.chooseDefaultWorkspace) return this.#h.chooseDefaultWorkspace(page)
+    await this.#continue(page)
+  }
+
+  async #profile(page) {
+    if (this.#h.fillProfile) return this.#h.fillProfile(page)
+    const visible = page.locator('input:visible')
+    const name = await this.#h.firstVisibleInput(page, (s) => /name|姓名/.test(s))
+      || await firstVisible(visible)
+    let age = await this.#h.firstVisibleInput(page, (s) => /age|birth|年龄|出生/.test(s))
+    if (!age && await visible.count() > 1) age = visible.nth(1)
+    if (!name || !age) throw fail('manual_challenge')
+    await name.fill('black')
+    await age.fill('26')
     await this.#continue(page)
   }
 
@@ -556,10 +572,6 @@ export class BatchOAuthRunner {
         if (manual) { this.#stop(task, 'blocked', manual); break }
         const retryable = { openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }[state.kind]
         if (retryable) { this.#stop(task, 'failed', retryable); break }
-        if (task.workflowMode === 'reauthorization' && ['phone', 'phone_rejected', 'sms_code'].includes(state.kind)) {
-          this.#stop(task, 'blocked', 'reauthorization_phone_required')
-          break
-        }
         if (state.kind === 'phone_rejected') {
           if (task.phone) task.rejected.add(task.phone)
           this.#stage(task, 'phone_required')
@@ -606,7 +618,7 @@ export class BatchOAuthRunner {
           }
           continue
         }
-        if (['login', 'email', 'password', 'totp', 'workspace'].includes(state.kind) && !attempted.has(state.kind)) {
+        if (['login', 'email', 'password', 'totp', 'profile', 'workspace'].includes(state.kind) && !attempted.has(state.kind)) {
           attempted.add(state.kind)
           this.#stage(task, state.kind)
           if (state.kind === 'login') await state.action.click()
@@ -626,6 +638,7 @@ export class BatchOAuthRunner {
             task.secret = ''
             await this.#code(page, code)
           }
+          if (state.kind === 'profile') await this.#profile(page)
           if (state.kind === 'workspace') {
             if (!task.emailSubmitted) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
             await this.#workspace(page)

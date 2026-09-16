@@ -109,6 +109,20 @@ describe('batch OAuth modal', () => {
     expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(2, 'task-00000000000001', 'acquire')
     expect(wrapper.find('[data-testid="confirmation"]').exists()).toBe(false)
   })
+  it('leaves AdsPower phone and SMS actions to the resident helper', async () => {
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({
+      items: [{ ...task('phone_required'), browser_mode: 'adspower', requires_sms_confirmation: false }],
+      max_concurrency: 3,
+      max_restarts: 2,
+    })
+    await render()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('提交手机号')
+    expect(wrapper.findAll('button').some(button => button.text().includes('领取号码'))).toBe(false)
+  })
   it('deduplicates old failed attempts and deletes finished records', async () => {
     const failed = (id: string, email: string): BatchOAuthTask => ({ ...task('opening'), task_id: id, email, status: 'failed', reason: 'proxy_unavailable', restart_count: 1 })
     vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [

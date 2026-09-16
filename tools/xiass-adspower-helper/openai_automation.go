@@ -53,6 +53,9 @@ var (
 	bannedAccountPattern      = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned)|account_(?:suspended|banned)|账号.*(?:封禁|封号)`)
 	restrictedAccountPattern  = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:restricted|limited)|account_(?:restricted|limited)|账号.*(?:受限|限制)`)
 	invalidCodePattern        = regexp.MustCompile(`(?i)incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)`)
+	phoneRejectedPattern      = regexp.MustCompile(`(?i)phone.*(?:invalid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)`)
+	automationPhonePattern    = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
+	automationSMSCodePattern  = regexp.MustCompile(`^\d{4,10}$`)
 	diagnosticCodePattern     = regexp.MustCompile(`\b\d{6,8}\b`)
 	diagnosticTokenPattern    = regexp.MustCompile(`\b[A-Za-z0-9_-]{24,}\b`)
 )
@@ -269,6 +272,35 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 	attempted := make(map[string]time.Time)
 	emailSubmitted := false
 	oauthResumeAttempted := false
+	phoneSubmitted := ""
+	var smsDeadline time.Time
+	smsReserved := false
+	smsCodeSubmitted := false
+	var lastSMSAcquire time.Time
+	var lastSMSPoll time.Time
+	lastProgress := ""
+	reportProgress := func(status, stage, reason string) bool {
+		key := status + "\x00" + stage + "\x00" + reason
+		if key == lastProgress {
+			return true
+		}
+		reportCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := s.reportProgress(reportCtx, origin, launch, status, stage, reason)
+		cancel()
+		if err != nil {
+			return false
+		}
+		lastProgress = key
+		return true
+	}
+	defer func() {
+		if !smsReserved {
+			return
+		}
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, _ = s.smsAction(cancelCtx, origin, launch, "cancel")
+	}()
 	var snapshotFailureSince time.Time
 	var emailSession *emailCodeSession
 	if strings.TrimSpace(launch.LoginMethod) == "email_code" {
@@ -317,7 +349,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 					}
 					continue
 				}
-				s.progress(origin, launch, "running", "login", "")
+				reportProgress("running", "login", "")
 				if err := clickOAuthAction(browser, action); err != nil {
 					return err
 				}
@@ -336,8 +368,106 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			return blocked("captcha_required")
 		case "account_deleted_or_disabled", "account_banned", "unknown_error", "proxy_unavailable", "invalid_credentials", "invalid_email_code", "invalid_totp", "invalid_sms_code":
 			return blocked(state.Kind)
-		case "phone", "phone_rejected", "sms_code":
-			return blocked("reauthorization_phone_required")
+		case "phone", "phone_rejected":
+			if state.Kind == "phone" && phoneSubmitted != "" {
+				if recentAttempt(attempted, "phone_transition") && attemptExpired(attempted, "phone_transition") {
+					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
+				}
+				break
+			}
+			action := "acquire"
+			reason := ""
+			if state.Kind == "phone_rejected" {
+				action = "change"
+				reason = "phone_rejected"
+			}
+			if !reportProgress("running", "phone_required", reason) {
+				break
+			}
+			if !lastSMSAcquire.IsZero() && time.Since(lastSMSAcquire) < 2*time.Second {
+				break
+			}
+			lastSMSAcquire = time.Now()
+			result, err := s.smsAction(ctx, origin, launch, action)
+			if err != nil || result == nil || !validAutomationPhone(result.Number) {
+				if recentAttempt(attempted, "sms_acquire") && time.Since(attempted["sms_acquire"]) > 5*time.Minute {
+					return automationFailureError{Status: "failed", Reason: "sms_confirmation_timeout"}
+				}
+				break
+			}
+			delete(attempted, "sms_acquire")
+			smsReserved = true
+			smsCodeSubmitted = false
+			phoneSubmitted = normalizeAutomationPhone(result.Number)
+			smsDeadline = time.Now().Add(3 * time.Minute)
+			reportProgress("running", "phone_submitting", "")
+			if err := fillOAuthInput(browser, state.Input, phoneSubmitted); err != nil {
+				return err
+			}
+			_ = clickOAuthText(browser, []string{"text message", "短信"})
+			if err := clickOAuthContinue(browser); err != nil {
+				return err
+			}
+			delete(attempted, "phone_transition")
+			if !reportProgress("running", "sms_waiting", "") {
+				break
+			}
+		case "sms_code":
+			if smsCodeSubmitted {
+				if recentAttempt(attempted, "sms_transition") && attemptExpired(attempted, "sms_transition") {
+					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
+				}
+				break
+			}
+			if !smsReserved {
+				smsReserved = true
+				if smsDeadline.IsZero() {
+					smsDeadline = time.Now().Add(3 * time.Minute)
+				}
+			}
+			delete(attempted, "phone_transition")
+			reportProgress("running", "sms_waiting", "")
+			if !smsDeadline.IsZero() && !time.Now().Before(smsDeadline) {
+				cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				_, cancelErr := s.smsAction(cancelCtx, origin, launch, "cancel")
+				cancel()
+				if cancelErr == nil {
+					smsReserved = false
+				}
+				return automationFailureError{Status: "failed", Reason: "sms_timeout"}
+			}
+			if !lastSMSPoll.IsZero() && time.Since(lastSMSPoll) < 2*time.Second {
+				break
+			}
+			lastSMSPoll = time.Now()
+			result, err := s.smsAction(ctx, origin, launch, "check")
+			if err != nil {
+				break
+			}
+			code := strings.TrimSpace(result.Code)
+			if code == "" {
+				break
+			}
+			if !validAutomationSMSCode(code) {
+				return blocked("invalid_sms_code")
+			}
+			smsReserved = false
+			smsCodeSubmitted = true
+			reportProgress("running", "sms_submitting", "")
+			if err := fillOAuthCode(browser, state.Inputs, code); err != nil {
+				return err
+			}
+		case "profile":
+			if recentAttempt(attempted, state.Kind) {
+				if attemptExpired(attempted, state.Kind) {
+					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
+				}
+				break
+			}
+			reportProgress("running", "profile", "")
+			if err := fillOAuthProfile(browser, state.Inputs); err != nil {
+				return err
+			}
 		case "retry_page":
 			if recentAttempt(attempted, state.Kind) {
 				if attemptExpired(attempted, state.Kind) {
@@ -345,7 +475,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "opening", "")
+			reportProgress("running", "opening", "")
 			if err := clickOAuthAction(browser, state.Action); err != nil {
 				return err
 			}
@@ -356,7 +486,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "workspace", "")
+			reportProgress("running", "workspace", "")
 			if err := clickOAuthAction(browser, state.Action); err != nil {
 				return err
 			}
@@ -368,7 +498,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "login", "")
+			reportProgress("running", "login", "")
 			if err := clickOAuthAction(browser, state.Action); err != nil {
 				return err
 			}
@@ -379,7 +509,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "email", "")
+			reportProgress("running", "email", "")
 			if err := fillOAuthInput(browser, state.Input, launch.LoginEmail); err != nil {
 				return err
 			}
@@ -409,7 +539,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "password", "")
+			reportProgress("running", "password", "")
 			if err := fillOAuthInput(browser, state.Input, launch.Password); err != nil {
 				return err
 			}
@@ -426,7 +556,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if strings.TrimSpace(launch.TOTPSecret) == "" {
 				return blocked("authenticator_required")
 			}
-			s.progress(origin, launch, "running", "totp", "")
+			reportProgress("running", "totp", "")
 			code, err := totp.GenerateCode(strings.ReplaceAll(launch.TOTPSecret, " ", ""), time.Now().UTC())
 			if err != nil {
 				return blocked("invalid_totp")
@@ -444,12 +574,12 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			s.progress(origin, launch, "running", "email_code_waiting", "")
+			reportProgress("running", "email_code_waiting", "")
 			code, err := emailSession.waitForCode(ctx, time.Now())
 			if err != nil {
 				return blocked(emailCodeReason(err))
 			}
-			s.progress(origin, launch, "running", "email_code_submitting", "")
+			reportProgress("running", "email_code_submitting", "")
 			if err := fillOAuthCode(browser, state.Inputs, code); err != nil {
 				return err
 			}
@@ -467,17 +597,17 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				// updates the account, so continuing here cannot swap identities.
 				emailSubmitted = true
 			}
-			s.progress(origin, launch, "running", "workspace", "")
+			reportProgress("running", "workspace", "")
 			_ = clickOAuthText(browser, []string{"default workspace", "默认工作空间"})
 			if err := clickOAuthContinue(browser); err != nil {
 				return err
 			}
-			s.progress(origin, launch, "running", "callback_waiting", "")
+			reportProgress("running", "callback_waiting", "")
 		case "unknown":
 			if shouldResumeOAuthFromChatGPTHomepage(snapshot.URL, emailSubmitted, oauthResumeAttempted) {
 				oauthResumeAttempted = true
 				delete(attempted, "unknown")
-				s.progress(origin, launch, "running", "opening", "")
+				reportProgress("running", "opening", "")
 				if err := navigateOAuthURL(browser, launch.AuthURL); err != nil {
 					return err
 				}
@@ -498,6 +628,22 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		case <-timer.C:
 		}
 	}
+}
+
+func normalizeAutomationPhone(value string) string {
+	value = strings.NewReplacer(" ", "", "(", "", ")", "", "-", "").Replace(strings.TrimSpace(value))
+	if value != "" && !strings.HasPrefix(value, "+") {
+		value = "+" + value
+	}
+	return value
+}
+
+func validAutomationPhone(value string) bool {
+	return automationPhonePattern.MatchString(normalizeAutomationPhone(value))
+}
+
+func validAutomationSMSCode(value string) bool {
+	return automationSMSCodePattern.MatchString(strings.TrimSpace(value))
 }
 
 func accountSwitchAction(snapshot oauthPageSnapshot) (int, bool) {
@@ -636,6 +782,15 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 	case invalidCredentialsPattern.MatchString(body):
 		state.Kind = "invalid_credentials"
 	default:
+		if (parsed != nil && (strings.Contains(parsed.Path, "/about-you") || strings.Contains(parsed.Path, "/profile"))) ||
+			strings.Contains(lower, "tell us about yourself") || strings.Contains(lower, "about you") ||
+			(strings.Contains(lower, "name") && (strings.Contains(lower, "age") || strings.Contains(lower, "birth"))) ||
+			strings.Contains(lower, "姓名") || strings.Contains(lower, "年龄") {
+			if profileInputs := oauthProfileInputs(snapshot.Inputs); len(profileInputs) >= 2 {
+				state.Kind, state.Inputs = "profile", profileInputs
+				return state
+			}
+		}
 		codeInputs := matchingInputs(snapshot.Inputs, func(value string) bool {
 			return strings.Contains(value, "one-time-code") || strings.Contains(value, "inputmode numeric") || strings.Contains(value, "code") || strings.Contains(value, "otp")
 		})
@@ -662,6 +817,15 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 				}
 			}
 			state.Inputs = codeInputs
+			return state
+		}
+		if phoneRejectedPattern.MatchString(body) {
+			state.Kind = "phone_rejected"
+			if input, ok := firstMatchingInput(snapshot.Inputs, func(value string) bool {
+				return strings.Contains(value, "tel") || strings.Contains(value, "phone") || strings.Contains(value, "mobile")
+			}); ok {
+				state.Input = input
+			}
 			return state
 		}
 		if input, ok := firstMatchingInput(snapshot.Inputs, func(value string) bool {
@@ -697,6 +861,34 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 		state.Kind = "unknown"
 	}
 	return state
+}
+
+func oauthProfileInputs(inputs []oauthPageInput) []int {
+	if len(inputs) < 2 {
+		return nil
+	}
+	nameIndex, nameFound := firstMatchingInput(inputs, func(value string) bool {
+		return strings.Contains(value, "name") || strings.Contains(value, "姓名")
+	})
+	ageIndex, ageFound := firstMatchingInput(inputs, func(value string) bool {
+		return strings.Contains(value, "age") || strings.Contains(value, "birth") || strings.Contains(value, "年龄") || strings.Contains(value, "出生")
+	})
+	if !nameFound {
+		nameIndex = inputs[0].Index
+	}
+	if !ageFound {
+		for _, input := range inputs {
+			if input.Index != nameIndex {
+				ageIndex = input.Index
+				ageFound = true
+				break
+			}
+		}
+	}
+	if !ageFound || nameIndex == ageIndex {
+		return nil
+	}
+	return []int{nameIndex, ageIndex}
 }
 
 func matchingInputs(inputs []oauthPageInput, match func(string) bool) []int {
@@ -757,6 +949,19 @@ func fillOAuthCode(browser context.Context, inputs []int, code string) error {
 	}
 	_ = clickOAuthContinue(browser)
 	return nil
+}
+
+func fillOAuthProfile(browser context.Context, inputs []int) error {
+	if len(inputs) < 2 {
+		return errors.New("profile inputs missing")
+	}
+	if err := fillOAuthInput(browser, inputs[0], "black"); err != nil {
+		return err
+	}
+	if err := fillOAuthInput(browser, inputs[1], "26"); err != nil {
+		return err
+	}
+	return clickOAuthContinue(browser)
 }
 
 func clickOAuthAction(browser context.Context, index int) error {

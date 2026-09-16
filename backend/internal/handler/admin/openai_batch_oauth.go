@@ -690,7 +690,7 @@ func batchOAuthPublicStage(stage string) string {
 	switch stage {
 	case "queued", "opening", "login", "email", "password", "totp", "phone_required", "phone_submitting",
 		"email_code_waiting", "email_code_submitting", "sms_waiting", "sms_submitting", "workspace", "callback_waiting", "callback_received", "completed",
-		"external_browser", "failed", "blocked", "canceled":
+		"profile", "external_browser", "failed", "blocked", "canceled":
 		return stage
 	default:
 		return "login"

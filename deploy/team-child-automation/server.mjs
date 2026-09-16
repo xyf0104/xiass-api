@@ -3502,6 +3502,7 @@ const batchOAuth = new BatchOAuthRunner({
     fillLoginPassword,
     fillVerificationCode,
     submitPhoneOnOpenAI,
+    fillProfile,
     chooseDefaultWorkspace,
     onProgress: progress => console.log(JSON.stringify({ component: 'batch-oauth', ...progress }))
   }

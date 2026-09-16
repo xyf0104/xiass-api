@@ -150,7 +150,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
         } else if (secrets.has(row.key) && batchTaskWillAutoRestart(row.task)) {
           const state = `restart:${row.task.restart_count}:${row.task.reason}`
           await automatic(row, state, 10000, async () => retry(row))
-        } else if (row.task.status === 'running' && row.task.stage === 'phone_required') {
+        } else if (row.task.browser_mode !== 'adspower' && row.task.status === 'running' && row.task.stage === 'phone_required') {
           if (row.task.reason === 'phone_rejected') {
             const state = `change:${row.task.restart_count}:${row.number || ''}`
             await automatic(row, state, 1000, async () => sms(row, 'change'))
@@ -158,7 +158,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
             const state = `acquire:${row.task.restart_count}`
             await automatic(row, state, 1000, async () => ensurePhone(row))
           }
-        } else if (row.task.status === 'running' && row.task.stage === 'sms_waiting') {
+        } else if (row.task.browser_mode !== 'adspower' && row.task.status === 'running' && row.task.stage === 'sms_waiting') {
           await pollSMS(row)
         }
       }

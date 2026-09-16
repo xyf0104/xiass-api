@@ -755,13 +755,14 @@ const stageDetails: Record<string, { step: number; label: string }> = {
   phone_submitting: { step: 4, label: '提交手机号' },
   sms_waiting: { step: 4, label: '等待短信验证码' },
   sms_submitting: { step: 4, label: '提交短信验证码' },
-  workspace: { step: 5, label: '确认个人工作空间并点击继续' },
-  callback_waiting: { step: 6, label: '等待 localhost OAuth 回调' },
-  callback_received: { step: 6, label: '已取得 OAuth 回调' },
-  completed: { step: 7, label: '新 OAuth 凭据已保存到原账号' },
-  failed: { step: 7, label: '授权任务失败' },
-  blocked: { step: 7, label: 'OpenAI 阻止了当前授权' },
-  canceled: { step: 7, label: '任务已停止' }
+  profile: { step: 5, label: '填写姓名和年龄' },
+  workspace: { step: 6, label: '确认个人工作空间并点击继续' },
+  callback_waiting: { step: 7, label: '等待 localhost OAuth 回调' },
+  callback_received: { step: 7, label: '已取得 OAuth 回调' },
+  completed: { step: 8, label: '新 OAuth 凭据已保存到原账号' },
+  failed: { step: 8, label: '授权任务失败' },
+  blocked: { step: 8, label: 'OpenAI 阻止了当前授权' },
+  canceled: { step: 8, label: '任务已停止' }
 }
 
 const reasonLabels: Record<string, string> = {
@@ -778,7 +779,7 @@ const reasonLabels: Record<string, string> = {
   email_code_access_denied: '保存的邮箱验证码 Token 已失效或与邮箱不匹配。',
   email_code_unavailable: '邮箱验证码服务暂时不可用，任务已停止。',
   invalid_email_code: 'OpenAI 拒绝了邮箱验证码。',
-  reauthorization_phone_required: '401 重新授权不应进入手机号接码，任务已停止。',
+  reauthorization_phone_required: '旧版助手未继续处理手机号验证，请使用最新版重新授权。',
   proxy_unavailable: '账号代理无法用于浏览器授权。',
   navigation_timeout: '打开 OpenAI 授权页超时。',
   browser_context_lost: '独立隐私浏览器上下文意外关闭。',
@@ -810,7 +811,7 @@ function stepLabel(account: Account): string {
   const task = taskFor(account)
   if (!task) return '尚未启动'
   const detail = stageDetails[task.stage] || stageDetails[task.status]
-  return detail ? `第 ${Math.min(detail.step, 7)}/7 步 · ${detail.label}` : '正在读取实际授权状态'
+  return detail ? `第 ${Math.min(detail.step, 8)}/8 步 · ${detail.label}` : '正在读取实际授权状态'
 }
 
 function failureText(account: Account): string {
@@ -826,7 +827,7 @@ function progressPercent(account: Account): number {
   if (!task) return 0
   if (task.status === 'completed') return 100
   const detail = stageDetails[task.stage] || stageDetails[task.status]
-  return detail ? Math.max(8, Math.min(100, Math.round(detail.step / 7 * 100))) : 8
+  return detail ? Math.max(8, Math.min(100, Math.round(detail.step / 8 * 100))) : 8
 }
 
 function progressClass(account: Account): string {
@@ -1205,6 +1206,7 @@ async function processTask(task: OpenAIReauthorizationTask) {
     return
   }
   if (task.status !== 'running' || smsTaskIDs.has(task.task_id)) return
+  if (task.browser_mode === 'adspower') return
   if (task.stage !== 'phone_required' && task.stage !== 'sms_waiting') return
   smsTaskIDs.add(task.task_id)
   try {

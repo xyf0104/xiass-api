@@ -93,6 +93,13 @@ type callbackView struct {
 	URL     string
 }
 
+type adsPowerSMSActionResult struct {
+	Status    string     `json:"status"`
+	Number    string     `json:"number"`
+	Code      string     `json:"code"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
 func newHelperServer(cfg *config) *helperServer {
 	return &helperServer{
 		cfg:         cfg,
@@ -430,6 +437,20 @@ func (s *helperServer) reportProgress(ctx context.Context, origin string, launch
 		"stage":          stage,
 		"reason":         reason,
 	}, &result)
+}
+
+func (s *helperServer) smsAction(ctx context.Context, origin string, launch *launchPayload, action string) (*adsPowerSMSActionResult, error) {
+	if launch == nil || strings.TrimSpace(launch.CallbackToken) == "" {
+		return nil, errors.New("AdsPower SMS task is unavailable")
+	}
+	var result apiEnvelope[adsPowerSMSActionResult]
+	if err := s.serverRequest(ctx, origin, "/api/v1/tools/adspower/sms/action", map[string]string{
+		"callback_token": launch.CallbackToken,
+		"action":         action,
+	}, &result); err != nil {
+		return nil, err
+	}
+	return &result.Data, nil
 }
 
 func (s *helperServer) stopProfileAfterCallback(profileID string) {
