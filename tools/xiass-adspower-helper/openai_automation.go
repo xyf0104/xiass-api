@@ -170,21 +170,40 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 	}))
 	cancelNavigation()
 	if err != nil {
-		probeCtx, cancelProbe := context.WithTimeout(browser, 5*time.Second)
-		var currentURL string
-		probeErr := chromedp.Run(probeCtx, chromedp.Location(&currentURL))
-		cancelProbe()
-		if probeErr != nil || strings.TrimSpace(currentURL) == "" {
+		targets, targetsErr := chromedp.Targets(root)
+		currentURL := browserTargetURL(browser, targets)
+		if targetsErr != nil || currentURL == "" || currentURL == "about:blank" {
 			cancelBrowser()
 			cleanup()
 			return nil, func() {}, err
 		}
-		log.Printf("AdsPower OAuth navigation returned before page load completed; continuing with the live target")
+		log.Printf("AdsPower OAuth navigation returned before page load completed; continuing at %s", safeTargetLocation(currentURL))
 	}
 	return browser, func() {
 		cancelBrowser()
 		cleanup()
 	}, nil
+}
+
+func browserTargetURL(browser context.Context, targets []*target.Info) string {
+	browserContext := chromedp.FromContext(browser)
+	if browserContext == nil || browserContext.Target == nil {
+		return ""
+	}
+	for _, candidate := range targets {
+		if candidate != nil && candidate.TargetID == browserContext.Target.TargetID {
+			return strings.TrimSpace(candidate.URL)
+		}
+	}
+	return ""
+}
+
+func safeTargetLocation(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "invalid-url"
+	}
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path
 }
 
 func summarizeOAuthTargets(targets []*target.Info) string {
@@ -196,13 +215,7 @@ func summarizeOAuthTargets(targets []*target.Info) string {
 		if candidate == nil {
 			continue
 		}
-		parsed, err := url.Parse(candidate.URL)
-		if err != nil {
-			parts = append(parts, candidate.Type+":invalid-url")
-			continue
-		}
-		location := parsed.Scheme + "://" + parsed.Host + parsed.Path
-		parts = append(parts, candidate.Type+":"+location)
+		parts = append(parts, candidate.Type+":"+safeTargetLocation(candidate.URL))
 	}
 	return strings.Join(parts, ",")
 }

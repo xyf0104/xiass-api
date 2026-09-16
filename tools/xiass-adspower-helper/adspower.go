@@ -352,20 +352,60 @@ func verifyProxyExitIP(ctx context.Context, cfg adsPowerProxyConfig) (string, er
 		{url: "https://api.ipify.org?format=json", json: true},
 	}
 	var lastErr error
-	for _, probe := range probes {
-		attemptCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		exitIP, err := probeProxyExitIP(attemptCtx, cfg, auth, probe.url, probe.json)
-		cancel()
+	for attempt := 0; attempt < 2; attempt++ {
+		exitIP, err := probeProxyExitIPRound(ctx, cfg, auth, probes)
 		if err == nil {
 			return exitIP, nil
 		}
 		lastErr = err
+		if attempt == 0 {
+			if err := sleepWithContext(ctx, 500*time.Millisecond); err != nil {
+				return "", err
+			}
+		}
 	}
 	return "", fmt.Errorf("SOCKS5 proxy check failed: %w", lastErr)
 }
 
+func probeProxyExitIPRound(ctx context.Context, cfg adsPowerProxyConfig, auth *proxy.Auth, probes []struct {
+	url  string
+	json bool
+}) (string, error) {
+	type result struct {
+		exitIP string
+		err    error
+	}
+	roundCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	results := make(chan result, len(probes))
+	for _, candidate := range probes {
+		candidate := candidate
+		go func() {
+			exitIP, err := probeProxyExitIP(roundCtx, cfg, auth, candidate.url, candidate.json)
+			results <- result{exitIP: exitIP, err: err}
+		}()
+	}
+	var lastErr error
+	for range probes {
+		select {
+		case candidate := <-results:
+			if candidate.err == nil {
+				cancel()
+				return candidate.exitIP, nil
+			}
+			lastErr = candidate.err
+		case <-roundCtx.Done():
+			return "", roundCtx.Err()
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("all proxy probes failed")
+	}
+	return "", lastErr
+}
+
 func probeProxyExitIP(ctx context.Context, cfg adsPowerProxyConfig, auth *proxy.Auth, endpoint string, jsonResponse bool) (string, error) {
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort(strings.TrimSpace(cfg.ProxyHost), strings.TrimSpace(cfg.ProxyPort)), auth, proxy.Direct)
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort(strings.TrimSpace(cfg.ProxyHost), strings.TrimSpace(cfg.ProxyPort)), auth, &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second})
 	if err != nil {
 		return "", err
 	}
