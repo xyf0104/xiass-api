@@ -50,6 +50,18 @@ func openAIReauthorizationAccountConfig(account *service.Account) batchOAuthConf
 	}
 }
 
+func openAIReauthorizationConfigurationChanged(task *batchOAuthTask, account *service.Account, localNodeID string) bool {
+	if task == nil || account == nil {
+		return true
+	}
+	currentNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
+	if currentNodeID != task.executionNodeID || !batchProxyEqual(account.ProxyID, task.config.ProxyID) {
+		return true
+	}
+	localNodeID = strings.TrimSpace(localNodeID)
+	return !task.usesAdsPower() && localNodeID != "" && currentNodeID != "" && currentNodeID != localNodeID
+}
+
 func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64, browserMode string) (*service.Account, *openAIReauthorizationLoginMaterial, map[string]string, error) {
 	if h == nil || h.adminService == nil || h.secretEncryptor == nil {
 		return nil, nil, nil, errors.New("OpenAI reauthorization is unavailable")
@@ -289,10 +301,7 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		response.Success(c, task)
 		return
 	}
-	currentNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
-	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	if currentNodeID != task.executionNodeID || !batchProxyEqual(account.ProxyID, task.config.ProxyID) ||
-		(localNodeID != "" && currentNodeID != "" && currentNodeID != localNodeID) {
+	if openAIReauthorizationConfigurationChanged(task, account, os.Getenv("GATEWAY_EXECUTION_NODE_ID")) {
 		task.Status, task.Stage, task.Reason = "failed", "failed", "account_configuration_changed"
 		response.Success(c, task)
 		return
@@ -452,6 +461,7 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	task.RestartCount++
 	task.RequiresSMSConfirmation = false
 	task.FinishedAt = nil
+	task.CreatedAt = time.Now().UTC()
 	task.Status, task.Stage, task.Reason = "queued", "queued", ""
 	if task.ReauthorizationNumber <= 0 {
 		task.ReauthorizationNumber = authorizationNumber

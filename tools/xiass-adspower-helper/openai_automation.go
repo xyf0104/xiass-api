@@ -268,6 +268,7 @@ func blocked(reason string) error {
 func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin string, launch *launchPayload) error {
 	attempted := make(map[string]time.Time)
 	emailSubmitted := false
+	oauthResumeAttempted := false
 	var snapshotFailureSince time.Time
 	var emailSession *emailCodeSession
 	if strings.TrimSpace(launch.LoginMethod) == "email_code" {
@@ -300,9 +301,32 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		snapshotFailureSince = time.Time{}
 		state := inspectOAuthPage(snapshot)
 		if state.Kind == "callback" {
+			if err := s.submitObservedCallback(ctx, launch, snapshot.URL); err != nil {
+				return err
+			}
 			return nil
 		}
-		if state.VisibleMail != "" && !strings.EqualFold(state.VisibleMail, strings.TrimSpace(launch.LoginEmail)) {
+		if state.Kind != "account_choice" && state.Kind != "workspace" && state.VisibleMail != "" && !strings.EqualFold(state.VisibleMail, strings.TrimSpace(launch.LoginEmail)) {
+			if action, ok := accountSwitchAction(snapshot); ok {
+				if recentAttempt(attempted, "account_switch") {
+					if attemptExpired(attempted, "account_switch") {
+						return blocked("invalid_credentials")
+					}
+					if err := sleepWithContext(ctx, time.Second); err != nil {
+						return err
+					}
+					continue
+				}
+				s.progress(origin, launch, "running", "login", "")
+				if err := clickOAuthAction(browser, action); err != nil {
+					return err
+				}
+				emailSubmitted = false
+				for _, key := range []string{"login", "email", "password", "totp", "email_code", "email_code_switch", "workspace", "unknown"} {
+					delete(attempted, key)
+				}
+				continue
+			}
 			return blocked("invalid_credentials")
 		}
 		switch state.Kind {
@@ -314,6 +338,29 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			return blocked(state.Kind)
 		case "phone", "phone_rejected", "sms_code":
 			return blocked("reauthorization_phone_required")
+		case "retry_page":
+			if recentAttempt(attempted, state.Kind) {
+				if attemptExpired(attempted, state.Kind) {
+					return automationFailureError{Status: "failed", Reason: "openai_route_error"}
+				}
+				break
+			}
+			s.progress(origin, launch, "running", "opening", "")
+			if err := clickOAuthAction(browser, state.Action); err != nil {
+				return err
+			}
+		case "account_choice":
+			if recentAttempt(attempted, state.Kind) {
+				if attemptExpired(attempted, state.Kind) {
+					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
+				}
+				break
+			}
+			s.progress(origin, launch, "running", "workspace", "")
+			if err := clickOAuthAction(browser, state.Action); err != nil {
+				return err
+			}
+			emailSubmitted = true
 		case "login":
 			if recentAttempt(attempted, state.Kind) {
 				if attemptExpired(attempted, state.Kind) {
@@ -366,7 +413,6 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			if err := fillOAuthInput(browser, state.Input, launch.Password); err != nil {
 				return err
 			}
-			launch.Password = ""
 			if err := clickOAuthContinue(browser); err != nil {
 				return err
 			}
@@ -382,7 +428,6 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			}
 			s.progress(origin, launch, "running", "totp", "")
 			code, err := totp.GenerateCode(strings.ReplaceAll(launch.TOTPSecret, " ", ""), time.Now().UTC())
-			launch.TOTPSecret = ""
 			if err != nil {
 				return blocked("invalid_totp")
 			}
@@ -416,7 +461,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				}
 				break
 			}
-			if !emailSubmitted && state.VisibleMail == "" {
+			if !emailSubmitted {
 				// A bound AdsPower profile may already hold the matching OpenAI
 				// session. The backend still verifies the OAuth identity before it
 				// updates the account, so continuing here cannot swap identities.
@@ -429,6 +474,15 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			}
 			s.progress(origin, launch, "running", "callback_waiting", "")
 		case "unknown":
+			if shouldResumeOAuthFromChatGPTHomepage(snapshot.URL, emailSubmitted, oauthResumeAttempted) {
+				oauthResumeAttempted = true
+				delete(attempted, "unknown")
+				s.progress(origin, launch, "running", "opening", "")
+				if err := navigateOAuthURL(browser, launch.AuthURL); err != nil {
+					return err
+				}
+				continue
+			}
 			if attempted["unknown"].IsZero() {
 				attempted["unknown"] = time.Now()
 			} else if time.Since(attempted["unknown"]) > 20*time.Second {
@@ -444,6 +498,64 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		case <-timer.C:
 		}
 	}
+}
+
+func accountSwitchAction(snapshot oauthPageSnapshot) (int, bool) {
+	return firstMatchingAction(snapshot.Actions, []string{
+		"use another account",
+		"log in to another account",
+		"choose another account",
+		"switch account",
+		"sign in with another account",
+		"使用其他账号",
+		"选择其他账号",
+		"切换账号",
+	})
+}
+
+func (s *helperServer) submitObservedCallback(ctx context.Context, launch *launchPayload, callbackURL string) error {
+	parsed, err := url.Parse(launch.AuthURL)
+	if err != nil {
+		return errors.New("OpenAI authorization URL is invalid")
+	}
+	state := strings.TrimSpace(parsed.Query().Get("state"))
+	if !validCallback(callbackURL, state) {
+		return errors.New("OpenAI callback URL is invalid")
+	}
+	registration, ok := s.callbackRegistration(state)
+	if !ok {
+		// The loopback callback handler normally reports and removes the
+		// registration before the browser renders the receipt page.
+		return nil
+	}
+	reportCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := s.reportCallback(reportCtx, registration, callbackURL); err != nil {
+		return err
+	}
+	s.removeCallback(state)
+	s.stopProfileAfterCallback(registration.ProfileID)
+	return nil
+}
+
+func shouldResumeOAuthFromChatGPTHomepage(rawURL string, emailSubmitted, alreadyAttempted bool) bool {
+	if !emailSubmitted || alreadyAttempted {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (parsed.Hostname() != "chatgpt.com" && parsed.Hostname() != "www.chatgpt.com") {
+		return false
+	}
+	return parsed.Path == "" || parsed.Path == "/"
+}
+
+func navigateOAuthURL(browser context.Context, authURL string) error {
+	navigationCtx, cancel := context.WithTimeout(browser, 10*time.Second)
+	defer cancel()
+	return chromedp.Run(navigationCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, _, _, _, err := page.Navigate(authURL).Do(ctx)
+		return err
+	}))
 }
 
 func summarizeOAuthSnapshot(snapshot oauthPageSnapshot) string {
@@ -501,6 +613,11 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 		state.VisibleMail = strings.ToLower(match)
 	}
 	lower := strings.ToLower(body)
+	if action, ok := firstMatchingAction(snapshot.Actions, []string{"try again", "retry", "重试"}); ok &&
+		(strings.Contains(lower, "oops, an error occurred") || strings.Contains(lower, "not valid json") || strings.Contains(lower, "unexpected token")) {
+		state.Kind, state.Action = "retry_page", action
+		return state
+	}
 	switch {
 	case strings.Contains(lower, "error_code: invalid_state") || strings.Contains(lower, "sign-in session is no longer valid") || strings.Contains(lower, "session ended"):
 		state.Kind = "oauth_session_expired"
@@ -562,6 +679,12 @@ func inspectOAuthPage(snapshot oauthPageSnapshot) automationState {
 		}); ok {
 			state.Kind, state.Input = "email", input
 			return state
+		}
+		if parsed != nil && parsed.Path == "/choose-an-account" {
+			if action, ok := firstMatchingAction(snapshot.Actions, []string{"select account", "选择账号"}); ok {
+				state.Kind, state.Action = "account_choice", action
+				return state
+			}
 		}
 		if strings.Contains(lower, "workspace") || strings.Contains(lower, "organization") || strings.Contains(lower, "continue to codex") || strings.Contains(lower, "authorize codex") || strings.Contains(lower, "工作空间") {
 			state.Kind = "workspace"

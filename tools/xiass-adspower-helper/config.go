@@ -42,8 +42,8 @@ func (c *config) serverForEnvironment(preferredOrigin, environmentKey string) (s
 	if c == nil {
 		return "", serverConfig{}, false
 	}
-	environmentKey = strings.TrimSpace(environmentKey)
-	if server, ok := c.Servers[preferredOrigin]; ok && server.EnvironmentKey == environmentKey {
+	environmentKey = canonicalEnvironmentKey(environmentKey)
+	if server, ok := c.Servers[preferredOrigin]; ok && canonicalEnvironmentKey(server.EnvironmentKey) == environmentKey {
 		return preferredOrigin, server, true
 	}
 	origins := make([]string, 0, len(c.Servers))
@@ -53,11 +53,26 @@ func (c *config) serverForEnvironment(preferredOrigin, environmentKey string) (s
 	sort.Strings(origins)
 	for _, origin := range origins {
 		server := c.Servers[origin]
-		if server.EnvironmentKey == environmentKey {
+		if canonicalEnvironmentKey(server.EnvironmentKey) == environmentKey {
 			return origin, server, true
 		}
 	}
 	return "", serverConfig{}, false
+}
+
+func canonicalEnvironmentKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if parsed, err := url.Parse(value); err == nil && parsed.Hostname() != "" {
+		value = parsed.Hostname()
+	} else if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.TrimSuffix(value, ".")
+	label := strings.SplitN(value, ".", 2)[0]
+	if label == "api" || label == "api2" {
+		return label
+	}
+	return value
 }
 
 func defaultConfigPath() (string, error) {

@@ -1527,6 +1527,7 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false
 	t.FinishedAt = nil
+	t.CreatedAt = time.Now().UTC()
 	t.LoginMethod = method
 	t.loginPasswordEncrypted, t.loginTOTPEncrypted = passwordEncrypted, totpEncrypted
 	t.loginEmailCodeEncrypted = emailCodeEncrypted

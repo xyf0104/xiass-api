@@ -281,6 +281,20 @@ func TestOpenAIReauthorizationAdsPowerTaskUsesAssignedProxyAcrossExecutionNodes(
 	require.Empty(t, f.requests)
 }
 
+func TestOpenAIReauthorizationConfigurationAllowsAdsPowerAcrossExecutionNodes(t *testing.T) {
+	account := reauthorizationAccount(448)
+	task := &batchOAuthTask{
+		executionNodeID: account.GetExtraString(service.AccountExecutionNodeExtraKey),
+		config:          openAIReauthorizationAccountConfig(account),
+	}
+	task.config.BrowserMode = batchOAuthBrowserAdsPower
+
+	require.False(t, openAIReauthorizationConfigurationChanged(task, account, "api"))
+
+	task.config.BrowserMode = batchOAuthBrowserServer
+	require.True(t, openAIReauthorizationConfigurationChanged(task, account, "api"))
+}
+
 func TestOpenAIReauthorizationCompletionOnlyUpdatesMergedCredentials(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
@@ -482,10 +496,12 @@ func TestOpenAIReauthorizationUnknownBlockedTaskCanRetry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(start.Body.Bytes(), &envelope))
 	task := f.h.batchOAuthStore.tasks[envelope.Data.ID]
 	task.mu.Lock()
+	task.CreatedAt = time.Unix(1, 0).UTC()
 	task.Status, task.Stage, task.Reason = "blocked", "blocked", "account_blocked"
 	task.mu.Unlock()
 	restart := batchOAuthRequest(r, http.MethodPost, "/tasks/"+envelope.Data.ID+"/restart", `{"confirmed":true}`)
 	require.Equal(t, http.StatusOK, restart.Code, restart.Body.String())
+	require.True(t, task.CreatedAt.After(time.Unix(1, 0)))
 	require.Len(t, f.requests, 2)
 }
 

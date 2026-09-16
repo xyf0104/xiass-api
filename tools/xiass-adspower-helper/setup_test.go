@@ -77,7 +77,7 @@ func TestSetupUsesAdsPowerSavedProxyWithoutHostProbe(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
 		case "/api/v2/proxy-list/list":
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"list": []map[string]any{{
-				"proxy_id": "7", "type": "socks5", "host": "192.168.1.1", "port": "1085",
+				"proxy_id": "7", "type": "socks5", "host": "192.0.2.10", "port": "1085",
 			}}}})
 		default:
 			http.NotFound(w, r)

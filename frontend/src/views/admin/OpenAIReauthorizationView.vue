@@ -698,7 +698,7 @@ function canStart(account: Account): boolean {
   if (!task) return true
   if (task.account_id) return task.reason === 'account_state_recovery_failed'
   if (task.status === 'completed' || activeStatuses.has(task.status)) return false
-  return task.restart_count < maxRestarts.value
+	return true
 }
 
 function canRecoverAccountState(account: Account): boolean {
@@ -774,7 +774,7 @@ const reasonLabels: Record<string, string> = {
   unknown_error: '未知错误，可以恢复状态后重试。',
   captcha_required: 'OpenAI 要求完成人机验证。',
   email_code_required: 'OpenAI 要求邮箱验证码，当前自动流程未继续。',
-  email_code_timeout: '等待邮箱验证码超过 60 秒，任务已停止。',
+  email_code_timeout: '等待邮箱验证码超过 2 分钟，任务已停止。',
   email_code_access_denied: '保存的邮箱验证码 Token 已失效或与邮箱不匹配。',
   email_code_unavailable: '邮箱验证码服务暂时不可用，任务已停止。',
   invalid_email_code: 'OpenAI 拒绝了邮箱验证码。',
@@ -1091,7 +1091,12 @@ async function startAccount(account: Account, acknowledgeRisk = false, browserMo
   errors.delete(account.id)
   localErrors.value = errors
   try {
-    const current = taskFor(account)
+		let current = taskFor(account)
+		if (current && terminalFailureStatuses.has(current.status) && current.restart_count >= maxRestarts.value) {
+			await openAIReauthorizationAPI.remove(current.task_id)
+			tasks.value = tasks.value.filter(candidate => candidate.task_id !== current?.task_id)
+			current = undefined
+		}
     const requestedBrowserMode = browserMode === 'adspower' ? 'adspower' : undefined
     const restartCurrent = (taskID: string) => requestedBrowserMode
       ? openAIReauthorizationAPI.restart(taskID, acknowledgeRisk, requestedBrowserMode)

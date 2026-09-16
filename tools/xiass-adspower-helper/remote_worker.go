@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -141,11 +143,35 @@ func (s *helperServer) pollRemoteCommand(parent context.Context, cfg *config, or
 		log.Printf("AdsPower helper command %s failed: %v", server.EnvironmentKey, err)
 		return
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	_ = response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		log.Printf("AdsPower helper command %s returned HTTP %d", server.EnvironmentKey, response.StatusCode)
+		message := summarizeLaunchResponse(body)
+		if message == "" {
+			log.Printf("AdsPower helper command %s returned HTTP %d", server.EnvironmentKey, response.StatusCode)
+		} else {
+			log.Printf("AdsPower helper command %s returned HTTP %d: %s", server.EnvironmentKey, response.StatusCode, message)
+		}
 	}
+}
+
+var launchResponseTextPattern = regexp.MustCompile(`(?is)<(?:h1|p)[^>]*>(.*?)</(?:h1|p)>`)
+var launchResponseTagPattern = regexp.MustCompile(`(?is)<[^>]+>`)
+
+func summarizeLaunchResponse(body []byte) string {
+	matches := launchResponseTextPattern.FindAllSubmatch(body, 2)
+	parts := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		part := html.UnescapeString(launchResponseTagPattern.ReplaceAllString(string(match[1]), " "))
+		part = strings.Join(strings.Fields(part), " ")
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, ": ")
 }
 
 func (s *helperServer) serverRequestWithBearer(ctx context.Context, origin, path, secret string, body any, target any) error {

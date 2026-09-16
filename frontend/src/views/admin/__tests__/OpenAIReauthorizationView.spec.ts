@@ -467,6 +467,27 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
+	it('starts a fresh task after the previous retry budget is exhausted', async () => {
+		mocks.route.query = { account_ids: '9' }
+		openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(9, { has_history: true, has_attempted: true, attempt_count: 3, risk_level: 'failed' })], cooldown_seconds: 604800 })
+		const exhausted = task(9, 'failed', 'failed', 'invalid_credentials')
+		exhausted.restart_count = 2
+		openAIReauthorizationAPI.list.mockResolvedValue({ items: [exhausted], max_concurrency: 3, max_restarts: 2 })
+		openAIReauthorizationAPI.remove.mockResolvedValue({ task_id: exhausted.task_id })
+		openAIReauthorizationAPI.start.mockResolvedValue(task(9, 'running', 'opening'))
+		const wrapper = await mountView()
+
+		const retry = wrapper.get('[data-testid="start-reauthorization-9"]')
+		expect(retry.text()).toContain('重试本次授权')
+		await retry.trigger('click')
+		await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+		await flushPromises()
+
+		expect(openAIReauthorizationAPI.remove).toHaveBeenCalledWith(exhausted.task_id)
+		expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(9, false)
+		wrapper.unmount()
+	})
+
   it('does not offer retry or recovery for an explicitly deleted or disabled account', async () => {
     mocks.route.query = { account_ids: '10' }
     openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(10, { can_start: true, requires_risk_confirmation: true, risk_level: 'blocked', last_result: 'blocked', last_reason: 'account_deleted_or_disabled' })], cooldown_seconds: 604800 })

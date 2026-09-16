@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -236,7 +237,7 @@ func (s *emailCodeSession) waitForCode(ctx context.Context, notBefore time.Time)
 		return "", emailCodeError("email_code_timeout")
 	case <-timer.C:
 	}
-	deadline := time.Now().Add(time.Minute)
+	deadline := time.Now().Add(2 * time.Minute)
 	processed := make(map[string]bool, len(s.baseline))
 	for id := range s.baseline {
 		processed[id] = true
@@ -254,7 +255,7 @@ func (s *emailCodeSession) waitForCode(ctx context.Context, notBefore time.Time)
 				continue
 			}
 			processed[message.ID] = true
-			if parseMessageTime(message.Date).Before(notBefore.Add(-2 * time.Minute)) {
+			if messagePredates(message.Date, notBefore.Add(-2*time.Minute)) {
 				continue
 			}
 			if code := extractEmailCode(message); code != "" {
@@ -279,8 +280,38 @@ func (s *emailCodeSession) waitForCode(ctx context.Context, notBefore time.Time)
 }
 
 func parseMessageTime(value string) time.Time {
-	parsed, _ := time.Parse(time.RFC3339, value)
-	return parsed
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC822Z,
+		time.RFC822,
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	if numeric, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if numeric > 1_000_000_000_000 {
+			return time.UnixMilli(numeric)
+		}
+		if numeric > 0 {
+			return time.Unix(numeric, 0)
+		}
+	}
+	return time.Time{}
+}
+
+func messagePredates(value string, cutoff time.Time) bool {
+	parsed := parseMessageTime(value)
+	return !parsed.IsZero() && parsed.Before(cutoff)
 }
 
 func extractEmailCode(message emailCodeMessage) string {

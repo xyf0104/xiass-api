@@ -240,7 +240,7 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		if payload.Existing.DeviceID != deviceID {
 			return nil, nil, "", errors.New("该账号已绑定到另一台设备，必须先在 XIASS 中解除绑定")
 		}
-		if payload.Existing.EnvironmentKey != serverCfg.EnvironmentKey {
+		if canonicalEnvironmentKey(payload.Existing.EnvironmentKey) != canonicalEnvironmentKey(serverCfg.EnvironmentKey) {
 			return nil, nil, "", errors.New("该账号绑定的服务器出口与当前页面不一致")
 		}
 		profile, err := adsPower.profile(ctx, payload.Existing.ProfileID)

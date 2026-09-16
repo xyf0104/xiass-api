@@ -238,6 +238,28 @@ func TestServerForEnvironmentUsesAccountNodeBehindDifferentControlServer(t *test
 	require.Equal(t, "8", server.ProxyID)
 }
 
+func TestServerForEnvironmentAcceptsLegacyNodeHostnames(t *testing.T) {
+	cfg := &config{Servers: map[string]serverConfig{
+		"https://api.example.test":  {EnvironmentKey: "api", ProxyID: "8"},
+		"https://api2.example.test": {EnvironmentKey: "api2", ProxyID: "7"},
+	}}
+
+	origin, server, ok := cfg.serverForEnvironment("https://api2.example.test", "api.example.test")
+	require.True(t, ok)
+	require.Equal(t, "https://api.example.test", origin)
+	require.Equal(t, "8", server.ProxyID)
+
+	origin, server, ok = cfg.serverForEnvironment("https://api.example.test", "https://api2.example.test")
+	require.True(t, ok)
+	require.Equal(t, "https://api2.example.test", origin)
+	require.Equal(t, "7", server.ProxyID)
+}
+
+func TestSummarizeLaunchResponse(t *testing.T) {
+	body := []byte(`<main><h1>服务器出口不匹配</h1><p>当前账号不属于这个 AdsPower 出口环境。</p></main>`)
+	require.Equal(t, "服务器出口不匹配: 当前账号不属于这个 AdsPower 出口环境。", summarizeLaunchResponse(body))
+}
+
 func TestDirectSOCKSTemplateUsesAdsPowerDefaultGroup(t *testing.T) {
 	server := serverConfig{
 		EnvironmentKey: "api2",
@@ -258,7 +280,7 @@ func TestSavedProxyTemplateIsResolvedThroughAdsPower(t *testing.T) {
 		require.Equal(t, "/api/v2/proxy-list/list", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"list": []map[string]any{{
-			"proxy_id": "7", "type": "socks5", "host": "192.168.1.1", "port": "1085",
+			"proxy_id": "7", "type": "socks5", "host": "192.0.2.10", "port": "1085",
 		}}}})
 	}))
 	defer server.Close()
@@ -269,7 +291,7 @@ func TestSavedProxyTemplateIsResolvedThroughAdsPower(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "7", template.ProxyID)
 	require.Equal(t, "socks5", template.UserProxyConfig.ProxyType)
-	require.Equal(t, "192.168.1.1", template.UserProxyConfig.ProxyHost)
+	require.Equal(t, "192.0.2.10", template.UserProxyConfig.ProxyHost)
 	require.Equal(t, "1085", template.UserProxyConfig.ProxyPort)
 }
 
