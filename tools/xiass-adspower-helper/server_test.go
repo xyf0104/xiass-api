@@ -210,6 +210,26 @@ func TestDirectSOCKSTemplateUsesAdsPowerDefaultGroup(t *testing.T) {
 	require.Equal(t, "api2.example.test", template.UserProxyConfig.ProxyHost)
 }
 
+func TestSavedProxyTemplateIsResolvedThroughAdsPower(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v2/proxy-list/list", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"list": []map[string]any{{
+			"proxy_id": "7", "type": "socks5", "host": "192.168.1.1", "port": "1085",
+		}}}})
+	}))
+	defer server.Close()
+
+	client := newAdsPowerClient(&config{AdsPowerBaseURL: server.URL})
+	client.minInterval = 0
+	template, err := resolveAdsPowerTemplate(context.Background(), client, serverConfig{EnvironmentKey: "api2", ProxyID: "7"})
+	require.NoError(t, err)
+	require.Equal(t, "7", template.ProxyID)
+	require.Equal(t, "socks5", template.UserProxyConfig.ProxyType)
+	require.Equal(t, "192.168.1.1", template.UserProxyConfig.ProxyHost)
+	require.Equal(t, "1085", template.UserProxyConfig.ProxyPort)
+}
+
 func TestCallbackPageKeepsCompleteCallbackURL(t *testing.T) {
 	cfg := &config{AdsPowerBaseURL: "http://127.0.0.1:50325", DeviceID: "device-1", Servers: map[string]serverConfig{}}
 	helper := newHelperServer(cfg)

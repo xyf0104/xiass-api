@@ -32,7 +32,18 @@ type adsPowerProfile struct {
 	SerialNumber    string              `json:"serial_number"`
 	Name            string              `json:"name"`
 	GroupID         string              `json:"group_id"`
+	ProxyID         string              `json:"proxyid"`
+	IP              string              `json:"ip"`
 	UserProxyConfig adsPowerProxyConfig `json:"user_proxy_config"`
+}
+
+type adsPowerSavedProxy struct {
+	ProxyID      string `json:"proxy_id"`
+	Type         string `json:"type"`
+	Host         string `json:"host"`
+	Port         string `json:"port"`
+	Remark       string `json:"remark"`
+	ProfileCount string `json:"profile_count"`
 }
 
 type adsPowerBrowserSession struct {
@@ -206,6 +217,36 @@ func (c *adsPowerClient) profile(ctx context.Context, profileID string) (*adsPow
 	return nil, errors.New("AdsPower profile was not found")
 }
 
+func (c *adsPowerClient) savedProxies(ctx context.Context) ([]adsPowerSavedProxy, error) {
+	var data struct {
+		List []adsPowerSavedProxy `json:"list"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v2/proxy-list/list", map[string]any{
+		"page":  1,
+		"limit": 200,
+	}, &data); err != nil {
+		return nil, err
+	}
+	return data.List, nil
+}
+
+func (c *adsPowerClient) savedProxy(ctx context.Context, proxyID string) (*adsPowerSavedProxy, error) {
+	proxyID = strings.TrimSpace(proxyID)
+	if !validOpaqueID(proxyID) {
+		return nil, errors.New("AdsPower proxy ID is invalid")
+	}
+	proxies, err := c.savedProxies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range proxies {
+		if proxies[index].ProxyID == proxyID {
+			return &proxies[index], nil
+		}
+	}
+	return nil, errors.New("AdsPower saved proxy was not found")
+}
+
 func randomizedFingerprintConfig(forCreate bool) map[string]any {
 	config := map[string]any{
 		"automatic_timezone":   "1",
@@ -249,8 +290,12 @@ func (c *adsPowerClient) createProfile(ctx context.Context, name string, templat
 	payload := map[string]any{
 		"name":               sanitizeProfileName(name),
 		"domain_name":        "https://auth.openai.com",
-		"user_proxy_config":  proxyConfig,
 		"fingerprint_config": randomizedFingerprintConfig(true),
+	}
+	if strings.TrimSpace(template.ProxyID) != "" {
+		payload["proxyid"] = template.ProxyID
+	} else {
+		payload["user_proxy_config"] = proxyConfig
 	}
 	if strings.TrimSpace(template.GroupID) != "" {
 		payload["group_id"] = template.GroupID
@@ -275,11 +320,16 @@ func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsP
 	}
 	proxyConfig := template.UserProxyConfig
 	proxyConfig.LatestIP = ""
-	return c.do(ctx, http.MethodPost, "/api/v2/browser-profile/update", map[string]any{
+	payload := map[string]any{
 		"profile_id":         profile.UserID,
-		"user_proxy_config":  proxyConfig,
 		"fingerprint_config": randomizedFingerprintConfig(false),
-	}, nil)
+	}
+	if strings.TrimSpace(template.ProxyID) != "" {
+		payload["proxyid"] = template.ProxyID
+	} else {
+		payload["user_proxy_config"] = proxyConfig
+	}
+	return c.do(ctx, http.MethodPost, "/api/v2/browser-profile/update", payload, nil)
 }
 
 func (c *adsPowerClient) startProfile(ctx context.Context, profileID string) (*adsPowerBrowserSession, error) {

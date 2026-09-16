@@ -212,9 +212,12 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("读取 %s 出口模板失败: %w", serverCfg.EnvironmentKey, err)
 	}
-	exitIP, err := s.verifyProxy(ctx, templateProfile.UserProxyConfig)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("%s 出口代理不可用: %w", serverCfg.EnvironmentKey, err)
+	exitIP := strings.TrimSpace(templateProfile.IP)
+	if templateProfile.ProxyID == "" {
+		exitIP, err = s.verifyProxy(ctx, templateProfile.UserProxyConfig)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("%s 出口代理不可用: %w", serverCfg.EnvironmentKey, err)
+		}
 	}
 	if payload.Existing != nil {
 		if payload.Existing.DeviceID != deviceID {
@@ -234,9 +237,15 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 		if err != nil {
 			return nil, nil, "", errors.New("刷新后的 AdsPower 环境无法读取")
 		}
-		profileExitIP, err := s.verifyProxy(ctx, profile.UserProxyConfig)
-		if err != nil || profileExitIP != exitIP {
-			return nil, nil, "", errors.New("账号固定环境没有使用当前服务器出口")
+		profileExitIP := strings.TrimSpace(profile.IP)
+		if profileExitIP == "" {
+			profileExitIP = strings.TrimSpace(profile.UserProxyConfig.LatestIP)
+		}
+		if templateProfile.ProxyID == "" {
+			profileExitIP, err = s.verifyProxy(ctx, profile.UserProxyConfig)
+			if err != nil || profileExitIP != exitIP {
+				return nil, nil, "", errors.New("账号固定环境没有使用当前服务器出口")
+			}
 		}
 		return profile, templateProfile, profileExitIP, nil
 	}
@@ -244,9 +253,15 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("创建账号专属环境失败: %w", err)
 	}
-	profileExitIP, err := s.verifyProxy(ctx, profile.UserProxyConfig)
-	if err != nil || profileExitIP != exitIP {
-		return nil, nil, "", errors.New("新建 AdsPower 环境没有使用当前服务器出口")
+	profileExitIP := strings.TrimSpace(profile.IP)
+	if profileExitIP == "" {
+		profileExitIP = strings.TrimSpace(profile.UserProxyConfig.LatestIP)
+	}
+	if templateProfile.ProxyID == "" {
+		profileExitIP, err = s.verifyProxy(ctx, profile.UserProxyConfig)
+		if err != nil || profileExitIP != exitIP {
+			return nil, nil, "", errors.New("新建 AdsPower 环境没有使用当前服务器出口")
+		}
 	}
 	return profile, templateProfile, profileExitIP, nil
 }
@@ -254,6 +269,26 @@ func (s *helperServer) prepareProfile(ctx context.Context, payload *launchPayloa
 func resolveAdsPowerTemplate(ctx context.Context, adsPower *adsPowerClient, serverCfg serverConfig) (*adsPowerProfile, error) {
 	if strings.TrimSpace(serverCfg.TemplateProfileID) != "" {
 		return adsPower.profile(ctx, serverCfg.TemplateProfileID)
+	}
+	if strings.TrimSpace(serverCfg.ProxyID) != "" {
+		saved, err := adsPower.savedProxy(ctx, serverCfg.ProxyID)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(saved.Type), "socks5") {
+			return nil, errors.New("AdsPower saved proxy must use SOCKS5")
+		}
+		return &adsPowerProfile{
+			Name:    "XIASS " + serverCfg.EnvironmentKey,
+			GroupID: "0",
+			ProxyID: saved.ProxyID,
+			UserProxyConfig: adsPowerProxyConfig{
+				ProxySoft: "other",
+				ProxyType: "socks5",
+				ProxyHost: saved.Host,
+				ProxyPort: saved.Port,
+			},
+		}, nil
 	}
 	proxyConfig, ok := serverCfg.adsPowerProxy()
 	if !ok {

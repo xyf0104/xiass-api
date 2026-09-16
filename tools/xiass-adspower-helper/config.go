@@ -28,6 +28,7 @@ type config struct {
 type serverConfig struct {
 	EnvironmentKey    string `json:"environment_key"`
 	TemplateProfileID string `json:"template_profile_id,omitempty"`
+	ProxyID           string `json:"proxy_id,omitempty"`
 	ProxyHost         string `json:"proxy_host,omitempty"`
 	ProxyPort         string `json:"proxy_port,omitempty"`
 	ProxyUser         string `json:"proxy_user,omitempty"`
@@ -125,6 +126,7 @@ func (c *config) normalize() (bool, error) {
 		}
 		server.EnvironmentKey = strings.TrimSpace(server.EnvironmentKey)
 		server.TemplateProfileID = strings.TrimSpace(server.TemplateProfileID)
+		server.ProxyID = strings.TrimSpace(server.ProxyID)
 		server.ProxyHost = normalizeProxyHost(server.ProxyHost)
 		server.ProxyPort = strings.TrimSpace(server.ProxyPort)
 		server.ProxyUser = strings.TrimSpace(server.ProxyUser)
@@ -135,8 +137,11 @@ func (c *config) normalize() (bool, error) {
 		if server.TemplateProfileID != "" && !validOpaqueID(server.TemplateProfileID) {
 			return false, fmt.Errorf("server %s has an invalid template profile", origin)
 		}
-		if server.TemplateProfileID == "" && !server.validDirectProxy() {
-			return false, fmt.Errorf("server %s must configure a template profile or SOCKS5 proxy", origin)
+		if server.ProxyID != "" && !validOpaqueID(server.ProxyID) {
+			return false, fmt.Errorf("server %s has an invalid AdsPower proxy", origin)
+		}
+		if server.TemplateProfileID == "" && server.ProxyID == "" && !server.validDirectProxy() {
+			return false, fmt.Errorf("server %s must configure an AdsPower proxy, template profile, or SOCKS5 proxy", origin)
 		}
 		normalizedServers[origin] = server
 		if origin != rawOrigin || server != c.Servers[rawOrigin] {

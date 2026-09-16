@@ -69,6 +69,49 @@ func TestSetupSavesLocalAPIKeyAndDirectSOCKSRoute(t *testing.T) {
 	require.Equal(t, "proxy-password", server.ProxyPassword)
 }
 
+func TestSetupUsesAdsPowerSavedProxyWithoutHostProbe(t *testing.T) {
+	adsPower := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
+		case "/api/v2/proxy-list/list":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"list": []map[string]any{{
+				"proxy_id": "7", "type": "socks5", "host": "192.168.1.1", "port": "1085",
+			}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer adsPower.Close()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg, err := loadConfig(path)
+	require.NoError(t, err)
+	cfg.AdsPowerBaseURL = adsPower.URL
+	require.NoError(t, saveConfig(cfg))
+	helper := newHelperServer(cfg)
+	helper.adsPower.minInterval = 0
+	helper.verifyProxy = func(context.Context, adsPowerProxyConfig) (string, error) {
+		t.Fatal("saved AdsPower proxies must not be dialed by XIASS")
+		return "", nil
+	}
+
+	body := `{"server_origin":"https://api2.example.test","environment_key":"api2","proxy_id":"7"}`
+	request := localHelperRequest(http.MethodPost, "/api/setup", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	helper.routes().ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	saved, err := loadConfig(path)
+	require.NoError(t, err)
+	server := saved.Servers["https://api2.example.test"]
+	require.Equal(t, "7", server.ProxyID)
+	require.Empty(t, server.ProxyHost)
+	require.Empty(t, server.ProxyPort)
+}
+
 func TestHelperRejectsNonLoopbackHost(t *testing.T) {
 	cfg := &config{AdsPowerBaseURL: "http://127.0.0.1:50325", DeviceID: "device-1", Servers: map[string]serverConfig{}}
 	helper := newHelperServer(cfg)
