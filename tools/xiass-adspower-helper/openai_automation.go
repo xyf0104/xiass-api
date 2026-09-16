@@ -161,9 +161,16 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 	err := chromedp.Run(navigationCtx, chromedp.Navigate(authURL))
 	cancelNavigation()
 	if err != nil {
-		cancelBrowser()
-		cleanup()
-		return nil, func() {}, err
+		probeCtx, cancelProbe := context.WithTimeout(browser, 5*time.Second)
+		var currentURL string
+		probeErr := chromedp.Run(probeCtx, chromedp.Location(&currentURL))
+		cancelProbe()
+		if probeErr != nil || strings.TrimSpace(currentURL) == "" {
+			cancelBrowser()
+			cleanup()
+			return nil, func() {}, err
+		}
+		log.Printf("AdsPower OAuth navigation returned before page load completed; continuing with the live target")
 	}
 	return browser, func() {
 		cancelBrowser()
