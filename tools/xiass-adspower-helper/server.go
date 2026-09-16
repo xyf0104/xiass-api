@@ -177,7 +177,7 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 		s.renderLaunch(w, http.StatusConflict, launchView{Title: "授权回调无法绑定", Message: err.Error(), ProfileName: profile.Name, EnvironmentKey: payload.EnvironmentKey, ExitIP: exitIP})
 		return
 	}
-	browserSession, err := adsPower.startProfile(ctx, profile.UserID, payload.AuthURL)
+	browserSession, err := adsPower.startProfile(ctx, profile.UserID)
 	if err != nil {
 		if registered {
 			s.removeCallback(state)

@@ -92,6 +92,7 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "固定指纹环境已打开")
 	require.Equal(t, "disabled", createdBody["fingerprint_config"].(map[string]any)["webrtc"])
 	require.Equal(t, "created-profile", startedBody["profile_id"])
+	require.NotContains(t, startedBody, "open_tabs")
 	require.Contains(t, startedBody["launch_args"], "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
 	require.Equal(t, "device-1", report["device_id"])
 	require.Equal(t, "203.0.113.42", report["proxy_exit_ip"])

@@ -282,11 +282,10 @@ func (c *adsPowerClient) enforceProfilePolicy(ctx context.Context, profile *adsP
 	}, nil)
 }
 
-func (c *adsPowerClient) startProfile(ctx context.Context, profileID, authURL string) (*adsPowerBrowserSession, error) {
+func (c *adsPowerClient) startProfile(ctx context.Context, profileID string) (*adsPowerBrowserSession, error) {
 	var session adsPowerBrowserSession
 	err := c.do(ctx, http.MethodPost, "/api/v2/browser-profile/start", map[string]any{
 		"profile_id": profileID,
-		"open_tabs":  []string{authURL},
 		"launch_args": []string{
 			"--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 			"--webrtc-ip-handling-policy=disable_non_proxied_udp",

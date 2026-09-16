@@ -104,7 +104,7 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	s.progress(origin, launch, "running", "opening", "")
-	browser, closeBrowser, err := attachAdsPowerOAuthTarget(ctx, endpoint, launch.AuthURL)
+	browser, closeBrowser, err := openAdsPowerOAuthTarget(ctx, endpoint, launch.AuthURL)
 	if err != nil {
 		log.Printf("AdsPower OAuth automation failed at opening: %s", automationErrorReason(err, "opening"))
 		s.finishAutomation(origin, launch, profileID, "failed", "failed", automationErrorReason(err, "opening"))
@@ -122,7 +122,7 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 	}
 }
 
-func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (context.Context, func(), error) {
+func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (context.Context, func(), error) {
 	allocator, cancelAllocator := chromedp.NewRemoteAllocator(parent, endpoint)
 	root, cancelRoot := chromedp.NewContext(allocator)
 
@@ -131,44 +131,23 @@ func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string)
 		cancelAllocator()
 	}
 
-	type targetResult struct {
-		info *target.Info
-		err  error
+	type connectionResult struct {
+		targets []*target.Info
+		err     error
 	}
-	result := make(chan targetResult, 1)
+	result := make(chan connectionResult, 1)
 	go func() {
-		loggedTargets := false
-		for {
-			targets, err := chromedp.Targets(root)
-			if err != nil {
-				result <- targetResult{err: err}
-				return
-			}
-			if matched := matchingOAuthTarget(targets, authURL); matched != nil {
-				result <- targetResult{info: matched}
-				return
-			}
-			if !loggedTargets {
-				log.Printf("AdsPower CDP connected but OAuth target is not ready: %s", summarizeOAuthTargets(targets))
-				loggedTargets = true
-			}
-			select {
-			case <-root.Done():
-				result <- targetResult{err: root.Err()}
-				return
-			case <-time.After(200 * time.Millisecond):
-			}
-		}
+		targets, err := chromedp.Targets(root)
+		result <- connectionResult{targets: targets, err: err}
 	}()
 
-	var matched *target.Info
 	select {
-	case found := <-result:
-		if found.err != nil {
+	case connected := <-result:
+		if connected.err != nil {
 			cleanup()
-			return nil, func() {}, found.err
+			return nil, func() {}, connected.err
 		}
-		matched = found.info
+		log.Printf("AdsPower CDP connected; existing targets: %s", summarizeOAuthTargets(connected.targets))
 	case <-time.After(30 * time.Second):
 		cleanup()
 		return nil, func() {}, context.DeadlineExceeded
@@ -177,8 +156,11 @@ func attachAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string)
 		return nil, func() {}, parent.Err()
 	}
 
-	browser, cancelBrowser := chromedp.NewContext(root, chromedp.WithTargetID(matched.TargetID))
-	if err := chromedp.Run(browser); err != nil {
+	browser, cancelBrowser := chromedp.NewContext(root)
+	navigationCtx, cancelNavigation := context.WithTimeout(browser, 30*time.Second)
+	err := chromedp.Run(navigationCtx, chromedp.Navigate(authURL))
+	cancelNavigation()
+	if err != nil {
 		cancelBrowser()
 		cleanup()
 		return nil, func() {}, err
@@ -207,46 +189,6 @@ func summarizeOAuthTargets(targets []*target.Info) string {
 		parts = append(parts, candidate.Type+":"+location)
 	}
 	return strings.Join(parts, ",")
-}
-
-func matchingOAuthTarget(targets []*target.Info, authURL string) *target.Info {
-	expected, err := url.Parse(strings.TrimSpace(authURL))
-	if err != nil {
-		return nil
-	}
-	expectedState := expected.Query().Get("state")
-	var fallback *target.Info
-	for _, candidate := range targets {
-		if candidate == nil || candidate.Type != "page" {
-			continue
-		}
-		candidateURL := strings.TrimSpace(candidate.URL)
-		if candidateURL == authURL {
-			return candidate
-		}
-		parsed, parseErr := url.Parse(candidateURL)
-		if parseErr != nil {
-			continue
-		}
-		host := strings.ToLower(parsed.Hostname())
-		path := strings.ToLower(parsed.Path)
-		if host != "auth.openai.com" || strings.Contains(path, "/error") {
-			continue
-		}
-		candidateState := parsed.Query().Get("state")
-		if expectedState != "" {
-			if subtle.ConstantTimeCompare([]byte(candidateState), []byte(expectedState)) == 1 {
-				return candidate
-			}
-			if candidateState != "" {
-				continue
-			}
-		}
-		if fallback == nil {
-			fallback = candidate
-		}
-	}
-	return fallback
 }
 
 type automationFailureResult struct {
