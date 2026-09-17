@@ -141,21 +141,22 @@ func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]a
 	return stripped
 }
 
-// stripExecutionNodeIDFromExtraUpdate protects the server-owned account
-// ownership marker from generic JSONB update paths. The accepting XIASS
-// instance assigns this value during account creation; edits, imports, and
-// runtime state updates must never be able to move an account to another
-// execution node.
+// stripExecutionNodeIDFromExtraUpdate protects server-owned relationship
+// markers from generic JSONB update paths. Edits, imports, CRS sync and runtime
+// state updates must never move an account to another execution node or forge
+// an OpenAI OAuth credential owner.
 func stripExecutionNodeIDFromExtraUpdate(extra map[string]any) map[string]any {
 	if extra == nil {
 		return nil
 	}
-	if _, exists := extra[service.AccountExecutionNodeExtraKey]; !exists {
+	_, hasExecutionNode := extra[service.AccountExecutionNodeExtraKey]
+	_, hasCredentialSource := extra[service.OpenAIOAuthCredentialSourceIDExtraKey]
+	if !hasExecutionNode && !hasCredentialSource {
 		return extra
 	}
-	stripped := make(map[string]any, len(extra)-1)
+	stripped := make(map[string]any, len(extra))
 	for key, value := range extra {
-		if key == service.AccountExecutionNodeExtraKey {
+		if key == service.AccountExecutionNodeExtraKey || key == service.OpenAIOAuthCredentialSourceIDExtraKey {
 			continue
 		}
 		stripped[key] = value
@@ -1366,6 +1367,106 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 
 func (r *accountRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Account, *pagination.PaginationResult, error) {
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
+}
+
+// ListAccountIDsByClassification filters OpenAI OAuth rows by the effective
+// credential owner. Linked copies inherit their source account and Spark
+// shadows inherit their parent, so every schedulable row remains in the same
+// subscription/login category as the identity it actually uses.
+func (r *accountRepository) ListAccountIDsByClassification(ctx context.Context, subscriptionPlan, loginMethod string) ([]int64, error) {
+	if r == nil || r.sql == nil {
+		return nil, errors.New("account classification query is unavailable")
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		WITH effective_accounts AS (
+			SELECT
+				a.id,
+				COALESCE(owner.credentials, a.credentials, '{}'::jsonb) AS credentials
+			FROM accounts AS a
+			LEFT JOIN accounts AS owner
+				ON owner.id = CASE
+					WHEN CASE
+						WHEN BTRIM(COALESCE(a.extra ->> $1, '')) ~ '^[1-9][0-9]{0,18}$'
+							THEN (BTRIM(a.extra ->> $1))::numeric <= 9223372036854775807
+						ELSE FALSE
+					END
+						THEN (BTRIM(a.extra ->> $1))::bigint
+					WHEN a.parent_account_id IS NOT NULL THEN a.parent_account_id
+					ELSE a.id
+				END
+				AND owner.deleted_at IS NULL
+				AND owner.platform = $2
+				AND owner.type = $3
+			WHERE a.deleted_at IS NULL
+				AND a.platform = $2
+				AND a.type = $3
+		), classified AS (
+			SELECT
+				id,
+				REGEXP_REPLACE(
+					LOWER(BTRIM(COALESCE(credentials ->> 'plan_type', ''))),
+					'[[:space:]_-]+',
+					'',
+					'g'
+				) AS plan_key,
+				NULLIF(BTRIM(COALESCE(credentials ->> $6, '')), '') IS NOT NULL AS has_email,
+				NULLIF(BTRIM(COALESCE(credentials ->> $7, '')), '') IS NOT NULL AS has_password,
+				NULLIF(BTRIM(COALESCE(credentials ->> $8, '')), '') IS NOT NULL AS has_totp,
+				NULLIF(BTRIM(COALESCE(credentials ->> $9, '')), '') IS NOT NULL AS has_email_code
+			FROM effective_accounts
+		)
+		SELECT id
+		FROM classified
+		WHERE (
+			$4 = ''
+			OR ($4 = 'free' AND plan_key IN ('free', 'basic', 'chatgptfree'))
+			OR ($4 = 'plus' AND plan_key IN ('plus', 'chatgptplus'))
+			OR ($4 = 'pro' AND plan_key IN ('pro', 'chatgptpro'))
+			OR ($4 = 'team' AND plan_key IN (
+				'team', 'chatgptteam', 'business', 'chatgptbusiness',
+				'selfservebusiness', 'selfservebusinessusagebased'
+			))
+			OR ($4 = 'other' AND plan_key NOT IN (
+				'free', 'basic', 'chatgptfree', 'plus', 'chatgptplus',
+				'pro', 'chatgptpro', 'team', 'chatgptteam', 'business',
+				'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased'
+			))
+		)
+		AND (
+			$5 = ''
+			OR ($5 = 'password_2fa' AND has_email AND has_password AND has_totp)
+			OR ($5 = 'email_code' AND has_email AND has_email_code)
+			OR ($5 = 'unconfigured' AND NOT (has_email AND has_password AND has_totp) AND NOT (has_email AND has_email_code))
+		)
+		ORDER BY id
+	`,
+		service.OpenAIOAuthCredentialSourceIDExtraKey,
+		service.PlatformOpenAI,
+		service.AccountTypeOAuth,
+		strings.TrimSpace(subscriptionPlan),
+		strings.TrimSpace(loginMethod),
+		service.OpenAIOAuthReauthorizationEmailCredentialKey,
+		service.OpenAIOAuthReauthorizationPasswordCredentialKey,
+		service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey,
+		service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list account IDs by classification: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	accountIDs := make([]int64, 0)
+	for rows.Next() {
+		var accountID int64
+		if err := rows.Scan(&accountID); err != nil {
+			return nil, fmt.Errorf("scan account classification ID: %w", err)
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate account classification IDs: %w", err)
+	}
+	return accountIDs, nil
 }
 
 func (r *accountRepository) accountListFilteredQuery(platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {

@@ -539,7 +539,7 @@ func (t *batchOAuthTask) terminal() bool {
 }
 
 func batchOAuthAccountMatchesEmail(account *service.Account, email string) bool {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return false
 	}
 	for _, candidate := range []string{
@@ -1206,6 +1206,15 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		h.adsPowerLaunchStore.deletePending(ctx, t.sessionID)
 	}
 	t.AccountID = account.ID
+	if t.config.PoolID == nil && t.config.ProxyID == nil && account.ProxyID != nil {
+		// Multi-node account creation may bind the accepting node's private
+		// egress after the browser task was started without an explicit proxy.
+		// Record that authoritative result so readback verification and retries
+		// compare against the persisted system-managed proxy rather than the
+		// original empty form value.
+		proxyID := *account.ProxyID
+		t.config.ProxyID = &proxyID
+	}
 	if t.config.PoolID != nil {
 		var assignErr error
 		if pools, ok := h.adminService.(service.AccountPoolOAuthAssigner); ok {
@@ -1248,7 +1257,7 @@ func (h *OpenAIOAuthHandler) verifyBatchAccount(ctx context.Context, t *batchOAu
 	if wantName == "" {
 		wantName = t.Email
 	}
-	if !a.IsOpenAIOAuth() || a.IsCredentialShadow() || a.Name != wantName || !a.Schedulable || !batchProxyEqual(a.ProxyID, t.config.ProxyID) ||
+	if !a.IsOpenAIOAuth() || a.IsCredentialShadow() || a.IsOpenAIOAuthCredentialCopy() || a.Name != wantName || !a.Schedulable || !batchProxyEqual(a.ProxyID, t.config.ProxyID) ||
 		a.Concurrency != t.config.Concurrency || a.Priority != t.config.Priority ||
 		a.GetExtraString("codex_fingerprint_mode") != t.config.FingerprintMode ||
 		!slices.Equal(slices.Compact(wantGroups), slices.Compact(actualGroups)) {

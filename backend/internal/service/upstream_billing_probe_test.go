@@ -20,10 +20,11 @@ import (
 
 type upstreamBillingProbeAccountRepo struct {
 	AccountRepository
-	mu          sync.Mutex
-	accounts    map[int64]*Account
-	updates     map[int64][]map[string]any
-	bulkUpdates []AccountBulkUpdate
+	mu            sync.Mutex
+	accounts      map[int64]*Account
+	updates       map[int64][]map[string]any
+	bulkUpdates   []AccountBulkUpdate
+	bulkUpdateIDs [][]int64
 }
 
 type staleDueUpstreamBillingProbeAccountRepo struct {
@@ -62,6 +63,7 @@ func (r *upstreamBillingProbeAccountRepo) BulkUpdate(_ context.Context, ids []in
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bulkUpdates = append(r.bulkUpdates, updates)
+	r.bulkUpdateIDs = append(r.bulkUpdateIDs, append([]int64(nil), ids...))
 	return int64(len(ids)), nil
 }
 

@@ -278,16 +278,132 @@ func TestDuplicateAccountRejectsCredentialShadow(t *testing.T) {
 	require.Len(t, repo.accounts, 1)
 }
 
-func TestDuplicateAccountRejectsRotatingOrUnknownCredentialTypes(t *testing.T) {
-	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken, "legacy-cookie"} {
-		t.Run(accountType, func(t *testing.T) {
+func TestDuplicateAccountCreatesLinkedOpenAIOAuthCopy(t *testing.T) {
+	ctx := context.Background()
+	repo := newDuplicateAccountRepoStub()
+	svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
+	source := &Account{
+		Name:        "openai-primary",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"access_token":       "access-one",
+			"refresh_token":      "refresh-one",
+			"chatgpt_account_id": "chatgpt-one",
+			"email":              "owner@example.test",
+			"plan_type":          "pro",
+		},
+		Extra: map[string]any{codexFingerprintModeExtraKey: codexFingerprintDevice},
+	}
+	require.NoError(t, repo.Create(ctx, source))
+
+	duplicate, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
+
+	require.NoError(t, err)
+	require.True(t, duplicate.Schedulable)
+	require.True(t, duplicate.IsOpenAIOAuthCredentialCopy())
+	require.Equal(t, source.ID, duplicate.OpenAIOAuthCredentialSourceID())
+	require.Equal(t, OpenAITokenCacheKey(source), OpenAITokenCacheKey(duplicate))
+	require.Equal(t, source.Credentials, duplicate.Credentials)
+	require.NotEqual(t, source.Extra[codexFingerprintSeedExtraKey], duplicate.Extra[codexFingerprintSeedExtraKey])
+	require.False(t, (&OpenAITokenRefresher{}).CanRefresh(duplicate))
+	require.True(t, (&OpenAITokenRefresher{}).CanRefresh(source))
+
+	updated, err := svc.UpdateAccount(ctx, duplicate.ID, &UpdateAccountInput{Credentials: map[string]any{
+		"access_token":  "forged-copy-access",
+		"refresh_token": "forged-copy-refresh",
+		"plan_type":     "free",
+		"model_mapping": map[string]any{"gpt-6": "gpt-6-astra"},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "access-one", updated.Credentials["access_token"])
+	require.Equal(t, "refresh-one", updated.Credentials["refresh_token"])
+	require.Equal(t, "pro", updated.Credentials["plan_type"])
+	require.Equal(t, map[string]any{"gpt-6": "gpt-6-astra"}, updated.Credentials["model_mapping"])
+	require.Equal(t, "access-one", source.Credentials["access_token"])
+
+	legacyCredentials := map[string]any{
+		"access_token":  "legacy-forged-access",
+		"refresh_token": "legacy-forged-refresh",
+		"model_mapping": map[string]any{"gpt-5": "gpt-5.6-sol"},
+		OpenAIOAuthReauthorizationPasswordCredentialKey: "legacy-forged-password",
+	}
+	legacyUpdated, err := NewAccountService(repo, nil).Update(ctx, duplicate.ID, UpdateAccountRequest{
+		Credentials: &legacyCredentials,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "access-one", legacyUpdated.Credentials["access_token"])
+	require.Equal(t, "refresh-one", legacyUpdated.Credentials["refresh_token"])
+	require.Equal(t, map[string]any{"gpt-5": "gpt-5.6-sol"}, legacyUpdated.Credentials["model_mapping"])
+	require.NotContains(t, legacyUpdated.Credentials, OpenAIOAuthReauthorizationPasswordCredentialKey)
+
+	secondCopy, err := svc.DuplicateAccount(ctx, legacyUpdated.ID, "admin:1", "")
+	require.NoError(t, err)
+	require.Equal(t, source.ID, secondCopy.OpenAIOAuthCredentialSourceID())
+	require.Equal(t, OpenAITokenCacheKey(source), OpenAITokenCacheKey(secondCopy))
+	require.Equal(t, map[string]any{"gpt-5": "gpt-5.6-sol"}, secondCopy.Credentials["model_mapping"])
+
+	thirdCopy, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
+	require.NoError(t, err)
+	fourthCopy, err := svc.DuplicateAccount(ctx, secondCopy.ID, "admin:1", "")
+	require.NoError(t, err)
+
+	seedValues := make(map[any]struct{}, 4)
+	for _, copyAccount := range []*Account{duplicate, secondCopy, thirdCopy, fourthCopy} {
+		require.True(t, copyAccount.Schedulable)
+		require.Equal(t, source.ID, copyAccount.OpenAIOAuthCredentialSourceID())
+		require.Equal(t, OpenAITokenCacheKey(source), OpenAITokenCacheKey(copyAccount))
+		seed := copyAccount.Extra[codexFingerprintSeedExtraKey]
+		require.NotEmpty(t, seed)
+		seedValues[seed] = struct{}{}
+	}
+	require.Len(t, seedValues, 4, "each of the four schedulable rows must have an independent fingerprint seed")
+	require.Len(t, repo.accounts, 5, "one canonical account plus four copies must coexist")
+}
+
+func TestDeleteOpenAIOAuthCredentialSourceCascadesCopies(t *testing.T) {
+	ctx := context.Background()
+	repo := newDuplicateAccountRepoStub()
+	svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
+	source := &Account{
+		Name:        "openai-primary",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Schedulable: true,
+		Credentials: map[string]any{"access_token": "access", "refresh_token": "refresh"},
+	}
+	require.NoError(t, repo.Create(ctx, source))
+	copyAccount, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.DeleteAccount(ctx, source.ID))
+
+	_, sourceExists := repo.accounts[source.ID]
+	_, copyExists := repo.accounts[copyAccount.ID]
+	require.False(t, sourceExists)
+	require.False(t, copyExists)
+}
+
+func TestDuplicateAccountRejectsUnsupportedRotatingOrUnknownCredentialTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		platform    string
+		accountType string
+	}{
+		{name: "OpenAI setup token", platform: PlatformOpenAI, accountType: AccountTypeSetupToken},
+		{name: "Anthropic OAuth", platform: PlatformAnthropic, accountType: AccountTypeOAuth},
+		{name: "legacy cookie", platform: PlatformOpenAI, accountType: "legacy-cookie"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			repo := newDuplicateAccountRepoStub()
 			svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
 			source := &Account{
 				Name:        "rotating-credential-account",
-				Platform:    PlatformOpenAI,
-				Type:        accountType,
+				Platform:    tc.platform,
+				Type:        tc.accountType,
 				Credentials: map[string]any{"refresh_token": "shared-token"},
 			}
 			require.NoError(t, repo.Create(ctx, source))
@@ -300,6 +416,29 @@ func TestDuplicateAccountRejectsRotatingOrUnknownCredentialTypes(t *testing.T) {
 			require.Len(t, repo.accounts, 1)
 		})
 	}
+}
+
+func TestDuplicateAccountRejectsOpenAIAgentIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := newDuplicateAccountRepoStub()
+	svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
+	source := &Account{
+		Name:     "agent-identity",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			openAIAuthModeCredentialKey: OpenAIAuthModeAgentIdentity,
+			"agent_private_key":         "private-key",
+		},
+	}
+	require.NoError(t, repo.Create(ctx, source))
+
+	_, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
+	require.Equal(t, "ACCOUNT_DUPLICATE_CREDENTIAL_TYPE_UNSUPPORTED", infraerrors.Reason(err))
+	require.Len(t, repo.accounts, 1)
 }
 
 func TestDuplicateAccountPreservesUngroupedState(t *testing.T) {

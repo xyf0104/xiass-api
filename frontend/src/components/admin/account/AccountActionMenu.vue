@@ -31,7 +31,7 @@
               {{ t('admin.accounts.duplicateAccount') }}
             </button>
             <!-- 影子账号不持凭据:重授权/刷新 token 对其无效(后端拒绝),故隐藏(外审 G4)。 -->
-            <template v-if="(account.type === 'oauth' || account.type === 'setup-token') && !isShadow">
+            <template v-if="(account.type === 'oauth' || account.type === 'setup-token') && !isShadow && !isOpenAIOAuthCredentialCopy">
               <button :disabled="!canManage" :title="!canManage ? managementBlockReason : undefined" @click="$emit('reauth', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700">
                 <Icon name="link" size="sm" />
                 {{ t('admin.accounts.reAuthorize') }}
@@ -88,6 +88,7 @@ const managementBlockReason = computed(() => props.managementBlockReason || t('a
 const canDuplicate = computed(() => {
   if (!props.account || props.account.parent_account_id != null) return false
   return ['apikey', 'upstream', 'bedrock', 'service_account'].includes(props.account.type)
+    || (props.account.platform === 'openai' && props.account.type === 'oauth' && !isOpenAIAgentIdentity.value)
 })
 const hasGroups = computed(() => {
   if (!props.account) return false
@@ -113,11 +114,19 @@ const hasRecoverableState = computed(() => {
 })
 const isAntigravityOAuth = computed(() => props.account?.platform === 'antigravity' && props.account?.type === 'oauth')
 const isOpenAIOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth')
+const isOpenAIAgentIdentity = computed(() => {
+  const authMode = (props.account?.credentials as Record<string, unknown> | undefined)?.auth_mode
+  return isOpenAIOAuth.value && typeof authMode === 'string' && authMode.trim().toLowerCase() === 'agentidentity'
+})
 // 影子账号(链接型,持 parent_account_id)不持凭据、type 不可变,凭据/隐私类操作对其无效。
 const isShadow = computed(() => props.account?.parent_account_id != null)
+const isOpenAIOAuthCredentialCopy = computed(() => {
+  const sourceID = Number((props.account?.extra as Record<string, unknown> | undefined)?.xiass_openai_oauth_credential_source_id)
+  return isOpenAIOAuth.value && Number.isInteger(sourceID) && sourceID > 0 && sourceID !== props.account?.id
+})
 // A "parent" OpenAI OAuth account is one that is NOT itself a shadow (parent_account_id == null)
-const isOpenAIOAuthParent = computed(() => isOpenAIOAuth.value && !isShadow.value)
-const supportsPrivacy = computed(() => (isAntigravityOAuth.value || isOpenAIOAuth.value) && !isShadow.value)
+const isOpenAIOAuthParent = computed(() => isOpenAIOAuth.value && !isShadow.value && !isOpenAIOAuthCredentialCopy.value)
+const supportsPrivacy = computed(() => (isAntigravityOAuth.value || isOpenAIOAuth.value) && !isShadow.value && !isOpenAIOAuthCredentialCopy.value)
 const hasQuotaLimit = computed(() => {
   return (props.account?.type === 'apikey' || props.account?.type === 'bedrock') && (
     (props.account?.quota_limit ?? 0) > 0 ||

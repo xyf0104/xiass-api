@@ -774,6 +774,8 @@ type AccountBulkEditTarget =
       filters: {
         platform?: string
         type?: string
+        subscription_plan?: string
+        login_method?: string
         status?: string
         group?: string
         account_pool?: string
@@ -1189,6 +1191,8 @@ const {
   initialParams: {
     platform: '',
     type: '',
+    subscription_plan: '',
+    login_method: '',
     status: '',
     privacy_mode: '',
     group: '',
@@ -1631,9 +1635,13 @@ const refreshAccountsIncrementally = async () => {
       toRaw(params) as {
         platform?: string
         type?: string
+        subscription_plan?: string
+        login_method?: string
         status?: string
         privacy_mode?: string
         group?: string
+        account_pool?: string
+        execution_node_id?: string
         active_concurrency_group?: string
         account_id?: string
         search?: string
@@ -2221,6 +2229,8 @@ const buildBulkEditFilterSnapshot = () => {
   return {
     platform: typeof rawParams.platform === 'string' ? rawParams.platform : '',
     type: typeof rawParams.type === 'string' ? rawParams.type : '',
+    subscription_plan: typeof rawParams.subscription_plan === 'string' ? rawParams.subscription_plan : '',
+    login_method: typeof rawParams.login_method === 'string' ? rawParams.login_method : '',
     status: typeof rawParams.status === 'string' ? rawParams.status : '',
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
     account_pool: typeof rawParams.account_pool === 'string' ? rawParams.account_pool : '',
@@ -2369,9 +2379,15 @@ const handleBulkUpdated = () => {
 const handleDataImported = () => { showImportData.value = false; reload() }
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
 const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
+const OPENAI_REAUTH_EMAIL_STATUS_KEY = 'has_xiass_openai_oauth_reauth_email'
+const OPENAI_REAUTH_PASSWORD_STATUS_KEY = 'has_xiass_openai_oauth_reauth_password_encrypted'
+const OPENAI_REAUTH_TOTP_STATUS_KEY = 'has_xiass_openai_oauth_reauth_totp_secret_encrypted'
+const OPENAI_REAUTH_EMAIL_CODE_STATUS_KEY = 'has_xiass_openai_oauth_reauth_email_code_token_encrypted'
 const buildAccountQueryFilters = () => ({
   platform: params.platform || '',
   type: params.type || '',
+  subscription_plan: params.subscription_plan || '',
+  login_method: params.login_method || '',
   status: params.status || '',
   group: params.group || '',
   account_pool: params.account_pool || '',
@@ -2382,11 +2398,53 @@ const buildAccountQueryFilters = () => ({
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
 })
+const normalizeOpenAISubscriptionPlanCategory = (value: unknown) => {
+  const normalized = typeof value === 'string'
+    ? value.trim().toLowerCase().replace(/[\s_-]+/g, '')
+    : ''
+  if (['free', 'basic', 'chatgptfree'].includes(normalized)) return 'free'
+  if (['plus', 'chatgptplus'].includes(normalized)) return 'plus'
+  if (['pro', 'chatgptpro'].includes(normalized)) return 'pro'
+  if (['team', 'chatgptteam', 'business', 'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased'].includes(normalized)) return 'team'
+  return 'other'
+}
+const isDerivedOpenAIOAuthAccount = (account: Account) => {
+  const sourceID = account.extra?.xiass_openai_oauth_credential_source_id
+  return Boolean(account.parent_account_id || (typeof sourceID === 'string' && sourceID.trim()))
+}
+const accountMatchesSubscriptionPlanFilter = (account: Account, filter: string) => {
+  if (!filter) return true
+  if (account.platform !== 'openai' || account.type !== 'oauth') return false
+  const planType = account.parent_plan_type || account.credentials?.plan_type
+  if ((planType === undefined || planType === null || planType === '') && isDerivedOpenAIOAuthAccount(account)) {
+    // The server classifies linked rows by their credential owner; keep an
+    // already-returned row stable when a local patch lacks owner credentials.
+    return true
+  }
+  return normalizeOpenAISubscriptionPlanCategory(planType) === filter
+}
+const accountMatchesLoginMethodFilter = (account: Account, filter: string) => {
+  if (!filter) return true
+  if (account.platform !== 'openai' || account.type !== 'oauth') return false
+  if (isDerivedOpenAIOAuthAccount(account)) return true
+  const status = account.credentials_status || {}
+  const hasEmail = status[OPENAI_REAUTH_EMAIL_STATUS_KEY] === true
+  const hasPassword2FA = hasEmail
+    && status[OPENAI_REAUTH_PASSWORD_STATUS_KEY] === true
+    && status[OPENAI_REAUTH_TOTP_STATUS_KEY] === true
+  const hasEmailCode = hasEmail && status[OPENAI_REAUTH_EMAIL_CODE_STATUS_KEY] === true
+  if (filter === 'password_2fa') return hasPassword2FA
+  if (filter === 'email_code') return hasEmailCode
+  if (filter === 'unconfigured') return !hasPassword2FA && !hasEmailCode
+  return false
+}
 const accountMatchesCurrentFilters = (account: Account) => {
   const filters = buildAccountQueryFilters()
   if (params.account_id && account.id !== Number(params.account_id)) return false
   if (filters.platform && account.platform !== filters.platform) return false
   if (filters.type && account.type !== filters.type) return false
+  if (!accountMatchesSubscriptionPlanFilter(account, filters.subscription_plan)) return false
+  if (!accountMatchesLoginMethodFilter(account, filters.login_method)) return false
   if (filters.status) {
     const now = Date.now()
     const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
@@ -2616,7 +2674,10 @@ const handleDuplicateAccount = async (a: Account) => {
   duplicatingAccountIDs.add(a.id)
   try {
     const duplicate = await adminAPI.accounts.duplicate(a.id)
-    appStore.showSuccess(t('admin.accounts.duplicateSuccess', { name: duplicate.name }))
+    const messageKey = a.platform === 'openai' && a.type === 'oauth'
+      ? 'admin.accounts.duplicateOAuthSuccess'
+      : 'admin.accounts.duplicateSuccess'
+    appStore.showSuccess(t(messageKey, { name: duplicate.name }))
     reload()
   } catch (error: any) {
     console.error('Failed to duplicate account:', error)

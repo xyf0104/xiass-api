@@ -39,6 +39,9 @@ type accountRepoStubForBulkUpdate struct {
 	listResult          *pagination.PaginationResult
 	listErr             error
 	listCalled          bool
+	classificationIDs   []int64
+	classificationPlan  string
+	classificationLogin string
 	lastListParams      pagination.PaginationParams
 	lastListFilters     struct {
 		platform    string
@@ -133,6 +136,29 @@ func (s *accountRepoStubForBulkUpdate) ListWithFilters(_ context.Context, params
 		return s.listData, s.listResult, nil
 	}
 	return s.listData, &pagination.PaginationResult{Total: int64(len(s.listData))}, nil
+}
+
+func (s *accountRepoStubForBulkUpdate) ListWithFiltersByIDs(ctx context.Context, params pagination.PaginationParams, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
+	allowed := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		allowed[accountID] = struct{}{}
+	}
+	original := s.listData
+	s.listData = nil
+	for _, account := range original {
+		if _, ok := allowed[account.ID]; ok {
+			s.listData = append(s.listData, account)
+		}
+	}
+	accounts, result, err := s.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
+	s.listData = original
+	return accounts, result, err
+}
+
+func (s *accountRepoStubForBulkUpdate) ListAccountIDsByClassification(_ context.Context, subscriptionPlan, loginMethod string) ([]int64, error) {
+	s.classificationPlan = subscriptionPlan
+	s.classificationLogin = loginMethod
+	return append([]int64(nil), s.classificationIDs...), nil
 }
 
 // TestAdminService_BulkUpdateAccounts_AllSuccessIDs 验证批量更新成功时返回 success_ids/failed_ids。
@@ -306,4 +332,29 @@ func TestAdminServiceBulkUpdateAccounts_ResolvesIDsFromFilters(t *testing.T) {
 	require.Equal(t, 2, result.Success)
 	require.Equal(t, 0, result.Failed)
 	require.Equal(t, []int64{7, 11}, result.SuccessIDs)
+}
+
+func TestAdminServiceBulkUpdateAccounts_ResolvesClassificationFiltersBeforeWrite(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		listData:          []Account{{ID: 7}, {ID: 11}, {ID: 13}},
+		classificationIDs: []int64{11, 13},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	schedulable := true
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		Filters: &BulkUpdateAccountFilters{
+			Platform:         PlatformOpenAI,
+			Type:             AccountTypeOAuth,
+			SubscriptionPlan: AccountSubscriptionPlanPlus,
+			LoginMethod:      AccountLoginMethodPassword2FA,
+		},
+		Schedulable: &schedulable,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountSubscriptionPlanPlus, repo.classificationPlan)
+	require.Equal(t, AccountLoginMethodPassword2FA, repo.classificationLogin)
+	require.Equal(t, []int64{11, 13}, repo.bulkUpdateIDs)
+	require.Equal(t, 2, result.Success)
 }

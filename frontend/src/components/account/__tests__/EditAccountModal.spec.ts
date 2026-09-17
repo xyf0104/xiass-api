@@ -335,6 +335,49 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it('shows node-managed egress instead of requiring a proxy selection and resets to the managed proxy on save', async () => {
+    const account = {
+      ...buildAccount(),
+      execution_node_id: 'api',
+      extra: { xiass_execution_node_id: 'api' },
+      proxy_id: null,
+    }
+    updateAccountMock.mockReset()
+    updateAccountMock.mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).toContain('admin.accounts.systemManagedProxy')
+    expect(wrapper.text()).toContain('admin.accounts.systemManagedProxyHint')
+    expect(wrapper.find('proxy-selector-stub').exists()).toBe(false)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.proxy_id).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('keeps the proxy selector for a node account with an explicit administrator proxy', () => {
+    const account = {
+      ...buildAccount(),
+      execution_node_id: 'api',
+      extra: {
+        xiass_execution_node_id: 'api',
+        xiass_execution_proxy_id: '99',
+      },
+      proxy_id: 99,
+    }
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).not.toContain('admin.accounts.systemManagedProxyHint')
+    expect(wrapper.find('proxy-selector-stub').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

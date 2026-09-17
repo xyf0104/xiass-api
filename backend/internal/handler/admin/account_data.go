@@ -30,8 +30,8 @@ type DataPayload struct {
 	ExportedAt string        `json:"exported_at"`
 	Proxies    []DataProxy   `json:"proxies"`
 	Accounts   []DataAccount `json:"accounts"`
-	// SkippedShadows 记录导出时被排除的 spark 影子账号数量(见 ExportData)。仅作可见性提示,
-	// 导入侧忽略该字段;omitempty 保持向后兼容。
+	// SkippedShadows 记录导出时被排除的关联凭据账号数量(见 ExportData)。字段名沿用旧版
+	// spark 影子导出契约；导入侧忽略该字段，omitempty 保持向后兼容。
 	SkippedShadows int `json:"skipped_shadows,omitempty"`
 }
 
@@ -119,22 +119,22 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 		return
 	}
 
-	// 排除 spark 影子账号:影子不持凭据,通用凭据型导出无法表达父子链接、导入侧又强制 credentials
+	// 排除 spark 影子和 OpenAI OAuth 凭据副本:它们不拥有独立凭据,通用凭据型导出无法表达链接、导入侧又强制 credentials
 	// 非空——若混入会产出无法还原的坏备份(导入即失败)。影子的独立调度配置(priority/并发/分组/
-	// status,管理员可单独调)随之不进备份,还原后需在重建的影子上重新调优;前端按 skipped_shadows
-	// 提示用户(外审第5轮发现、第6轮裁决:保持排除 + 警告,不做完整往返)。
-	skippedShadows := 0
+	// status,管理员可单独调)随之不进备份,还原后需重新创建并调优;为兼容既有导出格式继续使用
+	// skipped_shadows 字段，但前端按“关联凭据账号”统一提示。
+	skippedLinkedAccounts := 0
 	exportable := make([]service.Account, 0, len(accounts))
 	for i := range accounts {
-		if accounts[i].IsCredentialShadow() {
-			skippedShadows++
+		if accounts[i].IsCredentialShadow() || accounts[i].IsOpenAIOAuthCredentialCopy() {
+			skippedLinkedAccounts++
 			continue
 		}
 		exportable = append(exportable, accounts[i])
 	}
 	accounts = exportable
-	if skippedShadows > 0 {
-		slog.Info("export_skipped_spark_shadows", "count", skippedShadows)
+	if skippedLinkedAccounts > 0 {
+		slog.Info("export_skipped_linked_credential_accounts", "count", skippedLinkedAccounts)
 	}
 
 	includeProxies, err := parseIncludeProxies(c)
@@ -226,7 +226,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 		ExportedAt:     time.Now().UTC().Format(time.RFC3339),
 		Proxies:        dataProxies,
 		Accounts:       dataAccounts,
-		SkippedShadows: skippedShadows,
+		SkippedShadows: skippedLinkedAccounts,
 	}
 
 	response.Success(c, payload)

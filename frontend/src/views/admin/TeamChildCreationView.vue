@@ -549,6 +549,7 @@ const ordinaryOpenAIOAuthAccounts = computed(() => openAIOAuthAccounts.value.fil
   return account.platform === 'openai'
     && account.type === 'oauth'
     && account.parent_account_id == null
+    && !extra?.xiass_openai_oauth_credential_source_id
     && extra?.xiass_team_child !== true
 }))
 const pendingHistoryReauthorizationMessage = computed(() => {

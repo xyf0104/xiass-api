@@ -116,6 +116,12 @@ const AccountExecutionNodeExtraKey = "xiass_execution_node_id"
 // AccountExecutionProxyExtraKey binds an explicit administrator choice to its proxy ID.
 const AccountExecutionProxyExtraKey = "xiass_execution_proxy_id"
 
+// OpenAIOAuthCredentialSourceIDExtraKey links a schedulable OpenAI OAuth copy
+// to the primary account that owns and rotates its credentials. The copy keeps
+// its own scheduling, proxy, fingerprint, billing and group configuration, but
+// every upstream credential read is resolved through this source account.
+const OpenAIOAuthCredentialSourceIDExtraKey = "xiass_openai_oauth_credential_source_id"
+
 func (a *Account) hasExplicitExecutionProxy() bool {
 	if a == nil || a.ProxyID == nil || *a.ProxyID <= 0 {
 		return false
@@ -193,6 +199,7 @@ func (a *Account) ExecutionNodeID(legacyDefault string) string {
 
 func applyExecutionNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
 	delete(extra, AccountExecutionProxyExtraKey)
+	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	if cfg == nil || !cfg.Gateway.ExecutionNode.Enabled {
 		// The ownership field is always system-managed. Strip untrusted import data
 		// even while multi-node routing is disabled so a later activation cannot
@@ -232,12 +239,16 @@ func preserveExecutionNodeOnUpdate(account *Account, extra map[string]any) map[s
 	}
 	delete(extra, AccountExecutionNodeExtraKey)
 	delete(extra, AccountExecutionProxyExtraKey)
+	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	if account != nil && account.Extra != nil {
 		if account.hasExplicitExecutionProxy() {
 			extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
 		}
 		if nodeID, ok := account.Extra[AccountExecutionNodeExtraKey].(string); ok && strings.TrimSpace(nodeID) != "" {
 			extra[AccountExecutionNodeExtraKey] = strings.TrimSpace(nodeID)
+		}
+		if sourceID := account.OpenAIOAuthCredentialSourceID(); sourceID > 0 {
+			extra[OpenAIOAuthCredentialSourceIDExtraKey] = strconv.FormatInt(sourceID, 10)
 		}
 	}
 	return extra
@@ -1449,6 +1460,41 @@ func (a *Account) IsAnthropic() bool {
 
 func (a *Account) IsOpenAIOAuth() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeOAuth
+}
+
+// OpenAIOAuthCredentialSourceID returns the primary account that owns this
+// linked copy's OAuth credentials. Invalid, self-referential and non-OAuth
+// values fail closed as an ordinary standalone account.
+func (a *Account) OpenAIOAuthCredentialSourceID() int64 {
+	if a == nil || !a.IsOpenAIOAuth() || a.IsCredentialShadow() || a.Extra == nil {
+		return 0
+	}
+	sourceID := int64(ParseExtraInt(a.Extra[OpenAIOAuthCredentialSourceIDExtraKey]))
+	if sourceID <= 0 || sourceID == a.ID {
+		return 0
+	}
+	return sourceID
+}
+
+func (a *Account) IsOpenAIOAuthCredentialCopy() bool {
+	return a.OpenAIOAuthCredentialSourceID() > 0
+}
+
+func (a *Account) OpenAIOAuthCredentialOwnerID() int64 {
+	if sourceID := a.OpenAIOAuthCredentialSourceID(); sourceID > 0 {
+		return sourceID
+	}
+	if a == nil {
+		return 0
+	}
+	return a.ID
+}
+
+// RequiresCredentialResolution reports accounts whose runtime credentials are
+// owned by another row. Spark shadows inherit their parent wholesale, while
+// OAuth copies inherit only credentials and retain their own execution config.
+func (a *Account) RequiresCredentialResolution() bool {
+	return a != nil && (a.IsCredentialShadow() || a.IsOpenAIOAuthCredentialCopy())
 }
 
 // IsOpenAIOAuthLike reports OpenAI credentials that use the ChatGPT/Codex

@@ -94,3 +94,26 @@ func TestEnsureOpenAIPrivacySkipsShadow(t *testing.T) {
 	require.Equal(t, "", got)
 	require.False(t, privacyCalled, "privacyClientFactory 不应被影子账号触发")
 }
+
+func TestOpenAIPrivacySkipsCredentialCopy(t *testing.T) {
+	copyAccount := &Account{
+		ID:          201,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "shared-source-token"},
+		Extra: map[string]any{
+			OpenAIOAuthCredentialSourceIDExtraKey: "100",
+		},
+	}
+	privacyCalled := false
+	svc := &adminServiceImpl{
+		privacyClientFactory: func(proxyURL string) (*req.Client, error) {
+			privacyCalled = true
+			return nil, errors.New("should not reach factory for an OAuth credential copy")
+		},
+	}
+
+	require.Equal(t, "", svc.EnsureOpenAIPrivacy(context.Background(), copyAccount))
+	require.Equal(t, "", svc.ForceOpenAIPrivacy(context.Background(), copyAccount))
+	require.False(t, privacyCalled, "privacyClientFactory must only run for the canonical credential source")
+}

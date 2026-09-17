@@ -424,8 +424,8 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 
 	// spark 影子账号凭据透传母账号、自身恒空,刷新无意义;在调用上游前早拒,避免先打上游
 	// 再被凭据写守卫拦下的无谓副作用(外审第6轮)。
-	if account.IsCredentialShadow() {
-		response.BadRequest(c, "Cannot refresh spark shadow account; its credentials are managed by the parent account")
+	if account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
+		response.BadRequest(c, "Cannot refresh linked OpenAI account credentials; refresh the primary credential source account")
 		return
 	}
 

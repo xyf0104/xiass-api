@@ -100,8 +100,8 @@ func (h *OpenAIOAuthHandler) SaveOpenAIAccountReauthorizationCredentials(c *gin.
 		response.BadRequest(c, "仅支持普通 OpenAI OAuth 账号")
 		return
 	}
-	if account.IsCredentialShadow() {
-		response.BadRequest(c, "Spark 影子账号使用母账号凭据，不能保存独立登录信息")
+	if account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
+		response.BadRequest(c, "凭据关联账号使用主账号身份，不能保存独立登录信息")
 		return
 	}
 	if _, teamChild := teamChildAccountWorkflowEmail(account); teamChild {

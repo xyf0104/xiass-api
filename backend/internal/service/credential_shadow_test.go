@@ -44,3 +44,94 @@ func TestResolveCredentialAccount(t *testing.T) {
 	_, err = resolveCredentialAccount(ctx, badRepo, shadow)
 	require.Error(t, err)
 }
+
+func TestResolveCredentialAccountMergesOpenAICopyCredentialsWithoutReplacingExecutionConfig(t *testing.T) {
+	ctx := context.Background()
+	proxyID := int64(84)
+	source := &Account{
+		ID:       100,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "source-access",
+			"refresh_token":      "source-refresh",
+			"chatgpt_account_id": "source-chatgpt",
+			"plan_type":          "pro",
+			"model_mapping":      map[string]any{"source": "ignored"},
+		},
+	}
+	copyAccount := &Account{
+		ID:       200,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"access_token":  "stale-copy-access",
+			"refresh_token": "stale-copy-refresh",
+			"model_mapping": map[string]any{"gpt-6": "gpt-6-astra"},
+		},
+		Extra: map[string]any{
+			OpenAIOAuthCredentialSourceIDExtraKey: "100",
+			codexFingerprintSeedExtraKey:          "copy-seed",
+		},
+	}
+
+	resolved, err := resolveCredentialAccount(ctx, newStubCredRepo(source), copyAccount)
+
+	require.NoError(t, err)
+	require.Equal(t, copyAccount.ID, resolved.ID)
+	require.Equal(t, proxyID, *resolved.ProxyID)
+	require.Equal(t, "copy-seed", resolved.Extra[codexFingerprintSeedExtraKey])
+	require.Equal(t, "source-access", resolved.Credentials["access_token"])
+	require.Equal(t, "source-refresh", resolved.Credentials["refresh_token"])
+	require.Equal(t, "source-chatgpt", resolved.Credentials["chatgpt_account_id"])
+	require.Equal(t, map[string]any{"gpt-6": "gpt-6-astra"}, resolved.Credentials["model_mapping"])
+	require.Equal(t, "stale-copy-access", copyAccount.Credentials["access_token"])
+}
+
+func TestResolveOpenAIOAuthCredentialSourceRejectsChains(t *testing.T) {
+	copySource := &Account{
+		ID:       100,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: "50"},
+	}
+	copyAccount := &Account{
+		ID:       200,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: "100"},
+	}
+
+	_, err := resolveOpenAIOAuthCredentialSourceAccount(context.Background(), newStubCredRepo(copySource), copyAccount)
+
+	require.ErrorContains(t, err, "itself a credential copy")
+}
+
+func TestStripOpenAIOAuthSourceCredentialUpdatesKeepsCopyLocalConfiguration(t *testing.T) {
+	filtered := stripOpenAIOAuthSourceCredentialUpdates(map[string]any{
+		"access_token":              "forged-access",
+		"refresh_token":             "forged-refresh",
+		"plan_type":                 "free",
+		"model_mapping":             map[string]any{"gpt-6": "gpt-6-astra"},
+		"intercept_warmup_requests": true,
+	})
+
+	require.NotContains(t, filtered, "access_token")
+	require.NotContains(t, filtered, "refresh_token")
+	require.NotContains(t, filtered, "plan_type")
+	require.Equal(t, map[string]any{"gpt-6": "gpt-6-astra"}, filtered["model_mapping"])
+	require.Equal(t, true, filtered["intercept_warmup_requests"])
+
+	preserved := preserveOpenAIOAuthSourceCredentialSnapshot(map[string]any{
+		"access_token": "snapshot-access",
+		"plan_type":    "pro",
+	}, map[string]any{
+		"access_token":  "forged-access",
+		"plan_type":     "free",
+		"model_mapping": map[string]any{"gpt-6": "gpt-6-astra"},
+	})
+	require.Equal(t, "snapshot-access", preserved["access_token"])
+	require.Equal(t, "pro", preserved["plan_type"])
+	require.Equal(t, map[string]any{"gpt-6": "gpt-6-astra"}, preserved["model_mapping"])
+}

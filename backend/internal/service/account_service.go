@@ -49,6 +49,12 @@ type OAuthRefreshCandidatePager interface {
 	ListOAuthRefreshCandidatePage(ctx context.Context, options OAuthRefreshPageOptions) (*OAuthRefreshCandidatePage, error)
 }
 
+// AccountClassificationIDRepository narrows the optional account-list
+// classification query so existing repository doubles remain source compatible.
+type AccountClassificationIDRepository interface {
+	ListAccountIDsByClassification(ctx context.Context, subscriptionPlan, loginMethod string) ([]int64, error)
+}
+
 type AccountRepository interface {
 	Create(ctx context.Context, account *Account) error
 	GetByID(ctx context.Context, id int64) (*Account, error)
@@ -379,7 +385,14 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	}
 
 	if req.Credentials != nil {
-		account.Credentials = *req.Credentials
+		credentials := *req.Credentials
+		if account.IsOpenAIOAuthCredentialCopy() {
+			credentials = preserveOpenAIOAuthSourceCredentialSnapshot(
+				account.Credentials,
+				stripOpenAIReauthorizationCredentials(credentials),
+			)
+		}
+		account.Credentials = credentials
 	}
 
 	if req.Extra != nil {

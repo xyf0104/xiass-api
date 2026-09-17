@@ -128,7 +128,7 @@ func (s *adminServiceImpl) UpdateOpenAIAdsPowerBindingFromLaunch(ctx context.Con
 }
 
 func (s *adminServiceImpl) persistOpenAIAdsPowerBinding(ctx context.Context, account *Account, binding *OpenAIAdsPowerBinding) error {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return errors.New("only primary OpenAI OAuth accounts can bind an AdsPower profile")
 	}
 	if binding == nil {

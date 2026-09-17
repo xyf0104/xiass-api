@@ -366,8 +366,16 @@ func TestWeeklyJoinEntryDuplicateDoesNotInheritAnyQuotaState(t *testing.T) {
 	require.Equal(t, before.Extra, source.Extra)
 	oauthSource := weeklyJoinEntryExisting()
 	require.NoError(t, repo.Create(context.Background(), oauthSource))
-	_, err = svc.DuplicateAccount(context.Background(), oauthSource.ID, "admin:join-test", "")
-	require.Error(t, err, "OAuth duplication remains prohibited")
+	oauthCopy, err := svc.DuplicateAccount(context.Background(), oauthSource.ID, "admin:join-test", "")
+	require.NoError(t, err)
+	require.True(t, oauthCopy.IsOpenAIOAuthCredentialCopy())
+	require.Equal(t, oauthSource.ID, oauthCopy.OpenAIOAuthCredentialSourceID())
+	require.True(t, oauthCopy.Schedulable)
+	for key := range oauthCopy.Extra {
+		require.False(t, IsOpenAIQuotaRuntimeExtraKey(key), key)
+	}
+	require.NotContains(t, oauthCopy.Extra, openAIWeeklyEstimateBaselineKey)
+	require.NotContains(t, oauthCopy.Extra, "codex_7d_estimate_epoch")
 }
 
 func TestWeeklyJoinEntryPrincipalCaptureUsesProxyAndRejectsLateTokenOrProxy(t *testing.T) {

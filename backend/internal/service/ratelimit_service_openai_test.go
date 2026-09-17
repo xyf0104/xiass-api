@@ -251,6 +251,36 @@ func TestHandle429_OpenAISyncsObservedPlanType(t *testing.T) {
 	require.Equal(t, account.ID, repo.rateLimitedID)
 }
 
+func TestHandle429_OpenAICredentialCopySyncsPlanTypeToSource(t *testing.T) {
+	source := &Account{
+		ID:          100,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"plan_type": "plus"},
+	}
+	repo := &openAI429SnapshotRepo{}
+	repo.accountsByID = map[int64]*Account{source.ID: source}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	copyAccount := &Account{
+		ID:          125,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"plan_type": "plus"},
+		Extra: map[string]any{
+			OpenAIOAuthCredentialSourceIDExtraKey: "100",
+		},
+	}
+	body := []byte(`{"error":{"type":"usage_limit_reached","plan_type":"free"}}`)
+
+	svc.handle429(context.Background(), copyAccount, http.Header{}, body)
+
+	require.Equal(t, []int64{source.ID}, repo.bulkUpdatedIDs)
+	require.Equal(t, "free", repo.bulkUpdatedPayload.Credentials["plan_type"])
+	require.Equal(t, "free", source.Credentials["plan_type"])
+	require.Equal(t, "plus", copyAccount.Credentials["plan_type"], "the copy keeps a local snapshot; runtime credential resolution reads the source")
+	require.Equal(t, copyAccount.ID, repo.rateLimitedID, "quota cooldown remains copy-local")
+}
+
 // TestHandle429_SkipsSparkShadow 外审第8轮 P1:spark 影子的限流状态只由 QueryUsage(/wham/usage
 // codex_bengalfox)维护;/responses 429 携带的 global x-codex-* 不得对影子做任何 DB 限流写入,
 // 否则会把 spark 误耦合到 global codex 窗口、冷却到 global reset。

@@ -41,6 +41,8 @@ export async function list(
   filters?: {
     platform?: string
     type?: string
+    subscription_plan?: string
+    login_method?: string
     status?: string
     group?: string
     account_pool?: string
@@ -81,6 +83,8 @@ export async function listWithEtag(
   filters?: {
     platform?: string
     type?: string
+    subscription_plan?: string
+    login_method?: string
     status?: string
     group?: string
     account_pool?: string

@@ -688,6 +688,48 @@ type batchPoolAdminStub struct {
 	assigned  []int64
 }
 
+type batchManagedProxyAdminStub struct {
+	*stubAdminService
+	proxyID int64
+}
+
+func (s *batchManagedProxyAdminStub) CreateAccount(ctx context.Context, input *service.CreateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.createdAccounts = append(s.createdAccounts, input)
+	s.mu.Unlock()
+	account := &service.Account{
+		ID:          300,
+		Name:        input.Name,
+		Platform:    input.Platform,
+		Type:        input.Type,
+		Credentials: input.Credentials,
+		Extra:       input.Extra,
+		ProxyID:     &s.proxyID,
+		Concurrency: input.Concurrency,
+		Priority:    input.Priority,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		GroupIDs:    append([]int64(nil), input.GroupIDs...),
+	}
+	s.getAccountResult = account
+	return account, nil
+}
+
+func TestBatchOAuthAcceptsSystemManagedProxyAssignedDuringCreate(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	admin := &batchManagedProxyAdminStub{stubAdminService: f.admin, proxyID: 84}
+	f.h.adminService = admin
+	r, id := startFixtureTask(t, f)
+
+	w := batchOAuthRequest(r, http.MethodPost, "/tasks/"+id+"/complete", `{}`)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"status":"completed"`)
+	require.NotNil(t, f.h.batchOAuthStore.tasks[id].config.ProxyID)
+	require.Equal(t, int64(84), *f.h.batchOAuthStore.tasks[id].config.ProxyID)
+	require.Nil(t, f.admin.createdAccounts[0].ProxyID, "the administrator did not need to select a proxy")
+}
+
 func (s *batchPoolAdminStub) GetAccountPool(context.Context, int64) (*service.AccountPool, error) {
 	return s.pool, nil
 }

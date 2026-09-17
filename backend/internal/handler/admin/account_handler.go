@@ -85,6 +85,10 @@ type accountPoolGetter interface {
 	GetAccountPool(context.Context, int64) (*service.AccountPool, error)
 }
 
+type accountClassificationIDLister interface {
+	ListAccountIDsByClassification(ctx context.Context, subscriptionPlan, loginMethod string) ([]int64, error)
+}
+
 func intersectAccountIDFilters(current []int64, currentSet bool, next []int64) ([]int64, bool) {
 	if !currentSet {
 		result := slices.Clone(next)
@@ -213,14 +217,16 @@ type BulkUpdateAccountsRequest struct {
 }
 
 type BulkUpdateAccountFilters struct {
-	Platform        string `json:"platform"`
-	Type            string `json:"type"`
-	Status          string `json:"status"`
-	Group           string `json:"group"`
-	AccountPool     string `json:"account_pool"`
-	Search          string `json:"search"`
-	PrivacyMode     string `json:"privacy_mode"`
-	ExecutionNodeID string `json:"execution_node_id"`
+	Platform         string `json:"platform"`
+	Type             string `json:"type"`
+	SubscriptionPlan string `json:"subscription_plan"`
+	LoginMethod      string `json:"login_method"`
+	Status           string `json:"status"`
+	Group            string `json:"group"`
+	AccountPool      string `json:"account_pool"`
+	Search           string `json:"search"`
+	PrivacyMode      string `json:"privacy_mode"`
+	ExecutionNodeID  string `json:"execution_node_id"`
 }
 
 // CheckMixedChannelRequest represents check mixed channel risk request
@@ -580,6 +586,12 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	subscriptionPlan := strings.ToLower(strings.TrimSpace(c.Query("subscription_plan")))
+	loginMethod := strings.ToLower(strings.TrimSpace(c.Query("login_method")))
+	if !service.IsValidAccountSubscriptionPlanFilter(subscriptionPlan) || !service.IsValidAccountLoginMethodFilter(loginMethod) {
+		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_ACCOUNT_FILTER", "invalid account classification filter"))
+		return
+	}
 	executionNodeID, executionNodeErr := parseExecutionNodeFilter(c)
 	if executionNodeErr != nil {
 		response.ErrorFrom(c, executionNodeErr)
@@ -689,6 +701,21 @@ func (h *AccountHandler) List(c *gin.Context) {
 
 	var filteredAccountIDs []int64
 	filterByAccountIDs := false
+	var classificationAccountIDs []int64
+	if subscriptionPlan != "" || loginMethod != "" {
+		lister, ok := h.adminService.(accountClassificationIDLister)
+		if !ok {
+			response.ErrorFrom(c, infraerrors.ServiceUnavailable("ACCOUNT_CLASSIFICATION_FILTER_UNAVAILABLE", "account classification filtering is temporarily unavailable"))
+			return
+		}
+		var classificationErr error
+		classificationAccountIDs, classificationErr = lister.ListAccountIDsByClassification(c.Request.Context(), subscriptionPlan, loginMethod)
+		if classificationErr != nil {
+			response.ErrorFrom(c, classificationErr)
+			return
+		}
+		filteredAccountIDs, filterByAccountIDs = intersectAccountIDFilters(filteredAccountIDs, filterByAccountIDs, classificationAccountIDs)
+	}
 	if focusedAccountID > 0 {
 		filteredAccountIDs, filterByAccountIDs = intersectAccountIDFilters(filteredAccountIDs, filterByAccountIDs, []int64{focusedAccountID})
 	}
@@ -796,6 +823,9 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 	if includeSchedulerScore && pageHasOpenAIAccounts {
 		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
+		if subscriptionPlan != "" || loginMethod != "" {
+			schedulerFilterPool = filterAccountsByIDList(schedulerFilterPool, classificationAccountIDs)
+		}
 		if executionNodeID != "" {
 			schedulerFilterPool = filterAccountsByExecutionNode(schedulerFilterPool, executionNodeID)
 		}
@@ -932,7 +962,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	if !concurrencySnapshotAt.IsZero() {
 		c.Header("X-Concurrency-Snapshot-At", concurrencySnapshotAt.Format(time.RFC3339))
 	}
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, focusedAccountID, activeConcurrencyGroupID, groupConcurrencyCounts, lite)
+	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, subscriptionPlan, loginMethod, focusedAccountID, activeConcurrencyGroupID, groupConcurrencyCounts, lite)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -949,7 +979,7 @@ func buildAccountsListETag(
 	items []AccountWithConcurrency,
 	total int64,
 	page, pageSize int,
-	platform, accountType, status, search string,
+	platform, accountType, status, search, subscriptionPlan, loginMethod string,
 	focusedAccountID int64,
 	activeConcurrencyGroupID int64,
 	groupConcurrencyCounts map[int64]int,
@@ -963,6 +993,8 @@ func buildAccountsListETag(
 		AccountType              string                   `json:"type"`
 		Status                   string                   `json:"status"`
 		Search                   string                   `json:"search"`
+		SubscriptionPlan         string                   `json:"subscription_plan"`
+		LoginMethod              string                   `json:"login_method"`
 		FocusedAccountID         int64                    `json:"account_id"`
 		ActiveConcurrencyGroupID int64                    `json:"active_concurrency_group"`
 		GroupConcurrencyCounts   map[int64]int            `json:"group_current_concurrency"`
@@ -976,6 +1008,8 @@ func buildAccountsListETag(
 		AccountType:              accountType,
 		Status:                   status,
 		Search:                   search,
+		SubscriptionPlan:         subscriptionPlan,
+		LoginMethod:              loginMethod,
 		FocusedAccountID:         focusedAccountID,
 		ActiveConcurrencyGroupID: activeConcurrencyGroupID,
 		GroupConcurrencyCounts:   groupConcurrencyCounts,
@@ -997,6 +1031,23 @@ func filterAccountsByConcurrencySnapshot(accounts []service.Account, counts map[
 	filtered := make([]service.Account, 0, len(accounts))
 	for i := range accounts {
 		if counts[accounts[i].ID] > 0 {
+			filtered = append(filtered, accounts[i])
+		}
+	}
+	return filtered
+}
+
+func filterAccountsByIDList(accounts []service.Account, accountIDs []int64) []service.Account {
+	if len(accounts) == 0 || len(accountIDs) == 0 {
+		return nil
+	}
+	allowed := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		allowed[accountID] = struct{}{}
+	}
+	filtered := make([]service.Account, 0, min(len(accounts), len(accountIDs)))
+	for i := range accounts {
+		if _, ok := allowed[accounts[i].ID]; ok {
 			filtered = append(filtered, accounts[i])
 		}
 	}
@@ -1174,7 +1225,9 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	response.Success(c, result.Data)
 }
 
-// Duplicate handles creating an independent account from an existing account's configuration.
+// Duplicate creates a new account from an existing account's configuration.
+// OpenAI OAuth duplicates retain independent scheduling configuration while
+// sharing one canonical credential owner for safe refresh-token rotation.
 // POST /api/v1/admin/accounts/:id/duplicate
 func (h *AccountHandler) Duplicate(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -1493,6 +1546,10 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	if account.IsCredentialShadow() {
 		return nil, "", infraerrors.BadRequest("SPARK_SHADOW_NO_REFRESH",
 			"cannot refresh spark shadow account; its credentials are managed by the parent account")
+	}
+	if account.IsOpenAIOAuthCredentialCopy() {
+		return nil, "", infraerrors.BadRequest("OPENAI_OAUTH_CREDENTIAL_COPY_REFRESH_SOURCE_REQUIRED",
+			"cannot refresh an OpenAI OAuth credential copy; refresh the primary credential source account")
 	}
 
 	var newCredentials map[string]any
@@ -2508,6 +2565,14 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	if req.Filters != nil {
+		req.Filters.SubscriptionPlan = strings.ToLower(strings.TrimSpace(req.Filters.SubscriptionPlan))
+		req.Filters.LoginMethod = strings.ToLower(strings.TrimSpace(req.Filters.LoginMethod))
+		if !service.IsValidAccountSubscriptionPlanFilter(req.Filters.SubscriptionPlan) || !service.IsValidAccountLoginMethodFilter(req.Filters.LoginMethod) {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_ACCOUNT_FILTER", "invalid account classification filter"))
+			return
+		}
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -2576,14 +2641,16 @@ func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *servi
 		return nil
 	}
 	return &service.BulkUpdateAccountFilters{
-		Platform:        filters.Platform,
-		Type:            filters.Type,
-		Status:          filters.Status,
-		Group:           filters.Group,
-		AccountPool:     filters.AccountPool,
-		Search:          filters.Search,
-		PrivacyMode:     filters.PrivacyMode,
-		ExecutionNodeID: filters.ExecutionNodeID,
+		Platform:         filters.Platform,
+		Type:             filters.Type,
+		SubscriptionPlan: filters.SubscriptionPlan,
+		LoginMethod:      filters.LoginMethod,
+		Status:           filters.Status,
+		Group:            filters.Group,
+		AccountPool:      filters.AccountPool,
+		Search:           filters.Search,
+		PrivacyMode:      filters.PrivacyMode,
+		ExecutionNodeID:  filters.ExecutionNodeID,
 	}
 }
 
@@ -3294,6 +3361,10 @@ func (h *AccountHandler) SetPrivacy(c *gin.Context) {
 	}
 	if account.Type != service.AccountTypeOAuth {
 		response.BadRequest(c, "Only OAuth accounts support privacy setting")
+		return
+	}
+	if account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
+		response.BadRequest(c, "Set privacy on the primary credential source account")
 		return
 	}
 	var mode string

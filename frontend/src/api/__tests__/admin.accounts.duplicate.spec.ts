@@ -56,4 +56,25 @@ describe('admin account duplicate API', () => {
     expect(post.mock.calls[1][2].headers).toEqual(firstHeaders)
     expect(sessionStorage.length).toBe(0)
   })
+
+  it('uses a fresh operation key after each successful copy', async () => {
+    vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+    post
+      .mockResolvedValueOnce({ data: { id: 43, name: 'primary (Copy)' } })
+      .mockResolvedValueOnce({ data: { id: 44, name: 'primary (Copy)' } })
+
+    await duplicate(42)
+    await duplicate(42)
+
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[0][2].headers).toEqual({
+      'Idempotency-Key': 'account-duplicate-42-11111111-1111-4111-8111-111111111111'
+    })
+    expect(post.mock.calls[1][2].headers).toEqual({
+      'Idempotency-Key': 'account-duplicate-42-22222222-2222-4222-8222-222222222222'
+    })
+    expect(sessionStorage.length).toBe(0)
+  })
 })

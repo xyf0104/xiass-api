@@ -125,6 +125,7 @@ func (s *openAITokenCacheStub) ReleaseRefreshLock(ctx context.Context, cacheKey 
 
 // openAIAccountRepoStub is a minimal stub implementing only the methods used by OpenAITokenProvider
 type openAIAccountRepoStub struct {
+	AccountRepository
 	account      *Account
 	getErr       error
 	updateErr    error
@@ -193,6 +194,41 @@ func TestOpenAITokenProvider_CacheHit(t *testing.T) {
 	require.Equal(t, "cached-token", token)
 	require.Equal(t, int32(1), atomic.LoadInt32(&cache.getCalled))
 	require.Equal(t, int32(0), atomic.LoadInt32(&cache.setCalled))
+}
+
+func TestOpenAITokenProviderLinkedCopyUsesCredentialSource(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).Format(time.RFC3339)
+	source := &Account{
+		ID:       100,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":  "source-token",
+			"refresh_token": "source-refresh",
+			"expires_at":    expiresAt,
+		},
+	}
+	copyAccount := &Account{
+		ID:       200,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":  "stale-copy-token",
+			"refresh_token": "stale-copy-refresh",
+			"expires_at":    expiresAt,
+		},
+		Extra: map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: "100"},
+	}
+	repo := &openAIAccountRepoStub{account: source}
+	cache := newOpenAITokenCacheStub()
+	provider := NewOpenAITokenProvider(repo, cache, nil)
+
+	token, err := provider.GetAccessToken(context.Background(), copyAccount)
+
+	require.NoError(t, err)
+	require.Equal(t, "source-token", token)
+	require.Equal(t, OpenAITokenCacheKey(source), OpenAITokenCacheKey(copyAccount))
+	require.Equal(t, "source-token", cache.tokens[OpenAITokenCacheKey(source)])
 }
 
 func TestOpenAITokenProvider_CacheMiss_FromCredentials(t *testing.T) {

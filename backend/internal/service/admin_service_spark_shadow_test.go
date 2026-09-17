@@ -320,6 +320,24 @@ func TestPersistAccountCredentials_SkipsShadow(t *testing.T) {
 	require.Empty(t, repo.accounts[shadow.ID].Credentials, "影子凭据不可被写入(仓储)")
 }
 
+func TestPersistAccountCredentialsSkipsOpenAIOAuthCredentialCopy(t *testing.T) {
+	ctx := context.Background()
+	repo := newSparkShadowRepoStub()
+	copyAccount := &Account{
+		Name: "copy", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status:      StatusActive,
+		Credentials: map[string]any{"access_token": "snapshot-access", "model_mapping": map[string]any{"gpt-6": "gpt-6-astra"}},
+		Extra:       map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: "100"},
+	}
+	require.NoError(t, repo.Create(ctx, copyAccount))
+
+	err := persistAccountCredentials(ctx, repo, copyAccount, map[string]any{"access_token": "rotated-on-copy"})
+
+	require.NoError(t, err)
+	require.Equal(t, "snapshot-access", copyAccount.Credentials["access_token"])
+	require.Equal(t, "snapshot-access", repo.accounts[copyAccount.ID].Credentials["access_token"])
+}
+
 // TestResolveCredentialAccount_RejectsParentShadow 验证外审第6轮 P2 防御:畸形数据/手工 DB
 // 写出的「影子→影子」链,凭据解析必须 fail-closed 而非停在无凭据的一级影子。
 func TestResolveCredentialAccount_RejectsParentShadow(t *testing.T) {

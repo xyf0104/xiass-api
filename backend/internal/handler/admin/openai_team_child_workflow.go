@@ -452,7 +452,7 @@ func parseOpenAIAccountRouteID(c *gin.Context) (int64, error) {
 // used the dedicated login-email endpoint first. The password ciphertext is
 // intentionally optional because the official page may not request one.
 func openAIAccountReauthorizationLogin(account *service.Account) (email, ciphertext, kind string) {
-	if account == nil || account.Platform != service.PlatformOpenAI || !account.IsOAuth() || account.IsCredentialShadow() {
+	if account == nil || account.Platform != service.PlatformOpenAI || !account.IsOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return "", "", ""
 	}
 	if teamEmail, teamChild := teamChildAccountWorkflowEmail(account); teamChild {

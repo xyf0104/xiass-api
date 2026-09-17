@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,17 @@ func (s *adminServiceImpl) ListAccountsForSchedulerScoreFilter(ctx context.Conte
 	return s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
 }
 
+func (s *adminServiceImpl) ListAccountIDsByClassification(ctx context.Context, subscriptionPlan, loginMethod string) ([]int64, error) {
+	if s == nil || s.accountRepo == nil {
+		return nil, nil
+	}
+	lister, ok := s.accountRepo.(AccountClassificationIDRepository)
+	if !ok {
+		return nil, errors.New("account repository does not support classification filtering")
+	}
+	return lister.ListAccountIDsByClassification(ctx, subscriptionPlan, loginMethod)
+}
+
 func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx context.Context, groupID *int64) ([]Account, error) {
 	if s == nil || s.accountRepo == nil {
 		return nil, nil
@@ -138,6 +150,9 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	// A retry identity belongs to the operation that created one copy, not to later copies.
 	duplicateAccountOperationIDExtraKey: {},
+	// Credential ownership is rebuilt from the canonical source below. Never
+	// copy a possibly chained or forged source marker verbatim.
+	OpenAIOAuthCredentialSourceIDExtraKey: {},
 	// External sync identity belongs to one local account only.
 	"crs_account_id": {},
 	"crs_kind":       {},
@@ -207,12 +222,17 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	return stripOpenAIQuotaRuntimeExtra(cloned), nil
 }
 
-func canDuplicateAccountType(accountType string) bool {
-	switch accountType {
+func canDuplicateAccount(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	switch account.Type {
 	case AccountTypeAPIKey, AccountTypeUpstream, AccountTypeBedrock, AccountTypeServiceAccount:
 		return true
 	default:
-		return false
+		// OpenAI OAuth copies share one canonical credential owner. Agent identity
+		// credentials carry a task-bound private key lifecycle and remain excluded.
+		return account.IsOpenAIOAuth() && !account.IsOpenAIAgentIdentity()
 	}
 }
 
@@ -279,10 +299,10 @@ func cloneAccountValuePointer[T any](value *T) *T {
 	return &cloned
 }
 
-// DuplicateAccount creates a paused account from source configuration without carrying first-class
-// runtime state. Credentials and extra configuration are deep-copied so normalization of the new
-// account cannot mutate the in-memory source. Linked credential shadows are excluded because they
-// intentionally do not own credentials and must be created through CreateShadow.
+// DuplicateAccount creates a new account from source configuration without carrying first-class
+// runtime state. Static credentials are copied into a paused row. OpenAI OAuth accounts become
+// independently schedulable rows linked to one canonical credential owner, so only that owner can
+// rotate the refresh token. Linked Spark shadows remain excluded and must use CreateShadow.
 func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actorScope, operationKey string) (*Account, error) {
 	operationID := duplicateAccountOperationID(id, actorScope, operationKey)
 	existing, err := s.RecoverDuplicateAccount(ctx, id, actorScope, operationKey)
@@ -306,14 +326,29 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			"linked credential shadow accounts cannot be duplicated; duplicate the parent account instead",
 		)
 	}
-	if !canDuplicateAccountType(source.Type) {
+	if !canDuplicateAccount(source) {
 		return nil, infraerrors.BadRequest(
 			"ACCOUNT_DUPLICATE_CREDENTIAL_TYPE_UNSUPPORTED",
 			"accounts with rotating or unsupported credential types cannot be duplicated",
 		)
 	}
 
-	credentials, err := cloneAccountJSONMap(source.Credentials)
+	credentialOwner := source
+	if source.IsOpenAIOAuthCredentialCopy() {
+		credentialOwner, err = resolveOpenAIOAuthCredentialSourceAccount(ctx, s.accountRepo, source)
+		if err != nil {
+			return nil, err
+		}
+	}
+	credentialSnapshot := credentialOwner.Credentials
+	if source.IsOpenAIOAuth() {
+		// A copy may carry account-local request configuration such as model
+		// mappings. Preserve those fields when copying a copy, while always
+		// replacing token and identity fields with the canonical owner's latest
+		// snapshot so credential ownership can never form a chain.
+		credentialSnapshot = mergeOpenAIOAuthSourceCredentials(source.Credentials, credentialOwner.Credentials)
+	}
+	credentials, err := cloneAccountJSONMap(credentialSnapshot)
 	if err != nil {
 		return nil, fmt.Errorf("clone account credentials: %w", err)
 	}
@@ -374,7 +409,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	// request. In multi-node mode it must use that instance's durable node and
 	// private egress instead of inheriting the source account's ownership.
 	if s.settingService != nil {
-		accountExtra, input.ProxyID = applyExecutionNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+		accountExtra, input.ProxyID, err = s.applyManagedExecutionNodeForCreate(ctx, accountExtra, input.ProxyID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
@@ -383,8 +421,19 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, err
 	}
-	// A copied credential must be reviewed before it can share live traffic with its source.
-	duplicate.Schedulable = false
+	if source.IsOpenAIOAuth() {
+		if duplicate.Extra == nil {
+			duplicate.Extra = make(map[string]any, 1)
+		}
+		duplicate.Extra[OpenAIOAuthCredentialSourceIDExtraKey] = strconv.FormatInt(credentialOwner.ID, 10)
+		// OAuth copies are safe to schedule immediately because only the canonical
+		// source account can rotate credentials. Preserve an intentionally paused
+		// source instead of silently enabling its copies.
+		duplicate.Schedulable = source.Schedulable
+	} else {
+		// Static credential copies keep the existing review-before-enable behavior.
+		duplicate.Schedulable = false
+	}
 	if s.accountDuplicateRepo == nil {
 		return nil, errors.New("account duplicate repository is not configured")
 	}
@@ -521,6 +570,9 @@ func normalizeGrokMediaEligibilityUpdateExtra(account *Account, input *UpdateAcc
 }
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
+	// Credential-copy ownership is server-managed and can only be established by
+	// DuplicateAccount after all ordinary create/import normalization completes.
+	delete(accountExtra, OpenAIOAuthCredentialSourceIDExtraKey)
 	// Imported runtime observations belong to the source row, not a new account.
 	if input.Platform == PlatformOpenAI && input.Type == AccountTypeOAuth {
 		accountExtra = stripOpenAIQuotaRuntimeExtra(accountExtra)
@@ -669,8 +721,24 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if s.settingService != nil {
 		if input.PreserveOAuthWorkflowProxy {
 			accountExtra, input.ProxyID = applyOAuthWorkflowNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+			// A trusted OAuth workflow may have already selected and verified an
+			// explicit proxy. When it did not, bind the resulting account to the
+			// accepting node's managed private egress just like every other create
+			// path, instead of forcing the administrator to choose one manually.
+			if input.ProxyID == nil || *input.ProxyID <= 0 {
+				managedProxyID, managedErr := s.executionNodeManagedProxyID(ctx, &Account{Extra: accountExtra})
+				if managedErr != nil {
+					return nil, managedErr
+				}
+				if managedProxyID > 0 {
+					input.ProxyID = &managedProxyID
+				}
+			}
 		} else {
-			accountExtra, input.ProxyID = applyExecutionNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
+			accountExtra, input.ProxyID, err = s.applyManagedExecutionNodeForCreate(ctx, accountExtra, input.ProxyID)
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		delete(accountExtra, AccountExecutionNodeExtraKey)
@@ -791,6 +859,23 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_IMMUTABLE_TYPE",
 				"spark shadow account type cannot be changed; it must remain an OpenAI OAuth shadow")
 		}
+	} else if account.IsOpenAIOAuthCredentialCopy() {
+		if input.Type != "" && input.Type != account.Type {
+			return nil, infraerrors.BadRequest(
+				"OPENAI_OAUTH_CREDENTIAL_COPY_IMMUTABLE_TYPE",
+				"an OpenAI OAuth credential copy must remain an OpenAI OAuth account",
+			)
+		}
+		if input.AllowOpenAIReauthorizationCredentials {
+			return nil, infraerrors.BadRequest(
+				"OPENAI_OAUTH_CREDENTIAL_COPY_REAUTH_SOURCE_REQUIRED",
+				"reauthorize the primary credential source account instead of its copy",
+			)
+		}
+		// The edit form sends a full, redacted credential document. Keep copy-local
+		// model/request configuration, but ignore every identity/token field owned
+		// by the canonical source account.
+		input.Credentials = preserveOpenAIOAuthSourceCredentialSnapshot(account.Credentials, input.Credentials)
 	} else if input.Type != "" && input.Type != account.Type && input.Type != AccountTypeOAuth {
 		// 母账号守卫(外审 D/P1):有 spark 影子的账号不能把 type 改出 OpenAI OAuth——影子读透母
 		// 凭据,母变成 apikey/setup_token 会让影子被调度后按错协议失败(resolveCredentialAccount
@@ -867,6 +952,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OpenAITeamChildEmailExtraKey)
 		delete(normalizedExtra, OpenAIReauthorizationStateExtraKey)
 		delete(normalizedExtra, OpenAIAdsPowerBindingExtraKey)
+		delete(normalizedExtra, OpenAIOAuthCredentialSourceIDExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -886,6 +972,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenAITeamChildEmailExtraKey,
 			OpenAIReauthorizationStateExtraKey,
 			OpenAIAdsPowerBindingExtraKey,
+			OpenAIOAuthCredentialSourceIDExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -947,11 +1034,18 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
 	if input.ProxyID != nil && !account.IsCredentialShadow() {
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
+		resetToManagedProxy := false
 		if *input.ProxyID == 0 {
 			if s.executionNodeRoutingActive(ctx) {
-				return nil, infraerrors.BadRequest("EXECUTION_NODE_PROXY_REQUIRED", "accounts must keep a private egress proxy while multi-node routing is enabled")
+				managedProxyID, err := s.executionNodeManagedProxyID(ctx, account)
+				if err != nil {
+					return nil, err
+				}
+				account.ProxyID = &managedProxyID
+				resetToManagedProxy = true
+			} else {
+				account.ProxyID = nil
 			}
-			account.ProxyID = nil
 		} else {
 			account.ProxyID = input.ProxyID
 		}
@@ -959,7 +1053,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			account.Extra = make(map[string]any)
 		}
 		delete(account.Extra, AccountExecutionProxyExtraKey)
-		if *input.ProxyID > 0 {
+		if !resetToManagedProxy && *input.ProxyID > 0 {
 			account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
@@ -1269,6 +1363,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OpenAIAdsPowerBindingExtraKey)
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
+	delete(updates, OpenAIOAuthCredentialSourceIDExtraKey)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
@@ -1308,6 +1403,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, AccountExecutionNodeExtraKey)
 	delete(input.Extra, AccountExecutionProxyExtraKey)
 	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
+	delete(input.Extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	fingerprintModeValue, hasFingerprintModeUpdate := input.Extra[codexFingerprintModeExtraKey]
 	if hasFingerprintModeUpdate {
 		mode, ok := fingerprintModeValue.(string)
@@ -1440,18 +1536,49 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_NO_CREDENTIALS",
 					"spark shadow account %d cannot hold credentials; manage credentials on the parent account", acc.ID)
 			}
+			if acc != nil && acc.IsOpenAIOAuthCredentialCopy() && containsOpenAIOAuthSourceCredentialUpdates(input.Credentials) {
+				return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_OAUTH_CREDENTIAL_COPY_SOURCE_FIELDS_MANAGED",
+					"OpenAI OAuth credential copy %d inherits identity and token fields from its source account", acc.ID)
+			}
 		}
 	}
 
 	// 影子账号 proxy 恒继承母账号(与单账号 UpdateAccount 守卫对齐——外审第4轮 P1):批量携带 proxy
 	// 时目标不得含影子,否则影子会获得独立 proxy、破坏继承不变量(网关按所选影子自身 proxy 出站,
 	// 要等母账号下次改 proxy 才覆盖→漂移)。含影子即整体拒绝,提示从选择中剔除影子。
+	// 多节点模式下 proxy_id=0 不再表示真正清空代理，而是按每个账号自己的节点归属恢复系统出口；
+	// 一批账号可能属于不同节点，因此先逐账号解析，再按目标 proxy 分组持久化。
+	managedProxyReset := false
+	managedProxyByAccount := make(map[int64]int64)
 	if input.ProxyID != nil {
-		if *input.ProxyID <= 0 && s.executionNodeRoutingActive(ctx) {
-			return nil, infraerrors.BadRequest("EXECUTION_NODE_PROXY_REQUIRED", "accounts must keep a private egress proxy while multi-node routing is enabled")
-		}
-		for _, acc := range cachedTargets {
-			if acc != nil && acc.IsCredentialShadow() {
+		managedProxyReset = *input.ProxyID <= 0 && s.executionNodeRoutingActive(ctx)
+		if managedProxyReset {
+			targetsByID := make(map[int64]*Account, len(cachedTargets))
+			for _, account := range cachedTargets {
+				if account != nil {
+					targetsByID[account.ID] = account
+				}
+			}
+			for _, accountID := range input.AccountIDs {
+				acc, ok := targetsByID[accountID]
+				if !ok {
+					return nil, ErrAccountNotFound
+				}
+				if acc.IsCredentialShadow() {
+					return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
+						"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
+				}
+				managedProxyID, err := s.executionNodeManagedProxyID(ctx, acc)
+				if err != nil {
+					return nil, err
+				}
+				managedProxyByAccount[accountID] = managedProxyID
+			}
+		} else {
+			for _, acc := range cachedTargets {
+				if acc == nil || !acc.IsCredentialShadow() {
+					continue
+				}
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
 					"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
 			}
@@ -1535,12 +1662,14 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Name = &input.Name
 	}
 	if input.ProxyID != nil {
-		repoUpdates.ProxyID = input.ProxyID
+		if !managedProxyReset {
+			repoUpdates.ProxyID = input.ProxyID
+		}
 		if repoUpdates.Extra == nil {
 			repoUpdates.Extra = make(map[string]any)
 		}
 		repoUpdates.Extra[AccountExecutionProxyExtraKey] = nil
-		if *input.ProxyID > 0 {
+		if !managedProxyReset && *input.ProxyID > 0 {
 			repoUpdates.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 	}
@@ -1573,9 +1702,40 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
+	if managedProxyReset {
+		type proxyAccountGroup struct {
+			proxyID    int64
+			accountIDs []int64
+		}
+		groups := make([]proxyAccountGroup, 0, len(managedProxyByAccount))
+		groupIndex := make(map[int64]int, len(managedProxyByAccount))
+		for _, accountID := range input.AccountIDs {
+			proxyID := managedProxyByAccount[accountID]
+			index, exists := groupIndex[proxyID]
+			if !exists {
+				index = len(groups)
+				groupIndex[proxyID] = index
+				groups = append(groups, proxyAccountGroup{proxyID: proxyID})
+			}
+			groups[index].accountIDs = append(groups[index].accountIDs, accountID)
+		}
+		for i := range groups {
+			proxyID := groups[i].proxyID
+			if _, err := s.accountRepo.BulkUpdate(ctx, groups[i].accountIDs, AccountBulkUpdate{ProxyID: &proxyID}); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
-	if repoUpdates.ProxyID != nil {
+	if managedProxyReset {
+		for _, accountID := range input.AccountIDs {
+			proxyID := managedProxyByAccount[accountID]
+			if err := s.propagateProxyToShadows(ctx, accountID, &proxyID); err != nil {
+				return nil, err
+			}
+		}
+	} else if repoUpdates.ProxyID != nil {
 		var effectiveProxyID *int64
 		if *repoUpdates.ProxyID != 0 {
 			effectiveProxyID = repoUpdates.ProxyID
@@ -1622,6 +1782,52 @@ func (s *adminServiceImpl) executionNodeRoutingActive(ctx context.Context) bool 
 	return !settings.Available || settings.Enabled
 }
 
+func (s *adminServiceImpl) executionNodeManagedProxyID(ctx context.Context, account *Account) (int64, error) {
+	if s == nil || s.settingService == nil || s.settingService.cfg == nil || !s.executionNodeRoutingActive(ctx) {
+		return 0, nil
+	}
+	cfg := s.settingService.cfg.Gateway.ExecutionNode
+	nodeID := strings.TrimSpace(cfg.ID)
+	if account != nil {
+		nodeID = account.ExecutionNodeID(cfg.LegacyUnassignedNodeID)
+	}
+	settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
+	if settings.Available {
+		if proxyID := settings.ProxyIDs[nodeID]; proxyID > 0 {
+			return proxyID, nil
+		}
+	}
+	if nodeID == strings.TrimSpace(cfg.ID) && cfg.DefaultProxyID > 0 {
+		return cfg.DefaultProxyID, nil
+	}
+	if nodeID == strings.TrimSpace(cfg.LegacyUnassignedNodeID) && cfg.LegacyUnassignedProxyID > 0 {
+		return cfg.LegacyUnassignedProxyID, nil
+	}
+	return 0, infraerrors.BadRequest(
+		"EXECUTION_NODE_PROXY_MAPPING_INCOMPLETE",
+		fmt.Sprintf("execution node %s does not have a private egress proxy", nodeID),
+	)
+}
+
+func (s *adminServiceImpl) applyManagedExecutionNodeForCreate(
+	ctx context.Context,
+	extra map[string]any,
+	proxyID *int64,
+) (map[string]any, *int64, error) {
+	extra, proxyID = applyExecutionNodeForCreate(s.settingService.cfg, extra, proxyID)
+	if !s.executionNodeRoutingActive(ctx) {
+		return extra, proxyID, nil
+	}
+	managedProxyID, err := s.executionNodeManagedProxyID(ctx, &Account{Extra: extra})
+	if err != nil {
+		return nil, nil, err
+	}
+	if managedProxyID > 0 {
+		proxyID = &managedProxyID
+	}
+	return extra, proxyID, nil
+}
+
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {
 	for _, key := range []string{"api_key", "base_url", credKeyHeaderOverrideEnabled, credKeyHeaderOverrides} {
 		if _, ok := credentials[key]; ok {
@@ -1664,8 +1870,8 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		}
 		groupID = parsedGroupID
 	}
-	var poolAccountIDs []int64
-	filterByPool := false
+	var filteredAccountIDs []int64
+	filterByAccountIDs := false
 	if rawPoolID := strings.TrimSpace(filters.AccountPool); rawPoolID != "" {
 		poolID, err := strconv.ParseInt(rawPoolID, 10, 64)
 		if err != nil || poolID <= 0 {
@@ -1675,8 +1881,20 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		if err != nil {
 			return nil, err
 		}
-		poolAccountIDs = append([]int64(nil), pool.AccountIDs...)
-		filterByPool = true
+		filteredAccountIDs, filterByAccountIDs = intersectBulkUpdateAccountIDs(filteredAccountIDs, filterByAccountIDs, pool.AccountIDs)
+	}
+
+	subscriptionPlan := strings.ToLower(strings.TrimSpace(filters.SubscriptionPlan))
+	loginMethod := strings.ToLower(strings.TrimSpace(filters.LoginMethod))
+	if !IsValidAccountSubscriptionPlanFilter(subscriptionPlan) || !IsValidAccountLoginMethodFilter(loginMethod) {
+		return nil, infraerrors.BadRequest("INVALID_ACCOUNT_FILTER", "invalid account classification filter")
+	}
+	if subscriptionPlan != "" || loginMethod != "" {
+		classificationAccountIDs, err := s.ListAccountIDsByClassification(ctx, subscriptionPlan, loginMethod)
+		if err != nil {
+			return nil, err
+		}
+		filteredAccountIDs, filterByAccountIDs = intersectBulkUpdateAccountIDs(filteredAccountIDs, filterByAccountIDs, classificationAccountIDs)
 	}
 
 	const pageSize = 500
@@ -1688,9 +1906,9 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		var total int64
 		var err error
 		if strings.TrimSpace(filters.ExecutionNodeID) != "" {
-			if filterByPool {
+			if filterByAccountIDs {
 				accounts, total, err = s.ListAccountsByIDsWithExecutionNode(
-					ctx, page, pageSize, poolAccountIDs, filters.Platform, filters.Type, filters.Status,
+					ctx, page, pageSize, filteredAccountIDs, filters.Platform, filters.Type, filters.Status,
 					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
 				)
 			} else {
@@ -1699,9 +1917,9 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
 				)
 			}
-		} else if filterByPool {
+		} else if filterByAccountIDs {
 			accounts, total, err = s.ListAccountsByIDs(
-				ctx, page, pageSize, poolAccountIDs, filters.Platform, filters.Type, filters.Status,
+				ctx, page, pageSize, filteredAccountIDs, filters.Platform, filters.Type, filters.Status,
 				filters.Search, groupID, filters.PrivacyMode, "", "",
 			)
 		} else {
@@ -1723,6 +1941,28 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 	}
 }
 
+func intersectBulkUpdateAccountIDs(current []int64, currentSet bool, next []int64) ([]int64, bool) {
+	if !currentSet {
+		result := append([]int64(nil), next...)
+		slices.Sort(result)
+		return slices.Compact(result), true
+	}
+	allowed := make(map[int64]struct{}, len(current))
+	for _, accountID := range current {
+		if accountID > 0 {
+			allowed[accountID] = struct{}{}
+		}
+	}
+	result := make([]int64, 0, len(next))
+	for _, accountID := range next {
+		if _, ok := allowed[accountID]; ok {
+			result = append(result, accountID)
+		}
+	}
+	slices.Sort(result)
+	return slices.Compact(result), true
+}
+
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
 		return err
@@ -1735,6 +1975,19 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 	for _, shadow := range shadows {
 		if err := s.accountRepo.Delete(ctx, shadow.ID); err != nil {
 			return fmt.Errorf("cascade delete spark shadow %d: %w", shadow.ID, err)
+		}
+	}
+	credentialCopies, err := s.accountRepo.FindByExtraField(
+		ctx,
+		OpenAIOAuthCredentialSourceIDExtraKey,
+		strconv.FormatInt(id, 10),
+	)
+	if err != nil {
+		return fmt.Errorf("list OpenAI OAuth credential copies for cascade delete: %w", err)
+	}
+	for i := range credentialCopies {
+		if err := s.accountRepo.Delete(ctx, credentialCopies[i].ID); err != nil {
+			return fmt.Errorf("cascade delete OpenAI OAuth credential copy %d: %w", credentialCopies[i].ID, err)
 		}
 	}
 	if err := s.accountRepo.Delete(ctx, id); err != nil {
@@ -1862,6 +2115,10 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 	if parent.IsCredentialShadow() {
 		return nil, infraerrors.New(http.StatusBadRequest, "SPARK_SHADOW_PARENT_IS_SHADOW",
 			"spark shadow parent must be a real account, not another spark shadow")
+	}
+	if parent.IsOpenAIOAuthCredentialCopy() {
+		return nil, infraerrors.New(http.StatusBadRequest, "SPARK_SHADOW_PARENT_IS_CREDENTIAL_COPY",
+			"spark shadow must be created from the primary credential owner, not an OAuth account copy")
 	}
 
 	// 2. 一母一影校验
@@ -2136,8 +2393,9 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 // EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
 // 未设置则调用 disableOpenAITraining 并持久化到 Extra，返回设置的 mode 值。
 func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Account) string {
-	// 影子账号不持凭据，隐私设置由母账号管理，直接跳过。
-	if account.IsCredentialShadow() {
+	// Linked accounts do not own independent identity credentials. Privacy is
+	// managed once on the canonical credential source.
+	if account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return ""
 	}
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
@@ -2173,8 +2431,9 @@ func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Acc
 
 // ForceOpenAIPrivacy 强制重新设置 OpenAI OAuth 账号隐私，无论当前状态。
 func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Account) string {
-	// 影子账号不持凭据,隐私由母账号管理,直接跳过(与 EnsureOpenAIPrivacy 一致——外审第4轮)。
-	if account.IsCredentialShadow() {
+	// Linked accounts do not own independent identity credentials; keep this in
+	// lockstep with EnsureOpenAIPrivacy.
+	if account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return ""
 	}
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {

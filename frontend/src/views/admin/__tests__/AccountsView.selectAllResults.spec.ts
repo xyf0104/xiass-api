@@ -115,7 +115,8 @@ const BulkEditAccountModalStub = {
 }
 
 const AccountTableFiltersStub = {
-  emits: ['change'],
+  props: ['filters'],
+  emits: ['change', 'update:filters'],
   template: '<button data-test="change-filter" @click="$emit(\'change\')">change filter</button>'
 }
 
@@ -251,6 +252,48 @@ describe('admin AccountsView select all filtered results', () => {
 
     expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
     expect(wrapper.get('[data-test="all-results-selected"]').text()).toBe('false')
+  })
+
+  it('uses subscription and login classifications for select-all and filtered bulk actions', async () => {
+    const matching = makeAccounts(2).map(account => ({
+      ...account,
+      platform: 'openai',
+      credentials: { plan_type: 'plus' }
+    }))
+    listAccounts.mockResolvedValue({
+      items: matching,
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    wrapper.findComponent(AccountTableFiltersStub).vm.$emit('update:filters', {
+      subscription_plan: 'plus',
+      login_method: 'password_2fa'
+    })
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(1, 1000, expect.objectContaining({
+      subscription_plan: 'plus',
+      login_method: 'password_2fa',
+      lite: '1',
+      include_scheduler_score: '0'
+    }))
+
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').exists()).toBe(true)
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 1000, expect.objectContaining({
+      subscription_plan: 'plus',
+      login_method: 'password_2fa'
+    }))
   })
 
   it('starts every visit with recent account activity first instead of restoring an old table sort', async () => {

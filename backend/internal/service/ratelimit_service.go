@@ -275,7 +275,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		// 问题变成影子永久死亡。母账号被标记 temp-unschedulable 后由 parentHealthyForShadow 级联排除影子。
 		// 非影子时 resolveCredentialAccount 返回自身;母账号缺失/损坏(orphan 影子,罕见)时回退到原 account。
 		authAccount := account
-		if resolved, rerr := resolveCredentialAccount(ctx, s.accountRepo, account); rerr == nil && resolved != nil {
+		if account.IsOpenAIOAuthCredentialCopy() {
+			if source, rerr := resolveOpenAIOAuthCredentialSourceAccount(ctx, s.accountRepo, account); rerr == nil && source != nil {
+				authAccount = source
+			}
+		} else if resolved, rerr := resolveCredentialAccount(ctx, s.accountRepo, account); rerr == nil && resolved != nil {
 			authAccount = resolved
 		}
 		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
@@ -1671,6 +1675,14 @@ func persistOpenAI429PlanType(ctx context.Context, repo AccountRepository, accou
 	// plan_type 由母账号在自己的请求上维护,影子跳过。
 	if account.IsCredentialShadow() {
 		return
+	}
+	if account.IsOpenAIOAuthCredentialCopy() {
+		source, err := resolveOpenAIOAuthCredentialSourceAccount(ctx, repo, account)
+		if err != nil {
+			slog.Warn("openai_429_plan_type_source_resolve_failed", "account_id", account.ID, "error", err)
+			return
+		}
+		account = source
 	}
 
 	planType := parseOpenAIRateLimitPlanType(body)

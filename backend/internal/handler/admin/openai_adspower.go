@@ -505,7 +505,7 @@ func (h *OpenAIOAuthHandler) CreateOpenAIAdsPowerLaunchTicket(c *gin.Context) {
 			return
 		}
 		account, err := h.adminService.GetAccount(c.Request.Context(), req.AccountID)
-		if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+		if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 			response.BadRequest(c, "Only primary OpenAI OAuth accounts can use AdsPower")
 			return
 		}
@@ -576,7 +576,7 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 	}
 	if mode == batchOAuthModeReauthorization {
 		account, err := h.adminService.GetAccount(c.Request.Context(), task.TargetAccountID)
-		if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+		if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 			response.Error(c, http.StatusConflict, "OpenAI account is unavailable")
 			return
 		}
@@ -976,7 +976,7 @@ func (h *OpenAIOAuthHandler) ClaimOpenAIAdsPowerBinding(c *gin.Context) {
 		return
 	}
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
-	if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		response.BadRequest(c, "Only primary OpenAI OAuth accounts can claim an AdsPower profile")
 		return
 	}

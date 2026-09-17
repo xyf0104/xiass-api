@@ -594,13 +594,13 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 		}
 	}
 
-	// Spark shadow accounts do not hold their own credentials; resolve to the
-	// parent account so that chatgpt_account_id / access_token / proxy all come
-	// from the parent. This must happen BEFORE the chatgpt_account_id check.
-	if account.IsShadow() {
+	// Resolve linked credentials before reading chatgpt_account_id or capturing
+	// a token snapshot. Spark shadows inherit the parent wholesale; OAuth copies
+	// inherit current source credentials while retaining their own proxy/config.
+	if account.RequiresCredentialResolution() {
 		resolved, rerr := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if rerr != nil {
-			return "", "", "", false, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_SHADOW_RESOLVE_FAILED", "failed to resolve shadow account: %v", rerr)
+			return "", "", "", false, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_CREDENTIAL_RESOLVE_FAILED", "failed to resolve linked account credentials: %v", rerr)
 		}
 		account = resolved
 	}
@@ -705,7 +705,7 @@ func (s *OpenAIQuotaService) recoverAgentIdentityTask(ctx context.Context, accou
 	if err != nil || account == nil {
 		return fmt.Errorf("account is unavailable")
 	}
-	if account.IsShadow() {
+	if account.RequiresCredentialResolution() {
 		account, err = resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil || account == nil {
 			return fmt.Errorf("credential account is unavailable")
@@ -725,7 +725,7 @@ func (s *OpenAIQuotaService) isAgentIdentityAccount(ctx context.Context, account
 	if err != nil || account == nil {
 		return false
 	}
-	if account.IsShadow() {
+	if account.RequiresCredentialResolution() {
 		account, err = resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil || account == nil {
 			return false
@@ -746,7 +746,7 @@ func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, account
 		}
 		return headers, "", nil
 	}
-	if account.IsShadow() {
+	if account.RequiresCredentialResolution() {
 		if resolved, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account); resolveErr == nil && resolved != nil {
 			account = resolved
 		} else if strings.TrimSpace(accessToken) == "" {

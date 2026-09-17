@@ -35,6 +35,20 @@ func (s *accountPoolListStub) GetAccountPool(_ context.Context, id int64) (*serv
 	return s.pool, nil
 }
 
+type accountClassificationListStub struct {
+	*stubAdminService
+	accountIDs       []int64
+	subscriptionPlan string
+	loginMethod      string
+	err              error
+}
+
+func (s *accountClassificationListStub) ListAccountIDsByClassification(_ context.Context, subscriptionPlan, loginMethod string) ([]int64, error) {
+	s.subscriptionPlan = subscriptionPlan
+	s.loginMethod = loginMethod
+	return append([]int64(nil), s.accountIDs...), s.err
+}
+
 func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {
 	router, adminSvc := setupAccountListRouter()
 
@@ -140,6 +154,61 @@ func TestAccountHandlerListRejectsInvalidAccountPoolFilter(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?account_pool=invalid", nil)
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAccountHandlerListCombinesSubscriptionLoginAndPoolFiltersBeforePagination(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	adminSvc.accounts = []service.Account{
+		{ID: 17, Name: "pool-only", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+		{ID: 18, Name: "matching", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+		{ID: 19, Name: "classification-only", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth},
+	}
+	classificationSvc := &accountClassificationListStub{
+		stubAdminService: adminSvc,
+		accountIDs:       []int64{19, 18},
+	}
+	poolService := &classificationPoolListStub{
+		accountClassificationListStub: classificationSvc,
+		pool:                          &service.AccountPool{ID: 8, Name: "Plus 2FA", AccountIDs: []int64{17, 18}},
+	}
+	router := gin.New()
+	handler := NewAccountHandler(poolService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router.GET("/api/v1/admin/accounts", handler.List)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&subscription_plan=plus&login_method=password_2fa&account_pool=8", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, service.AccountSubscriptionPlanPlus, classificationSvc.subscriptionPlan)
+	require.Equal(t, service.AccountLoginMethodPassword2FA, classificationSvc.loginMethod)
+	require.Equal(t, []int64{18}, adminSvc.lastListAccounts.accountIDs)
+}
+
+type classificationPoolListStub struct {
+	*accountClassificationListStub
+	pool *service.AccountPool
+}
+
+func (s *classificationPoolListStub) GetAccountPool(_ context.Context, id int64) (*service.AccountPool, error) {
+	if s.pool == nil || s.pool.ID != id {
+		return nil, service.ErrAccountPoolNotFound
+	}
+	return s.pool, nil
+}
+
+func TestAccountHandlerListRejectsInvalidClassificationFilters(t *testing.T) {
+	router, _ := setupAccountListRouter()
+	for _, query := range []string{
+		"subscription_plan=enterprise",
+		"login_method=password",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?"+query, nil)
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, query)
+	}
 }
 
 func TestAccountHandlerListRejectsInvalidExactAccountID(t *testing.T) {

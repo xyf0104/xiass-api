@@ -19,7 +19,7 @@ const SelectStub = {
 
 describe('AccountTableFilters account pool filter', () => {
   it('lists pools and emits the selected pool without changing other filters', async () => {
-    const filters = { platform: '', type: '', status: '', privacy_mode: '', group: '', account_pool: '', execution_node_id: '' }
+    const filters = { platform: '', type: '', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '', execution_node_id: '' }
     const wrapper = mount(AccountTableFilters, {
       props: {
         searchQuery: '',
@@ -35,10 +35,38 @@ describe('AccountTableFilters account pool filter', () => {
     })
 
     const selects = wrapper.findAll('select')
-    expect(selects[5].text()).toContain('沐念云')
-    await selects[5].setValue('8')
+    expect(selects[7].text()).toContain('沐念云')
+    await selects[7].setValue('8')
 
     expect(wrapper.emitted('update:filters')?.[0]?.[0]).toEqual({ ...filters, account_pool: '8' })
     expect(wrapper.emitted('change')).toHaveLength(1)
+  })
+
+  it('keeps subscription plan and login method as independent combinable filters', async () => {
+    const filters = { platform: 'openai', type: 'oauth', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '', execution_node_id: '' }
+    const wrapper = mount(AccountTableFilters, {
+      props: { searchQuery: '', filters },
+      global: {
+        stubs: {
+          Select: SelectStub,
+          SearchInput: { template: '<input />' }
+        }
+      }
+    })
+
+    const selects = wrapper.findAll('select')
+    expect(selects[2].text()).toContain('Plus')
+    expect(selects[3].text()).toContain('admin.accounts.password2FALogin')
+
+    await selects[2].setValue('plus')
+    expect(wrapper.emitted('update:filters')?.[0]?.[0]).toEqual({ ...filters, subscription_plan: 'plus' })
+
+    await wrapper.setProps({ filters: { ...filters, subscription_plan: 'plus' } })
+    await selects[3].setValue('password_2fa')
+    expect(wrapper.emitted('update:filters')?.[1]?.[0]).toEqual({
+      ...filters,
+      subscription_plan: 'plus',
+      login_method: 'password_2fa'
+    })
   })
 })

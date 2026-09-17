@@ -10,6 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStripExecutionNodeIDFromExtraUpdateRemovesServerOwnedMarkers(t *testing.T) {
+	input := map[string]any{
+		service.AccountExecutionNodeExtraKey:          "api2",
+		service.OpenAIOAuthCredentialSourceIDExtraKey: "99",
+		"custom": true,
+	}
+
+	filtered := stripExecutionNodeIDFromExtraUpdate(input)
+
+	require.NotContains(t, filtered, service.AccountExecutionNodeExtraKey)
+	require.NotContains(t, filtered, service.OpenAIOAuthCredentialSourceIDExtraKey)
+	require.Equal(t, true, filtered["custom"])
+	require.Contains(t, input, service.AccountExecutionNodeExtraKey, "input map remains untouched")
+}
+
 func TestPrepareExecutionNodeRoutingMigratesLegacyAccountsAndPublishesRebuild(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

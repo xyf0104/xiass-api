@@ -192,7 +192,7 @@ func (s *adminServiceImpl) UpdateOpenAIReauthorizationState(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return errors.New("only primary OpenAI OAuth accounts can store reauthorization history")
 	}
 	state.Normalize()

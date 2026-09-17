@@ -1456,7 +1456,14 @@
         <div class="mb-1 flex items-center gap-2">
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <template v-if="isExecutionNodeManaged">
+          <div class="input flex min-h-10 items-center justify-between gap-3 bg-gray-50 dark:bg-dark-800">
+            <span class="truncate text-sm font-medium text-gray-800 dark:text-dark-100">{{ t('admin.accounts.systemManagedProxy') }}</span>
+            <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">{{ managedExecutionProxyLabel }}</span>
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}</p>
+        </template>
+        <ProxySelector v-else v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -2818,6 +2825,18 @@ const authStore = useAuthStore()
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+const executionNodeID = computed(() => {
+  const direct = props.account?.execution_node_id?.trim()
+  if (direct) return direct
+  const extra = props.account?.extra as Record<string, unknown> | undefined
+  return typeof extra?.xiass_execution_node_id === 'string' ? extra.xiass_execution_node_id.trim() : ''
+})
+const hasExplicitExecutionProxy = computed(() => {
+  const extra = props.account?.extra as Record<string, unknown> | undefined
+  const proxyID = Number(extra?.xiass_execution_proxy_id)
+  return Number.isInteger(proxyID) && proxyID > 0
+})
+const isExecutionNodeManaged = computed(() => !isSparkShadow.value && executionNodeID.value !== '' && !hasExplicitExecutionProxy.value)
 
 const hideAccountLongContextBilling = computed(() => {
   return allSelectedGroupsEnableLongContextPricing(form.group_ids, props.groups)
@@ -3445,6 +3464,13 @@ const form = reactive({
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
+})
+
+const managedExecutionProxyLabel = computed(() => {
+  const proxy = props.account?.proxy
+  if (proxy?.name) return `${proxy.name} (#${proxy.id})`
+  const proxyID = form.proxy_id ?? props.account?.proxy_id
+  return proxyID ? `#${proxyID}` : t('admin.accounts.systemManagedProxyAuto')
 })
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
@@ -4430,8 +4456,11 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
-    // 后端期望 proxy_id: 0 表示清除代理，而不是 null
-    if (updatePayload.proxy_id === null) {
+    // Node-owned accounts cannot become direct-connect accounts. Sending 0
+    // means "restore this node's managed private egress" on the backend.
+    if (isExecutionNodeManaged.value) {
+      updatePayload.proxy_id = 0
+    } else if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
     }
     if (form.expires_at === null) {

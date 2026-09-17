@@ -1,9 +1,10 @@
 package service
 
-// parentHealthyForShadow 报告 spark 影子账号的母账号凭据是否可用(影子据此可被调度)。
+// parentHealthyForShadow reports whether a linked account's credential owner
+// is usable. It covers both Spark shadows and schedulable OpenAI OAuth copies.
 //
-// 非影子账号直接返回 true（不受此检查约束）。
-// lookup 将母账号 ID 解析为当前 Account（来自调度快照 map 或 repo）。
+// 普通独立账号直接返回 true（不受此检查约束）。
+// lookup 将 Spark 母账号或 OAuth 凭据源 ID 解析为当前 Account（来自调度快照 map 或 repo）。
 //
 // 关键语义(F1 决策 A + 外审 D):母账号须仍是 OpenAI OAuth(fail-closed——否则透传凭据解析必失败,
 // 影子不应进调度候选),且凭据「可用」。IsCredentialUsableForShadow 检查:账号 active、OAuth token
@@ -14,14 +15,23 @@ package service
 // 母账号 global 429 不得连坐 spark 影子,否则会重新耦合影子架构本应解耦的两条 429 道。
 // 母账号未找到(nil)、非 OpenAI OAuth、或凭据不可用时影子被挡。
 func parentHealthyForShadow(account *Account, lookup func(int64) *Account) bool {
-	if account == nil || !account.IsShadow() {
+	if account == nil {
 		return true
 	}
-	parent := lookup(*account.ParentAccountID)
+	sourceID := int64(0)
+	switch {
+	case account.IsShadow():
+		sourceID = *account.ParentAccountID
+	case account.IsOpenAIOAuthCredentialCopy():
+		sourceID = account.OpenAIOAuthCredentialSourceID()
+	default:
+		return true
+	}
+	parent := lookup(sourceID)
 	if parent == nil {
 		return false
 	}
-	return parent.IsOpenAIOAuth() && parent.IsCredentialUsableForShadow()
+	return parent.IsOpenAIOAuth() && !parent.IsOpenAIOAuthCredentialCopy() && parent.IsCredentialUsableForShadow()
 }
 
 // sparkModelVariants 返回所有归一到 spark 的模型 ID（当前仅 base：spark 无 effort 变体）。

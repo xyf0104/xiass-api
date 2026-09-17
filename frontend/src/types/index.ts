@@ -1693,7 +1693,7 @@ export interface AdminDataPayload {
   exported_at: string
   proxies: AdminDataProxy[]
   accounts: AdminDataAccount[]
-  // 导出时被排除的 spark 影子账号数量(影子不持凭据、其调度配置不在备份范围)。
+  // 导出时被排除的关联凭据账号数量；字段名为兼容旧版继续沿用 skipped_shadows。
   skipped_shadows?: number
 }
 

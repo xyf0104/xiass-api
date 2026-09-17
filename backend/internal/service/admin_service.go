@@ -465,14 +465,16 @@ type BulkUpdateAccountsInput struct {
 }
 
 type BulkUpdateAccountFilters struct {
-	Platform        string
-	Type            string
-	Status          string
-	Group           string
-	AccountPool     string
-	Search          string
-	PrivacyMode     string
-	ExecutionNodeID string
+	Platform         string
+	Type             string
+	SubscriptionPlan string
+	LoginMethod      string
+	Status           string
+	Group            string
+	AccountPool      string
+	Search           string
+	PrivacyMode      string
+	ExecutionNodeID  string
 }
 
 // BulkUpdateAccountResult captures the result for a single account update.

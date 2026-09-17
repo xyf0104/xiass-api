@@ -69,8 +69,33 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
     wrapper.unmount()
   })
 
-  it.each(['oauth', 'setup-token'] as const)('%s 账号隐藏「复制账号」按钮，避免共享可轮换令牌', (type) => {
-    const account = makeAccount({ platform: 'openai', type, parent_account_id: null })
+  it('OpenAI OAuth 账号显示「复制账号」按钮', () => {
+    const account = makeAccount({ platform: 'openai', type: 'oauth', parent_account_id: null })
+    const wrapper = mount(AccountActionMenu, {
+      props: { show: true, account, position },
+      attachTo: document.body,
+    })
+    expect(getBodyText()).toContain('admin.accounts.duplicateAccount')
+    wrapper.unmount()
+  })
+
+  it('OpenAI Agent Identity 账号隐藏「复制账号」按钮', () => {
+    const account = makeAccount({
+      platform: 'openai',
+      type: 'oauth',
+      parent_account_id: null,
+      credentials: { auth_mode: 'agentIdentity' },
+    })
+    const wrapper = mount(AccountActionMenu, {
+      props: { show: true, account, position },
+      attachTo: document.body,
+    })
+    expect(getBodyText()).not.toContain('admin.accounts.duplicateAccount')
+    wrapper.unmount()
+  })
+
+  it('setup-token 账号仍隐藏「复制账号」按钮', () => {
+    const account = makeAccount({ platform: 'openai', type: 'setup-token', parent_account_id: null })
     const wrapper = mount(AccountActionMenu, {
       props: { show: true, account, position },
       attachTo: document.body,
@@ -138,6 +163,26 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
     expect(body).not.toContain('admin.accounts.reAuthorize')
     expect(body).not.toContain('admin.accounts.refreshToken')
     expect(body).not.toContain('admin.accounts.setPrivacy')
+    wrapper.unmount()
+  })
+
+  it('OpenAI OAuth 凭据副本隐藏重授权、刷新、隐私和 Spark 影子入口', () => {
+    const account = makeAccount({
+      platform: 'openai',
+      type: 'oauth',
+      parent_account_id: null,
+      extra: { xiass_openai_oauth_credential_source_id: '42' },
+    })
+    const wrapper = mount(AccountActionMenu, {
+      props: { show: true, account, position },
+      attachTo: document.body,
+    })
+
+    expect(getBodyText()).toContain('admin.accounts.duplicateAccount')
+    expect(getBodyText()).not.toContain('admin.accounts.reAuthorize')
+    expect(getBodyText()).not.toContain('admin.accounts.refreshToken')
+    expect(getBodyText()).not.toContain('admin.accounts.setPrivacy')
+    expect(getBodyText()).not.toContain('admin.accounts.createSparkShadow')
     wrapper.unmount()
   })
 

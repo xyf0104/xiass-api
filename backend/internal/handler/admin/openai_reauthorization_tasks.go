@@ -70,7 +70,7 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	if err != nil || account == nil {
 		return nil, nil, nil, errors.New("OpenAI account not found")
 	}
-	if !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return nil, nil, nil, errors.New("only OpenAI OAuth accounts can be reauthorized")
 	}
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
@@ -290,7 +290,7 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		return
 	}
 	account, err := h.adminService.GetAccount(c.Request.Context(), task.TargetAccountID)
-	if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+	if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		task.Status, task.Stage, task.Reason = "failed", "failed", "account_update_failed"
 		response.Success(c, task)
 		return

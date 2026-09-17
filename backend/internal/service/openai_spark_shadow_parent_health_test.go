@@ -38,6 +38,16 @@ func TestParentHealthyForShadow(t *testing.T) {
 		Status:          StatusActive,
 		Schedulable:     true,
 	}
+	credentialCopy := &Account{
+		ID:          201,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			OpenAIOAuthCredentialSourceIDExtraKey: "100",
+		},
+	}
 	normalAccount := &Account{
 		ID:          300,
 		Platform:    PlatformOpenAI,
@@ -70,6 +80,36 @@ func TestParentHealthyForShadow(t *testing.T) {
 	t.Run("shadow_parent_not_found_is_not_healthy", func(t *testing.T) {
 		lookup := func(_ int64) *Account { return nil }
 		require.False(t, parentHealthyForShadow(shadow, lookup))
+	})
+
+	t.Run("credential_copy_of_healthy_source_is_healthy", func(t *testing.T) {
+		lookup := func(id int64) *Account {
+			if id == healthyParent.ID {
+				return healthyParent
+			}
+			return nil
+		}
+		require.True(t, parentHealthyForShadow(credentialCopy, lookup))
+	})
+
+	t.Run("credential_copy_source_not_found_is_not_healthy", func(t *testing.T) {
+		require.False(t, parentHealthyForShadow(credentialCopy, func(int64) *Account { return nil }))
+	})
+
+	t.Run("credential_copy_of_unhealthy_source_is_not_healthy", func(t *testing.T) {
+		lookup := func(id int64) *Account {
+			if id == unhealthyParent.ID {
+				return unhealthyParent
+			}
+			return nil
+		}
+		require.False(t, parentHealthyForShadow(credentialCopy, lookup))
+	})
+
+	t.Run("credential_copy_chain_is_not_healthy", func(t *testing.T) {
+		chainedSource := *healthyParent
+		chainedSource.Extra = map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: "99"}
+		require.False(t, parentHealthyForShadow(credentialCopy, func(int64) *Account { return &chainedSource }))
 	})
 
 	t.Run("normal_account_always_healthy", func(t *testing.T) {

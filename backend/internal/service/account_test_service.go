@@ -602,7 +602,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	credentialAccount := account
-	if account.IsCredentialShadow() {
+	if account.RequiresCredentialResolution() {
 		resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {
 			return s.sendErrorAndEnd(c, err.Error())
@@ -1031,7 +1031,7 @@ func (s *AccountTestService) reconcileOpenAIUnauthorized(ctx context.Context, ac
 func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account *Account, testModelID string) error {
 	ctx := c.Request.Context()
 	credentialAccount := account
-	if account.IsShadow() {
+	if account.RequiresCredentialResolution() {
 		resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {
 			return s.sendErrorAndEnd(c, "Failed to resolve account credentials")
@@ -1952,7 +1952,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 // testOpenAIImageOAuth tests OpenAI image generation using an OAuth account via Codex /responses API.
 func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Context, account *Account, modelID, prompt string) error {
 	credentialAccount := account
-	if account.IsShadow() {
+	if account.RequiresCredentialResolution() {
 		resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {
 			return s.sendErrorAndEnd(c, "Failed to resolve account credentials")

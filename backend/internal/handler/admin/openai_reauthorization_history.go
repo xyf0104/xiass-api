@@ -266,7 +266,7 @@ func (h *OpenAIOAuthHandler) listPrimaryOpenAIOAuthAccounts(ctx context.Context)
 			return nil, err
 		}
 		for i := range items {
-			if items[i].IsOpenAIOAuth() && !items[i].IsCredentialShadow() {
+			if items[i].IsOpenAIOAuth() && !items[i].IsCredentialShadow() && !items[i].IsOpenAIOAuthCredentialCopy() {
 				all = append(all, items[i])
 			}
 		}
@@ -289,7 +289,7 @@ func parseOpenAIReauthorizationAccountIDs(raw string) map[int64]struct{} {
 }
 
 func openAIAccountNeedsReauthorization(account *service.Account) bool {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.Status != service.StatusError {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() || account.Status != service.StatusError {
 		return false
 	}
 	if value, ok := account.Extra["needs_reauth"].(bool); ok && value {

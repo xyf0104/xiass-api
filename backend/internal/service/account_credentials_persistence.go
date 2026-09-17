@@ -22,6 +22,15 @@ func persistAccountCredentials(ctx context.Context, repo AccountRepository, acco
 			"account_id", account.ID, "parent_id", *account.ParentAccountID)
 		return nil
 	}
+	// OAuth copies may keep copy-local model configuration, but rotating identity
+	// credentials are owned exclusively by the canonical source row. Any refresh
+	// or enrichment path that reaches this helper with a copy must therefore be a
+	// no-op instead of creating a second durable token document.
+	if account.IsOpenAIOAuthCredentialCopy() {
+		slog.Warn("skip persisting credentials to OpenAI OAuth credential copy",
+			"account_id", account.ID, "source_account_id", account.OpenAIOAuthCredentialSourceID())
+		return nil
+	}
 
 	account.Credentials = shallowCopyMap(credentials)
 	if updater, ok := any(repo).(accountCredentialsUpdater); ok {

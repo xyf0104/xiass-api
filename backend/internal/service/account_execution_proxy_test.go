@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type executionProxyGroupRepoStub struct{ GroupRepository }
+
 func TestAdminExplicitExecutionProxyUpdate(t *testing.T) {
 	ctx := context.Background()
 	account := executionNodeTestAccount(901, "api", 1)
@@ -37,8 +39,11 @@ func TestAdminExplicitExecutionProxyUpdate(t *testing.T) {
 	require.Equal(t, 1, result.Success)
 	require.Equal(t, "99", repo.bulkUpdates[0].Extra[AccountExecutionProxyExtraKey])
 	zero := int64(0)
-	_, err = svc.UpdateAccount(ctx, account.ID, &UpdateAccountInput{ProxyID: &zero})
-	require.ErrorContains(t, err, "private egress proxy")
+	updated, err = svc.UpdateAccount(ctx, account.ID, &UpdateAccountInput{ProxyID: &zero})
+	require.NoError(t, err)
+	require.NotNil(t, updated.ProxyID)
+	require.Equal(t, int64(84), *updated.ProxyID)
+	require.False(t, updated.hasExplicitExecutionProxy())
 }
 
 func TestExecutionNodeExplicitProxyPreservesHealthAndOwnerGuards(t *testing.T) {
@@ -67,8 +72,125 @@ func TestExecutionNodeExplicitProxyPreservesHealthAndOwnerGuards(t *testing.T) {
 
 func TestExecutionProxyMarkerCannotBeImported(t *testing.T) {
 	proxyID := int64(99)
-	extra, _ := applyExecutionNodeForCreate(&config.Config{}, map[string]any{AccountExecutionProxyExtraKey: "99"}, &proxyID)
+	extra, _ := applyExecutionNodeForCreate(&config.Config{}, map[string]any{
+		AccountExecutionProxyExtraKey:         "99",
+		OpenAIOAuthCredentialSourceIDExtraKey: "888",
+	}, &proxyID)
 	require.NotContains(t, extra, AccountExecutionProxyExtraKey)
-	extra = preserveExecutionNodeOnUpdate(&Account{ProxyID: &proxyID}, map[string]any{AccountExecutionProxyExtraKey: "99"})
+	require.NotContains(t, extra, OpenAIOAuthCredentialSourceIDExtraKey)
+	copyAccount := &Account{ID: 200, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &proxyID, Extra: map[string]any{
+		OpenAIOAuthCredentialSourceIDExtraKey: "100",
+	}}
+	extra = preserveExecutionNodeOnUpdate(copyAccount, map[string]any{
+		AccountExecutionProxyExtraKey:         "99",
+		OpenAIOAuthCredentialSourceIDExtraKey: "888",
+	})
 	require.NotContains(t, extra, AccountExecutionProxyExtraKey)
+	require.Equal(t, "100", extra[OpenAIOAuthCredentialSourceIDExtraKey])
+}
+
+func TestAdminCreateBindsPrivateEgressFromSharedNodeMapping(t *testing.T) {
+	repo := newDuplicateAccountRepoStub()
+	cfg := &config.Config{}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
+		Enabled:                true,
+		ID:                     "api",
+		LegacyUnassignedNodeID: "api",
+	}
+	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
+		SettingKeyExecutionNodeBalancingEnabled: "true",
+		SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
+		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
+	}}, cfg)
+	svc := &adminServiceImpl{
+		accountRepo:    repo,
+		groupRepo:      &executionProxyGroupRepoStub{},
+		settingService: settings,
+	}
+
+	created, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                 "imported",
+		Platform:             PlatformOpenAI,
+		Type:                 AccountTypeAPIKey,
+		Credentials:          map[string]any{"api_key": "secret"},
+		SkipDefaultGroupBind: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "api", created.ExecutionNodeID(""))
+	require.NotNil(t, created.ProxyID)
+	require.Equal(t, int64(84), *created.ProxyID)
+}
+
+func TestAdminTrustedOAuthCreateFallsBackToManagedNodeEgress(t *testing.T) {
+	repo := newDuplicateAccountRepoStub()
+	cfg := &config.Config{}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
+		Enabled:                true,
+		ID:                     "api2",
+		LegacyUnassignedNodeID: "api",
+	}
+	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
+		SettingKeyExecutionNodeBalancingEnabled: "true",
+		SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
+		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
+	}}, cfg)
+	svc := &adminServiceImpl{
+		accountRepo:    repo,
+		groupRepo:      &executionProxyGroupRepoStub{},
+		settingService: settings,
+	}
+
+	created, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                                  "oauth-workflow",
+		Platform:                              PlatformOpenAI,
+		Type:                                  AccountTypeOAuth,
+		Credentials:                           map[string]any{"access_token": "secret"},
+		AllowOpenAIReauthorizationCredentials: true,
+		PreserveOAuthWorkflowProxy:            true,
+		SkipDefaultGroupBind:                  true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "api2", created.ExecutionNodeID("api"))
+	require.NotNil(t, created.ProxyID)
+	require.Equal(t, int64(83), *created.ProxyID)
+	require.False(t, created.hasExplicitExecutionProxy())
+}
+
+func TestAdminBulkProxyResetRestoresEachAccountManagedNodeEgress(t *testing.T) {
+	ctx := context.Background()
+	apiAccount := executionNodeTestAccount(903, "api", 99)
+	api2Account := executionNodeTestAccount(904, "api2", 98)
+	apiAccount.Platform, apiAccount.Type = PlatformOpenAI, AccountTypeAPIKey
+	api2Account.Platform, api2Account.Type = PlatformOpenAI, AccountTypeAPIKey
+	apiAccount.Extra[AccountExecutionProxyExtraKey] = "99"
+	api2Account.Extra[AccountExecutionProxyExtraKey] = "98"
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		apiAccount.ID:  apiAccount,
+		api2Account.ID: api2Account,
+	}}
+	settings, settingRepo := verifiedPairedAdminService(t, "api")
+	settings.cfg.Gateway.ExecutionNode.LegacyUnassignedNodeID = "api"
+	settingRepo.values[SettingKeyExecutionNodeBalancingEnabled] = "true"
+	settingRepo.values[SettingKeyExecutionNodeWeights] = `{"api":9,"api2":1}`
+	settingRepo.values[SettingKeyExecutionNodeProxyIDs] = `{"api":84,"api2":83}`
+	svc := &adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{repo}, settingService: settings}
+	zero := int64(0)
+
+	result, err := svc.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{
+		AccountIDs: []int64{apiAccount.ID, api2Account.ID},
+		ProxyID:    &zero,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Len(t, repo.bulkUpdates, 3)
+	require.Nil(t, repo.bulkUpdates[0].ProxyID)
+	require.Nil(t, repo.bulkUpdates[0].Extra[AccountExecutionProxyExtraKey])
+	require.Equal(t, []int64{apiAccount.ID, api2Account.ID}, repo.bulkUpdateIDs[0])
+	require.Equal(t, int64(84), *repo.bulkUpdates[1].ProxyID)
+	require.Equal(t, []int64{apiAccount.ID}, repo.bulkUpdateIDs[1])
+	require.Equal(t, int64(83), *repo.bulkUpdates[2].ProxyID)
+	require.Equal(t, []int64{api2Account.ID}, repo.bulkUpdateIDs[2])
 }
