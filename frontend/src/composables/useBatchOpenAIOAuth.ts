@@ -176,7 +176,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
         if (!row.task || busyKeys.value.has(row.key)) continue
         if (row.task.browser_mode === 'adspower' && row.task.status === 'running' && row.task.stage === 'external_browser'
           && secrets.has(row.key) && !adsLaunchAttempts.has(adsLaunchKey(row)) && !row.error) {
-          await launchAdsPower(row, true)
+          await launchAdsPower(row)
         } else if (row.task.status === 'ready' && !row.error) {
           await operation(row, async () => update(row, await batchOAuthAPI.complete(row.task!.task_id)))
         } else if (secrets.has(row.key) && batchTaskWillAutoRestart(row.task)) {
@@ -314,7 +314,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     })
   }
 
-  async function launchAdsPower(row: OAuthQueueRow, automaticLaunch = false) {
+  async function launchAdsPower(row: OAuthQueueRow) {
     if (!row.task || row.task.browser_mode !== 'adspower' || row.task.stage !== 'external_browser') return
     const key = adsLaunchKey(row)
     if (!helperWindows.has(row.key)) prepareHelperWindow(row)

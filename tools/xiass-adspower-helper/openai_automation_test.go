@@ -134,6 +134,46 @@ func TestInspectOAuthPageDoesNotTreatNumericPhoneAsOTP(t *testing.T) {
 	require.Equal(t, 0, state.Input)
 }
 
+func TestInspectOAuthPageRecognizesTeamPhoneRejections(t *testing.T) {
+	for _, message := range []string{
+		"Phone number is not valid.",
+		"This phone number is already associated with another account.",
+		"This phone number is already linked to an account.",
+		"This phone number has already used the maximum number of accounts.",
+		"Please use a different phone number.",
+		"Try another phone number.",
+		"This phone number is not supported.",
+		"This phone number cannot be used.",
+		"This phone number can't be used.",
+		"Unable to send a verification code to this phone number.",
+		"Too many accounts are associated with this number.",
+		"\u8be5\u7535\u8bdd\u53f7\u7801\u5df2\u4f7f\u7528\uff0c\u8bf7\u66f4\u6362\u5176\u4ed6\u53f7\u7801\u3002",
+		"\u8be5\u624b\u673a\u53f7\u4e0d\u53d7\u652f\u6301\u3002",
+	} {
+		t.Run(message, func(t *testing.T) {
+			state := inspectOAuthPage(oauthPageSnapshot{
+				URL:    "https://auth.openai.com/add-phone",
+				Body:   message,
+				Inputs: []oauthPageInput{{Index: 2, Metadata: "tel phone"}},
+			})
+			require.Equal(t, "phone_rejected", state.Kind)
+			require.Equal(t, 2, state.Input)
+		})
+	}
+	for _, message := range []string{
+		"Phone number required Text message WhatsApp",
+		"Unable to connect. Please try again later.",
+		"Something went wrong. Please try again.",
+	} {
+		state := inspectOAuthPage(oauthPageSnapshot{
+			URL:    "https://auth.openai.com/add-phone",
+			Body:   message,
+			Inputs: []oauthPageInput{{Index: 0, Metadata: "tel phone"}},
+		})
+		require.Equal(t, "phone", state.Kind, message)
+	}
+}
+
 func TestInspectOAuthPageRequiresExplicitProfileFields(t *testing.T) {
 	state := inspectOAuthPage(oauthPageSnapshot{
 		URL:    "https://auth.openai.com/about-you",

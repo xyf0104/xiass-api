@@ -558,6 +558,10 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 			})
 			return
 		}
+		if task.Stage != "external_browser" {
+			response.Error(c, http.StatusConflict, "The AdsPower authorization is already in progress")
+			return
+		}
 		task.adsPowerLaunchIssued = false
 		task.adsPowerLaunchHelperURL = ""
 		task.adsPowerLaunchDelivery = ""

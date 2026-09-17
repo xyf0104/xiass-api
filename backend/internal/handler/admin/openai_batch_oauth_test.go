@@ -330,7 +330,10 @@ func TestBatchOAuthAdsPowerModeUsesOneTaskBoundCallbackAndPersistsProfile(t *tes
 	task := f.h.batchOAuthStore.tasks[started.Data.ID]
 	task.mu.Lock()
 	require.Equal(t, "password", task.Stage)
+	task.adsPowerLaunchExpiresAt = time.Now().Add(-time.Second)
 	task.mu.Unlock()
+	expiredLaunch := batchOAuthRequest(r, http.MethodPost, "/tasks/"+started.Data.ID+"/adspower-launch", `{}`)
+	require.Equal(t, http.StatusConflict, expiredLaunch.Code, expiredLaunch.Body.String())
 
 	sms := &batchSMSStub{result: &service.PixlabSMSResult{Number: "+12025550123", Status: "WAITING"}}
 	f.h.batchSMSService = sms

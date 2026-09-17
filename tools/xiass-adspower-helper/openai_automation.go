@@ -38,6 +38,7 @@ type oauthPageSnapshot struct {
 	Inputs  []oauthPageInput  `json:"inputs"`
 	Actions []oauthPageAction `json:"actions"`
 	Captcha bool              `json:"captcha"`
+	Busy    bool              `json:"busy"`
 }
 
 type automationState struct {
@@ -55,7 +56,7 @@ var (
 	bannedAccountPattern      = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:suspended|banned)|account_(?:suspended|banned)|账号.*(?:封禁|封号)`)
 	restrictedAccountPattern  = regexp.MustCompile(`(?i)(?:your |this )?account (?:has been |is )?(?:restricted|limited)|account_(?:restricted|limited)|账号.*(?:受限|限制)`)
 	invalidCodePattern        = regexp.MustCompile(`(?i)incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)`)
-	phoneRejectedPattern      = regexp.MustCompile(`(?i)phone.*(?:invalid|not valid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)`)
+	phoneRejectedPattern      = regexp.MustCompile(`(?i)phone.*(?:invalid|not valid|unavailable|used too many|already (?:used|linked|associated)|maximum|max(?:imum)? number|not supported|cannot be used|can't be used)|(?:try|use) (?:a )?(?:different|another) phone number|too many (?:accounts|verification attempts)|too many.*phone|unable to (?:send|verify).*phone|无法使用.*号码|(?:手机号|电话号码).*(?:不可用|无效|次数过多|已使用|已绑定|不受支持)|请.*(?:更换|其他).*号码`)
 	automationPhonePattern    = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
 	automationSMSCodePattern  = regexp.MustCompile(`^\d{4,10}$`)
 	diagnosticCodePattern     = regexp.MustCompile(`\b\d{6,8}\b`)
@@ -81,7 +82,10 @@ const oauthSnapshotJS = `(() => {
     body: String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 100000),
     inputs,
     actions,
-    captcha: Boolean(document.querySelector('iframe[src*="captcha"],iframe[src*="challenges.cloudflare.com"]'))
+    captcha: Boolean(document.querySelector('iframe[src*="captcha"],iframe[src*="challenges.cloudflare.com"]')),
+    busy: Array.from(document.querySelectorAll('button,[role="button"],form[aria-busy="true"]')).filter(visible).some(e =>
+      e.getAttribute('aria-busy') === 'true' ||
+      ((e.disabled || e.getAttribute('aria-disabled') === 'true') && /^(continue|next|verify|继续|下一步)$/i.test(String(e.innerText || e.textContent || '').trim())))
   };
 })()`
 
@@ -318,6 +322,9 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 	emailSubmitted := false
 	oauthResumeAttempted := false
 	phoneSubmitted := ""
+	var phoneSubmittedAt time.Time
+	phoneReplacementPending := false
+	rejectedPhones := make(map[string]bool)
 	var smsDeadline time.Time
 	smsReserved := false
 	smsCodeSubmitted := false
@@ -412,7 +419,13 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 		case "account_deleted_or_disabled", "account_banned", "unknown_error", "proxy_unavailable", "invalid_credentials", "invalid_email_code", "invalid_totp", "invalid_sms_code":
 			return blocked(state.Kind)
 		case "phone", "phone_rejected":
-			if state.Kind == "phone" && phoneSubmitted != "" {
+			// A previous rejection can remain visible while the new submission
+			// is in flight. Do not replace its reservation before it settles.
+			if phoneSubmitted != "" && !phoneReplacementPending && !phoneSubmittedAt.IsZero() &&
+				(time.Since(phoneSubmittedAt) < 3*time.Second || snapshot.Busy && time.Since(phoneSubmittedAt) < 20*time.Second) {
+				break
+			}
+			if state.Kind == "phone" && phoneSubmitted != "" && !phoneReplacementPending {
 				if recentAttempt(attempted, "phone_transition") && attemptExpired(attempted, "phone_transition") {
 					return automationFailureError{Status: "failed", Reason: "page_interaction_failed"}
 				}
@@ -420,7 +433,11 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			}
 			action := "acquire"
 			reason := ""
-			if state.Kind == "phone_rejected" {
+			if state.Kind == "phone_rejected" && phoneSubmitted != "" {
+				rejectedPhones[phoneSubmitted] = true
+				phoneReplacementPending = true
+			}
+			if phoneReplacementPending {
 				action = "change"
 				reason = "phone_rejected"
 			}
@@ -432,7 +449,7 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 			}
 			lastSMSAcquire = time.Now()
 			result, err := s.smsAction(ctx, origin, launch, action)
-			if err != nil || result == nil || !validAutomationPhone(result.Number) {
+			if err != nil || result == nil || !validAutomationPhone(result.Number) || rejectedPhones[normalizeAutomationPhone(result.Number)] {
 				if recentAttempt(attempted, "sms_acquire") && time.Since(attempted["sms_acquire"]) > 5*time.Minute {
 					return automationFailureError{Status: "failed", Reason: "sms_confirmation_timeout"}
 				}
@@ -456,6 +473,8 @@ func (s *helperServer) automateOpenAI(ctx, browser context.Context, origin strin
 				log.Printf("AdsPower phone Continue failed: %v", err)
 				return err
 			}
+			phoneSubmittedAt = time.Now()
+			phoneReplacementPending = false
 			delete(attempted, "phone_transition")
 			if !reportProgress("running", "sms_waiting", "") {
 				break
