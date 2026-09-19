@@ -43,6 +43,7 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 const anchorRect = new DOMRect(100, 100, 24, 24)
+const position = { top: 100, left: 100 }
 
 // AccountActionMenu uses <Teleport to="body">; content is rendered in document.body, not in wrapper.
 const getBodyText = () => document.body.textContent ?? ''

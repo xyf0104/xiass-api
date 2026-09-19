@@ -14,8 +14,6 @@ func openAIResponsesInputItemIDPrefix(itemType string) (string, bool) {
 		return "msg", true
 	case "reasoning":
 		return "rs", true
-	case "web_search_call":
-		return "ws", true
 	case "custom_tool_call", "tool_search_call":
 		return openAIResponsesToolCallIDPrefix(itemType), true
 	case "custom_tool_call_output":

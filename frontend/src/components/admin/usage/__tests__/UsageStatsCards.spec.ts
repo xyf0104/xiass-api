@@ -105,13 +105,11 @@ describe('UsageStatsCards', () => {
       },
     })
 
-    const tooltip = wrapper.findAll('span').find((el) => el.classes().includes('group-hover:block'))
+    const tooltip = document.body.querySelector('[role="tooltip"]')
 
-    expect(tooltip).toBeDefined()
-    // `opacity-0` hides the tooltip visually but keeps it in the layout, so its
-    // fixed width still widens the document and causes horizontal scrolling on
-    // narrow screens. `hidden` (display: none) takes it out of the flow.
-    expect(tooltip?.classes()).toContain('hidden')
-    expect(tooltip?.classes()).not.toContain('opacity-0')
+    expect(tooltip).not.toBeNull()
+    expect((tooltip as HTMLElement).style.display).toBe('none')
+    expect((tooltip as HTMLElement).className).not.toContain('opacity-0')
+    wrapper.unmount()
   })
 })

@@ -31,6 +31,7 @@ func executionNodeProxyProtectionService(repo ProxyRepository) *adminServiceImpl
 }
 
 func TestExecutionNodeMappedProxyCannotBeDisabledExpiredOrDeleted(t *testing.T) {
+	warnDays := 7
 	repo := &updatingProxyRepoStub{
 		proxyRepoStub: &proxyRepoStub{},
 		proxy: &Proxy{
@@ -48,7 +49,7 @@ func TestExecutionNodeMappedProxyCannotBeDisabledExpiredOrDeleted(t *testing.T) 
 	_, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		Status:         StatusDisabled,
 		FallbackMode:   FallbackModeNone,
-		ExpiryWarnDays: 7,
+		ExpiryWarnDays: &warnDays,
 	})
 	require.ErrorIs(t, err, ErrExecutionNodeProxyProtected)
 	require.Zero(t, repo.updateCalls)
@@ -57,7 +58,7 @@ func TestExecutionNodeMappedProxyCannotBeDisabledExpiredOrDeleted(t *testing.T) 
 	_, err = svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		ExpiresAt:      &expired,
 		FallbackMode:   FallbackModeNone,
-		ExpiryWarnDays: 7,
+		ExpiryWarnDays: &warnDays,
 	})
 	require.ErrorIs(t, err, ErrExecutionNodeProxyProtected)
 	require.Zero(t, repo.updateCalls)
@@ -68,6 +69,7 @@ func TestExecutionNodeMappedProxyCannotBeDisabledExpiredOrDeleted(t *testing.T) 
 }
 
 func TestExecutionNodeMappedProxyCanBeRepairedWhileRemainingActive(t *testing.T) {
+	warnDays := 7
 	repo := &updatingProxyRepoStub{
 		proxyRepoStub: &proxyRepoStub{},
 		proxy: &Proxy{
@@ -86,7 +88,7 @@ func TestExecutionNodeMappedProxyCanBeRepairedWhileRemainingActive(t *testing.T)
 		Host:           "new.internal",
 		Status:         StatusActive,
 		FallbackMode:   FallbackModeNone,
-		ExpiryWarnDays: 7,
+		ExpiryWarnDays: &warnDays,
 	})
 
 	require.NoError(t, err)

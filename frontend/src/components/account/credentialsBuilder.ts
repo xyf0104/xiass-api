@@ -42,7 +42,9 @@ export function isHeaderOverridePlatform(platform: string): boolean {
     platform === 'openai' ||
     platform === 'kimi' ||
     platform === 'zhipu' ||
-    platform === 'deepseek'
+    platform === 'deepseek' ||
+    platform === 'minimax' ||
+    platform === 'opencode_go'
   )
 }
 

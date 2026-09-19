@@ -112,12 +112,54 @@ func TestUpdateUserPlatformQuotas_Success(t *testing.T) {
 	if len(repo.upsertCalls) != 1 {
 		t.Fatalf("UpsertForUser should be called once, got %d", len(repo.upsertCalls))
 	}
-	if repo.upsertCalls[0].userID != 42 || len(repo.upsertCalls[0].records) != len(service.AllowedQuotaPlatforms) {
+	// Only platforms with at least one configured limit are persisted. Empty
+	// platforms are omitted so UpsertForUser can soft-delete stale rows.
+	if repo.upsertCalls[0].userID != 42 || len(repo.upsertCalls[0].records) != 2 {
 		t.Errorf("unexpected upsert call: %+v", repo.upsertCalls[0])
 	}
-	// 缓存失效：按全部允许平台统一失效。
-	if len(cache.deleteCalls) != 5 {
-		t.Errorf("expected 5 cache delete calls, got %d: %+v", len(cache.deleteCalls), cache.deleteCalls)
+	for _, record := range repo.upsertCalls[0].records {
+		if record.Platform != "anthropic" && record.Platform != "openai" {
+			t.Errorf("platform %q has no configured limit and must not be upserted", record.Platform)
+		}
+	}
+	// Invalidate every allowed platform so removed limits cannot remain cached.
+	if len(cache.deleteCalls) != len(service.AllowedQuotaPlatforms) {
+		t.Errorf("expected %d cache delete calls, got %d: %+v", len(service.AllowedQuotaPlatforms), len(cache.deleteCalls), cache.deleteCalls)
+	}
+}
+
+func TestUpdateUserPlatformQuotas_AllUnlimitedClearsRows(t *testing.T) {
+	repo := &upsertCapturingQuotaRepo{}
+	h := buildTestHandler(repo, &billingCacheStub{})
+
+	c, w := putReq(t, `{"quotas":[
+		{"platform":"anthropic","daily_limit_usd":null,"weekly_limit_usd":null,"monthly_limit_usd":null},
+		{"platform":"openai"}
+	]}`)
+	h.UpdateUserPlatformQuotas(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(repo.upsertCalls) != 1 {
+		t.Fatalf("UpsertForUser should be called once, got %d", len(repo.upsertCalls))
+	}
+	if len(repo.upsertCalls[0].records) != 0 {
+		t.Errorf("all-unlimited input must upsert zero records, got %+v", repo.upsertCalls[0].records)
+	}
+
+	repo = &upsertCapturingQuotaRepo{}
+	h = buildTestHandler(repo, &billingCacheStub{})
+	c, w = putReq(t, `{"quotas":[{"platform":"gemini","daily_limit_usd":0}]}`)
+	h.UpdateUserPlatformQuotas(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(repo.upsertCalls) != 1 || len(repo.upsertCalls[0].records) != 1 {
+		t.Fatalf("zero limit is a configured limit and must be upserted: %+v", repo.upsertCalls)
+	}
+	if record := repo.upsertCalls[0].records[0]; record.Platform != "gemini" || record.DailyLimitUSD == nil || *record.DailyLimitUSD != 0 {
+		t.Errorf("unexpected zero-limit record: %+v", record)
 	}
 }
 

@@ -2186,6 +2186,7 @@ func (s *OpenAIGatewayService) CompleteAPIKeyCodexModelsManifestForClient(manife
 			body = convertOpenAIModelListToCodexManifestForAccount(body, account)
 		}
 	}
+	sourceBody := append([]byte(nil), body...)
 	var err error
 	body, err = applySyncedAPIKeyCodexModelMetadata(body, account, manifest.convertedFromOpenAIModelList)
 	if err != nil {
@@ -2203,9 +2204,69 @@ func (s *OpenAIGatewayService) CompleteAPIKeyCodexModelsManifestForClient(manife
 	if err != nil {
 		return err
 	}
+	body, err = removeSynthesizedCodexFieldMissingFromSource(body, sourceBody, "supports_search_tool")
+	if err != nil {
+		return err
+	}
 	manifest.Body = body
 	manifest.ETag = codexModelsManifestBodyETag(manifest.Body)
 	return nil
+}
+
+func removeSynthesizedCodexFieldMissingFromSource(body, sourceBody []byte, field string) ([]byte, error) {
+	var sourceEnvelope map[string]json.RawMessage
+	if err := json.Unmarshal(sourceBody, &sourceEnvelope); err != nil {
+		return nil, fmt.Errorf("decode source JSON object: %w", err)
+	}
+	var sourceModels []map[string]json.RawMessage
+	if err := json.Unmarshal(sourceEnvelope["models"], &sourceModels); err != nil {
+		return nil, fmt.Errorf("decode source models array: %w", err)
+	}
+	declared := make(map[string]bool, len(sourceModels))
+	for _, model := range sourceModels {
+		var slug string
+		if err := json.Unmarshal(model["slug"], &slug); err != nil || strings.TrimSpace(slug) == "" {
+			continue
+		}
+		_, exists := model[field]
+		declared[slug] = exists
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("decode completed JSON object: %w", err)
+	}
+	var models []map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["models"], &models); err != nil {
+		return nil, fmt.Errorf("decode completed models array: %w", err)
+	}
+	changed := false
+	for _, model := range models {
+		var slug string
+		if err := json.Unmarshal(model["slug"], &slug); err != nil || strings.TrimSpace(slug) == "" {
+			continue
+		}
+		if declared[slug] {
+			continue
+		}
+		if _, exists := model[field]; exists {
+			delete(model, field)
+			changed = true
+		}
+	}
+	if !changed {
+		return body, nil
+	}
+	encodedModels, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("encode completed models array: %w", err)
+	}
+	envelope["models"] = encodedModels
+	updated, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode completed JSON object: %w", err)
+	}
+	return updated, nil
 }
 
 func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwriteLocalDefaults bool) ([]byte, error) {
@@ -2386,6 +2447,9 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 		if err := json.Unmarshal(defaultBody, &defaults); err != nil {
 			return nil, fmt.Errorf("decode default model %q: %w", slug, err)
 		}
+		if err := removeUnverifiedAPIKeyCodexServiceTierDefaults(model, defaults); err != nil {
+			return nil, fmt.Errorf("filter default service tiers for model %q: %w", slug, err)
+		}
 
 		capabilityModel := slug
 		if account != nil {
@@ -2439,6 +2503,35 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 		return nil, fmt.Errorf("encode JSON object: %w", err)
 	}
 	return completed, nil
+}
+
+func removeUnverifiedAPIKeyCodexServiceTierDefaults(current, defaults map[string]json.RawMessage) error {
+	if _, declaredByUpstream := current["service_tiers"]; declaredByUpstream {
+		delete(defaults, "service_tiers")
+		return nil
+	}
+
+	rawTiers, ok := defaults["service_tiers"]
+	if !ok {
+		return nil
+	}
+	var tiers []configuredCodexServiceTier
+	if err := json.Unmarshal(rawTiers, &tiers); err != nil {
+		return err
+	}
+	filtered := tiers[:0]
+	for _, tier := range tiers {
+		if tier.ID == OpenAIFastTierUltrafast {
+			continue
+		}
+		filtered = append(filtered, tier)
+	}
+	encoded, err := json.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	defaults["service_tiers"] = encoded
+	return nil
 }
 
 func mergeMissingCodexModelFields(current, defaults map[string]json.RawMessage) (bool, error) {

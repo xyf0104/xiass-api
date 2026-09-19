@@ -1,6 +1,6 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import ChannelStatusV1View from '../ChannelStatusV1View.vue'
+import ChannelStatusView from '../ChannelStatusView.vue'
 
 const { list } = vi.hoisted(() => ({ list: vi.fn() }))
 vi.mock('@/api/channelMonitor', () => ({ list, status: vi.fn() }))
@@ -9,7 +9,7 @@ vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
   useI18n: () => ({ t: (key: string) => key }),
 }))
-const mountView = () => shallowMount(ChannelStatusV1View, {
+const mountView = () => shallowMount(ChannelStatusView, {
   global: { stubs: {
     AppLayout: { template: '<div><slot /></div>' },
     MonitorHero: { props: ['autoRefresh'], emits: ['refresh'], template: `<div>

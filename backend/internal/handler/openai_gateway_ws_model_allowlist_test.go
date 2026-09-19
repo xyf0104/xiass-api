@@ -55,7 +55,7 @@ func TestOpenAIResponsesWebSocket_SubsequentTurnModelNotAllowedCloses_Passthroug
 		secondPayload:           `{"type":"response.create","model":"gpt-4.1","stream":false}`,
 		group:                   wsAllowlistGroup(true, "gpt-5.4"),
 		ingressMode:             service.OpenAIWSIngressModePassthrough,
-		midFrameCloseExpected:   true,
+		secondTurnCloseExpected: true,
 	})
 }
 

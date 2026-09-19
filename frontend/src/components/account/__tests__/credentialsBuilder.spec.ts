@@ -231,11 +231,15 @@ describe('GROK_BASE_URL_PRESETS', () => {
 })
 
 describe('isHeaderOverrideCapable', () => {
-  it('preserves apikey-only behavior for anthropic/openai and enables grok apikey/oauth', () => {
+  it('preserves apikey-only behavior for supported platforms and enables grok apikey/oauth', () => {
     expect(isHeaderOverrideCapable('anthropic', 'apikey')).toBe(true)
     expect(isHeaderOverrideCapable('anthropic', 'oauth')).toBe(false)
     expect(isHeaderOverrideCapable('openai', 'apikey')).toBe(true)
     expect(isHeaderOverrideCapable('openai', 'oauth')).toBe(false)
+    expect(isHeaderOverrideCapable('minimax', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('minimax', 'oauth')).toBe(false)
+    expect(isHeaderOverrideCapable('opencode_go', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('opencode_go', 'oauth')).toBe(false)
     expect(isHeaderOverrideCapable('grok', 'apikey')).toBe(true)
     expect(isHeaderOverrideCapable('grok', 'oauth')).toBe(true)
     expect(isHeaderOverrideCapable('grok', 'setup-token')).toBe(false)

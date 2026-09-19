@@ -37,6 +37,60 @@ func TestCalculateCostUnified_NilResolver_FallsBackToOldPath(t *testing.T) {
 	require.Empty(t, cost.BillingMode)
 }
 
+func TestCalculateCostUnified_Fable51MaxEffortUsesDefaultMultiplier(t *testing.T) {
+	bs := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 10}
+
+	standard, err := bs.CalculateCostUnified(CostInput{
+		Model: "claude-fable-5-1", Tokens: tokens, RateMultiplier: 1, ReasoningEffort: "xhigh",
+	})
+	require.NoError(t, err)
+	maxCost, err := bs.CalculateCostUnified(CostInput{
+		Model: "claude-fable-5-1", Tokens: tokens, RateMultiplier: 1, ReasoningEffort: "max",
+	})
+	require.NoError(t, err)
+
+	require.InDelta(t, standard.TotalCost*3, maxCost.TotalCost, 1e-12)
+	require.InDelta(t, standard.ActualCost*3, maxCost.ActualCost, 1e-12)
+	require.InDelta(t, standard.InputCost*3, maxCost.InputCost, 1e-12)
+	require.InDelta(t, standard.OutputCost*3, maxCost.OutputCost, 1e-12)
+}
+
+func TestCalculateCostUnified_ChannelOverridesFable51MaxEffortMultiplier(t *testing.T) {
+	configured := 1.5
+	groupID := int64(51)
+	cs := newTestChannelServiceWithCache(t, &channelCache{
+		pricingByGroupModel: map[channelModelKey]*ChannelModelPricing{
+			{groupID: groupID, platform: PlatformAnthropic, model: "claude-fable-5-1"}: {
+				Platform:                     PlatformAnthropic,
+				BillingMode:                  BillingModeToken,
+				InputPrice:                   testPtrFloat64(10e-6),
+				OutputPrice:                  testPtrFloat64(50e-6),
+				MaxReasoningEffortMultiplier: &configured,
+			},
+		},
+		channelByGroupID: map[int64]*Channel{
+			groupID: {ID: groupID, Status: StatusActive},
+		},
+		groupPlatform:           map[int64]string{groupID: PlatformAnthropic},
+		wildcardByGroupPlatform: map[channelGroupPlatformKey][]*wildcardPricingEntry{},
+		mappingByGroupModel:     map[channelModelKey]string{},
+		wildcardMappingByGP:     map[channelGroupPlatformKey][]*wildcardMappingEntry{},
+		byID:                    map[int64]*Channel{},
+	})
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(cs, bs)
+	group := &Group{ID: groupID, Platform: PlatformAnthropic}
+
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-fable-5-1", GroupID: &groupID, Group: group,
+		Tokens: UsageTokens{InputTokens: 1000}, RateMultiplier: 1, ReasoningEffort: "max", Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 1000*10e-6*configured, cost.TotalCost, 1e-12)
+	require.InDelta(t, cost.TotalCost, cost.ActualCost, 1e-12)
+}
+
 func TestCalculateCostUnified_TokenMode(t *testing.T) {
 	bs := newTestBillingService()
 	resolver := NewModelPricingResolver(nil, bs)

@@ -99,7 +99,7 @@ func TestOpenCodeGatewayAppliesMappedModelOnAllIngresses(t *testing.T) {
 			wantURL:      "https://opencode.ai/zen/v1/messages",
 			wantModel:    "claude-sonnet-4",
 			wantNotModel: "opencode/claude-sonnet-4",
-			upstream:     nativeAnthropicBufferedResponse(),
+			upstream:     nativeAnthropicReasoningBufferedResponse(),
 			forward: func(svc *OpenAIGatewayService, c *gin.Context, account *Account, body []byte) error {
 				_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
 				return err

@@ -299,6 +299,39 @@ func TestCompleteAPIKeyCodexManifestSearchCapabilityPreservesUpstreamAndFailsClo
 	require.Equal(t, true, models[1]["supports_search_tool"])
 }
 
+func TestCompleteAPIKeyCodexManifestDoesNotInventUltrafastTier(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://provider.example/v1",
+		},
+	}
+	body, err := completeAPIKeyCodexModelsManifestMetadata(
+		[]byte(`{"models":[{"slug":"gpt-5.6-sol"}]}`), true, account,
+	)
+	require.NoError(t, err)
+	model := decodeCodexManifestModels(t, body)[0]
+	tiers, ok := model["service_tiers"].([]any)
+	require.True(t, ok)
+	for _, rawTier := range tiers {
+		tier, ok := rawTier.(map[string]any)
+		require.True(t, ok)
+		require.NotEqual(t, OpenAIFastTierUltrafast, tier["id"])
+	}
+
+	body, err = completeAPIKeyCodexModelsManifestMetadata(
+		[]byte(`{"models":[{"slug":"gpt-5.6-sol","service_tiers":[{"id":"ultrafast","name":"Provider Ultra","description":"Provider verified"}]}]}`),
+		true,
+		account,
+	)
+	require.NoError(t, err)
+	model = decodeCodexManifestModels(t, body)[0]
+	require.Equal(t, OpenAIFastTierUltrafast, model["service_tiers"].([]any)[0].(map[string]any)["id"])
+}
+
 // Scenario: multiple schedulable accounts advertise only their shared capabilities.
 func TestBuildCodexModelsManifestForGroupIntersectsSyncedAccountMetadata(t *testing.T) {
 	t.Parallel()

@@ -128,8 +128,9 @@ func TestHandleUpstreamTransportError_AttributesEventTimeProxy(t *testing.T) {
 }
 
 // TestHandleUpstreamTransportError_PersistentEvictsAccount pins the contract
-// for durable faults (dead endpoint / DNS / proxy credentials): fail over AND
-// temporarily unschedule the account for the transport cooldown.
+// for explicit proxy credential failures: fail over AND temporarily unschedule
+// the account for the transport cooldown. Connectivity failures are covered by
+// separate tests and must remain immediately schedulable after recovery.
 func TestHandleUpstreamTransportError_PersistentEvictsAccount(t *testing.T) {
 	repo := &transportTempUnschedRepoStub{}
 	s := &GatewayService{accountRepo: repo}
@@ -138,7 +139,7 @@ func TestHandleUpstreamTransportError_PersistentEvictsAccount(t *testing.T) {
 
 	before := time.Now()
 	err := s.handleUpstreamTransportError(context.Background(), c, account,
-		errors.New(`dial tcp 1.2.3.4:443: connect: connection refused`), OpsUpstreamErrorEvent{})
+		errors.New(`proxyconnect tcp: proxy authentication required`), OpsUpstreamErrorEvent{})
 
 	var failoverErr *UpstreamFailoverError
 	if !errors.As(err, &failoverErr) {

@@ -981,30 +981,15 @@ func (s *BatchImagePublicService) selectProviderAndAccount(ctx context.Context, 
 		if len(eligible) == 0 {
 			continue
 		}
-		// Retain the batch subsystem's descending priority and provider order.
-		highestPriority := eligible[0].Priority
-
-		for _, account := range eligible[1:] {
-
-			if account.Priority > highestPriority {
-				highestPriority = account.Priority
-
-			}
-		}
-		priorityCandidates := make([]*Account, 0, len(eligible))
-		for _, account := range eligible {
-			if account.Priority == highestPriority {
-				priorityCandidates = append(priorityCandidates, account)
-			}
-		}
-		priorityCandidates = firstExecutionNodeCandidateGroup(
-			priorityCandidates,
+		eligible = orderExecutionNodeCandidatesWithinPriorities(
+			eligible,
 			func(account *Account) *Account { return account },
+			func(account *Account) int { return account.Priority },
 			policy,
 			"",
 		)
-		if len(priorityCandidates) > 0 {
-			return provider, priorityCandidates[0], nil
+		if len(eligible) > 0 {
+			return provider, eligible[0], nil
 		}
 	}
 	if requestedProvider != "" {

@@ -332,14 +332,25 @@ func TestCodexModelsAPIKeyETagUsesFinalGroupCapabilities(t *testing.T) {
 	)
 	handler := &OpenAIGatewayHandler{gatewayService: gatewayService, maxAccountSwitches: 3}
 
-	withSearch := performCodexModelsRequestWithETag(t, handler, groupWithSearch, service.PlatformOpenAI, "")
+	withSearchGroup := service.Group{
+		ID:       groupWithSearch,
+		Platform: service.PlatformOpenAI,
+		CodexModelsManifestConfig: service.GroupCodexModelsManifestConfig{
+			Enabled:    true,
+			AccountIDs: []int64{selected.ID},
+		},
+	}
+	withoutSearchGroup := withSearchGroup
+	withoutSearchGroup.ID = groupWithoutSearch
+
+	withSearch := performCodexModelsRequestWithGroup(t, handler, withSearchGroup, "")
 	require.Equal(t, http.StatusOK, withSearch.Code, withSearch.Body.String())
 	require.Equal(t, model, gjson.GetBytes(withSearch.Body.Bytes(), "models.0.slug").String())
 	require.True(t, gjson.GetBytes(withSearch.Body.Bytes(), "models.0.supports_search_tool").Bool())
 	withSearchETag := withSearch.Header().Get("ETag")
 	require.NotEmpty(t, withSearchETag)
 
-	withoutSearch := performCodexModelsRequestWithETag(t, handler, groupWithoutSearch, service.PlatformOpenAI, withSearchETag)
+	withoutSearch := performCodexModelsRequestWithGroup(t, handler, withoutSearchGroup, withSearchETag)
 	require.Equal(t, http.StatusOK, withoutSearch.Code, withoutSearch.Body.String())
 	require.Equal(t, model, gjson.GetBytes(withoutSearch.Body.Bytes(), "models.0.slug").String())
 	require.False(t, gjson.GetBytes(withoutSearch.Body.Bytes(), "models.0.supports_search_tool").Bool())
@@ -347,7 +358,7 @@ func TestCodexModelsAPIKeyETagUsesFinalGroupCapabilities(t *testing.T) {
 	require.NotEmpty(t, withoutSearchETag)
 	require.NotEqual(t, withSearchETag, withoutSearchETag)
 
-	notModified := performCodexModelsRequestWithETag(t, handler, groupWithoutSearch, service.PlatformOpenAI, withoutSearchETag)
+	notModified := performCodexModelsRequestWithGroup(t, handler, withoutSearchGroup, withoutSearchETag)
 	if notModified.Code != http.StatusNotModified {
 		t.Fatalf("same final representation returned status %d: sent_etag=%q response_etag=%q body=%s", notModified.Code, withoutSearchETag, notModified.Header().Get("ETag"), notModified.Body.String())
 	}
@@ -362,7 +373,7 @@ func TestCodexModelsUsesValidatedGroupIDWhenGroupIDPointerIsMissing(t *testing.T
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.144.0", nil)
 	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
-		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI},
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
 	})
 
 	handler.CodexModels(c)
@@ -416,6 +427,10 @@ func performCodexModelsRequestForPlatform(t *testing.T, handler *OpenAIGatewayHa
 }
 
 func performCodexModelsRequestWithETag(t *testing.T, handler *OpenAIGatewayHandler, groupID int64, platform, etag string) *httptest.ResponseRecorder {
+	return performCodexModelsRequestWithGroup(t, handler, service.Group{ID: groupID, Platform: platform}, etag)
+}
+
+func performCodexModelsRequestWithGroup(t *testing.T, handler *OpenAIGatewayHandler, group service.Group, etag string) *httptest.ResponseRecorder {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -424,8 +439,8 @@ func performCodexModelsRequestWithETag(t *testing.T, handler *OpenAIGatewayHandl
 		c.Request.Header.Set("If-None-Match", etag)
 	}
 	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
-		GroupID: &groupID,
-		Group:   &service.Group{ID: groupID, Platform: platform},
+		GroupID: &group.ID,
+		Group:   &group,
 	})
 
 	handler.CodexModels(c)

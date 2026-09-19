@@ -104,5 +104,6 @@ func newTestApplicationCleanup(inactiveUserCleanup *service.InactiveUserCleanupS
 		nil, // auditLog
 		nil, // promptAudit
 		nil, // adminHandlers
+		nil, // pluginManager
 	)
 }

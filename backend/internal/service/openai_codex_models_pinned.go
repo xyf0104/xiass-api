@@ -126,6 +126,9 @@ func (s *OpenAIGatewayService) FetchPinnedCodexModelsManifest(ctx context.Contex
 		if err := ApplyPinnedCodexModelsMapping(manifest, account, group); err != nil {
 			return nil, err
 		}
+		if err := s.ApplyCodexBridgedRouteSearchCapability(ctx, manifest, account, group.ID, ""); err != nil {
+			return nil, err
+		}
 		return manifest, nil
 	})
 	if err != nil {

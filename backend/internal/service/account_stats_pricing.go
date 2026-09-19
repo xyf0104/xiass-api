@@ -18,6 +18,7 @@ import (
 // requestedModel 仅用于 Antigravity Gemini 3.7/3.8 公共档位的自定义计价回退。
 // totalCost 是本次请求的客户计费（倍率前），用于优先级 2。
 // serviceTier 是最终参与用户计费的 OpenAI 服务层级，用于优先级 3。
+// reasoningEffort 是最终转发等级；Fable 5.1 max 默认按 3 倍额度消耗。
 func resolveAccountStatsCostForModels(
 	ctx context.Context,
 	channelService *ChannelService,
@@ -30,7 +31,12 @@ func resolveAccountStatsCostForModels(
 	requestCount int,
 	totalCost float64,
 	serviceTier string,
+	reasoningEfforts ...string,
 ) *float64 {
+	reasoningEffort := ""
+	if len(reasoningEfforts) > 0 {
+		reasoningEffort = reasoningEfforts[0]
+	}
 	if channelService == nil || upstreamModel == "" {
 		return nil
 	}
@@ -54,7 +60,7 @@ func resolveAccountStatsCostForModels(
 			pricingModels = append(pricingModels, requestedModel)
 		}
 	}
-	if cost := tryCustomRulesForModels(channel, accountID, groupID, platform, pricingModels, tokens, requestCount); cost != nil {
+	if cost := tryCustomRulesForModels(channel, accountID, groupID, platform, pricingModels, tokens, requestCount, reasoningEffort); cost != nil {
 		return cost
 	}
 
@@ -69,14 +75,18 @@ func resolveAccountStatsCostForModels(
 
 	// 优先级 3：模型定价文件（LiteLLM）默认价格
 	if billingService != nil {
-		return tryModelFilePricing(billingService, upstreamModel, tokens, serviceTier)
+		return tryModelFilePricing(billingService, upstreamModel, tokens, serviceTier, reasoningEffort)
 	}
 
 	return nil
 }
 
 // tryModelFilePricing 使用模型定价文件（LiteLLM/fallback）中的价格计算费用。
-func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string) *float64 {
+func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string, reasoningEfforts ...string) *float64 {
+	reasoningEffort := ""
+	if len(reasoningEfforts) > 0 {
+		reasoningEffort = reasoningEfforts[0]
+	}
 	pricing, err := billingService.GetModelPricing(model)
 	if err != nil || pricing == nil {
 		return nil
@@ -88,6 +98,7 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 		if err != nil || breakdown == nil || breakdown.TotalCost <= 0 {
 			return nil
 		}
+		applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(model, reasoningEffort, pricing))
 		return &breakdown.TotalCost
 	}
 	cost := float64(tokens.InputTokens)*pricing.InputPricePerToken +
@@ -98,6 +109,7 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 	if cost <= 0 {
 		return nil
 	}
+	cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, pricing)
 	return &cost
 }
 
@@ -105,7 +117,12 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 func tryCustomRulesForModels(
 	channel *Channel, accountID, groupID int64,
 	platform string, models []string, tokens UsageTokens, requestCount int,
+	reasoningEfforts ...string,
 ) *float64 {
+	reasoningEffort := ""
+	if len(reasoningEfforts) > 0 {
+		reasoningEffort = reasoningEfforts[0]
+	}
 	modelCandidates := make([]string, 0, len(models))
 	for _, model := range models {
 		model = strings.ToLower(strings.TrimSpace(model))
@@ -121,7 +138,11 @@ func tryCustomRulesForModels(
 		for _, model := range modelCandidates {
 			pricing := findPricingForModel(rule.Pricing, platform, model)
 			if pricing != nil {
-				return calculateStatsCost(pricing, tokens, requestCount)
+				cost := calculateStatsCost(pricing, tokens, requestCount)
+				if cost != nil {
+					*cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, nil)
+				}
+				return cost
 			}
 		}
 	}
@@ -271,7 +292,11 @@ func applyAccountStatsCost(
 	if usageLog != nil && usageLog.ServiceTier != nil {
 		serviceTier = *usageLog.ServiceTier
 	}
+	reasoningEffort := ""
+	if usageLog != nil && usageLog.ReasoningEffort != nil {
+		reasoningEffort = *usageLog.ReasoningEffort
+	}
 	usageLog.AccountStatsCost = resolveAccountStatsCostForModels(
-		ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier,
+		ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier, reasoningEffort,
 	)
 }

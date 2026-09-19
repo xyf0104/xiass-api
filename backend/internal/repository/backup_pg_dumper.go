@@ -24,11 +24,9 @@ type PgDumper struct {
 
 // NewPgDumper creates a new PgDumper
 func NewPgDumper(cfg *config.Config, db *sql.DB) service.DBDumper {
-	return &PgDumper{
-		cfg:            &cfg.Database,
-		db:             db,
-		commandContext: exec.CommandContext,
-	}
+	dumper := &PgDumper{cfg: &cfg.Database}
+	dumper.db = db
+	return dumper
 }
 
 // Dump executes pg_dump and returns a streaming reader of the output
@@ -61,11 +59,7 @@ func (d *PgDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 		"--if-exists",
 	}
 
-	commandContext := d.commandContext
-	if commandContext == nil {
-		commandContext = exec.CommandContext
-	}
-	cmd := commandContext(ctx, "pg_dump", args...)
+	cmd := d.pgDumpCommand(ctx, args...)
 	if d.cfg.Password != "" {
 		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+d.cfg.Password)
 	}
@@ -84,6 +78,13 @@ func (d *PgDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 	}
 
 	return &cmdReadCloser{ReadCloser: stdout, cmd: cmd, release: releaseLock}, nil
+}
+
+func (d *PgDumper) pgDumpCommand(ctx context.Context, args ...string) *exec.Cmd {
+	if d.commandContext != nil {
+		return d.commandContext(ctx, "pg_dump", args...)
+	}
+	return exec.CommandContext(ctx, "pg_dump", args...)
 }
 
 func releaseBackupMigrationLock(conn *sql.Conn) error {

@@ -61,6 +61,14 @@ vi.mock('@/stores', () => ({
   })
 }))
 
+vi.mock('@/stores/authInteraction', () => ({
+  useAuthInteractionStore: () => ({
+    begin: vi.fn(),
+    finish: vi.fn(),
+    fail: vi.fn()
+  })
+}))
+
 vi.mock('@/api/auth', () => ({
   buildOAuthLoginStartURL: vi.fn(),
   getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args),
@@ -101,7 +109,7 @@ describe('LoginView registration entry', () => {
     const wrapper = mountLogin()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('auth.signUp')
+    expect(wrapper.text()).toContain('注册')
   })
 
   it('hides the registration entry when registration is disabled', async () => {
@@ -113,6 +121,6 @@ describe('LoginView registration entry', () => {
     const wrapper = mountLogin()
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('auth.signUp')
+    expect(wrapper.text()).not.toContain('注册')
   })
 })

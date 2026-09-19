@@ -657,7 +657,13 @@ function resetWorkbenchFilters() {
 }
 
 function taskFor(account: Account): OpenAIReauthorizationTask | undefined {
-  return taskByAccountID.value.get(account.id)
+  const task = taskByAccountID.value.get(account.id)
+  const status = statusByAccountID.value.get(account.id)
+  // Completed tasks remain in the process-local store for up to 24 hours. If
+  // the account has since returned to 401, that success belongs to the previous
+  // authorization round and must not replace the current pending state.
+  if (task?.status === 'completed' && status?.current_needs_reauthorization) return undefined
+  return task
 }
 
 function statusFor(account: Account): OpenAIReauthorizationAccountStatus | undefined {
@@ -1039,6 +1045,14 @@ function historyResultLabel(account: Account): string {
   const status = statusFor(account)
   if (!status) return '未知'
   if (status.last_result === 'blocked' || status.risk_level === 'blocked') return accountRestrictionLabel(account)
+  // A prior successful authorization must not mask a new 401 round. The
+  // current credential state is authoritative for the result shown here;
+  // historical success remains visible in the timeline and counters.
+  if (status.current_needs_reauthorization) {
+    return status.current_authorization_number > 1
+      ? `待第 ${status.current_authorization_number} 次授权`
+      : '待重新授权'
+  }
   if (status.last_result === 'success' || status.has_reauthorized) return '成功'
   if (status.last_result === 'canceled') return '已停止'
   if (status.last_result === 'failed' || status.risk_level === 'failed') return '失败'
@@ -1049,7 +1063,7 @@ function historyResultClass(account: Account): string {
   const result = historyResultLabel(account)
   if (result === '成功') return 'oauth-tone-success'
   if (result === '账号已删除或停用' || result === '账号已封禁' || result === '失败') return 'oauth-tone-danger'
-  if (result === '已停止' || result === '待确认') return 'oauth-tone-warning'
+  if (result === '已停止' || result === '待确认' || result === '待重新授权' || result.startsWith('待第 ')) return 'oauth-tone-warning'
   return 'oauth-tone-info'
 }
 

@@ -80,7 +80,7 @@ const AccountGroupsCellStub = defineComponent({
 
 const EditAccountModalStub = defineComponent({
   props: { show: Boolean, account: { type: Object, default: null } },
-  template: '<div data-test="edit-account">{{ show ? account?.name : "" }}</div>'
+  template: '<div data-test="edit-account" :data-full-row="String(Boolean(account?.extra?.detail_only))">{{ show ? account?.name : "" }}</div>'
 })
 
 const AccountTestModalStub = defineComponent({
@@ -156,11 +156,11 @@ const fullAccount = {
   extra: { detail_only: true }
 }
 
-describe('admin AccountsView lite account list', () => {
+describe('admin AccountsView full account list', () => {
   beforeEach(() => {
     localStorage.clear()
-    listAccounts.mockReset().mockResolvedValue({ items: [listRow], total: 1, page: 1, page_size: 20, pages: 1 })
-    listWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'compact-etag', data: null })
+    listAccounts.mockReset().mockResolvedValue({ items: [fullAccount], total: 1, page: 1, page_size: 20, pages: 1 })
+    listWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'full-etag', data: null })
     getById.mockReset().mockResolvedValue(fullAccount)
     getBatchTodayStats.mockReset().mockResolvedValue({ stats: {} })
     getUpstreamBillingProbeSettings.mockReset().mockResolvedValue({ enabled: true })
@@ -176,16 +176,15 @@ describe('admin AccountsView lite account list', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps lite=1 on the initial list request', async () => {
+  it('omits lite=1 from the initial list request', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(listAccounts).toHaveBeenCalledWith(
-      1,
-      20,
-      expect.objectContaining({ lite: '1' }),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
+    expect(listAccounts).toHaveBeenCalled()
+    expect(listAccounts.mock.calls[0][0]).toBe(1)
+    expect(listAccounts.mock.calls[0][1]).toBe(20)
+    expect(listAccounts.mock.calls[0][2]).not.toHaveProperty('lite')
+    expect(listAccounts.mock.calls[0][3]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     wrapper.unmount()
   })
 
@@ -218,7 +217,7 @@ describe('admin AccountsView lite account list', () => {
     wrapper.unmount()
   })
 
-  it('keeps lite=1 on automatic ETag refreshes', async () => {
+  it('omits lite=1 from automatic ETag refreshes', async () => {
     vi.useFakeTimers()
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
@@ -228,35 +227,35 @@ describe('admin AccountsView lite account list', () => {
     await vi.advanceTimersByTimeAsync(6000)
     await flushPromises()
 
-    expect(listWithEtag).toHaveBeenCalledWith(
-      1,
-      20,
-      expect.objectContaining({ lite: '1' }),
-      expect.objectContaining({ etag: null })
-    )
+    expect(listWithEtag).toHaveBeenCalled()
+    expect(listWithEtag.mock.calls[0][0]).toBe(1)
+    expect(listWithEtag.mock.calls[0][1]).toBe(20)
+    expect(listWithEtag.mock.calls[0][2]).not.toHaveProperty('lite')
+    expect(listWithEtag.mock.calls[0][3]).toEqual(expect.objectContaining({ etag: null }))
     wrapper.unmount()
   })
 
-  it('loads the full account by id before opening edit, test, and stats actions', async () => {
-    const wrapper = mountView()
+  it('uses full list rows directly for edit, test, and stats actions', async () => {
+    const wrapper = mountView(false)
     await flushPromises()
 
     const editButton = wrapper.findAll('button').find(button => button.text().includes('common.edit'))
     expect(editButton).toBeTruthy()
     await editButton!.trigger('click')
     await flushPromises()
-    expect(getById).toHaveBeenCalledWith(42)
+    expect(getById).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="edit-account"]').text()).toBe('compact row')
+    expect(wrapper.get('[data-test="edit-account"]').attributes('data-full-row')).toBe('true')
 
     const menu = wrapper.findComponent(AccountActionMenu)
     menu.vm.$emit('test', listRow)
     await flushPromises()
-    expect(getById).toHaveBeenCalledTimes(2)
+    expect(getById).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="test-account"]').text()).toBe('compact row')
 
     menu.vm.$emit('stats', listRow)
     await flushPromises()
-    expect(getById).toHaveBeenCalledTimes(3)
+    expect(getById).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="stats-account"]').text()).toBe('compact row')
     wrapper.unmount()
   })
@@ -279,19 +278,4 @@ describe('admin AccountsView lite account list', () => {
     wrapper.unmount()
   })
 
-  it('shows an error and keeps the modal closed when detail loading fails', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    getById.mockRejectedValueOnce(new Error('detail failed'))
-    const wrapper = mountView()
-    await flushPromises()
-
-    const editButton = wrapper.findAll('button').find(button => button.text().includes('common.edit'))
-    await editButton!.trigger('click')
-    await flushPromises()
-
-    expect(showError).toHaveBeenCalledWith('detail failed')
-    expect(wrapper.get('[data-test="edit-account"]').text()).toBe('')
-    consoleError.mockRestore()
-    wrapper.unmount()
-  })
 })

@@ -14,7 +14,7 @@ async function openSelector() {
     props: { modelValue: null, proxies: [1, 2].map(id => ({
       id, name: `Proxy ${id}`, host: 'localhost', port: 8080, protocol: 'http'
     } as Proxy)) },
-    global: { stubs: { Icon: true } }
+    global: { stubs: { Icon: true, Teleport: true } }
   })
   await wrapper.get('.select-trigger').trigger('click')
   return wrapper

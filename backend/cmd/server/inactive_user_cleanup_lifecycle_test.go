@@ -83,7 +83,7 @@ func TestInactiveUserCleanup_WireApplicationLifecycle(t *testing.T) {
 			require.Equal(t, 1, counts[serviceProvider], "construct the worker only once")
 			args := calls[serviceProvider].Args
 			require.Len(t, args, 6)
-			require.Equal(t, results["service.NewAdminService"], render(args[0]), "use the existing admin deletion service")
+			require.Equal(t, results["service.NewAdminServiceWithConfig"], render(args[0]), "use the existing admin deletion service")
 			require.Equal(t, results[repositoryProvider], render(args[1]))
 			require.Equal(t, results["service.NewNotificationEmailService"], render(args[2]))
 			require.Equal(t, results["repository.NewLeaderLockCache"], render(args[3]))

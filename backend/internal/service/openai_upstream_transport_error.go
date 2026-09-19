@@ -82,7 +82,7 @@ func classifyOpenAITransportError(err error) openAITransportErrorClass {
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
-	appendOpenAIOpsUpstreamError(c, OpsUpstreamErrorEvent{
+	event := OpsUpstreamErrorEvent{
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,
@@ -90,7 +90,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		Passthrough:        passthrough,
 		Kind:               "request_error",
 		Message:            safeErr,
-	})
+	}
+	if _, frozen := c.Get(opsOpenAIProxySnapshotKey); frozen {
+		appendOpenAIOpsUpstreamError(c, event)
+	} else {
+		event.ProxyID, event.ProxyName = opsUpstreamProxyAttribution(account)
+		appendOpsUpstreamError(c, event)
+	}
 
 	// Client disconnected: do NOT fail over to another account and do NOT evict
 	// this one — the upstream never had a chance to exhibit a fault.

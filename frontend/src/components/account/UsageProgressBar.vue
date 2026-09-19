@@ -202,9 +202,9 @@ const barClass = computed(() => {
     }
     return 'bg-green-500'
   }
-  if (props.utilization >= 100) {
+  if (props.utilization >= 90) {
     return 'bg-red-500'
-  } else if (props.utilization >= 80) {
+  } else if (props.utilization >= 75) {
     return 'bg-amber-500'
   } else {
     return 'bg-green-500'
@@ -221,9 +221,9 @@ const textClass = computed(() => {
     }
     return 'text-gray-600 dark:text-gray-400'
   }
-  if (props.utilization >= 100) {
+  if (props.utilization >= 90) {
     return 'text-red-600 dark:text-red-400'
-  } else if (props.utilization >= 80) {
+  } else if (props.utilization >= 75) {
     return 'text-amber-600 dark:text-amber-400'
   } else {
     return 'text-gray-600 dark:text-gray-400'

@@ -38,34 +38,6 @@ func newRawStreamTruncationAccount() *Account {
 	return &Account{ID: 73, Name: "raw-upstream", Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 }
 
-func TestOpenAIRawStreamTerminalState(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name           string
-		payloads       []string
-		clientStarted  bool
-		wantTerminated bool
-		wantTruncated  bool
-	}{
-		{name: "done", payloads: []string{`{"choices":[{"delta":{"content":"a"}}]}`, "[DONE]"}, clientStarted: true, wantTerminated: true},
-		{name: "usage", payloads: []string{`{"choices":[],"usage":{"prompt_tokens":1}}`}, clientStarted: true, wantTerminated: true},
-		{name: "finish reason", payloads: []string{`{"choices":[{"finish_reason":"stop"}]}`}, clientStarted: true, wantTerminated: true},
-		{name: "null finish reason", payloads: []string{`{"choices":[{"finish_reason":null}]}`}, clientStarted: true, wantTruncated: true},
-		{name: "empty", clientStarted: false, wantTruncated: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			var state openAIRawStreamTerminalState
-			for _, payload := range test.payloads {
-				state.ObserveDataLine(payload)
-			}
-			require.Equal(t, test.wantTerminated, state.Terminated())
-			require.Equal(t, test.wantTruncated, state.IsTruncated(test.clientStarted))
-		})
-	}
-}
-
 func TestRawChatStreamEmptyBeforeOutputFailsOver(t *testing.T) {
 	context, recorder := newRawStreamTruncationContext(t)
 	service := &OpenAIGatewayService{}

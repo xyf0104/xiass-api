@@ -1034,6 +1034,28 @@ func (s *APIKeyService) SearchAPIKeys(ctx context.Context, userID int64, keyword
 	return keys, nil
 }
 
+// GetUserGroupVisibility returns groups granted through user_allowed_groups or
+// an active subscription, plus whether public-group visibility is restricted.
+// Logged-in users always receive a non-nil set, even when it is empty.
+func (s *APIKeyService) GetUserGroupVisibility(ctx context.Context, userID int64) (map[int64]struct{}, bool, error) {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, false, fmt.Errorf("get user: %w", err)
+	}
+	allowed := make(map[int64]struct{}, len(user.AllowedGroups))
+	for _, id := range user.AllowedGroups {
+		allowed[id] = struct{}{}
+	}
+	subscriptions, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list active subscriptions: %w", err)
+	}
+	for _, subscription := range subscriptions {
+		allowed[subscription.GroupID] = struct{}{}
+	}
+	return allowed, user.RestrictPublicGroups, nil
+}
+
 // GetUserGroupRates 获取用户的专属分组倍率配置
 // 返回 map[groupID]rateMultiplier
 func (s *APIKeyService) GetUserGroupRates(ctx context.Context, userID int64) (map[int64]float64, error) {

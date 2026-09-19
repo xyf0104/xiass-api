@@ -94,6 +94,15 @@ function task(id: number, status = 'running', stage = 'email', reason = '') {
   }
 }
 
+function completedTask(id: number, authorizationNumber: number) {
+  return {
+    ...task(id, 'completed', 'completed'),
+    account_id: id,
+    reauthorization_number: authorizationNumber,
+    finished_at: new Date().toISOString(),
+  }
+}
+
 function reauthorizationStatus(id: number, overrides: Record<string, unknown> = {}) {
   return {
     account: account(id),
@@ -410,6 +419,53 @@ describe('OpenAIReauthorizationView', () => {
     expect(wrapper.get('[data-testid="authorization-history-account-401"]').text()).toContain('account-401')
     expect(wrapper.find('[data-testid="reauthorization-account-201"]').exists()).toBe(false)
     expect(openAIReauthorizationAPI.accounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('does not show a previous completed task as success for a new 401 round', async () => {
+    openAIReauthorizationAPI.accounts.mockResolvedValue({
+      items: [reauthorizationStatus(402, {
+        current_authorization_number: 3,
+        has_history: true,
+        has_attempted: true,
+        has_reauthorized: true,
+        attempt_count: 2,
+        success_count: 2,
+        can_start: true,
+        requires_risk_confirmation: true,
+        risk_level: 'repeated',
+      })],
+      cooldown_seconds: 604800,
+    })
+    openAIReauthorizationAPI.list.mockResolvedValue({
+      items: [completedTask(402, 2)],
+      max_concurrency: 3,
+      max_restarts: 2,
+    })
+    openAIReauthorizationAPI.start.mockResolvedValue(task(402, 'running', 'opening'))
+
+    const wrapper = await mountView()
+    const row = wrapper.get('[data-testid="reauthorization-account-402"]')
+
+    expect(row.text()).toContain('第 3 次授权')
+    expect(row.text()).toContain('尚未启动')
+    expect(row.text()).not.toContain('授权成功')
+    expect(wrapper.get('[data-testid="start-reauthorization-402"]').text()).toContain('继续授权')
+
+    await wrapper.get('[data-testid="authorization-history-workspace-tab"]').trigger('click')
+    const history = wrapper.get('[data-testid="authorization-history-account-402"]')
+    expect(history.get('.oauth-history-result').text()).toContain('待第 3 次授权')
+    expect(history.get('.oauth-history-result').text()).not.toContain('成功')
+    expect(history.text()).toContain('第 2 次授权')
+
+    await wrapper.get('[data-testid="reauthorization-workspace-tab"]').trigger('click')
+
+    await wrapper.get('[data-testid="start-reauthorization-402"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('第 3 次掉授权')
+    await wrapper.get('[data-testid="confirm-action"]').trigger('click')
+    await flushPromises()
+
+    expect(openAIReauthorizationAPI.start).toHaveBeenCalledWith(402, true)
     wrapper.unmount()
   })
 

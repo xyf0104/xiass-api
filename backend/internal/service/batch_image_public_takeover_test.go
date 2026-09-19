@@ -48,17 +48,11 @@ func TestBatchImageFixedOwnerPriorityAndScope(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			want := remote.ID
-			if mode == "offline" || mode == "disabled" || mode == "unknown" {
-				want = local.ID
-			}
-			require.Equal(t, want, got.ID)
+			// Account priority is a hard ordering boundary. Execution-node health
+			// and weights may only reorder accounts inside the same priority tier.
+			require.Equal(t, local.ID, got.ID)
 			require.Equal(t, BatchImageProviderGeminiAPI, provider.Name())
-			proxyID := int64(83)
-			if mode == "healthy" {
-				proxyID = 84
-			}
-			require.Equal(t, proxyID, got.requestProxy().ID)
+			require.Equal(t, int64(83), got.requestProxy().ID)
 			require.Equal(t, int64(84), *remote.ProxyID)
 
 			require.Empty(t, gemini.submits)

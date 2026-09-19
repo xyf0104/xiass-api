@@ -173,7 +173,9 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	_, event, err := harness.clientConn.Read(readCtx)
 	cancelRead()
 	require.NoError(t, err)
-	require.Equal(t, "response.failed", gjson.GetBytes(event, "type").String())
+	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+	require.Equal(t, "content_policy_violation", gjson.GetBytes(event, "error.code").String())
+	require.Equal(t, service.OpenAIWSCyberPolicyClientMessage, gjson.GetBytes(event, "error.message").String())
 
 	require.Eventually(t, func() bool {
 		logs := harness.moderationRepo.logSnapshot()
@@ -203,9 +205,7 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	var closeErr coderws.CloseError
 	require.ErrorAs(t, err, &closeErr)
 	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-	// closeOpenAIClientWS caps close reasons at 120 bytes; passthrough must expose
-	// the same client-visible prefix rather than dropping the close frame.
-	require.Equal(t, "该会话已被网络安全策略屏蔽，请开启新会话 / This session is blocked by cyber-security policy, please ", closeErr.Reason)
+	require.Equal(t, service.OpenAIWSCyberPolicyClientMessage, closeErr.Reason)
 	select {
 	case <-harness.handlerDone:
 	case <-time.After(3 * time.Second):

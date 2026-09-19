@@ -61,8 +61,21 @@ function onEnter() {
   openTooltip()
 }
 
-function onLeave() {
+function isInside(container: HTMLElement | null, target: EventTarget | null): boolean {
+  return target instanceof Node && !!container?.contains(target)
+}
+
+// Keep hover content open while the pointer moves between the trigger and
+// the teleported tooltip so text remains selectable and copyable.
+function onLeave(event: MouseEvent) {
   if (props.trigger !== 'hover') return
+  if (isInside(tooltipRef.value, event.relatedTarget)) return
+  closeTooltip()
+}
+
+function onTooltipLeave(event: MouseEvent) {
+  if (props.trigger !== 'hover') return
+  if (isInside(triggerRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
@@ -173,11 +186,14 @@ onBeforeUnmount(() => {
         v-show="show"
         role="tooltip"
         :class="[
-          'help-tooltip-surface fixed z-[100000100] -translate-x-1/2 rounded-lg p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10',
-          tooltipPlacement === 'top' ? '-translate-y-full' : '',
+          'help-tooltip-surface fixed z-[100000100] -translate-x-1/2 rounded-lg p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 before:absolute before:inset-x-0 before:h-3',
+          tooltipPlacement === 'top'
+            ? '-translate-y-full before:top-full'
+            : 'before:bottom-full',
           props.widthClass,
         ]"
         :style="tooltipStyle"
+        @mouseleave="onTooltipLeave"
       >
         <button
           v-if="props.trigger === 'click'"

@@ -682,7 +682,7 @@ describe('BulkEditAccountModal', () => {
     })
 
     // 下拉框默认就是 off，用户只勾选「编辑该项」即提交——正是 issue 描述的操作路径。
-    await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-codex-fingerprint-mode-enabled').setValue(true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -707,7 +707,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-codex-fingerprint-mode-enabled').setValue(true)
     await wrapper
       .get('[data-testid="bulk-codex-fingerprint-mode-select"]')
       .setValue('session')

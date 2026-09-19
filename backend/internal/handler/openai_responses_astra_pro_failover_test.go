@@ -190,12 +190,12 @@ func TestDeriveOpenAIForwardAttemptBody_AstraCrossModeKeepsTopLevelReasoningMode
 	kiro := newOpenAIPassthroughAccount(1, true)     // passthrough first
 	bedrock := newOpenAIPassthroughAccount(2, false) // non-passthrough after
 
-	firstBody := h.deriveOpenAIForwardAttemptBody(nil, canonical, kiro, state)
+	firstBody, _ := h.deriveOpenAIForwardAttemptBody(nil, canonical, kiro, state)
 	require.Equal(t, 1, reasoningItemCount(t, firstBody), "first passthrough attempt keeps the encrypted input reasoning item")
 	require.Equal(t, "pro", gjson.GetBytes(firstBody, "reasoning.mode").String())
 	require.Equal(t, "max", gjson.GetBytes(firstBody, "reasoning.effort").String())
 
-	secondBody := h.deriveOpenAIForwardAttemptBody(nil, canonical, bedrock, state)
+	secondBody, _ := h.deriveOpenAIForwardAttemptBody(nil, canonical, bedrock, state)
 	require.Equal(t, 0, reasoningItemCount(t, secondBody), "cross-mode attempt drops the encrypted input reasoning item")
 	require.Equal(t, "pro", gjson.GetBytes(secondBody, "reasoning.mode").String(), "mode=pro must survive cross-mode sanitization")
 	require.Equal(t, "max", gjson.GetBytes(secondBody, "reasoning.effort").String(), "effort=max must survive cross-mode sanitization")

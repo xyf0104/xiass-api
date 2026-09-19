@@ -26,25 +26,29 @@ func TestShouldRecordGrokMediaUsage(t *testing.T) {
 		name     string
 		endpoint service.GrokMediaEndpoint
 		model    string
+		result   *service.OpenAIForwardResult
 		want     bool
 	}{
 		{
 			name:     "image generation records usage",
 			endpoint: service.GrokMediaEndpointImagesGenerations,
 			model:    "grok-imagine",
+			result:   &service.OpenAIForwardResult{ImageCount: 1},
 			want:     true,
 		},
 		{
 			name:     "image edit records usage",
 			endpoint: service.GrokMediaEndpointImagesEdits,
 			model:    "grok-imagine-edit",
+			result:   &service.OpenAIForwardResult{ImageCount: 1},
 			want:     true,
 		},
 		{
 			name:     "video generation records usage",
 			endpoint: service.GrokMediaEndpointVideosGenerations,
 			model:    "grok-imagine-video-1.5",
-			want:     true,
+			result:   &service.OpenAIForwardResult{VideoCount: 1},
+			want:     false,
 		},
 		{
 			name:     "video status skips empty model usage",
@@ -62,13 +66,21 @@ func TestShouldRecordGrokMediaUsage(t *testing.T) {
 			name:     "generation skips usage without model",
 			endpoint: service.GrokMediaEndpointImagesGenerations,
 			model:    " ",
+			result:   &service.OpenAIForwardResult{ImageCount: 1},
+			want:     false,
+		},
+		{
+			name:     "generation skips usage without completed image",
+			endpoint: service.GrokMediaEndpointImagesGenerations,
+			model:    "grok-imagine",
+			result:   &service.OpenAIForwardResult{},
 			want:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, shouldRecordGrokMediaUsage(tt.endpoint, tt.model))
+			require.Equal(t, tt.want, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, tt.result))
 		})
 	}
 }

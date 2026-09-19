@@ -199,6 +199,7 @@ const adminMappedLog = {
 }
 
 const sharedPageStubs = {
+  Teleport: true,
   AppLayout: layoutStub,
   Pagination: true,
   Select: true,

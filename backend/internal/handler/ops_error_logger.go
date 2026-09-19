@@ -1576,11 +1576,15 @@ func isKnownOpsErrorType(t string) bool {
 	switch t {
 	case "invalid_request_error",
 		"authentication_error",
+		"permission_error",
+		"model_not_found",
+		"service_unavailable",
 		"rate_limit_error",
 		"billing_error",
 		"subscription_error",
 		"upstream_error",
 		"overloaded_error",
+		"service_unavailable_error",
 		"api_error",
 		"not_found_error",
 		"forbidden_error":
@@ -1624,7 +1628,7 @@ func classifyOpsPhase(errType, message, code string) string {
 			return "request"
 		}
 		return "upstream"
-	case "invalid_request_error":
+	case "invalid_request_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found":
 		return "request"
 	case "upstream_error", "overloaded_error":
 		return "upstream"
@@ -1640,7 +1644,7 @@ func classifyOpsPhase(errType, message, code string) string {
 
 func classifyOpsSeverity(errType string, status int) string {
 	switch errType {
-	case "invalid_request_error", "authentication_error", "billing_error", "subscription_error":
+	case "invalid_request_error", "authentication_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found", "billing_error", "subscription_error":
 		return "P3"
 	}
 	if status >= 500 {
@@ -1660,9 +1664,13 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	routingCapacityLimited := isOpsRoutingCapacityLimited(c)
 	clientBusinessLimited := service.HasOpsClientBusinessLimited(c)
 	localModelConfiguration := clientBusinessLimited && service.OpsClientBusinessLimitedReason(c) == service.OpsClientBusinessLimitedReasonLocalModelConfiguration
+	ingressModelNotAllowed := false
+	if reason, rejected := middleware2.GetIngressRejectReason(c); rejected && reason == middleware2.IngressRejectModelNotAllowed {
+		ingressModelNotAllowed = true
+	}
 	upstreamError := hasOpsUpstreamErrorContext(c)
 	accountAuthFailure := hasOpsAccountAuthFailure(c)
-	if localModelConfiguration {
+	if localModelConfiguration && !ingressModelNotAllowed {
 		phase = "routing"
 	} else if accountAuthFailure && !routingCapacityLimited {
 		phase = "account_auth"
@@ -1758,6 +1766,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "this group is restricted to claude code clients") ||
 		strings.Contains(msg, "this group does not allow /v1/messages dispatch") ||
 		strings.Contains(msg, "image generation is not enabled for this group") ||
+		(strings.Contains(msg, "reasoning effort ") && strings.Contains(msg, " exceeds this group's limit")) ||
 		strings.Contains(msg, "token counting is not supported for this platform") ||
 		strings.Contains(msg, "images api is not supported for this platform") ||
 		(strings.Contains(msg, "model ") && strings.Contains(msg, " not in whitelist")) ||

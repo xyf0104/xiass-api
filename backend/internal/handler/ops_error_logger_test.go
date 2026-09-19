@@ -600,11 +600,12 @@ func TestOpsErrorLoggerMiddleware_LocalModelConfigurationFields(t *testing.T) {
 
 func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
 	tests := []struct {
-		name    string
-		errType string
-		message string
-		code    string
-		status  int
+		name        string
+		errType     string
+		wantErrType string
+		message     string
+		code        string
+		status      int
 	}{
 		{
 			name:    "standard invalid API key",
@@ -670,11 +671,12 @@ func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
 			status:  http.StatusForbidden,
 		},
 		{
-			name:    "anthropic unassigned API key group",
-			errType: "permission_error",
-			message: "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.",
-			code:    "",
-			status:  http.StatusForbidden,
+			name:        "anthropic unassigned API key group",
+			errType:     "permission_error",
+			wantErrType: "permission_error",
+			message:     "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.",
+			code:        "",
+			status:      http.StatusForbidden,
 		},
 		{
 			name:    "google invalid API key",
@@ -722,7 +724,11 @@ func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
 			errType := normalizeOpsErrorType(tt.errType, tt.code)
 			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, tt.message, tt.code, tt.status)
 
-			require.Equal(t, "api_error", errType)
+			wantErrType := tt.wantErrType
+			if wantErrType == "" {
+				wantErrType = "api_error"
+			}
+			require.Equal(t, wantErrType, errType)
 			require.Equal(t, "auth", phase)
 			require.True(t, isBusinessLimited)
 			require.Equal(t, "client", errorOwner)
@@ -873,7 +879,7 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			message:     "This group is restricted to Claude Code clients (/v1/messages only)",
 			code:        "",
 			status:      http.StatusForbidden,
-			wantErrType: "api_error",
+			wantErrType: "permission_error",
 			wantPhase:   "request",
 		},
 		{
@@ -882,7 +888,7 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			message:     "Image generation is not enabled for this group",
 			code:        "",
 			status:      http.StatusForbidden,
-			wantErrType: "api_error",
+			wantErrType: "permission_error",
 			wantPhase:   "request",
 		},
 		{
@@ -918,7 +924,7 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			message:     "model claude-3-5-sonnet not in whitelist",
 			code:        "",
 			status:      http.StatusForbidden,
-			wantErrType: "api_error",
+			wantErrType: "permission_error",
 			wantPhase:   "request",
 		},
 		{
@@ -945,7 +951,7 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			message:     "openai service_tier=priority is not allowed for model gpt-5.5",
 			code:        "",
 			status:      http.StatusForbidden,
-			wantErrType: "api_error",
+			wantErrType: "permission_error",
 			wantPhase:   "request",
 		},
 		{

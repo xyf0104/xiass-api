@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
+	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -54,9 +56,13 @@ func TestPgDumperUsesEffectiveRemoteDatabaseWithoutLocalFallback(t *testing.T) {
 	shim := "#!/bin/sh\nexec '" + strings.ReplaceAll(docker, "'", "'\\''") + "' run --rm --network bridge -e PGPASSWORD -e PGSSLMODE postgres:18.1-alpine3.23 pg_dump \"$@\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "pg_dump"), []byte(shim), 0700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	db, err := sql.Open("postgres", "host="+ip+" port=5432 user=snapshot password=synthetic-snapshot-password dbname=snapshot sslmode=disable")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, db.PingContext(ctx))
 	dumper := NewPgDumper(&config.Config{Database: config.DatabaseConfig{
 		Host: ip, Port: 5432, User: "snapshot", DBName: "snapshot", Password: "synthetic-snapshot-password", SSLMode: "disable",
-	}})
+	}}, db)
 	check := func() {
 		t.Helper()
 		stream, err := dumper.Dump(ctx)

@@ -196,7 +196,7 @@ var providerAdapters = map[string]providerAdapter{
 		buildBody: func(_, prompt string) ([]byte, error) {
 			return json.Marshal(map[string]any{
 				"contents": []map[string]any{
-					{"parts": []map[string]any{{"text": prompt}}},
+					{"role": "user", "parts": []map[string]any{{"text": prompt}}},
 				},
 				"generationConfig": map[string]any{"maxOutputTokens": monitorChallengeMaxTokens},
 			})
@@ -531,7 +531,61 @@ func joinURL(base, path string) string {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	parsed, err := url.Parse(base)
+	if err == nil {
+		basePath := strings.TrimRight(parsed.EscapedPath(), "/")
+		if basePath != "" && strings.HasPrefix(path, basePath+"/") {
+			path = strings.TrimPrefix(path, basePath)
+		} else if lastSegment := monitorURLLastPathSegment(basePath); isMonitorAPIVersionSegment(lastSegment) {
+			firstSegment := monitorURLFirstPathSegment(path)
+			if firstSegment == lastSegment {
+				path = strings.TrimPrefix(path, "/"+firstSegment)
+				if path == "" {
+					path = "/"
+				}
+			}
+		}
+	}
 	return base + path
+}
+
+func monitorURLFirstPathSegment(path string) string {
+	path = strings.TrimPrefix(path, "/")
+	if index := strings.IndexByte(path, '/'); index >= 0 {
+		return path[:index]
+	}
+	return path
+}
+
+func monitorURLLastPathSegment(path string) string {
+	path = strings.TrimRight(path, "/")
+	if index := strings.LastIndexByte(path, '/'); index >= 0 {
+		return path[index+1:]
+	}
+	return path
+}
+
+func isMonitorAPIVersionSegment(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	index := 1
+	for index < len(segment) && segment[index] >= '0' && segment[index] <= '9' {
+		index++
+	}
+	if index == 1 {
+		return false
+	}
+	if index == len(segment) {
+		return true
+	}
+	if strings.HasPrefix(segment[index:], "beta") {
+		index += len("beta")
+		for index < len(segment) && segment[index] >= '0' && segment[index] <= '9' {
+			index++
+		}
+	}
+	return index == len(segment)
 }
 
 // extractOrigin 从一个 endpoint URL 中提取 scheme://host[:port] 部分。

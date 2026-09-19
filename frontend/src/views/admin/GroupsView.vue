@@ -647,6 +647,7 @@
           id-prefix="create-group-reasoning"
           :platform="createForm.platform"
           v-model:max-effort="createForm.max_reasoning_effort"
+          v-model:over-limit="createForm.max_reasoning_effort_over_limit"
           v-model:mappings="createForm.reasoning_effort_mappings"
         />
         <div
@@ -1652,6 +1653,42 @@
             </div>
           </div>
         </div>
+        <!-- OpenAI Fast controls (OpenAI and Composite platforms) -->
+        <div
+          v-if="supportsGroupOpenAIFast(createForm.platform)"
+          class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-400"
+        >
+          <h4 class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.openaiFast.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.force") }}
+            </label>
+            <Toggle
+              v-model="createForm.force_openai_fast"
+              data-testid="create-force-openai-fast"
+              :aria-label="t('admin.groups.openaiFast.force')"
+            />
+          </div>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.openaiFast.hint") }}
+          </p>
+          <div class="mt-4 flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.free") }}
+            </label>
+            <Toggle
+              v-model="createForm.free_openai_fast"
+              data-testid="create-free-openai-fast"
+              :aria-label="t('admin.groups.openaiFast.free')"
+            />
+          </div>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.openaiFast.freeHint") }}
+          </p>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(createForm.platform)"
@@ -2488,6 +2525,7 @@
           id-prefix="edit-group-reasoning"
           :platform="editForm.platform"
           v-model:max-effort="editForm.max_reasoning_effort"
+          v-model:over-limit="editForm.max_reasoning_effort_over_limit"
           v-model:mappings="editForm.reasoning_effort_mappings"
         />
         <div v-if="editForm.subscription_type !== 'subscription'">
@@ -3501,6 +3539,42 @@
             </div>
           </div>
         </div>
+        <!-- OpenAI Fast controls (OpenAI and Composite platforms) -->
+        <div
+          v-if="supportsGroupOpenAIFast(editForm.platform)"
+          class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-400"
+        >
+          <h4 class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.openaiFast.title") }}
+          </h4>
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.force") }}
+            </label>
+            <Toggle
+              v-model="editForm.force_openai_fast"
+              data-testid="edit-force-openai-fast"
+              :aria-label="t('admin.groups.openaiFast.force')"
+            />
+          </div>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.openaiFast.hint") }}
+          </p>
+          <div class="mt-4 flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.free") }}
+            </label>
+            <Toggle
+              v-model="editForm.free_openai_fast"
+              data-testid="edit-free-openai-fast"
+              :aria-label="t('admin.groups.openaiFast.free')"
+            />
+          </div>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.openaiFast.freeHint") }}
+          </p>
+        </div>
+
         <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsLivePlatform(editForm.platform)"
@@ -4935,11 +5009,17 @@ import {
 } from "./groupsProfitControl";
 import {
   normalizeReasoningEffortForPlatform,
+  normalizeReasoningEffortOverLimit,
   reasoningEffortMappingsToAPI,
   reasoningEffortMappingsToRows,
+  reasoningEffortOverLimitDowngrade,
   supportsReasoningEffortPolicyPlatform,
   type ReasoningEffortMappingRow,
 } from "./groupsReasoningEffort";
+import {
+  normalizeGroupOpenAIFast,
+  supportsGroupOpenAIFast,
+} from "./groupsOpenAIFast";
 import {
   getDefaultImagePreviewPrice,
   getDefaultVideoPreviewPrice,
@@ -5923,6 +6003,8 @@ const createForm = reactive({
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
+  force_openai_fast: false,
+  free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5984,6 +6066,7 @@ const createForm = reactive({
   // 成本比例（成本价/官方价），用于前端展示成本价倍数
   cost_ratio: null as number | null,
   max_reasoning_effort: "",
+  max_reasoning_effort_over_limit: reasoningEffortOverLimitDowngrade,
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
 
@@ -6361,6 +6444,8 @@ const editForm = reactive({
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
+  force_openai_fast: false,
+  free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -6423,6 +6508,7 @@ const editForm = reactive({
   // 成本比例（成本价/官方价），用于前端展示成本价倍数
   cost_ratio: null as number | null,
   max_reasoning_effort: "",
+  max_reasoning_effort_over_limit: reasoningEffortOverLimitDowngrade,
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
 
@@ -6722,7 +6808,7 @@ const getQuotaUsageClass = (
 };
 
 const loadUsageSummary = async () => {
-  if (!hasVisibleUsageSummaryConsumer.value) {
+  if (authStore.isSimpleMode || !hasVisibleUsageSummaryConsumer.value) {
     usageLoading.value = false;
     return;
   }
@@ -6748,7 +6834,7 @@ const loadUsageSummary = async () => {
 let capacityRefreshPromise: Promise<void> | null = null;
 
 const loadCapacitySummary = (): Promise<void> => {
-  if (!hasVisibleCapacityColumn.value) {
+  if (authStore.isSimpleMode || !hasVisibleCapacityColumn.value) {
     return Promise.resolve();
   }
   if (capacityRefreshPromise !== null) return capacityRefreshPromise;
@@ -6888,6 +6974,8 @@ const closeCreateModal = () => {
   createForm.video_price_1080p = null;
   createForm.video_model_prices = createVideoModelPricesForm();
   createForm.long_context_pricing_enabled = true;
+  createForm.force_openai_fast = false;
+  createForm.free_openai_fast = false;
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -6914,6 +7002,7 @@ const closeCreateModal = () => {
   createForm.rpm_limit = 0;
   createForm.cost_ratio = null;
   createForm.max_reasoning_effort = "";
+  createForm.max_reasoning_effort_over_limit = reasoningEffortOverLimitDowngrade;
   createForm.reasoning_effort_mappings = [];
   createReasoningEffortPolicyRef.value?.resetValidation();
   resetModelAllowlistState(createModelAllowlistState);
@@ -6990,6 +7079,14 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createGroupForm,
+      force_openai_fast: normalizeGroupOpenAIFast(
+        createForm.platform,
+        createForm.force_openai_fast,
+      ),
+      free_openai_fast: normalizeGroupOpenAIFast(
+        createForm.platform,
+        createForm.free_openai_fast,
+      ),
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
@@ -7127,6 +7224,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.monthly_limit_usd = group.monthly_limit_usd;
   editForm.long_context_pricing_enabled =
     group.long_context_pricing_enabled ?? true;
+  editForm.force_openai_fast = group.force_openai_fast ?? false;
+  editForm.free_openai_fast = group.free_openai_fast ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -7197,6 +7296,9 @@ const handleEdit = async (group: AdminGroup) => {
     group.platform,
     group.max_reasoning_effort,
   );
+  editForm.max_reasoning_effort_over_limit = normalizeReasoningEffortOverLimit(
+    group.max_reasoning_effort_over_limit,
+  );
   editForm.reasoning_effort_mappings = reasoningEffortMappingsToRows(
     group.reasoning_effort_mappings,
     group.platform,
@@ -7243,6 +7345,7 @@ const closeEditModal = () => {
   showEditModal.value = false;
   editingGroup.value = null;
   editForm.max_reasoning_effort = "";
+  editForm.max_reasoning_effort_over_limit = reasoningEffortOverLimitDowngrade;
   editForm.reasoning_effort_mappings = [];
   editReasoningEffortPolicyRef.value?.resetValidation();
   editModelRoutingRules.value = [];
@@ -7261,6 +7364,8 @@ const closeEditModal = () => {
   editForm.video_price_1080p = null;
   editForm.video_model_prices = createVideoModelPricesForm();
   editForm.long_context_pricing_enabled = true;
+  editForm.force_openai_fast = false;
+  editForm.free_openai_fast = false;
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -7307,6 +7412,14 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      force_openai_fast: normalizeGroupOpenAIFast(
+        editForm.platform,
+        editForm.force_openai_fast,
+      ),
+      free_openai_fast: normalizeGroupOpenAIFast(
+        editForm.platform,
+        editForm.free_openai_fast,
+      ),
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,
@@ -7745,6 +7858,14 @@ watch(
     if (!supportsLivePlatform(newVal)) {
       createForm.allow_live = false;
     }
+    createForm.force_openai_fast = normalizeGroupOpenAIFast(
+      newVal,
+      createForm.force_openai_fast,
+    );
+    createForm.free_openai_fast = normalizeGroupOpenAIFast(
+      newVal,
+      createForm.free_openai_fast,
+    );
     if (!isProfitControlPlatform(newVal)) {
       createForm.profit_control_enabled = false;
       createForm.profit_min_margin_percent = 0;
@@ -7754,6 +7875,12 @@ watch(
       newVal,
       createForm.max_reasoning_effort,
     );
+    createForm.max_reasoning_effort_over_limit =
+      supportsReasoningEffortPolicyPlatform(newVal)
+        ? normalizeReasoningEffortOverLimit(
+            createForm.max_reasoning_effort_over_limit,
+          )
+        : reasoningEffortOverLimitDowngrade;
     createForm.reasoning_effort_mappings = reasoningEffortMappingsToRows(
       reasoningEffortMappingsToAPI(createForm.reasoning_effort_mappings),
       newVal,
@@ -7798,6 +7925,14 @@ watch(
     if (!supportsLivePlatform(newVal)) {
       editForm.allow_live = false;
     }
+    editForm.force_openai_fast = normalizeGroupOpenAIFast(
+      newVal,
+      editForm.force_openai_fast,
+    );
+    editForm.free_openai_fast = normalizeGroupOpenAIFast(
+      newVal,
+      editForm.free_openai_fast,
+    );
     if (!isProfitControlPlatform(newVal)) {
       editForm.profit_control_enabled = false;
       editForm.profit_min_margin_percent = 0;
@@ -7807,6 +7942,12 @@ watch(
       newVal,
       editForm.max_reasoning_effort,
     );
+    editForm.max_reasoning_effort_over_limit =
+      supportsReasoningEffortPolicyPlatform(newVal)
+        ? normalizeReasoningEffortOverLimit(
+            editForm.max_reasoning_effort_over_limit,
+          )
+        : reasoningEffortOverLimitDowngrade;
     editForm.reasoning_effort_mappings = reasoningEffortMappingsToRows(
       reasoningEffortMappingsToAPI(editForm.reasoning_effort_mappings),
       newVal,
@@ -7915,9 +8056,13 @@ const saveSortOrder = async () => {
 onMounted(() => {
   void loadExecutionNodeAdminAccess(true);
   void loadGroups().then(openRequestedAccountAllowlist);
-  void loadLiveCapability();
-  loadModelAllowlistCandidates("create", 0, createForm.platform);
-  startCapacityRefresh();
+  if (!authStore.isSimpleMode) {
+    void loadLiveCapability();
+    loadModelAllowlistCandidates("create", 0, createForm.platform);
+  }
+  if (!authStore.isSimpleMode) {
+    startCapacityRefresh();
+  }
   document.addEventListener("click", handleClickOutside);
 });
 
