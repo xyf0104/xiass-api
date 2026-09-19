@@ -201,7 +201,7 @@ func doWebSearch(ctx context.Context, account *Account, query string) (*websearc
 }
 
 func resolveAccountProxyURL(account *Account) string {
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		return account.requestProxyURL()
 	}
 	return ""

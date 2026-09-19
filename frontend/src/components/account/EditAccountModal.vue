@@ -1510,20 +1510,36 @@
         <div class="mb-1 flex items-center gap-2">
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
         </div>
-        <template v-if="isExecutionNodeManaged">
-          <div class="input flex min-h-10 items-center justify-between gap-3 bg-gray-50 dark:bg-dark-800">
-            <span class="truncate text-sm font-medium text-gray-800 dark:text-dark-100">{{ t('admin.accounts.systemManagedProxy') }}</span>
-            <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">{{ managedExecutionProxyLabel }}</span>
-          </div>
-          <p class="input-hint">{{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}</p>
-        </template>
-        <ProxySelector v-else v-model="form.proxy_id" :proxies="proxies" />
+        <div class="mb-2 inline-flex rounded-md bg-gray-100 p-0.5 dark:bg-dark-700">
+          <button
+            type="button"
+            class="rounded px-3 py-1.5 text-xs font-medium"
+            :class="proxyMode === 'single' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+            @click="proxyMode = 'single'"
+          >
+            {{ t('admin.accounts.multiProxy.singleMode') }}
+          </button>
+          <button
+            type="button"
+            class="rounded px-3 py-1.5 text-xs font-medium"
+            :class="proxyMode === 'multi' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+            @click="proxyMode = 'multi'"
+          >
+            {{ t('admin.accounts.multiProxy.multiMode') }}
+          </button>
+        </div>
+        <p v-if="proxyMode === 'single' && isExecutionNodeManaged" class="input-hint mb-2">
+          {{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}
+        </p>
+        <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
+        <MultiProxySelector v-else v-model="proxyBindings" :proxies="proxies" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
-          <input v-model.number="form.concurrency" type="number" min="1" class="input"
+          <input v-model.number="form.concurrency" type="number" min="1" class="input disabled:cursor-not-allowed disabled:bg-gray-50 dark:disabled:bg-dark-800"
+            :disabled="proxyMode === 'multi'"
             @input="form.concurrency = Math.max(1, form.concurrency || 1)" />
         </div>
         <div>
@@ -2800,7 +2816,8 @@ import type {
   OpenAIEndpointCapability,
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState
+  GrokMediaEligibilityState,
+  AccountProxyBindingInput
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -2808,6 +2825,7 @@ import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
+import MultiProxySelector from '@/components/account/MultiProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -3570,11 +3588,28 @@ const form = reactive({
   expires_at: null as number | null
 })
 
-const managedExecutionProxyLabel = computed(() => {
-  const proxy = props.account?.proxy
-  if (proxy?.name) return `${proxy.name} (#${proxy.id})`
-  const proxyID = form.proxy_id ?? props.account?.proxy_id
-  return proxyID ? `#${proxyID}` : t('admin.accounts.systemManagedProxyAuto')
+const proxyMode = ref<'single' | 'multi'>('single')
+const proxyBindings = ref<AccountProxyBindingInput[]>([])
+const normalizedProxyBindings = () => proxyBindings.value
+  .map((binding) => ({
+    proxy_id: binding.proxy_id,
+    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1))
+  }))
+  .sort((a, b) => a.proxy_id - b.proxy_id)
+
+watch(proxyBindings, (bindings) => {
+  if (proxyMode.value !== 'multi') return
+  form.proxy_id = bindings[0]?.proxy_id ?? null
+  form.concurrency = bindings.reduce((sum, binding) => sum + Math.max(1, Number(binding.max_concurrency) || 1), 0)
+}, { deep: true })
+
+watch(proxyMode, (mode) => {
+  if (mode !== 'multi') return
+  if (proxyBindings.value.length === 0 && form.proxy_id) {
+    proxyBindings.value = [{ proxy_id: form.proxy_id, max_concurrency: Math.max(1, form.concurrency || 1) }]
+  }
+  form.proxy_id = proxyBindings.value[0]?.proxy_id ?? null
+  form.concurrency = proxyBindings.value.reduce((sum, binding) => sum + Math.max(1, Number(binding.max_concurrency) || 1), 0)
 })
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
@@ -3675,6 +3710,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
+	proxyBindings.value = (newAccount.proxy_bindings || []).map((binding) => ({
+		proxy_id: binding.proxy_id,
+		max_concurrency: binding.max_concurrency
+	}))
+	proxyMode.value = proxyBindings.value.length > 0 ? 'multi' : 'single'
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
@@ -4616,13 +4656,19 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
-    // Node-owned accounts cannot become direct-connect accounts. Sending 0
-    // means "restore this node's managed private egress" on the backend.
-    if (isExecutionNodeManaged.value) {
-      updatePayload.proxy_id = 0
-    } else if (updatePayload.proxy_id === null) {
+    // Keep the execution-node ownership metadata independent from the selected
+    // egress. A node-owned account may still use an explicitly selected proxy;
+    // sending 0 remains the explicit way to restore the node's default egress.
+    if (proxyMode.value === 'multi') {
+		updatePayload.proxy_id = proxyBindings.value[0]?.proxy_id ?? 0
+		updatePayload.proxy_bindings = normalizedProxyBindings()
+		updatePayload.concurrency = form.concurrency
+	    } else if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
     }
+	if (proxyMode.value === 'single') {
+		updatePayload.proxy_bindings = []
+	}
     if (form.expires_at === null) {
       updatePayload.expires_at = 0
     }

@@ -329,7 +329,12 @@ func TestCompleteAPIKeyCodexManifestDoesNotInventUltrafastTier(t *testing.T) {
 	)
 	require.NoError(t, err)
 	model = decodeCodexManifestModels(t, body)[0]
-	require.Equal(t, OpenAIFastTierUltrafast, model["service_tiers"].([]any)[0].(map[string]any)["id"])
+	serviceTiers, ok := model["service_tiers"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, serviceTiers)
+	firstTier, ok := serviceTiers[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, OpenAIFastTierUltrafast, firstTier["id"])
 }
 
 // Scenario: multiple schedulable accounts advertise only their shared capabilities.

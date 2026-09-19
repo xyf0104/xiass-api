@@ -74,7 +74,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 	// 代理 URL
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 

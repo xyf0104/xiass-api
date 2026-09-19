@@ -748,10 +748,19 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 	}
 
 	accountIDs := make([]int64, 0, len(entAccounts))
+	proxyIDs := make([]int64, 0, len(entAccounts))
 	entByID := make(map[int64]*dbent.Account, len(entAccounts))
 	for _, acc := range entAccounts {
 		entByID[acc.ID] = acc
 		accountIDs = append(accountIDs, acc.ID)
+		if acc.ProxyID != nil {
+			proxyIDs = append(proxyIDs, *acc.ProxyID)
+		}
+		proxyIDs = append(proxyIDs, service.AccountProxyBindingIDsFromExtra(acc.Extra)...)
+	}
+	proxyMap, err := r.loadProxies(ctx, proxyIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	groupsByAccount, groupIDsByAccount, accountGroupsByAccount, err := r.loadAccountGroups(ctx, accountIDs)
@@ -767,9 +776,10 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		}
 
 		// Prefer the preloaded proxy edge when available.
-		if entAcc.Edges.Proxy != nil {
-			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
+		if entAcc.ProxyID != nil {
+			out.Proxy = proxyMap[*entAcc.ProxyID]
 		}
+		service.HydrateAccountProxyBindings(out, proxyMap)
 
 		if groups, ok := groupsByAccount[entAcc.ID]; ok {
 			out.Groups = groups
@@ -4072,6 +4082,7 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		if acc.ProxyFallbackOriginID != nil {
 			proxyIDs = append(proxyIDs, *acc.ProxyFallbackOriginID)
 		}
+		proxyIDs = append(proxyIDs, service.AccountProxyBindingIDsFromExtra(acc.Extra)...)
 	}
 
 	proxyMap, err := r.loadProxies(ctx, proxyIDs)
@@ -4094,6 +4105,7 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 				out.Proxy = proxy
 			}
 		}
+		service.HydrateAccountProxyBindings(out, proxyMap)
 		out.ProxyFallbackOriginID = acc.ProxyFallbackOriginID
 		if acc.ProxyFallbackOriginID != nil {
 			if op, ok := proxyMap[*acc.ProxyFallbackOriginID]; ok && op != nil {
@@ -4309,7 +4321,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 
 	rateMultiplier := m.RateMultiplier
 
-	return &service.Account{
+	out := &service.Account{
 		ID:                      m.ID,
 		Name:                    m.Name,
 		Notes:                   m.Notes,
@@ -4342,6 +4354,8 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		ParentAccountID:         m.ParentAccountID,
 		QuotaDimension:          string(m.QuotaDimension),
 	}
+	service.HydrateAccountProxyBindings(out, nil)
+	return out
 }
 
 func normalizeJSONMap(in map[string]any) map[string]any {

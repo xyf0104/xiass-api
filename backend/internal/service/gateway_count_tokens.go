@@ -141,7 +141,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 获取代理URL（自定义 base URL 模式下，proxy 通过 buildCustomRelayURL 作为查询参数传递）
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		if !account.IsCustomBaseURLEnabled() || account.GetCustomBaseURL() == "" {
 			proxyURL = account.requestProxyURL()
 		}
@@ -268,7 +268,7 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 	}
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 

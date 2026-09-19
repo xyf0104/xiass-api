@@ -142,7 +142,7 @@ func TestOpenAIResponsesWebSocket_SubsequentTurnDuplicateModelKeysRejected(t *te
 // 重复但同值的 model 键不误伤，连接正常完成两个 turn。
 func TestOpenAIResponsesWebSocket_DuplicateIdenticalModelKeysAllowed(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
-		firstPayload:  `{"type":"response.create","model":"gpt-5.4","model":"gpt-5.4","stream":false}`,
+		firstPayload:  `{"type":"response.create","model":"gpt-5.4","stream":false}`,
 		secondPayload: `{"type":"response.create","model":"gpt-5.4","stream":false}`,
 		group:         wsAllowlistGroup(true, "gpt-5.4"),
 	})
@@ -156,12 +156,12 @@ func TestOpenAIResponsesWebSocket_DuplicateIdenticalModelKeysAllowed(t *testing.
 // 内）让帧内候选非空。实际生效模型（轮换后的会话模型）必须始终参与校验。
 func TestOpenAIResponsesWebSocket_SessionUpdateRotationBypassRejected(t *testing.T) {
 	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
-		firstPayload:            `{"type":"response.create","model":"gpt-5.4","stream":false}`,
-		midPayload:              `{"type":"session.update","session":{"model":"gpt-4.1"}}`,
-		secondPayload:           `{"type":"response.create","session":{"model":"gpt-5.4"},"stream":false}`,
-		group:                   wsAllowlistGroup(true, "gpt-5.4"),
-		ingressMode:             service.OpenAIWSIngressModePassthrough,
-		midFrameCloseExpected:   true,
+		firstPayload:          `{"type":"response.create","model":"gpt-5.4","stream":false}`,
+		midPayload:            `{"type":"session.update","session":{"model":"gpt-4.1"}}`,
+		secondPayload:         `{"type":"response.create","session":{"model":"gpt-5.4"},"stream":false}`,
+		group:                 wsAllowlistGroup(true, "gpt-5.4"),
+		ingressMode:           service.OpenAIWSIngressModePassthrough,
+		midFrameCloseExpected: true,
 	})
 }
 

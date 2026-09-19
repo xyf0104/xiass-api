@@ -58,18 +58,24 @@ type DataProxy struct {
 // 影子的独立调度配置(priority/并发/分组/status 管理员可单独调)亦不在本备份范围,属已知局限
 // (外审第6轮裁决:保持排除 + 前端警告,而非升级格式做完整往返)。
 type DataAccount struct {
-	Name               string         `json:"name"`
-	Notes              *string        `json:"notes,omitempty"`
-	Platform           string         `json:"platform"`
-	Type               string         `json:"type"`
-	Credentials        map[string]any `json:"credentials"`
-	Extra              map[string]any `json:"extra,omitempty"`
-	ProxyKey           *string        `json:"proxy_key,omitempty"`
-	Concurrency        int            `json:"concurrency"`
-	Priority           int            `json:"priority"`
-	RateMultiplier     *float64       `json:"rate_multiplier,omitempty"`
-	ExpiresAt          *int64         `json:"expires_at,omitempty"`
-	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired,omitempty"`
+	Name               string                    `json:"name"`
+	Notes              *string                   `json:"notes,omitempty"`
+	Platform           string                    `json:"platform"`
+	Type               string                    `json:"type"`
+	Credentials        map[string]any            `json:"credentials"`
+	Extra              map[string]any            `json:"extra,omitempty"`
+	ProxyKey           *string                   `json:"proxy_key,omitempty"`
+	ProxyBindings      []DataAccountProxyBinding `json:"proxy_bindings,omitempty"`
+	Concurrency        int                       `json:"concurrency"`
+	Priority           int                       `json:"priority"`
+	RateMultiplier     *float64                  `json:"rate_multiplier,omitempty"`
+	ExpiresAt          *int64                    `json:"expires_at,omitempty"`
+	AutoPauseOnExpired *bool                     `json:"auto_pause_on_expired,omitempty"`
+}
+
+type DataAccountProxyBinding struct {
+	ProxyKey       string `json:"proxy_key"`
+	MaxConcurrency int    `json:"max_concurrency"`
 }
 
 type DataImportRequest struct {
@@ -201,6 +207,15 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 				proxyKey = &key
 			}
 		}
+		proxyBindings := make([]DataAccountProxyBinding, 0, len(acc.ProxyBindings))
+		for _, binding := range acc.ProxyBindings {
+			if key, ok := proxyKeyByID[binding.ProxyID]; ok {
+				proxyBindings = append(proxyBindings, DataAccountProxyBinding{
+					ProxyKey:       key,
+					MaxConcurrency: binding.MaxConcurrency,
+				})
+			}
+		}
 		var expiresAt *int64
 		if acc.ExpiresAt != nil {
 			v := acc.ExpiresAt.Unix()
@@ -214,6 +229,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			Credentials:        exportableAccountCredentials(acc.Credentials),
 			Extra:              exportableAccountExtra(acc.Extra),
 			ProxyKey:           proxyKey,
+			ProxyBindings:      proxyBindings,
 			Concurrency:        acc.Concurrency,
 			Priority:           acc.Priority,
 			RateMultiplier:     acc.RateMultiplier,
@@ -444,6 +460,30 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			}
 		}
 
+		proxyBindings := make([]service.AccountProxyBindingInput, 0, len(item.ProxyBindings))
+		bindingError := false
+		for _, binding := range item.ProxyBindings {
+			id, ok := proxyKeyToID[binding.ProxyKey]
+			if !ok || id <= 0 {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:     "account",
+					Name:     item.Name,
+					ProxyKey: binding.ProxyKey,
+					Message:  "proxy binding key not found",
+				})
+				bindingError = true
+				break
+			}
+			proxyBindings = append(proxyBindings, service.AccountProxyBindingInput{
+				ProxyID:        id,
+				MaxConcurrency: binding.MaxConcurrency,
+			})
+		}
+		if bindingError {
+			continue
+		}
+
 		enrichCredentialsFromIDToken(&item)
 
 		accountInput := &service.CreateAccountInput{
@@ -454,6 +494,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			Credentials:          item.Credentials,
 			Extra:                item.Extra,
 			ProxyID:              proxyID,
+			ProxyBindings:        proxyBindings,
 			Concurrency:          item.Concurrency,
 			Priority:             item.Priority,
 			RateMultiplier:       item.RateMultiplier,
@@ -618,19 +659,23 @@ func (h *AccountHandler) resolveExportProxies(ctx context.Context, accounts []se
 
 	seen := make(map[int64]struct{})
 	ids := make([]int64, 0)
-	for i := range accounts {
-		if accounts[i].ProxyID == nil {
-			continue
-		}
-		id := *accounts[i].ProxyID
+	addProxyID := func(id int64) {
 		if id <= 0 {
-			continue
+			return
 		}
 		if _, ok := seen[id]; ok {
-			continue
+			return
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
+	}
+	for i := range accounts {
+		if accounts[i].ProxyID != nil {
+			addProxyID(*accounts[i].ProxyID)
+		}
+		for _, binding := range accounts[i].ProxyBindings {
+			addProxyID(binding.ProxyID)
+		}
 	}
 	if len(ids) == 0 {
 		return []service.Proxy{}, nil

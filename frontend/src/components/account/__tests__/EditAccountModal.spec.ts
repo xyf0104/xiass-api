@@ -335,12 +335,12 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
-  it('shows node-managed egress instead of requiring a proxy selection and resets to the managed proxy on save', async () => {
+  it('keeps the proxy selector for node-owned accounts and saves a newly selected egress', async () => {
     const account = {
       ...buildAccount(),
       execution_node_id: 'api',
       extra: { xiass_execution_node_id: 'api' },
-      proxy_id: null,
+      proxy_id: 84,
     }
     updateAccountMock.mockReset()
     updateAccountMock.mockResolvedValue(account)
@@ -349,14 +349,15 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    expect(wrapper.text()).toContain('admin.accounts.systemManagedProxy')
     expect(wrapper.text()).toContain('admin.accounts.systemManagedProxyHint')
-    expect(wrapper.find('proxy-selector-stub').exists()).toBe(false)
+    expect(wrapper.find('proxy-selector-stub').exists()).toBe(true)
+    wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 99)
+    await wrapper.vm.$nextTick()
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.proxy_id).toBe(0)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.proxy_id).toBe(99)
     wrapper.unmount()
   })
 

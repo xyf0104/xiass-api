@@ -266,6 +266,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Extra:                   extra,
 		OllamaCloudUsage:        ollamaCloudUsage,
 		ProxyID:                 a.ProxyID,
+		ProxyBindings:           accountProxyBindingsFromService(a.ProxyBindings),
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,
 		// Leave historical ownership empty here. The admin UI resolves it from
@@ -426,6 +427,24 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 	return out
 }
 
+func accountProxyBindingsFromService(bindings []service.AccountProxyBinding) []AccountProxyBinding {
+	if len(bindings) == 0 {
+		return nil
+	}
+	out := make([]AccountProxyBinding, 0, len(bindings))
+	now := time.Now()
+	for _, binding := range bindings {
+		available := binding.Proxy != nil && binding.Proxy.IsActive() && !binding.Proxy.IsExpired(now)
+		out = append(out, AccountProxyBinding{
+			ProxyID:        binding.ProxyID,
+			MaxConcurrency: binding.MaxConcurrency,
+			Available:      available,
+			Proxy:          ProxyFromService(binding.Proxy),
+		})
+	}
+	return out
+}
+
 func redactAccountManagedExtra(extra map[string]any) map[string]any {
 	if extra == nil {
 		return nil
@@ -435,7 +454,8 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 		switch {
 		case key == service.OllamaCloudUsageSessionExtraKey,
 			key == service.OllamaCloudUsageAutoRefreshExtraKey,
-			key == service.OllamaCloudUsageSnapshotExtraKey:
+			key == service.OllamaCloudUsageSnapshotExtraKey,
+			key == service.AccountMultiProxyExtraKey:
 			continue
 		case service.IsOpenAICodexTicketPrivateExtraKey(key):
 			continue
@@ -496,7 +516,7 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		ID: a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
 		Credentials: a.Credentials, CredentialsStatus: a.CredentialsStatus, Extra: a.Extra,
 		OllamaCloudUsage: a.OllamaCloudUsage, CodexTurnTickets: a.CodexTurnTickets,
-		ProxyID: a.ProxyID, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
+		ProxyID: a.ProxyID, ProxyBindings: a.ProxyBindings, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
 		ExecutionNodeID: a.ExecutionNodeID,
 		Concurrency:     a.Concurrency, LoadFactor: a.LoadFactor, Priority: a.Priority, RateMultiplier: a.RateMultiplier,
 		Status: a.Status, ErrorMessage: a.ErrorMessage, LastUsedAt: a.LastUsedAt, ExpiresAt: a.ExpiresAt,

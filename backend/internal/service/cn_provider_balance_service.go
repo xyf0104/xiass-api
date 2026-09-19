@@ -272,11 +272,14 @@ func validatePayGAccount(account *Account) error {
 }
 
 func (s *CNProviderBalanceService) resolveProxyURL(ctx context.Context, account *Account) string {
-	if account == nil || account.ProxyID == nil {
+	if account == nil {
 		return ""
 	}
-	if account.Proxy != nil {
+	if account.requestProxy() != nil {
 		return account.requestProxyURL()
+	}
+	if account.ProxyID == nil {
+		return ""
 	}
 	if s != nil && s.proxyRepo != nil {
 		if proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && proxy != nil {

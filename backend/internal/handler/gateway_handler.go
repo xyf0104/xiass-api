@@ -455,7 +455,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				continue
 			}
 			account = latest
-			selection.Account = latest
+			account, accountReleaseFunc, err = h.concurrencyHelper.BindAccountProxy(admissionCtx, account, accountReleaseFunc)
+			if err != nil {
+				reqLog.Warn("gateway.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
+				fs.FailedAccountIDs[latest.ID] = struct{}{}
+				continue
+			}
+			selection.Account = account
 			// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已
 			// 抢槽的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
 			if selection.ProfitGateActive() || !selection.Acquired {
@@ -799,7 +805,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				continue
 			}
 			account = latest
-			selection.Account = latest
+			account, accountReleaseFunc, err = h.concurrencyHelper.BindAccountProxy(admissionCtx, account, accountReleaseFunc)
+			if err != nil {
+				reqLog.Warn("gateway.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
+				fs.FailedAccountIDs[latest.ID] = struct{}{}
+				continue
+			}
+			selection.Account = account
 			// 记录本请求注册过会话槽的账号（profit 准入后账号已定）
 			sessionSlotAccounts[account.ID] = account
 			// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已

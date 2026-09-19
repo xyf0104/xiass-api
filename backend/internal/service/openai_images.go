@@ -642,7 +642,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	upstreamStart := time.Now()

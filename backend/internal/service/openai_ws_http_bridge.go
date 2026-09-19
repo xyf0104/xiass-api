@@ -359,7 +359,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	if c != nil {

@@ -117,7 +117,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 
 	// 代理 URL
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 

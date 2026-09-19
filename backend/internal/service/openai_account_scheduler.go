@@ -558,11 +558,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
 		}
-		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     account,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
-		}), nil
+		return s.service.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -571,15 +567,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
 		}
-		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
-		}), nil
+		return s.service.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+			AccountID:      accountID,
+			MaxConcurrency: account.Concurrency,
+			Timeout:        cfg.StickySessionWaitTimeout,
+			MaxWaiting:     cfg.StickySessionMaxWaiting,
+		})
 	}
 	return nil, nil
 }
@@ -1346,11 +1339,8 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if req.SessionHash != "" && !req.PreserveStickyBinding {
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
-		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     fresh,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
-		}), compactBlocked, nil
+		selection, selectErr := s.service.newSelectionResultFromAccount(ctx, fresh, true, result.ReleaseFunc, nil)
+		return selection, compactBlocked, selectErr
 	}
 	return nil, compactBlocked, nil
 }
@@ -1443,23 +1433,16 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			if req.SessionHash != "" && !req.PreserveStickyBinding {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
-			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:     account,
-				Acquired:    true,
-				ReleaseFunc: result.ReleaseFunc,
-			}), nil
+			return s.service.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
 		}
 		if s.service.concurrencyService != nil {
 			cfg := s.service.schedulingConfig()
-			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: account,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				},
-			}), nil
+			return s.service.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+				AccountID:      account.ID,
+				MaxConcurrency: account.Concurrency,
+				Timeout:        cfg.StickySessionWaitTimeout,
+				MaxWaiting:     cfg.StickySessionMaxWaiting,
+			})
 		}
 	}
 	return nil, nil
@@ -1876,15 +1859,13 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				compactBlocked = true
 				continue
 			}
-			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: fresh,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      fresh.ID,
-					MaxConcurrency: fresh.Concurrency,
-					Timeout:        cfg.FallbackWaitTimeout,
-					MaxWaiting:     cfg.FallbackMaxWaiting,
-				},
-			}), candidateCount, topK, loadSkew, nil
+			selection, selectErr := s.service.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
+				AccountID:      fresh.ID,
+				MaxConcurrency: fresh.Concurrency,
+				Timeout:        cfg.FallbackWaitTimeout,
+				MaxWaiting:     cfg.FallbackMaxWaiting,
+			})
+			return selection, candidateCount, topK, loadSkew, selectErr
 		}
 	}
 
@@ -3117,15 +3098,6 @@ func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool 
 		return true
 	}
 	return now.Sub(updatedAt) >= openAIQuotaHeadroomSnapshotStaleAfter
-}
-
-func openAIQuotaWindowResetAny(extra map[string]any, now time.Time, windows ...string) bool {
-	for _, window := range windows {
-		if openAIQuotaWindowReset(extra, window, now) {
-			return true
-		}
-	}
-	return false
 }
 
 func clamp01(value float64) float64 {

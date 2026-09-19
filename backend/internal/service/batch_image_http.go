@@ -12,13 +12,20 @@ import (
 // A missing proxy is valid for legacy single-node accounts, but a dangling or
 // inactive proxy ID must never silently turn into a direct request.
 func batchImageAccountProxyURL(account *Account) (string, error) {
-	if account == nil || account.ProxyID == nil {
+	if account == nil {
 		return "", nil
 	}
-	if *account.ProxyID <= 0 || account.Proxy == nil || account.Proxy.ID != *account.ProxyID || !account.Proxy.IsActive() || account.Proxy.IsExpired(time.Now()) {
+	proxy := account.requestProxy()
+	if proxy == nil {
+		if account.ProxyID != nil || account.MultiProxyConfigured {
+			return "", ErrBatchImageProviderEgressUnavailable
+		}
+		return "", nil
+	}
+	if proxy.ID <= 0 || !proxy.IsActive() || proxy.IsExpired(time.Now()) {
 		return "", ErrBatchImageProviderEgressUnavailable
 	}
-	return account.requestProxyURL(), nil
+	return proxy.URL(), nil
 }
 
 func newBatchImageHTTPClient(proxyURL string) (*http.Client, error) {

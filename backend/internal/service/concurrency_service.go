@@ -56,6 +56,21 @@ type ConcurrencyCache interface {
 	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
 }
 
+// AccountProxySlotSpec is one usable egress and its independent capacity.
+// The optional cache capability below keeps existing test doubles and custom
+// cache implementations source-compatible.
+type AccountProxySlotSpec struct {
+	ProxyID        int64
+	MaxConcurrency int
+}
+
+type AccountProxyConcurrencyCache interface {
+	AcquireAccountProxySlot(ctx context.Context, accountID int64, slots []AccountProxySlotSpec, requestID string) (int64, bool, error)
+	ReleaseAccountProxySlot(ctx context.Context, accountID, proxyID int64, requestID string) error
+	GetAccountProxyConcurrency(ctx context.Context, accountID int64, proxyIDs []int64) (map[int64]int, error)
+	GetAccountsProxyConcurrency(ctx context.Context, accounts map[int64][]int64) (map[int64]map[int64]int, error)
+}
+
 type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
@@ -431,6 +446,129 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 		Acquired:    false,
 		ReleaseFunc: nil,
 	}, nil
+}
+
+// AcquireAccountProxySlot selects one egress by the lowest current/max load
+// ratio. Equal-ratio exits rotate in Redis so multiple XIASS instances make a
+// single fair decision instead of each keeping a divergent local cursor.
+func (s *ConcurrencyService) AcquireAccountProxySlot(ctx context.Context, account *Account) (*Account, func(), bool, error) {
+	if account == nil || account.RequestProxy != nil || !account.MultiProxyConfigured {
+		return account, func() {}, true, nil
+	}
+	bindings := account.UsableProxyBindings()
+	if len(bindings) == 0 {
+		return nil, nil, false, nil
+	}
+	cache, ok := s.cache.(AccountProxyConcurrencyCache)
+	if !ok {
+		return nil, nil, false, errors.New("account proxy concurrency cache is unavailable")
+	}
+	slots := make([]AccountProxySlotSpec, 0, len(bindings))
+	byID := make(map[int64]AccountProxyBinding, len(bindings))
+	for _, binding := range bindings {
+		slots = append(slots, AccountProxySlotSpec{ProxyID: binding.ProxyID, MaxConcurrency: binding.MaxConcurrency})
+		byID[binding.ProxyID] = binding
+	}
+	requestID := generateRequestID()
+	proxyID, acquired, err := cache.AcquireAccountProxySlot(ctx, account.ID, slots, requestID)
+	if err != nil || !acquired {
+		return nil, nil, acquired, err
+	}
+	binding, ok := byID[proxyID]
+	if !ok || binding.Proxy == nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = cache.ReleaseAccountProxySlot(releaseCtx, account.ID, proxyID, requestID)
+		cancel()
+		return nil, nil, false, errors.New("selected account proxy is no longer available")
+	}
+	selected := *account
+	selected.RequestProxy = binding.Proxy
+	selected.RequestProxyMaxConcurrency = binding.MaxConcurrency
+	// Forwarding clients use Account.Concurrency to size their per-route
+	// connection pool. The durable account keeps the aggregate capacity; this
+	// request-scoped clone uses the selected exit's own limit.
+	selected.Concurrency = selected.requestProxyConcurrency()
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cache.ReleaseAccountProxySlot(releaseCtx, account.ID, proxyID, requestID); err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: failed to release account proxy slot for account=%d proxy=%d req=%s: %v", account.ID, proxyID, requestID, err)
+			}
+		})
+	}
+	return &selected, release, true, nil
+}
+
+// BindAccountProxy attaches a request-scoped exit to an already acquired
+// aggregate account slot and returns one idempotent release function for both.
+func (s *ConcurrencyService) BindAccountProxy(ctx context.Context, account *Account, accountRelease func()) (*Account, func(), error) {
+	selected, proxyRelease, acquired, err := s.AcquireAccountProxySlot(ctx, account)
+	if err != nil || !acquired {
+		if accountRelease != nil {
+			accountRelease()
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.New("no account proxy capacity available")
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			if proxyRelease != nil {
+				proxyRelease()
+			}
+			if accountRelease != nil {
+				accountRelease()
+			}
+		})
+	}
+	return selected, release, nil
+}
+
+func (s *ConcurrencyService) GetAccountProxyConcurrency(ctx context.Context, account *Account) (map[int64]int, error) {
+	counts := make(map[int64]int)
+	if account == nil || len(account.ProxyBindings) == 0 {
+		return counts, nil
+	}
+	cache, ok := s.cache.(AccountProxyConcurrencyCache)
+	if !ok {
+		return nil, errors.New("account proxy concurrency cache is unavailable")
+	}
+	ids := make([]int64, 0, len(account.ProxyBindings))
+	for _, binding := range account.ProxyBindings {
+		ids = append(ids, binding.ProxyID)
+	}
+	return cache.GetAccountProxyConcurrency(ctx, account.ID, ids)
+}
+
+func (s *ConcurrencyService) GetAccountsProxyConcurrency(ctx context.Context, accounts []Account) (map[int64]map[int64]int, error) {
+	result := make(map[int64]map[int64]int)
+	if len(accounts) == 0 {
+		return result, nil
+	}
+	cache, ok := s.cache.(AccountProxyConcurrencyCache)
+	if !ok {
+		return nil, errors.New("account proxy concurrency cache is unavailable")
+	}
+	bindings := make(map[int64][]int64)
+	for i := range accounts {
+		account := &accounts[i]
+		if len(account.ProxyBindings) == 0 {
+			continue
+		}
+		ids := make([]int64, 0, len(account.ProxyBindings))
+		for _, binding := range account.ProxyBindings {
+			ids = append(ids, binding.ProxyID)
+		}
+		bindings[account.ID] = ids
+	}
+	if len(bindings) == 0 {
+		return result, nil
+	}
+	return cache.GetAccountsProxyConcurrency(ctx, bindings)
 }
 
 func (s *ConcurrencyService) trackGroupSlot(ctx context.Context, accountID int64, requestID string) func() {

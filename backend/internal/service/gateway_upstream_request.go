@@ -898,7 +898,7 @@ func truncateForLog(b []byte, maxBytes int) string {
 // 在 path 后附加 beta=true 和可选的 proxy 查询参数
 func (s *GatewayService) buildCustomRelayURL(baseURL, path string, account *Account) string {
 	u := strings.TrimRight(baseURL, "/") + path + "?beta=true"
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL := account.requestProxyURL()
 		if proxyURL != "" {
 			u += "&proxy=" + url.QueryEscape(proxyURL)

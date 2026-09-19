@@ -994,6 +994,17 @@ export interface Proxy {
   updated_at: string
 }
 
+export interface AccountProxyBindingInput {
+	proxy_id: number
+	max_concurrency: number
+}
+
+export interface AccountProxyBinding extends AccountProxyBindingInput {
+	current_concurrency: number
+	available: boolean
+	proxy?: Proxy
+}
+
 export interface ProxyAccountSummary {
   id: number
   name: string
@@ -1324,7 +1335,8 @@ export interface Account {
       credits?: { expires_at?: string }[]
     }
   } & Record<string, unknown>)
-  proxy_id: number | null
+	proxy_id: number | null
+	proxy_bindings?: AccountProxyBinding[]
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
   execution_node_id?: string
@@ -1634,7 +1646,8 @@ export interface CreateAccountRequest {
   type: AccountType
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
-  proxy_id?: number | null
+	proxy_id?: number | null
+	proxy_bindings?: AccountProxyBindingInput[]
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1660,7 +1673,8 @@ export interface UpdateAccountRequest {
   type?: AccountType
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
-  proxy_id?: number | null
+	proxy_id?: number | null
+	proxy_bindings?: AccountProxyBindingInput[]
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1760,6 +1774,7 @@ export interface AdminDataAccount {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_key?: string | null
+  proxy_bindings?: AccountProxyBindingInput[]
   concurrency: number
   priority: number
   rate_multiplier?: number | null
@@ -1790,6 +1805,7 @@ export interface CodexSessionImportRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_bindings?: AccountProxyBindingInput[]
   concurrency?: number
   priority?: number
   rate_multiplier?: number
@@ -1809,6 +1825,7 @@ export interface OpenAICodexPATCreateRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_bindings?: AccountProxyBindingInput[]
   concurrency?: number
   priority?: number
   rate_multiplier?: number

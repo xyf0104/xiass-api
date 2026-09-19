@@ -94,11 +94,14 @@ func openAIAccountOwnership(account *Account) string {
 	if account.Type != AccountTypeOAuth || (parts[4] == "" && parts[5] == "") {
 		parts = append(parts, account.GetCredential("api_key"), account.GetCredential("access_token"))
 	}
+	// Keep the durable default proxy in the ownership boundary for legacy
+	// accounts whose snapshot carries only ProxyID. A multi-proxy request can
+	// additionally bind the actual request-selected exit below.
 	if account.ProxyID != nil {
-		parts = append(parts, fmt.Sprint(*account.ProxyID))
+		parts = append(parts, "default-proxy", fmt.Sprint(*account.ProxyID))
 	}
-	if account.Proxy != nil {
-		parts = append(parts, account.requestProxyURL())
+	if proxy := account.requestProxy(); proxy != nil {
+		parts = append(parts, "request-proxy", fmt.Sprint(proxy.ID), proxy.URL())
 	}
 	return openAIOwnershipDigest(parts...)
 }

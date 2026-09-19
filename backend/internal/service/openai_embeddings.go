@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := ""
-	if account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)

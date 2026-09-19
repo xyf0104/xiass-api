@@ -222,7 +222,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	applyOpenCodeSessionHeader(c, account, targetURL, upstreamReq.Header)
 
 	proxyURL := ""
-	if account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)

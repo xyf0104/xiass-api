@@ -580,7 +580,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	upstreamStart := time.Now()
@@ -671,7 +671,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	account.ApplyHeaderOverrides(statusReq.Header)
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 	upstreamStart := time.Now()

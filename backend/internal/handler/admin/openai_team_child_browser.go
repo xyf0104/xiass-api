@@ -879,8 +879,8 @@ func newTeamChildBrowserReverseProxy(upstreamURL *url.URL, c *gin.Context) *http
 		}
 		proxy.Transport = transport
 	}
-	director := proxy.Director
-	proxy.Director = func(request *http.Request) {
+	director := proxy.Director                     //nolint:staticcheck // NewSingleHostReverseProxy provides the canonical URL rewrite.
+	proxy.Director = func(request *http.Request) { //nolint:staticcheck // Required to sanitize headers after the canonical rewrite.
 		director(request)
 		request.Host = upstreamURL.Host
 		// XIASS tokens and browser-workspace cookies must never be forwarded to

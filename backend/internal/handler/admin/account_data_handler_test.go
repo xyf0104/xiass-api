@@ -37,14 +37,20 @@ type dataProxy struct {
 }
 
 type dataAccount struct {
-	Name        string         `json:"name"`
-	Platform    string         `json:"platform"`
-	Type        string         `json:"type"`
-	Credentials map[string]any `json:"credentials"`
-	Extra       map[string]any `json:"extra"`
-	ProxyKey    *string        `json:"proxy_key"`
-	Concurrency int            `json:"concurrency"`
-	Priority    int            `json:"priority"`
+	Name          string                    `json:"name"`
+	Platform      string                    `json:"platform"`
+	Type          string                    `json:"type"`
+	Credentials   map[string]any            `json:"credentials"`
+	Extra         map[string]any            `json:"extra"`
+	ProxyKey      *string                   `json:"proxy_key"`
+	ProxyBindings []dataAccountProxyBinding `json:"proxy_bindings"`
+	Concurrency   int                       `json:"concurrency"`
+	Priority      int                       `json:"priority"`
+}
+
+type dataAccountProxyBinding struct {
+	ProxyKey       string `json:"proxy_key"`
+	MaxConcurrency int    `json:"max_concurrency"`
 }
 
 func setupAccountDataRouter() (*gin.Engine, *stubAdminService) {
@@ -351,6 +357,64 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.NotContains(t, adminSvc.createdAccounts[0].Credentials, service.OpenAIOAuthReauthorizationEmailCodeTokenCredentialKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Extra, service.OpenAITeamChildExtraKey)
 	require.NotContains(t, adminSvc.createdAccounts[0].Extra, service.OpenAITeamChildEmailExtraKey)
+}
+
+func TestExportAndImportDataPreserveMultiProxyBindings(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	defaultProxyID := int64(1)
+	secondaryProxyID := int64(2)
+	adminSvc.proxies = []service.Proxy{
+		{ID: defaultProxyID, Name: "primary", Protocol: "socks5", Host: "1.2.3.4", Port: 1080, Username: "u1", Password: "p1", Status: service.StatusActive},
+		{ID: secondaryProxyID, Name: "secondary", Protocol: "http", Host: "2001:db8::2", Port: 8080, Username: "u2", Password: "p2", Status: service.StatusActive},
+	}
+	adminSvc.accounts = []service.Account{{
+		ID:       21,
+		Name:     "multi",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "secret",
+		},
+		ProxyID: defaultProxyIDPtr(defaultProxyID),
+		ProxyBindings: []service.AccountProxyBinding{
+			{ProxyID: defaultProxyID, MaxConcurrency: 3},
+			{ProxyID: secondaryProxyID, MaxConcurrency: 2},
+		},
+		Concurrency: 5,
+		Priority:    50,
+		Status:      service.StatusActive,
+	}}
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/data", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var exported dataResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &exported))
+	require.Len(t, exported.Data.Proxies, 2)
+	require.Len(t, exported.Data.Accounts, 1)
+	require.Len(t, exported.Data.Accounts[0].ProxyBindings, 2)
+	require.Equal(t, 2, exported.Data.Accounts[0].ProxyBindings[1].MaxConcurrency)
+
+	importBody := map[string]any{
+		"data":                    exported.Data,
+		"skip_default_group_bind": true,
+	}
+	body, err := json.Marshal(importBody)
+	require.NoError(t, err)
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, adminSvc.createdAccounts, 1)
+	require.Equal(t, []service.AccountProxyBindingInput{
+		{ProxyID: defaultProxyID, MaxConcurrency: 3},
+		{ProxyID: secondaryProxyID, MaxConcurrency: 2},
+	}, adminSvc.createdAccounts[0].ProxyBindings)
+}
+
+func defaultProxyIDPtr(id int64) *int64 {
+	return &id
 }
 
 func TestExportDataExcludesCodexTicketMaterial(t *testing.T) {

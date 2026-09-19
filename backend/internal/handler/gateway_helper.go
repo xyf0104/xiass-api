@@ -241,6 +241,13 @@ func (h *ConcurrencyHelper) TryAcquireAccountSlot(ctx context.Context, accountID
 	return result.ReleaseFunc, true, nil
 }
 
+func (h *ConcurrencyHelper) BindAccountProxy(ctx context.Context, account *service.Account, accountRelease func()) (*service.Account, func(), error) {
+	if h == nil || h.concurrencyService == nil {
+		return account, accountRelease, nil
+	}
+	return h.concurrencyService.BindAccountProxy(ctx, account, accountRelease)
+}
+
 // AcquireUserSlotWithWait acquires a user concurrency slot, waiting if necessary.
 // For streaming requests, sends ping events during the wait.
 // streamStarted is updated if streaming response has begun.

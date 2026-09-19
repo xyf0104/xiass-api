@@ -470,6 +470,9 @@ func (p executionNodeRoutingPolicy) hydratedAccountEgressAllowed(account *Accoun
 	if !p.nodeHealthy(p.nodeID(account)) {
 		return false
 	}
+	if account.MultiProxyConfigured {
+		return account.MultiProxyConcurrency() > 0
+	}
 	return account.Proxy != nil &&
 		account.Proxy.ID == *account.ProxyID &&
 		account.Proxy.IsActive() &&

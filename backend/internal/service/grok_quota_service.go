@@ -511,12 +511,14 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 }
 
 func (s *GrokQuotaService) resolveProxyURL(ctx context.Context, account *Account) string {
-	if account == nil || account.ProxyID == nil {
+	if account == nil {
 		return ""
 	}
 	switch {
-	case account.Proxy != nil:
+	case account.requestProxy() != nil:
 		return account.requestProxyURL()
+	case account.ProxyID == nil:
+		return ""
 	case s != nil && s.proxyRepo != nil:
 		if proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && proxy != nil {
 			account.Proxy = proxy

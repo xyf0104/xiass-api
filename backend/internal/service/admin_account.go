@@ -376,6 +376,8 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		}
 		extra[duplicateAccountOperationIDExtraKey] = operationID
 	}
+	proxyBindings := AccountProxyBindingInputsFromExtra(source.Extra)
+	delete(extra, AccountMultiProxyExtraKey)
 
 	var expiresAt *int64
 	if source.ExpiresAt != nil {
@@ -400,6 +402,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		Credentials:           credentials,
 		Extra:                 extra,
 		ProxyID:               cloneAccountValuePointer(proxyID),
+		ProxyBindings:         proxyBindings,
 		Concurrency:           source.Concurrency,
 		Priority:              source.Priority,
 		RateMultiplier:        cloneAccountValuePointer(source.RateMultiplier),
@@ -421,6 +424,19 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		accountExtra, input.ProxyID, err = s.applyManagedExecutionNodeForCreate(ctx, accountExtra, input.ProxyID)
 		if err != nil {
 			return nil, err
+		}
+	}
+	normalizedBindings, totalProxyConcurrency, proxyMap, err := s.validateAccountProxyBindings(ctx, input.ProxyBindings)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalizedBindings) > 0 {
+		input.ProxyBindings = normalizedBindings
+		input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
+		input.Concurrency = totalProxyConcurrency
+		accountExtra = setAccountProxyBindingsExtra(accountExtra, normalizedBindings)
+		if s.executionNodeRoutingActive(ctx) {
+			accountExtra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
@@ -450,6 +466,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err := s.accountDuplicateRepo.CreateWithAccountGroups(ctx, duplicate, groups); err != nil {
 		return nil, fmt.Errorf("create duplicate account: %w", err)
 	}
+	HydrateAccountProxyBindings(duplicate, proxyMap)
 	for i := range groups {
 		groups[i].AccountID = duplicate.ID
 	}
@@ -715,6 +732,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	// Multi-proxy configuration is a typed, server-managed field. Generic Extra
+	// input must never bypass proxy existence/status validation.
+	delete(accountExtra, AccountMultiProxyExtraKey)
 	accountExtra, err = normalizeGrokMediaEligibilityExtra(input.Platform, accountExtra)
 	if err != nil {
 		return nil, err
@@ -727,6 +747,19 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		accountExtra[OpenAIAdsPowerBindingExtraKey] = binding
 	} else {
 		delete(accountExtra, OpenAIAdsPowerBindingExtraKey)
+	}
+	normalizedBindings, totalProxyConcurrency, proxyMap, err := s.validateAccountProxyBindings(ctx, input.ProxyBindings)
+	if err != nil {
+		return nil, infraerrors.BadRequest("INVALID_ACCOUNT_PROXY_BINDINGS", err.Error())
+	}
+	if len(normalizedBindings) > 0 {
+		input.ProxyBindings = normalizedBindings
+		input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
+		input.Concurrency = totalProxyConcurrency
+		accountExtra = setAccountProxyBindingsExtra(accountExtra, normalizedBindings)
+		if s.executionNodeRoutingActive(ctx) {
+			accountExtra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
+		}
 	}
 	if s.settingService != nil {
 		if input.PreserveOAuthWorkflowProxy {
@@ -791,6 +824,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := s.accountRepo.Create(ctx, account); err != nil {
 		return nil, err
 	}
+	HydrateAccountProxyBindings(account, proxyMap)
 
 	// 绑定分组
 	if len(groupIDs) > 0 {
@@ -851,6 +885,19 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		normalizedExtra = preserveExecutionNodeOnUpdate(account, normalizedExtra)
+		delete(normalizedExtra, AccountMultiProxyExtraKey)
+	}
+	var (
+		normalizedBindings    []AccountProxyBindingInput
+		totalProxyConcurrency int
+		proxyBindingsChanged  bool
+	)
+	if input.ProxyBindings != nil {
+		proxyBindingsChanged = true
+		normalizedBindings, totalProxyConcurrency, _, err = s.validateAccountProxyBindings(ctx, *input.ProxyBindings)
+		if err != nil {
+			return nil, infraerrors.BadRequest("INVALID_ACCOUNT_PROXY_BINDINGS", err.Error())
+		}
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
@@ -983,6 +1030,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenAIReauthorizationStateExtraKey,
 			OpenAIAdsPowerBindingExtraKey,
 			OpenAIOAuthCredentialSourceIDExtraKey,
+			AccountMultiProxyExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -1011,6 +1059,23 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.Extra == nil {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
+	}
+	if proxyBindingsChanged {
+		account.Extra = setAccountProxyBindingsExtra(account.Extra, normalizedBindings)
+		if len(normalizedBindings) > 0 {
+			account.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
+			account.Proxy = nil
+			account.Concurrency = totalProxyConcurrency
+			if account.Extra == nil {
+				account.Extra = make(map[string]any)
+			}
+			if s.executionNodeRoutingActive(ctx) {
+				account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
+			}
+		} else {
+			account.ProxyBindings = nil
+			account.MultiProxyConfigured = false
+		}
 	}
 	if requestedRateSyncEnabledUpdate != nil && *requestedRateSyncEnabledUpdate {
 		if requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate {
@@ -1043,7 +1108,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
-	if input.ProxyID != nil && !account.IsCredentialShadow() {
+	if input.ProxyID != nil && !account.IsCredentialShadow() && (!proxyBindingsChanged || len(normalizedBindings) == 0) {
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		resetToManagedProxy := false
 		if *input.ProxyID == 0 {
@@ -1091,7 +1156,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 	// 只在指针非 nil 时更新 Concurrency（支持设置为 0）
-	if input.Concurrency != nil {
+	if input.Concurrency != nil && len(normalizedBindings) == 0 && (!accountMultiProxyConfiguredFromExtra(account.Extra) || proxyBindingsChanged) {
 		account.Concurrency = normalizeAccountConcurrency(account.Platform, account.Type, *input.Concurrency)
 	}
 	// 只在指针非 nil 时更新 Priority（支持设置为 0）
@@ -1194,7 +1259,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 
 	// 将 proxy 变更传播到 spark 影子账号（同步；Update 内部已触发调度快照）。
 	// 影子自身 proxy 不可独立编辑(见上),故对影子的更新不触发传播。
-	if input.ProxyID != nil && !account.IsCredentialShadow() {
+	if (input.ProxyID != nil || proxyBindingsChanged) && !account.IsCredentialShadow() {
 		if err := s.propagateProxyToShadows(ctx, id, account.ProxyID); err != nil {
 			return nil, err
 		}
@@ -1375,6 +1440,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
 	delete(updates, OpenAIOAuthCredentialSourceIDExtraKey)
+	delete(updates, AccountMultiProxyExtraKey)
 	for key := range updates {
 		if IsOpenAICodexTicketExtraKey(key) {
 			delete(updates, key)

@@ -400,7 +400,7 @@ func enableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
 }
 
 func antigravityCompatProxyURL(account *Account) string {
-	if account.ProxyID == nil || account.Proxy == nil {
+	if account == nil || account.requestProxy() == nil {
 		return ""
 	}
 	return account.requestProxyURL()

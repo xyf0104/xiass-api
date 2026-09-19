@@ -98,7 +98,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	defer releaseUpstreamCtx()
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 
@@ -1217,7 +1217,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 	}
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account.requestProxy() != nil {
 		proxyURL = account.requestProxyURL()
 	}
 

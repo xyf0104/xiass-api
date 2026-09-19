@@ -62,9 +62,17 @@ type Account struct {
 	QuotaDimension  string // 用量维度："" / "global" / "spark"
 
 	Proxy         *Proxy
-	AccountGroups []AccountGroup
-	GroupIDs      []int64
-	Groups        []*Group
+	ProxyBindings []AccountProxyBinding
+	// MultiProxyConfigured distinguishes an intentionally configured account
+	// whose exits are currently unavailable from an ordinary direct account.
+	MultiProxyConfigured bool
+	// RequestProxy is a request-scoped egress selected from ProxyBindings. It is
+	// never persisted or written to the scheduler snapshot.
+	RequestProxy               *Proxy `json:"-"`
+	RequestProxyMaxConcurrency int    `json:"-"`
+	AccountGroups              []AccountGroup
+	GroupIDs                   []int64
+	Groups                     []*Group
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
@@ -87,10 +95,23 @@ func (a *Account) requestProxy() *Proxy {
 	if a == nil {
 		return nil
 	}
+	if a.RequestProxy != nil {
+		return a.RequestProxy
+	}
 	if a.ProxyID == nil {
 		return nil
 	}
 	return a.Proxy
+}
+
+func (a *Account) requestProxyConcurrency() int {
+	if a != nil && a.RequestProxyMaxConcurrency > 0 {
+		return a.RequestProxyMaxConcurrency
+	}
+	if a == nil {
+		return 0
+	}
+	return a.Concurrency
 }
 
 func (a *Account) requestProxyURL() string {
@@ -312,6 +333,9 @@ func (a *Account) IsSchedulable() bool {
 		return false
 	}
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+		return false
+	}
+	if a.MultiProxyConfigured && a.MultiProxyConcurrency() <= 0 {
 		return false
 	}
 	return true

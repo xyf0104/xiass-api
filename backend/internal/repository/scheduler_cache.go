@@ -871,6 +871,22 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 			ExpiresAt: account.Proxy.ExpiresAt,
 		}
 	}
+	proxyBindings := make([]service.AccountProxyBinding, 0, len(account.ProxyBindings))
+	for _, binding := range account.ProxyBindings {
+		var bindingProxy *service.Proxy
+		if binding.Proxy != nil {
+			bindingProxy = &service.Proxy{
+				ID:        binding.Proxy.ID,
+				Status:    binding.Proxy.Status,
+				ExpiresAt: binding.Proxy.ExpiresAt,
+			}
+		}
+		proxyBindings = append(proxyBindings, service.AccountProxyBinding{
+			ProxyID:        binding.ProxyID,
+			MaxConcurrency: binding.MaxConcurrency,
+			Proxy:          bindingProxy,
+		})
+	}
 	return service.Account{
 		ID:                      account.ID,
 		Name:                    account.Name,
@@ -878,6 +894,8 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		Type:                    account.Type,
 		ProxyID:                 account.ProxyID,
 		Proxy:                   proxySummary,
+		ProxyBindings:           proxyBindings,
+		MultiProxyConfigured:    account.MultiProxyConfigured,
 		Concurrency:             account.Concurrency,
 		LoadFactor:              account.LoadFactor,
 		Priority:                account.Priority,
@@ -992,6 +1010,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	keys := []string{
 		service.AccountExecutionNodeExtraKey,
 		service.AccountExecutionProxyExtraKey,
+		service.AccountMultiProxyExtraKey,
 		"session_window_utilization",
 		"passive_usage_7d_utilization",
 		"passive_usage_7d_reset",

@@ -181,6 +181,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, effectiveAPIKeyPlatform(c, apiKey))
+				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -250,7 +251,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			continue
 		}
 		account = latest
-		selection.Account = latest
+		account, accountReleaseFunc, err = h.concurrencyHelper.BindAccountProxy(admissionCtx, account, accountReleaseFunc)
+		if err != nil {
+			reqLog.Warn("gateway.responses.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
+			fs.FailedAccountIDs[latest.ID] = struct{}{}
+			continue
+		}
+		selection.Account = account
 		if selection.ProfitGateActive() {
 			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 				reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))

@@ -420,6 +420,7 @@ type CreateAccountInput struct {
 	Credentials        map[string]any
 	Extra              map[string]any
 	ProxyID            *int64
+	ProxyBindings      []AccountProxyBindingInput
 	Concurrency        int
 	Priority           int
 	RateMultiplier     *float64 // 账号计费倍率（>=0，允许 0）
@@ -466,6 +467,7 @@ type UpdateAccountInput struct {
 	Credentials        map[string]any
 	Extra              map[string]any
 	ProxyID            *int64
+	ProxyBindings      *[]AccountProxyBindingInput
 	Concurrency        *int     // 使用指针区分"未提供"和"设置为0"
 	Priority           *int     // 使用指针区分"未提供"和"设置为0"
 	RateMultiplier     *float64 // 账号计费倍率（>=0，允许 0）

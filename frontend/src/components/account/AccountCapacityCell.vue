@@ -7,6 +7,24 @@
       </svg>
     </CapacityBadge>
 
+    <div v-if="proxyBindings.length > 0" class="mt-0.5 min-w-36">
+      <div class="mb-0.5 inline-flex max-w-full items-center rounded bg-teal-100 px-1.5 py-0.5 text-[11px] font-medium text-teal-800 dark:bg-teal-900/30 dark:text-teal-300">
+        <span class="truncate">{{ t('admin.accounts.multiProxy.configured', { count: proxyBindings.length }) }}</span>
+      </div>
+      <div class="max-h-24 space-y-0.5 overflow-y-auto pr-1">
+        <div
+          v-for="binding in proxyBindings"
+          :key="binding.proxy_id"
+          class="flex min-w-0 items-center justify-between gap-2 font-mono text-[11px] leading-4"
+          :class="binding.available ? 'text-gray-600 dark:text-dark-300' : 'text-gray-400 line-through dark:text-dark-500'"
+          :title="proxyBindingTitle(binding)"
+        >
+          <span class="min-w-0 truncate">{{ binding.proxy?.name || `#${binding.proxy_id}` }}</span>
+          <span class="shrink-0">{{ binding.current_concurrency }}/{{ binding.max_concurrency }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 5h窗口费用限制 -->
     <CapacityBadge v-if="showWindowCost" :color-class="windowCostClass" :tooltip="windowCostTooltip" :current="'¥' + formatCost(currentWindowCost)" :max="'¥' + formatCost(account.window_cost_limit)">
       <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -38,7 +56,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { Account } from '@/types'
+import type { Account, AccountProxyBinding } from '@/types'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
 
@@ -52,6 +70,15 @@ const { t } = useI18n()
 const currentConcurrency = computed(() =>
   props.account.group_current_concurrency ?? props.account.current_concurrency ?? 0
 )
+
+const proxyBindings = computed(() => props.account.proxy_bindings ?? [])
+
+const proxyBindingTitle = (binding: AccountProxyBinding) => {
+  const proxy = binding.proxy
+  if (!proxy) return t('admin.accounts.multiProxy.missingProxy', { id: binding.proxy_id })
+  const host = proxy.host.includes(':') && !proxy.host.startsWith('[') ? `[${proxy.host}]` : proxy.host
+  return `${proxy.name} · ${proxy.protocol}://${host}:${proxy.port} · ${binding.current_concurrency}/${binding.max_concurrency}`
+}
 
 const concurrencyClass = computed(() => {
   const current = currentConcurrency.value

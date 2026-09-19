@@ -28,6 +28,9 @@ const (
 	// 并发槽位键前缀（有序集合）
 	// 格式: concurrency:account:{accountID}
 	accountSlotKeyPrefix = "concurrency:account:"
+	// Child slots use an account hash tag so every proxy key and the tie cursor
+	// share one Redis Cluster slot.
+	accountProxySlotKeyPrefix = "concurrency:account-proxy:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
@@ -121,6 +124,46 @@ var (
 		end
 
 		return {0, now}
+	`)
+
+	acquireAccountProxyScript = redis.NewScript(`
+		redis.replicate_commands()
+		local proxyCount = #KEYS - 1
+		local cursorKey = KEYS[#KEYS]
+		local ttl = tonumber(ARGV[1])
+		local requestID = ARGV[2]
+		local now = tonumber(redis.call('TIME')[1])
+		local expireBefore = now - ttl
+		local bestCurrent = nil
+		local bestMax = nil
+		local tied = {}
+
+		for i = 1, proxyCount do
+			local argIndex = 3 + (i - 1) * 2
+			local maxConcurrency = tonumber(ARGV[argIndex])
+			local proxyID = tonumber(ARGV[argIndex + 1])
+			redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', expireBefore)
+			local current = redis.call('ZCARD', KEYS[i])
+			if maxConcurrency ~= nil and maxConcurrency > 0 and current < maxConcurrency then
+				if bestCurrent == nil or current * bestMax < bestCurrent * maxConcurrency then
+					bestCurrent = current
+					bestMax = maxConcurrency
+					tied = {{keyIndex = i, proxyID = proxyID}}
+				elseif current * bestMax == bestCurrent * maxConcurrency then
+					table.insert(tied, {keyIndex = i, proxyID = proxyID})
+				end
+			end
+		end
+
+		if #tied == 0 then
+			return {0, now}
+		end
+		local cursor = tonumber(redis.call('GET', cursorKey)) or 0
+		local selected = tied[(cursor % #tied) + 1]
+		redis.call('SET', cursorKey, tostring(cursor + 1), 'EX', ttl)
+		redis.call('ZADD', KEYS[selected.keyIndex], now, requestID)
+		redis.call('EXPIRE', KEYS[selected.keyIndex], ttl)
+		return {selected.proxyID, now}
 	`)
 
 	// getCountScript 统计有序集合中的槽位数量并清理过期条目
@@ -387,6 +430,14 @@ func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeco
 // Helper functions for key generation
 func accountSlotKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
+}
+
+func accountProxySlotKey(accountID, proxyID int64) string {
+	return fmt.Sprintf("%s{%d}:%d", accountProxySlotKeyPrefix, accountID, proxyID)
+}
+
+func accountProxyCursorKey(accountID int64) string {
+	return fmt.Sprintf("%s{%d}:cursor", accountProxySlotKeyPrefix, accountID)
 }
 
 func userSlotKey(userID int64) string {
@@ -748,6 +799,93 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 	result := make(map[int64]int, len(accountIDs))
 	for _, cmd := range cmds {
 		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
+	}
+	return result, nil
+}
+
+func (c *concurrencyCache) AcquireAccountProxySlot(ctx context.Context, accountID int64, slots []service.AccountProxySlotSpec, requestID string) (int64, bool, error) {
+	if accountID <= 0 || len(slots) == 0 || requestID == "" {
+		return 0, false, nil
+	}
+	keys := make([]string, 0, len(slots)+1)
+	args := make([]any, 0, len(slots)*2+2)
+	args = append(args, c.slotTTLSeconds, requestID)
+	for _, slot := range slots {
+		if slot.ProxyID <= 0 || slot.MaxConcurrency <= 0 {
+			return 0, false, fmt.Errorf("invalid account proxy slot: proxy=%d max=%d", slot.ProxyID, slot.MaxConcurrency)
+		}
+		keys = append(keys, accountProxySlotKey(accountID, slot.ProxyID))
+		args = append(args, slot.MaxConcurrency, slot.ProxyID)
+	}
+	keys = append(keys, accountProxyCursorKey(accountID))
+	proxyID, _, err := runScriptInt64Pair(ctx, c.rdb, acquireAccountProxyScript, keys, args...)
+	if err != nil {
+		return 0, false, err
+	}
+	return proxyID, proxyID > 0, nil
+}
+
+func (c *concurrencyCache) ReleaseAccountProxySlot(ctx context.Context, accountID, proxyID int64, requestID string) error {
+	if accountID <= 0 || proxyID <= 0 || requestID == "" {
+		return nil
+	}
+	return c.rdb.ZRem(ctx, accountProxySlotKey(accountID, proxyID), requestID).Err()
+}
+
+func (c *concurrencyCache) GetAccountProxyConcurrency(ctx context.Context, accountID int64, proxyIDs []int64) (map[int64]int, error) {
+	all, err := c.GetAccountsProxyConcurrency(ctx, map[int64][]int64{accountID: proxyIDs})
+	if err != nil {
+		return nil, err
+	}
+	if counts := all[accountID]; counts != nil {
+		return counts, nil
+	}
+	return map[int64]int{}, nil
+}
+
+func (c *concurrencyCache) GetAccountsProxyConcurrency(ctx context.Context, accounts map[int64][]int64) (map[int64]map[int64]int, error) {
+	result := make(map[int64]map[int64]int, len(accounts))
+	if len(accounts) == 0 {
+		return result, nil
+	}
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+	cutoff := strconv.FormatInt(now.Unix()-int64(c.slotTTLSeconds), 10)
+	pipe := c.rdb.Pipeline()
+	type proxyCmd struct {
+		accountID int64
+		proxyID   int64
+		count     *redis.IntCmd
+	}
+	cmds := make([]proxyCmd, 0)
+	for accountID, proxyIDs := range accounts {
+		if accountID <= 0 {
+			continue
+		}
+		seen := make(map[int64]struct{}, len(proxyIDs))
+		for _, proxyID := range proxyIDs {
+			if proxyID <= 0 {
+				continue
+			}
+			if _, exists := seen[proxyID]; exists {
+				continue
+			}
+			seen[proxyID] = struct{}{}
+			key := accountProxySlotKey(accountID, proxyID)
+			pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
+			cmds = append(cmds, proxyCmd{accountID: accountID, proxyID: proxyID, count: pipe.ZCard(ctx, key)})
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	for _, cmd := range cmds {
+		if result[cmd.accountID] == nil {
+			result[cmd.accountID] = make(map[int64]int)
+		}
+		result[cmd.accountID][cmd.proxyID] = int(cmd.count.Val())
 	}
 	return result, nil
 }

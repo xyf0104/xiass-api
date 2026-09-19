@@ -65,10 +65,32 @@ func codexAccountIdentityNamespace(account *Account) string {
 	return ""
 }
 
+// Account identity scoping is an opt-in extension of Codex fingerprint
+// convergence. The default/off mode must preserve client identifiers, while
+// device mode only converges the installation identity. Session/full modes
+// are the modes that intentionally need account-scoped session values.
+func codexAccountIdentityScopingEnabled(account *Account) bool {
+	if account == nil || !account.IsOpenAIOAuthLike() || account.IsOpenAIAgentIdentity() {
+		return false
+	}
+	switch account.GetCodexFingerprintMode() {
+	case codexFingerprintSession, codexFingerprintFull:
+		return true
+	default:
+		return false
+	}
+}
+
 func isolateOpenAIUpstreamSessionID(apiKeyID int64, account *Account, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
+	}
+	if account != nil && account.GetCodexFingerprintMode() == codexFingerprintDevice {
+		return raw
+	}
+	if !codexAccountIdentityScopingEnabled(account) {
+		return isolateOpenAISessionID(apiKeyID, raw)
 	}
 	namespace := codexAccountIdentityNamespace(account)
 	if namespace == "" {
@@ -80,6 +102,9 @@ func isolateOpenAIUpstreamSessionID(apiKeyID int64, account *Account, raw string
 
 func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw string) string {
 	raw = strings.TrimSpace(raw)
+	if !codexAccountIdentityScopingEnabled(account) {
+		return raw
+	}
 	namespace := codexAccountIdentityNamespace(account)
 	if raw == "" || namespace == "" {
 		return raw

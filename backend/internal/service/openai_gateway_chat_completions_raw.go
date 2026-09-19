@@ -157,6 +157,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		}
 	}
 	upstreamBody = applyOllamaCloudRawChatCompletionsRequest(account, upstreamBody)
+	upstreamBody = clampOllamaCloudUpstreamMaxTokens(account, upstreamBody)
 	serviceTier := extractOpenAIServiceTierFromBody(upstreamBody)
 
 	logger.L().Debug("openai chat_completions raw: forwarding without protocol conversion",

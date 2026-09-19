@@ -49,7 +49,7 @@ func SetupRouter(
 		ctx, cancel := context.WithTimeout(context.Background(), frameSrcRefreshTimeout)
 		defer cancel()
 		origins, err := settingService.GetFrameSrcOrigins(ctx)
-		if err != nil {
+		if err != nil { //nolint:staticcheck // The embed build can construct the frontend; the non-embed stub always returns an error.
 			// 获取失败时保留已有缓存，避免 frame-src 被意外清空
 			return
 		}
@@ -74,8 +74,8 @@ func SetupRouter(
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {
-		frontendServer, err := web.NewFrontendServer(settingService)
-		if err != nil {
+		frontendServer, err := web.NewFrontendServer(settingService) //nolint:staticcheck // embed build can fail while reading the generated frontend; the non-embed stub is unreachable here.
+		if err != nil {                                              //nolint:staticcheck // embed build can return errors while loading generated frontend assets.
 			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
 			r.Use(web.ServeEmbeddedFrontend())
 			settingService.SetOnUpdateCallback(refreshFrameOrigins)

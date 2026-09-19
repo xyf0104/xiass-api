@@ -1,0 +1,78 @@
+import { describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import type { Proxy } from '@/types'
+
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string, values?: Record<string, unknown>) => `${key}${values ? JSON.stringify(values) : ''}` })
+  }
+})
+import MultiProxySelector from '../MultiProxySelector.vue'
+
+const proxies: Proxy[] = [
+  {
+    id: 2,
+    name: 'IPv6 exit',
+    protocol: 'socks5',
+    host: '2001:db8::20',
+    port: 1080,
+    username: null,
+    status: 'active',
+    expires_at: null,
+    fallback_mode: 'none',
+    expiry_warn_days: 7,
+    created_at: '2026-09-19T00:00:00Z',
+    updated_at: '2026-09-19T00:00:00Z'
+  },
+  {
+    id: 1,
+    name: 'IPv4 exit',
+    protocol: 'http',
+    host: '192.0.2.10',
+    port: 8080,
+    username: null,
+    status: 'active',
+    expires_at: null,
+    fallback_mode: 'none',
+    expiry_warn_days: 7,
+    created_at: '2026-09-19T00:00:00Z',
+    updated_at: '2026-09-19T00:00:00Z'
+  }
+]
+
+describe('MultiProxySelector', () => {
+  it('selects exits, edits per-exit capacity, and preserves IPv6 formatting', async () => {
+    const wrapper = mount(MultiProxySelector, {
+      props: { modelValue: [], proxies },
+      global: { stubs: { Icon: true } }
+    })
+
+    expect(wrapper.text()).toContain('[2001:db8::20]:1080')
+    await wrapper.findAll('input[type="checkbox"]')[0].setValue(true)
+    const first = wrapper.emitted('update:modelValue')?.at(-1)?.[0]
+    expect(first).toEqual([{ proxy_id: 2, max_concurrency: 1 }])
+
+    await wrapper.setProps({ modelValue: first })
+    await wrapper.get('input[type="number"]').setValue(4)
+    const updated = wrapper.emitted('update:modelValue')?.at(-1)?.[0]
+    expect(updated).toEqual([{ proxy_id: 2, max_concurrency: 4 }])
+  })
+
+  it('keeps emitted bindings sorted for stable account payloads', async () => {
+    const wrapper = mount(MultiProxySelector, {
+      props: {
+        modelValue: [{ proxy_id: 2, max_concurrency: 2 }],
+        proxies
+      },
+      global: { stubs: { Icon: true } }
+    })
+
+    await wrapper.findAll('input[type="checkbox"]')[1].setValue(true)
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual([
+      { proxy_id: 1, max_concurrency: 1 },
+      { proxy_id: 2, max_concurrency: 2 }
+    ])
+  })
+})

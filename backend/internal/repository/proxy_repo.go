@@ -503,7 +503,18 @@ func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string,
 // CountAccountsByProxyID returns the number of accounts using a specific proxy
 func (r *proxyRepository) CountAccountsByProxyID(ctx context.Context, proxyID int64) (int64, error) {
 	var count int64
-	if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM accounts WHERE proxy_id = $1 AND deleted_at IS NULL", []any{proxyID}, &count); err != nil {
+	if err := scanSingleRow(ctx, r.sql, `
+		SELECT COUNT(*)
+		FROM accounts
+		WHERE deleted_at IS NULL
+		  AND (
+			proxy_id = $1
+			OR extra @> jsonb_build_object(
+				$2::text,
+				jsonb_build_object('bindings', jsonb_build_array(jsonb_build_object('proxy_id', $1::bigint)))
+			)
+		  )
+	`, []any{proxyID, service.AccountMultiProxyExtraKey}, &count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -513,9 +524,16 @@ func (r *proxyRepository) ListAccountSummariesByProxyID(ctx context.Context, pro
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT id, name, platform, type, notes
 		FROM accounts
-		WHERE proxy_id = $1 AND deleted_at IS NULL
+		WHERE deleted_at IS NULL
+		  AND (
+			proxy_id = $1
+			OR extra @> jsonb_build_object(
+				$2::text,
+				jsonb_build_object('bindings', jsonb_build_array(jsonb_build_object('proxy_id', $1::bigint)))
+			)
+		  )
 		ORDER BY id DESC
-	`, proxyID)
+	`, proxyID, service.AccountMultiProxyExtraKey)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +571,27 @@ func (r *proxyRepository) ListAccountSummariesByProxyID(ctx context.Context, pro
 
 // GetAccountCountsForProxies returns a map of proxy ID to account count for all proxies
 func (r *proxyRepository) GetAccountCountsForProxies(ctx context.Context) (counts map[int64]int64, err error) {
-	rows, err := r.sql.QueryContext(ctx, "SELECT proxy_id, COUNT(*) AS count FROM accounts WHERE proxy_id IS NOT NULL AND deleted_at IS NULL GROUP BY proxy_id")
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT proxy_id, COUNT(DISTINCT account_id) AS count
+		FROM (
+			SELECT id AS account_id, proxy_id
+			FROM accounts
+			WHERE proxy_id IS NOT NULL AND deleted_at IS NULL
+			UNION ALL
+			SELECT a.id AS account_id, (binding ->> 'proxy_id')::bigint AS proxy_id
+			FROM accounts a
+			CROSS JOIN LATERAL jsonb_array_elements(
+				CASE
+					WHEN jsonb_typeof(a.extra -> $1::text -> 'bindings') = 'array'
+					THEN a.extra -> $1::text -> 'bindings'
+					ELSE '[]'::jsonb
+				END
+			) binding
+			WHERE a.deleted_at IS NULL
+			  AND (binding ->> 'proxy_id') ~ '^[0-9]+$'
+		) refs
+		GROUP BY proxy_id
+	`, service.AccountMultiProxyExtraKey)
 	if err != nil {
 		return nil, err
 	}

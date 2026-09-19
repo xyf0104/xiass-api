@@ -1721,8 +1721,29 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 	if err != nil {
 		return nil, err
 	}
+	return s.newSelectionResultFromAccount(ctx, hydrated, acquired, release, waitPlan)
+}
+
+// newSelectionResultFromAccount keeps a freshly rechecked account instead of
+// replacing it with a possibly stale scheduler snapshot. This is important
+// after a concurrency recheck and still applies the request-scoped proxy slot.
+func (s *OpenAIGatewayService) newSelectionResultFromAccount(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
+	if account == nil {
+		return nil, nil
+	}
+	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
+	if !policy.hydratedAccountEgressAllowed(account) {
+		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
+	}
+	if acquired && s.concurrencyService != nil {
+		var err error
+		account, release, err = s.concurrencyService.BindAccountProxy(ctx, account, release)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-		Account:     hydrated,
+		Account:     account,
 		Acquired:    acquired,
 		ReleaseFunc: release,
 		WaitPlan:    waitPlan,

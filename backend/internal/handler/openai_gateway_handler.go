@@ -84,7 +84,7 @@ func validateOpenAIWSModelAllowlist(group *service.Group, payload []byte, fallba
 	}
 	for _, candidate := range candidates {
 		if !group.ModelAllowlist.Allows(candidate) {
-			return fmt.Errorf("Model %q is not available for this group", candidate)
+			return fmt.Errorf("model %q is not available for this group", candidate)
 		}
 	}
 	return nil
@@ -657,6 +657,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					return
 				}
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, forwardModel, reqModel, requestPlatform)
+				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -1728,7 +1729,15 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 			return nil, openAISlotAcquireProfitVetoed
 		}
 		account = latest
-		selection.Account = latest
+		boundAccount, boundRelease, reasonErr := h.concurrencyHelper.BindAccountProxy(ctx, account, selection.ReleaseFunc)
+		if reasonErr != nil {
+			reqLog.Warn("openai.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(reasonErr))
+			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No account proxy capacity available", *streamStarted)
+			return nil, openAISlotAcquireFailed
+		}
+		account = boundAccount
+		selection.ReleaseFunc = boundRelease
+		selection.Account = account
 		// 调度器已抢槽路径无门时由选号内部完成 eager 绑定；门下选号内部
 		// 推迟绑定，这里在终检通过后补准入后绑定。
 		if selection.ProfitGateActive() {
@@ -1766,7 +1775,13 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 			return nil, openAISlotAcquireProfitVetoed
 		}
 		account = latest
-		selection.Account = latest
+		account, fastReleaseFunc, err = h.concurrencyHelper.BindAccountProxy(ctx, account, fastReleaseFunc)
+		if err != nil {
+			reqLog.Warn("openai.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
+			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No account proxy capacity available", *streamStarted)
+			return nil, openAISlotAcquireFailed
+		}
+		selection.Account = account
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
@@ -1821,7 +1836,13 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return nil, openAISlotAcquireProfitVetoed
 	}
 	account = latest
-	selection.Account = latest
+	account, accountReleaseFunc, err = h.concurrencyHelper.BindAccountProxy(ctx, account, accountReleaseFunc)
+	if err != nil {
+		reqLog.Warn("openai.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
+		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No account proxy capacity available", *streamStarted)
+		return nil, openAISlotAcquireFailed
+	}
+	selection.Account = account
 	if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}

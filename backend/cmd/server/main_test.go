@@ -17,7 +17,7 @@ func TestVersionFlagWritesToStdout(t *testing.T) {
 		os.Exit(0)
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestVersionFlagWritesToStdout$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestVersionFlagWritesToStdout$") // #nosec G702 -- executes the current test binary with a fixed argument.
 	cmd.Env = append(os.Environ(), "XIASS_TEST_VERSION_STDOUT=1")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

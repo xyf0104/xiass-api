@@ -2912,13 +2912,33 @@
         <div class="mb-1 flex items-center gap-2">
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <div class="mb-2 inline-flex rounded-md bg-gray-100 p-0.5 dark:bg-dark-700">
+          <button
+            type="button"
+            class="rounded px-3 py-1.5 text-xs font-medium"
+            :class="proxyMode === 'single' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+            @click="proxyMode = 'single'"
+          >
+            {{ t('admin.accounts.multiProxy.singleMode') }}
+          </button>
+          <button
+            type="button"
+            class="rounded px-3 py-1.5 text-xs font-medium"
+            :class="proxyMode === 'multi' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+            @click="proxyMode = 'multi'"
+          >
+            {{ t('admin.accounts.multiProxy.multiMode') }}
+          </button>
+        </div>
+        <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
+        <MultiProxySelector v-else v-model="proxyBindings" :proxies="proxies" />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
-          <input v-model.number="form.concurrency" type="number" min="1" class="input"
+          <input v-model.number="form.concurrency" type="number" min="1" class="input disabled:cursor-not-allowed disabled:bg-gray-50 dark:disabled:bg-dark-800"
+            :disabled="proxyMode === 'multi'"
             @input="form.concurrency = Math.max(1, form.concurrency || 1)" />
         </div>
         <div>
@@ -3844,6 +3864,7 @@ import type {
   OpenAICompactMode,
   OpenAIResponsesMode,
   OpenAIEndpointCapability
+  , AccountProxyBindingInput
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -3851,6 +3872,7 @@ import Select from '@/components/common/Select.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
+import MultiProxySelector from '@/components/account/MultiProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -4694,6 +4716,30 @@ const form = reactive({
   expires_at: null as number | null
 })
 
+const proxyMode = ref<'single' | 'multi'>('single')
+const proxyBindings = ref<AccountProxyBindingInput[]>([])
+const normalizedProxyBindings = () => proxyBindings.value
+  .map((binding) => ({
+    proxy_id: binding.proxy_id,
+    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1))
+  }))
+  .sort((a, b) => a.proxy_id - b.proxy_id)
+
+watch(proxyBindings, (bindings) => {
+  if (proxyMode.value !== 'multi') return
+  form.proxy_id = bindings[0]?.proxy_id ?? null
+  form.concurrency = bindings.reduce((sum, binding) => sum + Math.max(1, Number(binding.max_concurrency) || 1), 0)
+}, { deep: true })
+
+watch(proxyMode, (mode) => {
+  if (mode !== 'multi') return
+  if (proxyBindings.value.length === 0 && form.proxy_id) {
+    proxyBindings.value = [{ proxy_id: form.proxy_id, max_concurrency: Math.max(1, form.concurrency || 1) }]
+  }
+  form.proxy_id = proxyBindings.value[0]?.proxy_id ?? null
+  form.concurrency = proxyBindings.value.reduce((sum, binding) => sum + Math.max(1, Number(binding.max_concurrency) || 1), 0)
+})
+
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -5200,7 +5246,15 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
-    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(payload))
+    const proxyAwarePayload: CreateAccountRequest = proxyMode.value === 'multi'
+      ? {
+          ...payload,
+          proxy_id: proxyBindings.value[0]?.proxy_id ?? null,
+          proxy_bindings: normalizedProxyBindings(),
+          concurrency: form.concurrency
+        }
+      : { ...payload, proxy_bindings: undefined }
+    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(proxyAwarePayload))
     if (
       payload.type === 'apikey' &&
       ['openai', 'kimi', 'zhipu', 'deepseek'].includes(payload.platform) &&
@@ -5249,6 +5303,8 @@ const resetForm = () => {
   form.type = 'oauth'
   form.credentials = {}
   form.proxy_id = null
+  proxyMode.value = 'single'
+  proxyBindings.value = []
   form.concurrency = 10
   form.load_factor = null
   form.priority = 1
@@ -5807,6 +5863,7 @@ const handleSubmit = async () => {
             credentials,
             group_ids: form.group_ids,
             extra,
+            proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
             auto_pause_on_expired: autoPauseOnExpired.value,
           }))
           successCount++
@@ -6127,6 +6184,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           credentials,
           extra,
           proxy_id: form.proxy_id,
+          proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
@@ -6193,6 +6251,7 @@ const handleGrokImportSSO = async (ssoInput: string) => {
       name: form.name || undefined,
       notes: form.notes || undefined,
       proxy_id: form.proxy_id,
+      proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
       group_ids: form.group_ids,
       credentials,
       concurrency: form.concurrency,
@@ -6293,6 +6352,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         credentials,
         extra,
         proxy_id: form.proxy_id,
+        proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
         priority: form.priority,
@@ -6405,6 +6465,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
+      proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
       concurrency: form.concurrency,
       load_factor: form.load_factor ?? undefined,
       priority: form.priority,
@@ -6483,6 +6544,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
+      proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
       concurrency: form.concurrency,
       load_factor: form.load_factor ?? undefined,
       priority: form.priority,
@@ -6581,6 +6643,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             credentials,
             extra,
             proxy_id: form.proxy_id,
+            proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
             priority: form.priority,
@@ -6680,6 +6743,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           credentials,
           extra: {},
           proxy_id: form.proxy_id,
+          proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
@@ -7061,6 +7125,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           credentials,
           extra,
           proxy_id: form.proxy_id,
+          proxy_bindings: proxyMode.value === 'multi' ? normalizedProxyBindings() : undefined,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,

@@ -1714,6 +1714,12 @@ func (s *GatewayService) newSelectionResult(ctx context.Context, account *Accoun
 	if err != nil {
 		return nil, err
 	}
+	if acquired && s.concurrencyService != nil {
+		hydrated, release, err = s.concurrencyService.BindAccountProxy(ctx, hydrated, release)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 		Account:     hydrated,
 		Acquired:    acquired,
