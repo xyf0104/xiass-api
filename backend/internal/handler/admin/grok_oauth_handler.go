@@ -543,6 +543,9 @@ func (h *GrokOAuthHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "grok quota service is not enabled")
 		return
 	}
+	// ResetQuota currently returns GROK_QUOTA_RESET_UNSUPPORTED by contract;
+	// the error branch is intentionally retained for the stable API response.
+	//nolint:staticcheck // SA4023: the implementation is an intentional unsupported-operation result.
 	result, err := h.quotaService.ResetQuota(c.Request.Context(), accountID)
 	if err != nil {
 		response.ErrorFrom(c, err)

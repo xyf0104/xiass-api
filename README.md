@@ -8,7 +8,7 @@
   <p>
     <img src="https://img.shields.io/badge/当前版本-v1.2.26-0ea5e9" alt="当前版本 v1.2.26" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
-    <img src="https://img.shields.io/badge/Go-1.26-00add8" alt="Go 1.26" />
+    <img src="https://img.shields.io/badge/Go-1.27-00add8" alt="Go 1.27" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
     <img src="https://img.shields.io/badge/License-LGPL--3.0-16a34a" alt="LGPL-3.0" />
   </p>

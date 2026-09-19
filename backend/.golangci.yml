@@ -57,6 +57,11 @@ linters:
         - G304
         - G306
         - G404
+        # G703/G704 are taint-analysis variants of the existing configured
+        # forwarding/file-write exceptions; gateway destinations come from
+        # operator configuration by design.
+        - G703
+        - G704
       severity: high
       confidence: high
     errcheck:
