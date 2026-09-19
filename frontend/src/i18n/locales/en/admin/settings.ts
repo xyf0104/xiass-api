@@ -719,9 +719,9 @@ export default {
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
         codexHardeningTitle: "Codex Settings",
-        codexTicketEnabled: "292 Ticket anti-degradation",
+        codexTicketEnabled: "Codex Ticket anti-degradation",
         codexTicketEnabledDesc:
-          "Off by default. When enabled, the background harvester collects 292-character x-codex-turn-state tickets for ChatGPT OAuth accounts and injects them by account and model. When disabled, forwarding behavior is unchanged.",
+          "Off by default. When enabled, the background harvester collects valid current-format x-codex-turn-state tickets for ChatGPT OAuth accounts and injects them by account and model. When disabled, forwarding behavior is unchanged.",
         codexTicketHarvestProxy: "Ticket harvest proxy",
         codexTicketHarvestProxyDesc:
           "Used only by the background ticket harvester; production requests still use each account's own proxy. Accepts full HTTP, HTTPS, SOCKS5, and SOCKS5H URLs. Changes apply without a restart. Saving an empty value preserves the configured proxy.",

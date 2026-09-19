@@ -1222,8 +1222,10 @@ func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 }
 
 // OpenAICodexTicketConfig controls the optional ChatGPT OAuth turn-state
-// ticket harvester. Business requests keep using the account's own proxy;
-// HarvestProxyURL is used only by the background ticket probe.
+// ticket harvester. TargetLength keeps the historical 292-byte default;
+// with that default, current bounded upstream formats are accepted as well.
+// Business requests keep using the account's own proxy; HarvestProxyURL is
+// used only by the background ticket probe.
 type OpenAICodexTicketConfig struct {
 	Enabled                      bool     `mapstructure:"enabled"`
 	TargetLength                 int      `mapstructure:"target_length"`

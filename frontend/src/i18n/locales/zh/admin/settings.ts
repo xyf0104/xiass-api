@@ -712,9 +712,9 @@ export default {
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
         codexHardeningTitle: 'Codex 设置',
-        codexTicketEnabled: '292 Ticket 防降智',
+        codexTicketEnabled: 'Codex Ticket 防降智',
         codexTicketEnabledDesc:
-          '默认关闭。开启后后台为 ChatGPT OAuth 账号采集 292 位 x-codex-turn-state Ticket，并按账号和模型注入正式请求；关闭时完全沿用原转发链路。',
+          '默认关闭。开启后后台为 ChatGPT OAuth 账号采集有效的 x-codex-turn-state Ticket（兼容现行长度），并按账号和模型注入正式请求；关闭时完全沿用原转发链路。',
         codexTicketHarvestProxy: 'Ticket 采集代理',
         codexTicketHarvestProxyDesc:
           '仅用于后台采集 Ticket，正式业务请求仍走账号自己的代理。支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H 完整 URL；保存后动态生效，无需重启。留空保存会保留已配置值。',
