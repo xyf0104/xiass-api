@@ -50,6 +50,13 @@ func (r codexModelsFailoverAccountRepo) ListSchedulableByGroupID(_ context.Conte
 	return append([]service.Account(nil), r.accounts...), nil
 }
 
+func (r codexModelsFailoverAccountRepo) ListByGroup(_ context.Context, groupID int64) ([]service.Account, error) {
+	if accounts, ok := r.candidatesByGroup[groupID]; ok {
+		return append([]service.Account(nil), accounts...), nil
+	}
+	return append([]service.Account(nil), r.accounts...), nil
+}
+
 func (r codexModelsFailoverAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, _ bool) ([]service.Account, error) {
 	allowed := make(map[string]struct{}, len(platforms))
 	for _, platform := range platforms {

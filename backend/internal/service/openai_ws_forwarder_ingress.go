@@ -77,7 +77,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	token string,
 	firstClientMessage []byte,
 	hooks *OpenAIWSIngressHooks,
-) error {
+) (returnErr error) {
 	if s == nil {
 		return errors.New("service is nil")
 	}
@@ -105,8 +105,19 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 	}
 
+	if preemptCtx, cleanupPreempt, armed := s.BeginOpenAIWSIngressSessionPreemptionWithClient(ctx, c, account, firstClientMessage, clientConn); armed {
+		ctx = preemptCtx
+		defer cleanupPreempt()
+		defer func() {
+			if isOpenAIWSSessionPreempted(ctx) {
+				returnErr = errOpenAIWSSessionPreempted
+			}
+		}()
+	}
+
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
-	forceHTTPBridge := account.Platform == PlatformGrok
+	forceHTTPBridge := account.Platform == PlatformGrok ||
+		(s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account))
 	modeRouterV2Enabled := s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled
 	ingressMode := OpenAIWSIngressModeCtxPool
 	if modeRouterV2Enabled && !forceHTTPBridge {
@@ -248,10 +259,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				nil,
 			)
 		}
-		if hooks != nil && (hooks.MaxReasoningEffort != "" || len(hooks.ReasoningEffortMappings) > 0) {
-			if capped, changed := ApplyOpenAIReasoningEffortPolicy(normalized, hooks.MaxReasoningEffort, hooks.ReasoningEffortMappings); changed {
-				normalized = capped
-			}
+		if next, policyErr := applyOpenAIWSReasoningEffortPolicy(normalized, hooks); policyErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, policyErr.Error(), policyErr)
+		} else {
+			normalized = next
 		}
 
 		originalModel := strings.TrimSpace(values[1].String())
@@ -486,14 +497,24 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.ownedOpenAIWSStateStore(c, account)
 	groupID := getOpenAIGroupIDFromContext(c)
+	executionScope, _ := resolveOpenAIWSExecutionScope(c, firstClientMessage, getAPIKeyIDFromContext(c))
+	sessionStateStore := stateStore
+	if executionScope != "" {
+		sessionStateStore = s.getOpenAIWSStateStore()
+	}
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
+	sessionStateKey := ""
 	preferredConnID := ""
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
-		if turnState == "" && stateStore != nil && sessionHash != "" {
-			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
+		sessionStateKey = sessionHash
+		if executionScope != "" {
+			sessionStateKey = executionScope
+		}
+		if turnState == "" && sessionStateStore != nil && sessionStateKey != "" {
+			if savedTurnState, ok := sessionStateStore.GetSessionTurnState(groupID, sessionStateKey); ok {
 				turnState = savedTurnState
 			}
 		}
@@ -506,8 +527,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 
 		storeDisabled = s.isOpenAIWSStoreDisabledInRequestRaw(payload.payloadRaw, account)
-		if stateStore != nil && storeDisabled && payload.previousResponseID == "" && sessionHash != "" {
-			if connID, ok := stateStore.GetSessionConn(groupID, sessionHash); ok {
+		if sessionStateStore != nil && storeDisabled && payload.previousResponseID == "" && sessionStateKey != "" {
+			if connID, ok := sessionStateStore.GetSessionConn(groupID, sessionStateKey); ok {
 				preferredConnID = connID
 			}
 		}
@@ -552,7 +573,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			// Keep payload and replay histories aligned. Rewritten items receive new
 			// immutable bodies; all untouched replay bodies remain shared.
-			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, account.ID, sessionHash); len(invalidDigests) > 0 {
+			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, account.ID, sessionStateKey); len(invalidDigests) > 0 {
 				if openAIRawPayloadHasInvalidEncryptedCompaction(currentBridgePayload.payloadRaw, invalidDigests) ||
 					openAIReplayHasInvalidEncryptedCompaction(bridgeReplayInput, invalidDigests) ||
 					openAIReplayHasInvalidEncryptedCompaction(bridgeAccountFailoverInput, invalidDigests) {
@@ -694,8 +715,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
 				turnState = bridgeTurnState
-				if stateStore != nil && sessionHash != "" {
-					stateStore.BindSessionTurnState(groupID, sessionHash, bridgeTurnState, s.openAIWSSessionStickyTTL())
+				if sessionStateStore != nil && sessionStateKey != "" {
+					sessionStateStore.BindSessionTurnState(groupID, sessionStateKey, bridgeTurnState, s.openAIWSSessionStickyTTL())
 				}
 			}
 			responseID := strings.TrimSpace(result.RequestID)
@@ -887,8 +908,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if handshakeTurnState := strings.TrimSpace(lease.HandshakeHeader(openAIWSTurnStateHeader)); handshakeTurnState != "" {
 			s.noteOpenAICodexTurnStateProvenance(c, account, handshakeTurnState)
 			turnState = handshakeTurnState
-			if stateStore != nil && sessionHash != "" {
-				stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
+			if sessionStateStore != nil && sessionStateKey != "" {
+				sessionStateStore.BindSessionTurnState(groupID, sessionStateKey, handshakeTurnState, s.openAIWSSessionStickyTTL())
 			}
 			updatedHeaders := cloneHeader(baseAcquireReq.Headers)
 			if updatedHeaders == nil {
@@ -1022,13 +1043,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if eventType == "error" {
 				canonicalModel := canonicalOpenAIAccountSchedulingModel(account, originalModel)
-				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, canonicalModel, lease.HandshakeHeaders(), upstreamMessage)
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
-				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, canonicalModel)
+				if !cyberPolicyHit {
+					s.handleOpenAIWSErrorEventTransientFailure(ctx, account, canonicalModel, lease.HandshakeHeaders(), upstreamMessage)
+					s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, canonicalModel)
+				}
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
 					if digests := collectOpenAIEncryptedContentDigestsRaw(payload); len(digests) > 0 {
-						s.markOpenAIWSInvalidEncryptedContentLineage(groupID, account.ID, sessionHash, digests)
+						s.markOpenAIWSInvalidEncryptedContentLineage(groupID, account.ID, sessionStateKey, digests)
 						logOpenAIWSModeInfo(
 							"ingress_ws_invalid_encrypted_lineage_mark account_id=%d turn=%d digests=%d",
 							account.ID,
@@ -1155,7 +1178,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if isTerminalEvent {
 				canonicalModel := canonicalOpenAIAccountSchedulingModel(account, originalModel)
-				terminalEvent := s.handleOpenAIWSTerminalTransientFailure(ctx, account, canonicalModel, lease.HandshakeHeaders(), upstreamMessage)
+				terminalEvent := normalizeOpenAIWSTerminalEvent(eventType)
+				if !cyberPolicyHit {
+					terminalEvent = s.handleOpenAIWSTerminalTransientFailure(ctx, account, canonicalModel, lease.HandshakeHeaders(), upstreamMessage)
+				}
 				// 客户端已断连时，上游连接的 session 状态不可信，标记 broken 避免回池复用。
 				if clientDisconnected {
 					lease.MarkBroken()
@@ -1411,7 +1437,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		skipBeforeTurn = false
-		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, account.ID, sessionHash); len(invalidDigests) > 0 {
+		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, account.ID, sessionStateKey); len(invalidDigests) > 0 {
 			if openAIRawPayloadHasInvalidEncryptedCompaction(currentPayload, invalidDigests) ||
 				openAIReplayHasInvalidEncryptedCompaction(lastTurnReplayInput, invalidDigests) {
 				return writeOpenAIWSContextUnavailable(ctx, clientConn)
@@ -1604,7 +1630,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		if shouldPreflightPing {
-			if pingErr := sessionLease.PingWithTimeout(openAIWSConnHealthCheckTO); pingErr != nil {
+			if pingErr := sessionLease.PingWithTimeout(openAIWSProbePingTO); pingErr != nil {
 				logOpenAIWSModeInfo(
 					"ingress_ws_upstream_preflight_ping_fail account_id=%d turn=%d conn_id=%s cause=%s",
 					account.ID,
@@ -1787,8 +1813,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			stateStore.BindResponseConn(responseID, connID, ttl)
 		}
-		if stateStore != nil && storeDisabled && sessionHash != "" {
-			stateStore.BindSessionConn(groupID, sessionHash, connID, s.openAIWSSessionStickyTTL())
+		if sessionStateStore != nil && storeDisabled && sessionStateKey != "" {
+			sessionStateStore.BindSessionConn(groupID, sessionStateKey, connID, s.openAIWSSessionStickyTTL())
 		}
 		if connID != "" {
 			preferredConnID = connID

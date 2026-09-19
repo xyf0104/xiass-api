@@ -69,5 +69,5 @@ func lockAndMergeOpenAIQuotaExtra(ctx context.Context, client *dbent.Client, acc
 			}
 		}
 	}
-	return merged, nil
+	return service.MergeOpenAICodexTicketExtra(merged, current), nil
 }

@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref } from 'vue'
 import { batchOAuthAPI, type BatchOAuthConfig, type BatchOAuthLogin, type BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
+import { adsPowerHelperUnavailableMessage, isAdsPowerHelperAvailable } from '@/utils/adspowerHelper'
 
 export interface BatchOAuthQueueCredential {
   account: string
@@ -50,6 +51,7 @@ export function batchTaskWillAutoRestart(task?: BatchOAuthTask) {
 export function useBatchOpenAIOAuth(onCreated: () => void) {
   const rows = ref<OAuthQueueRow[]>([])
   const error = ref('')
+  const adsPowerHelperMissing = ref(false)
   const loading = ref(true)
   const started = ref(false)
   const busyKeys = ref(new Set<string>())
@@ -325,12 +327,21 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       adsLaunches.set(key, result)
       const popup = helperWindows.get(row.key)
       if (result.delivery === 'queued') {
+        adsPowerHelperMissing.value = false
         popup?.close()
         helperWindows.delete(row.key)
-      } else if (popup && !popup.closed) {
-        popup.location.href = result.helper_url
       } else {
-        row.error = '浏览器阻止了助手窗口，请点击“打开固定环境”。'
+        if (!await isAdsPowerHelperAvailable()) {
+          adsPowerHelperMissing.value = true
+          row.error = adsPowerHelperUnavailableMessage
+          popup?.close()
+          helperWindows.delete(row.key)
+          update(row, await batchOAuthAPI.cancel(row.task!.task_id))
+          return
+        }
+        adsPowerHelperMissing.value = false
+        if (popup && !popup.closed) popup.location.href = result.helper_url
+        else row.error = '浏览器阻止了助手窗口，请点击“打开固定环境”。'
       }
     })
     if (row.error) {
@@ -395,7 +406,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   }
   onScopeDispose(dispose)
   void sync()
-  return { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower,
+  return { rows, error, adsPowerHelperMissing, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower,
     hasSecret: (row: OAuthQueueRow) => secrets.has(row.key),
     emailCodeToken: (row: OAuthQueueRow) => {
       const login = secrets.get(row.key)

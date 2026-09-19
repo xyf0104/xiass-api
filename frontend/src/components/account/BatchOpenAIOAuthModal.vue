@@ -11,6 +11,13 @@
   >
     <div class="space-y-4" data-testid="batch-oauth">
       <p v-if="error || localError" role="alert" class="text-sm text-red-600 dark:text-red-300">{{ error || localError }}</p>
+      <div v-if="adsPowerHelperMissing" class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/25 dark:text-red-200" role="alert" data-testid="adspower-helper-missing">
+        <p>本次 Ads 授权已停止。请安装并启动 XIASS AdsPower 助手和 AdsPower，再到工作台顶部的“Ads 设置”完成 API Key 与代理出口配置。</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a class="btn btn-secondary btn-sm" :href="adsPowerHelperMacDownloadURL"><Icon name="download" size="sm" />macOS 安装包</a>
+          <a class="btn btn-secondary btn-sm" :href="adsPowerHelperWindowsDownloadURL"><Icon name="download" size="sm" />Windows 安装包</a>
+        </div>
+      </div>
       <fieldset v-if="!started" :disabled="loading || hasWork" class="space-y-4">
         <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-gray-200 p-1 dark:border-dark-600" role="tablist" aria-label="批量登录方式">
           <button type="button" role="tab" class="batch-mode-tab" :class="loginMode === 'password' ? 'batch-mode-tab-active' : 'batch-mode-tab-idle'" :aria-selected="loginMode === 'password'" data-testid="batch-mode-password" @click="loginMode = 'password'">
@@ -173,6 +180,7 @@ import { OPENAI_EMAIL_CODE_PROVIDER, parseOpenAIEmailCodeCredentials } from '@/f
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
 import { useClipboard } from '@/composables/useClipboard'
 import { useBatchOpenAIOAuth, batchTaskActive, batchTaskSkipped, batchTaskWillAutoRestart, type BatchOAuthQueueCredential, type OAuthQueueRow } from '@/composables/useBatchOpenAIOAuth'
+import { adsPowerHelperMacDownloadURL, adsPowerHelperWindowsDownloadURL } from '@/utils/adspowerHelper'
 
 type AuthorizationBrowserMode = 'server' | 'adspower'
 
@@ -183,7 +191,7 @@ const props = withDefaults(defineProps<{ show?: boolean; embedded?: boolean; gro
   showBrowserModeSelector: true,
 })
 const emit = defineEmits<{ close: []; created: [] }>()
-const { rows, error, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
+const { rows, error, adsPowerHelperMissing, loading, started, busyKeys, activeCount, pendingCount, hasWork, start, sms, cancel, cancelAll, retry, complete, remove, prepareNextBatch, launchAdsPower, hasSecret, emailCodeToken, refresh } = useBatchOpenAIOAuth(() => emit('created'))
 const { copied: failedCredentialsCopied, copyToClipboard } = useClipboard()
 const loginMode = ref<'password' | 'email_code'>('password')
 const passwordInput = ref('')

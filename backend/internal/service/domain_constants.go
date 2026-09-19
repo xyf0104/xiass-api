@@ -46,6 +46,8 @@ const (
 	PlatformKimi        = domain.PlatformKimi
 	PlatformZhipu       = domain.PlatformZhipu
 	PlatformDeepseek    = domain.PlatformDeepseek
+	PlatformMiniMax     = domain.PlatformMiniMax
+	PlatformOpenCodeGo  = domain.PlatformOpenCodeGo
 	PlatformComposite   = domain.PlatformComposite
 )
 
@@ -53,6 +55,8 @@ const (
 const (
 	AccountModePayG   = domain.AccountModePayG
 	AccountModeCoding = domain.AccountModeCoding
+	AccountModeZen    = domain.AccountModeZen
+	AccountModeGo     = domain.AccountModeGo
 )
 
 // 上游 API 协议（国产供应商）：决定转发端点与格式，与接入模式正交。
@@ -70,24 +74,38 @@ const (
 	DefaultZhipuPayGBaseURL   = "https://open.bigmodel.cn/api/paas/v4"
 	DefaultZhipuCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
 	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
+	DefaultMiniMaxBaseURL     = "https://api.minimaxi.com/v1"
+	DefaultOpenCodeGoBaseURL  = "https://opencode.ai/zen/go/v1"
+	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url。
 const (
-	DefaultKimiPayGAnthropicBaseURL   = "https://api.moonshot.cn/anthropic"
-	DefaultKimiCodingAnthropicBaseURL = "https://api.kimi.com/coding"
-	DefaultZhipuAnthropicBaseURL      = "https://open.bigmodel.cn/api/anthropic"
-	DefaultDeepseekAnthropicBaseURL   = "https://api.deepseek.com/anthropic"
+	DefaultKimiPayGAnthropicBaseURL    = "https://api.moonshot.cn/anthropic"
+	DefaultKimiCodingAnthropicBaseURL  = "https://api.kimi.com/coding"
+	DefaultZhipuAnthropicBaseURL       = "https://open.bigmodel.cn/api/anthropic"
+	DefaultDeepseekAnthropicBaseURL    = "https://api.deepseek.com/anthropic"
+	DefaultMiniMaxAnthropicBaseURL     = "https://api.minimaxi.com/anthropic"
+	DefaultOpenCodeGoAnthropicBaseURL  = "https://opencode.ai/zen/go"
+	DefaultOpenCodeZenAnthropicBaseURL = "https://opencode.ai/zen"
 )
 
 // IsCNProvider 报告 platform 是否为国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）。
 func IsCNProvider(platform string) bool {
 	switch platform {
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
 		return true
 	default:
 		return false
 	}
+}
+
+func IsOpenCodeGo(platform string) bool {
+	return platform == PlatformOpenCodeGo
+}
+
+func IsMultiProtocolAPIKeyProvider(platform string) bool {
+	return IsCNProvider(platform) || IsOpenCodeGo(platform)
 }
 
 // AllowedSchedulingThresholdPlatforms mirrors the upstream v0.1.179
@@ -342,23 +360,25 @@ const (
 	SettingKeyGoogleOAuthFrontendRedirectURL = "google_oauth_frontend_redirect_url"
 
 	// OEM设置
-	SettingKeySiteName                    = "site_name"                     // 网站名称
-	SettingKeySiteLogo                    = "site_logo"                     // 网站Logo (base64)
-	SettingKeySiteSubtitle                = "site_subtitle"                 // 网站副标题
-	SettingKeyAPIBaseURL                  = "api_base_url"                  // API端点地址（用于客户端配置和导入）
-	SettingKeyContactInfo                 = "contact_info"                  // 客服联系方式
-	SettingKeyDocURL                      = "doc_url"                       // 文档链接
-	SettingKeyHomeContent                 = "home_content"                  // 首页内容（支持 Markdown/HTML，或 URL 作为 iframe src）
-	SettingKeyCompactHomeEnabled          = "compact_home_enabled"          // 是否使用紧凑首页布局
-	SettingKeyHideCcsImportButton         = "hide_ccs_import_button"        // 是否隐藏 API Keys 页面的导入 CCS 按钮
-	SettingKeyTeamChildCreationEnabled    = "team_child_creation_enabled"   // 是否显示 Team 子号创建入口
-	SettingKeyTeamChildMailboxConfig      = "team_child_mailbox_config"     // Team 子号集群共享邮箱配置（服务端加密）
-	SettingKeyPurchaseSubscriptionEnabled = "purchase_subscription_enabled" // 是否展示"购买订阅"页面入口
-	SettingKeyPurchaseSubscriptionURL     = "purchase_subscription_url"     // "购买订阅"页面 URL（作为 iframe src）
-	SettingKeyTableDefaultPageSize        = "table_default_page_size"       // 表格默认每页条数
-	SettingKeyTablePageSizeOptions        = "table_page_size_options"       // 表格可选每页条数（JSON 数组）
-	SettingKeyCustomMenuItems             = "custom_menu_items"             // 自定义菜单项（JSON 数组）
-	SettingKeyCustomEndpoints             = "custom_endpoints"              // 自定义端点列表（JSON 数组）
+	SettingKeySiteName                      = "site_name"                     // 网站名称
+	SettingKeySiteLogo                      = "site_logo"                     // 网站Logo (base64)
+	SettingKeySiteSubtitle                  = "site_subtitle"                 // 网站副标题
+	SettingKeyAPIBaseURL                    = "api_base_url"                  // API端点地址（用于客户端配置和导入）
+	SettingKeyContactInfo                   = "contact_info"                  // 客服联系方式
+	SettingKeyDocURL                        = "doc_url"                       // 文档链接
+	SettingKeyHomeContent                   = "home_content"                  // 首页内容（支持 Markdown/HTML，或 URL 作为 iframe src）
+	SettingKeyCompactHomeEnabled            = "compact_home_enabled"          // 是否使用紧凑首页布局
+	SettingKeyHideCcsImportButton           = "hide_ccs_import_button"        // 是否隐藏 API Keys 页面的导入 CCS 按钮
+	SettingKeyTeamChildCreationEnabled      = "team_child_creation_enabled"   // 是否显示 Team 子号创建入口
+	SettingKeyTeamChildMailboxConfig        = "team_child_mailbox_config"     // Team 子号集群共享邮箱配置（服务端加密）
+	SettingKeyPurchaseSubscriptionEnabled   = "purchase_subscription_enabled" // 是否展示"购买订阅"页面入口
+	SettingKeyPurchaseSubscriptionURL       = "purchase_subscription_url"     // "购买订阅"页面 URL（作为 iframe src）
+	SettingKeyChannelMonitorHideUserRanking = "channel_monitor_hide_user_ranking"
+	SettingKeySubscriptionEnabled           = "subscription_enabled"
+	SettingKeyTableDefaultPageSize          = "table_default_page_size" // 表格默认每页条数
+	SettingKeyTablePageSizeOptions          = "table_page_size_options" // 表格可选每页条数（JSON 数组）
+	SettingKeyCustomMenuItems               = "custom_menu_items"       // 自定义菜单项（JSON 数组）
+	SettingKeyCustomEndpoints               = "custom_endpoints"        // 自定义端点列表（JSON 数组）
 
 	// 默认配置
 	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量
@@ -496,6 +516,9 @@ const (
 	SettingKeyModelPlazaEnabled     = "model_plaza_enabled"
 	SettingKeyModelPlazaRequireAuth = "model_plaza_require_auth"
 	SettingKeyModelPlazaDescription = "model_plaza_description"
+	// SettingKeyPluginManagementEnabled controls sidebar visibility only; it
+	// does not stop or otherwise change already loaded plugin runtimes.
+	SettingKeyPluginManagementEnabled = "plugin_management_enabled"
 
 	// SettingKeyUpstreamBillingProbeSettings stores the global enable switch and interval
 	// for probing remote Sub2API API-key billing metadata.
@@ -540,6 +563,9 @@ const (
 	// targets OpenAI's body-level service_tier field instead of Claude's
 	// anthropic-beta header.
 	SettingKeyOpenAIFastPolicySettings = "openai_fast_policy_settings"
+	// SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings stores the
+	// cooldown applied when the OAuth image capability is unavailable.
+	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
 
 	// =========================
 	// Claude Code Version Check
@@ -660,6 +686,8 @@ const (
 	SettingKeyOpenAICodexClientVersionSynced = "openai_codex_client_version_synced"
 	// SettingKeyOpenAICodexVersionAutoSyncEnabled 是否启用 Codex 客户端版本号自动同步（默认 true）。
 	SettingKeyOpenAICodexVersionAutoSyncEnabled = "openai_codex_version_auto_sync_enabled"
+	SettingKeyOpenAICodexTicketEnabled          = "openai_codex_ticket_enabled"
+	SettingKeyOpenAICodexTicketHarvestProxyURL  = "openai_codex_ticket_harvest_proxy_url"
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。
 	// 迁移后等价规则写入 SettingKeyCodexCLIOnlyWhitelist，不再参与运行时判定。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"

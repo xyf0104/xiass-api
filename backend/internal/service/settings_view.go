@@ -202,7 +202,9 @@ type SystemSettings struct {
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
+	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 	ChannelMonitorShowQuota              bool   `json:"channel_monitor_show_quota"`
+	SubscriptionEnabled                  bool   `json:"subscription_enabled"`
 
 	// Grok default mapping policy.
 	GrokDefaultTextModel           string `json:"grok_default_text_model"`
@@ -215,9 +217,10 @@ type SystemSettings struct {
 	ModelPricingEnabled bool `json:"model_pricing_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
-	ModelPlazaEnabled     bool   `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth bool   `json:"model_plaza_require_auth"`
-	ModelPlazaDescription string `json:"model_plaza_description"`
+	ModelPlazaEnabled       bool   `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth   bool   `json:"model_plaza_require_auth"`
+	ModelPlazaDescription   string `json:"model_plaza_description"`
+	PluginManagementEnabled bool   `json:"plugin_management_enabled"`
 
 	// Claude Code version check
 	MinClaudeCodeVersion string
@@ -249,6 +252,8 @@ type SystemSettings struct {
 	OpenAICodexClientVersion               string // 出站声明的 Codex 客户端版本号（管理员覆写）；空值跟随自动同步值
 	OpenAICodexClientVersionSynced         string // 自动同步到的官方最新稳定版版本号（只读展示）
 	OpenAICodexVersionAutoSyncEnabled      bool   // 是否启用 Codex 客户端版本号自动同步（默认 true）
+	OpenAICodexTicketEnabled               bool
+	OpenAICodexTicketHarvestProxyURL       string
 	MinCodexVersion                        string // codex_cli_only 最低 Codex 引擎版本；空=不检查
 	MaxCodexVersion                        string // codex_cli_only 最高 Codex 引擎版本；空=不检查
 	CodexCLIOnlyBlacklist                  string // codex_cli_only 全局黑名单 JSON（[]AllowedClientEntry，OR deny）
@@ -394,8 +399,9 @@ type PublicSettings struct {
 	ModelPricingEnabled      bool `json:"model_pricing_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
-	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth bool `json:"model_plaza_require_auth"`
+	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth   bool `json:"model_plaza_require_auth"`
+	PluginManagementEnabled bool `json:"plugin_management_enabled"`
 
 	// Affiliate (邀请返利) feature toggle
 	AffiliateEnabled bool `json:"affiliate_enabled"`
@@ -567,6 +573,17 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
+// OpenAIImagesOAuthUnavailableCooldownSettings controls how long an OAuth
+// account's image capability is paused when the upstream reports it unavailable.
+type OpenAIImagesOAuthUnavailableCooldownSettings struct {
+	CooldownMinutes int `json:"cooldown_minutes"`
+}
+
+const (
+	openAIImagesOAuthUnavailableDefaultCooldownMinutes = 30
+	openAIImagesOAuthUnavailableMaxCooldownMinutes     = 120
+)
+
 // DefaultOverloadCooldownSettings 返回默认的过载冷却配置（启用，10分钟）
 func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	return &OverloadCooldownSettings{
@@ -581,6 +598,10 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 		Enabled:         true,
 		CooldownSeconds: 5,
 	}
+}
+
+func DefaultOpenAIImagesOAuthUnavailableCooldownSettings() *OpenAIImagesOAuthUnavailableCooldownSettings {
+	return &OpenAIImagesOAuthUnavailableCooldownSettings{CooldownMinutes: openAIImagesOAuthUnavailableDefaultCooldownMinutes}
 }
 
 // DefaultBetaPolicySettings 返回默认的 Beta 策略配置
@@ -650,6 +671,7 @@ const (
 	OpenAIFastTierPriority  = "priority"  // 仅匹配 fast（priority）
 	OpenAIFastTierUltrafast = "ultrafast" // 仅匹配 ultrafast
 	OpenAIFastTierFlex      = "flex"      // 仅匹配 flex
+	OpenAIFastTierMissing   = "missing"   // 仅匹配省略 service_tier 的请求
 
 	// OpenAIFastPolicyActionForcePriority 会保留 service_tier 字段并强制写成
 	// priority，用于把 flex/auto/default/scale 等已识别 tier 收敛为 fast。

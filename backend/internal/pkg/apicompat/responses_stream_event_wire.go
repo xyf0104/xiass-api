@@ -104,10 +104,18 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		return json.Marshal(m)
 
 	default:
-		// response.created / completed / done / failed / incomplete and any
-		// event type not shaped above keep the default struct marshalling.
+		// Preserve the default shape, but sequence_number is mandatory even at 0.
 		type alias ResponsesStreamEvent
-		return json.Marshal(alias(e))
+		raw, err := json.Marshal(alias(e))
+		if err != nil {
+			return nil, err
+		}
+		var message map[string]any
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return nil, err
+		}
+		message["sequence_number"] = e.SequenceNumber
+		return json.Marshal(message)
 	}
 }
 

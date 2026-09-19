@@ -25,9 +25,10 @@ import (
 )
 
 type Application struct {
-	Server      *http.Server
-	PromptAudit *securityaudit.PromptService
-	Cleanup     func()
+	Server        *http.Server
+	PromptAudit   *securityaudit.PromptService
+	PluginManager *service.PluginManager
+	Cleanup       func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -51,14 +52,19 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 
 		// BuildInfo provider
 		provideServiceBuildInfo,
+		providePluginHostInfo,
 
 		// Cleanup function provider
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
 	)
 	return nil, nil
+}
+
+func providePluginHostInfo(buildInfo handler.BuildInfo) service.PluginHostInfo {
+	return service.PluginHostInfo{Version: buildInfo.Version, BuildType: buildInfo.BuildType}
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {
@@ -121,6 +127,7 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	promptAudit *securityaudit.PromptService,
 	adminHandlers *handler.AdminHandlers,
+	pluginManager *service.PluginManager,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -133,6 +140,12 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"PluginManager", func() error {
+				if pluginManager != nil {
+					pluginManager.Stop()
+				}
+				return nil
+			}},
 			{"PelicanBenchmark", func() error {
 				if adminHandlers != nil {
 					adminHandlers.PelicanBenchmark.StopWorkers()
@@ -335,6 +348,12 @@ func provideCleanup(
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
 					openAIGateway.CloseOpenAIWSPool()
+				}
+				return nil
+			}},
+			{"OpenAICodexTicketHarvester", func() error {
+				if openAIGateway != nil {
+					openAIGateway.StopOpenAICodexTicketHarvester()
 				}
 				return nil
 			}},

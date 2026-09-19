@@ -566,6 +566,32 @@ func buildOpenAIModelsURL(base string) string {
 	return buildOpenAIEndpointURL(base, "/v1/models")
 }
 
+func buildOpenAIAPIKeyModelsRequest(ctx context.Context, account *Account, validateBaseURL func(string) (string, error)) (*http.Request, error) {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return nil, newUpstreamModelSyncUnsupportedError("Unsupported OpenAI account type for upstream model sync", nil)
+	}
+	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
+	if apiKey == "" {
+		return nil, newUpstreamModelSyncConfigError("No OpenAI API key is available", nil)
+	}
+	baseURL := account.GetOpenAIFormatBaseURL()
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = "https://api.openai.com"
+	}
+	normalizedBaseURL, err := validateBaseURL(baseURL)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI base URL", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildOpenAIModelsURL(normalizedBaseURL), nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI model list URL", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+	return req, nil
+}
+
 func buildGeminiModelsURL(base string) string {
 	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
 	if strings.HasSuffix(normalized, "/v1beta/models") {

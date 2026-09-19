@@ -1,15 +1,19 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,24 +26,31 @@ import (
 )
 
 var (
-	openAIModelDatePattern          = regexp.MustCompile(`-\d{8}$`)
-	openAIModelBasePattern          = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
+	openAIModelDatePattern = regexp.MustCompile(`-\d{8}$`)
+	openAIModelBasePattern = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
+	// aboveTierPricePattern matches LiteLLM long-context absolute price fields.
+	aboveTierPricePattern = regexp.MustCompile(`^(input|output)_cost_per_token_above_(\d+)k_tokens$`)
+	// cacheTierPricePattern matches long-context cache price variants so missing
+	// base prices can be reported instead of silently billing them at zero.
+	cacheTierPricePattern = regexp.MustCompile(`^(cache_(?:creation|read)_input_token_cost)(_above_1hr)?_above_\d+k_tokens((?:_[a-z]+)?)$`)
+
 	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:       5e-06,
-		CacheReadInputTokenCost: 1.25e-06,
-		InputCostPerImageToken:  8e-06,
-		OutputCostPerImageToken: 3e-05,
-		LiteLLMProvider:         "openai",
-		Mode:                    "image_generation",
-		SupportsPromptCaching:   true,
+		InputCostPerToken:            5e-06,
+		CacheReadInputTokenCost:      1.25e-06,
+		InputCostPerImageToken:       8e-06,
+		CacheReadInputImageTokenCost: 2e-06,
+		OutputCostPerImageToken:      3e-05,
+		LiteLLMProvider:              "openai",
+		Mode:                         "image_generation",
+		SupportsPromptCaching:        true,
 	}
 	openAIGPT54FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:               2.5e-06, // $2.5 per MTok
 		OutputCostPerToken:              1.5e-05, // $15 per MTok
 		CacheReadInputTokenCost:         2.5e-07, // $0.25 per MTok
-		LongContextInputTokenThreshold:  272000,
-		LongContextInputCostMultiplier:  2.0,
-		LongContextOutputCostMultiplier: 1.5,
+		LongContextInputTokenThreshold:  openAIGPT54LongContextInputThreshold,
+		LongContextInputCostMultiplier:  openAIGPT54LongContextInputMultiplier,
+		LongContextOutputCostMultiplier: openAIGPT54LongContextOutputMultiplier,
 		LiteLLMProvider:                 "openai",
 		Mode:                            "chat",
 		SupportsPromptCaching:           true,
@@ -53,9 +64,6 @@ var (
 		CacheCreationInputTokenCostPriority: 25e-6,
 		CacheReadInputTokenCost:             1e-6,
 		CacheReadInputTokenCostPriority:     2e-6,
-		LongContextInputTokenThreshold:      openAIGPT54LongContextInputThreshold,
-		LongContextInputCostMultiplier:      openAIGPT54LongContextInputMultiplier,
-		LongContextOutputCostMultiplier:     openAIGPT54LongContextOutputMultiplier,
 		SupportsServiceTier:                 true,
 		LiteLLMProvider:                     "openai",
 		Mode:                                "chat",
@@ -152,6 +160,7 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImage                  float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
 	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格（如 gpt-image-2 图片编辑）
+	CacheReadInputImageTokenCost        float64 `json:"cache_read_input_image_token_cost"`
 
 	// TokenPricingAbsent 表示源数据中 input/output token 价格均缺失（仅有图片价）。
 	// 此类条目只可用于图片计费，token 计费必须回退到 fallback 或 fail-closed，
@@ -186,16 +195,18 @@ type LiteLLMRawEntry struct {
 	OutputCostPerImage                  *float64 `json:"output_cost_per_image"`
 	OutputCostPerImageToken             *float64 `json:"output_cost_per_image_token"`
 	InputCostPerImageToken              *float64 `json:"input_cost_per_image_token"`
+	CacheReadInputImageTokenCost        *float64 `json:"cache_read_input_image_token_cost"`
 }
 
 // PricingService 动态价格服务
 type PricingService struct {
-	cfg          *config.Config
-	remoteClient PricingRemoteClient
-	mu           sync.RWMutex
-	pricingData  map[string]*LiteLLMModelPricing
-	lastUpdated  time.Time
-	localHash    string
+	cfg             *config.Config
+	remoteClient    PricingRemoteClient
+	mu              sync.RWMutex
+	pricingData     map[string]*LiteLLMModelPricing
+	lastUpdated     time.Time
+	localHash       string
+	customFilesHash string
 
 	// 停止信号
 	stopCh chan struct{}
@@ -242,10 +253,17 @@ func (s *PricingService) Stop() {
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
 
-// startUpdateScheduler 启动定时更新调度器
+// startUpdateScheduler 启动远程目录同步与本地 fallback/override 热重载。
 func (s *PricingService) startUpdateScheduler() {
-	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.RemoteURL) == "" {
+	if s == nil || s.cfg == nil {
+		return
+	}
+	remoteEnabled := strings.TrimSpace(s.cfg.Pricing.RemoteURL) != ""
+	watchCustom := s.hasCustomPricingFiles()
+	if !remoteEnabled {
 		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Remote sync disabled: pricing remote URL is empty")
+	}
+	if !remoteEnabled && !watchCustom {
 		return
 	}
 
@@ -264,8 +282,13 @@ func (s *PricingService) startUpdateScheduler() {
 		for {
 			select {
 			case <-ticker.C:
-				if err := s.syncWithRemote(); err != nil {
-					logger.LegacyPrintf("service.pricing", "[Pricing] Sync failed: %v", err)
+				if remoteEnabled {
+					if err := s.syncWithRemote(); err != nil {
+						logger.LegacyPrintf("service.pricing", "[Pricing] Sync failed: %v", err)
+					}
+				}
+				if watchCustom {
+					s.reloadIfCustomFilesChanged()
 				}
 			case <-s.stopCh:
 				return
@@ -273,7 +296,7 @@ func (s *PricingService) startUpdateScheduler() {
 		}
 	}()
 
-	logger.LegacyPrintf("service.pricing", "[Pricing] Update scheduler started (check every %v)", hashInterval)
+	logger.LegacyPrintf("service.pricing", "[Pricing] Update scheduler started (check every %v, remote sync=%t, custom file watch=%t)", hashInterval, remoteEnabled, watchCustom)
 }
 
 // checkAndUpdatePricing 检查并更新价格数据
@@ -374,6 +397,104 @@ func (s *PricingService) syncWithRemote() error {
 	return nil
 }
 
+func (s *PricingService) hasCustomPricingFiles() bool {
+	if s == nil || s.cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(s.cfg.Pricing.FallbackFile) != "" || strings.TrimSpace(s.cfg.Pricing.OverrideFile) != ""
+}
+
+func (s *PricingService) customPricingFilesFingerprint() string {
+	if !s.hasCustomPricingFiles() {
+		return ""
+	}
+	h := sha256.New()
+	for _, path := range []string{s.cfg.Pricing.FallbackFile, s.cfg.Pricing.OverrideFile} {
+		var body []byte
+		if p := strings.TrimSpace(path); p != "" {
+			body, _ = os.ReadFile(p)
+		}
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(body)))
+		_, _ = h.Write(size[:])
+		_, _ = h.Write(body)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (s *PricingService) validateCustomPricingFiles() error {
+	for _, path := range []string{s.cfg.Pricing.FallbackFile, s.cfg.Pricing.OverrideFile} {
+		p := strings.TrimSpace(path)
+		if p == "" {
+			continue
+		}
+		body, err := os.ReadFile(p)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(body, &entries); err != nil {
+			return fmt.Errorf("%s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+func (s *PricingService) reloadIfCustomFilesChanged() {
+	fingerprint := s.customPricingFilesFingerprint()
+	s.mu.RLock()
+	unchanged := fingerprint == s.customFilesHash
+	s.mu.RUnlock()
+	if unchanged {
+		return
+	}
+	if err := s.reloadCustomPricingLayers(); err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing file changed but reload failed: %v", err)
+	}
+}
+
+func (s *PricingService) reloadCustomPricingLayers() error {
+	pricingFile := s.getPricingFilePath()
+	var data map[string]*LiteLLMModelPricing
+	var fingerprint string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
+			return fmt.Errorf("validate custom pricing files: %w", validateErr)
+		}
+		before := s.customPricingFilesFingerprint()
+		body, readErr := os.ReadFile(pricingFile)
+		if readErr != nil {
+			return fmt.Errorf("read file failed: %w", readErr)
+		}
+		data, fingerprint, err = s.buildPricingData(body)
+		if err != nil {
+			return fmt.Errorf("parse pricing data: %w", err)
+		}
+		after := s.customPricingFilesFingerprint()
+		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
+			return fmt.Errorf("validate custom pricing files: %w", validateErr)
+		}
+		if before == after && after == fingerprint {
+			break
+		}
+		if attempt == 2 {
+			return fmt.Errorf("custom pricing files changed during reload")
+		}
+	}
+
+	s.mu.Lock()
+	warnDroppedLongContextLadders(s.pricingData, data)
+	s.pricingData = data
+	s.customFilesHash = fingerprint
+	s.mu.Unlock()
+	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
+	return nil
+}
+
 // downloadPricingData 从远程下载价格数据
 func (s *PricingService) downloadPricingData() error {
 	remoteURL, err := s.validatePricingURL(s.cfg.Pricing.RemoteURL)
@@ -408,12 +529,10 @@ func (s *PricingService) downloadPricingData() error {
 			remoteHash[:min(8, len(remoteHash))], dataHashStr[:8])
 	}
 
-	// 解析JSON数据（使用灵活的解析方式）
-	data, err := s.parsePricingData(body)
+	data, customFilesHash, err := s.buildPricingData(body)
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
 	}
-	data = s.mergeFallbackPricingData(data)
 
 	// 保存到本地文件
 	pricingFile := s.getPricingFilePath()
@@ -434,9 +553,11 @@ func (s *PricingService) downloadPricingData() error {
 
 	// 更新内存数据
 	s.mu.Lock()
+	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
+	s.customFilesHash = customFilesHash
 	s.mu.Unlock()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Downloaded %d models successfully", len(data))
@@ -450,9 +571,11 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 	if err := json.Unmarshal(body, &rawData); err != nil {
 		return nil, fmt.Errorf("parse raw JSON: %w", err)
 	}
+	rawData = s.applyPricingOverrides(rawData)
 
 	result := make(map[string]*LiteLLMModelPricing)
 	skipped := 0
+	var orphanCacheTiers, lopsidedLadders []string
 
 	for modelName, rawEntry := range rawData {
 		// 跳过 sample_spec 等文档条目
@@ -468,7 +591,7 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 
 		// 只保留有有效价格的条目
-		if entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil {
+		if entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil && entry.CacheReadInputImageTokenCost == nil {
 			continue
 		}
 
@@ -525,6 +648,23 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.InputCostPerImageToken != nil {
 			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
 		}
+		if entry.CacheReadInputImageTokenCost != nil {
+			pricing.CacheReadInputImageTokenCost = *entry.CacheReadInputImageTokenCost
+		}
+
+		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||
+			entry.LongContextInputCostMultiplier != nil ||
+			entry.LongContextOutputCostMultiplier != nil
+		if !hasExplicitLongContext {
+			deriveLongContextFromAboveTierFields(rawEntry, pricing)
+			if isLopsidedLongContextLadder(pricing) {
+				lopsidedLadders = append(lopsidedLadders, fmt.Sprintf("%s(input x%.2f, output x%.2f)", modelName,
+					pricing.LongContextInputCostMultiplier, pricing.LongContextOutputCostMultiplier))
+			}
+		}
+		if orphans := orphanCacheTierFields(rawEntry); len(orphans) > 0 {
+			orphanCacheTiers = append(orphanCacheTiers, modelName+"("+strings.Join(orphans, ",")+")")
+		}
 
 		result[modelName] = pricing
 	}
@@ -532,12 +672,259 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 	if skipped > 0 {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Skipped %d invalid entries", skipped)
 	}
+	warnOrphanCacheTierFields(orphanCacheTiers)
+	warnLopsidedLongContextLadders(lopsidedLadders)
 
 	if len(result) == 0 {
 		return nil, fmt.Errorf("no valid pricing entries found")
 	}
 
 	return result, nil
+}
+
+// deriveLongContextFromAboveTierFields converts LiteLLM's absolute
+// *_above_XXXk_tokens prices into the threshold-and-multiplier representation
+// used by XIASS billing. Explicit long_context_* fields always win, including
+// explicit zeroes that disable a catalog ladder.
+func deriveLongContextFromAboveTierFields(rawEntry json.RawMessage, pricing *LiteLLMModelPricing) {
+	if pricing == nil ||
+		pricing.LongContextInputTokenThreshold > 0 ||
+		pricing.LongContextInputCostMultiplier > 0 ||
+		pricing.LongContextOutputCostMultiplier > 0 {
+		return
+	}
+	if !bytes.Contains(rawEntry, []byte("_above_")) {
+		return
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(rawEntry, &fields); err != nil {
+		return
+	}
+	type tierPrices struct{ input, output float64 }
+	tiers := make(map[int]*tierPrices)
+	for key, value := range fields {
+		m := aboveTierPricePattern.FindStringSubmatch(key)
+		if m == nil {
+			continue
+		}
+		price, ok := value.(float64)
+		if !ok || price <= 0 {
+			continue
+		}
+		thousands, err := strconv.Atoi(m[2])
+		if err != nil || thousands <= 0 {
+			continue
+		}
+		threshold := thousands * 1000
+		tp := tiers[threshold]
+		if tp == nil {
+			tp = &tierPrices{}
+			tiers[threshold] = tp
+		}
+		if m[1] == "input" {
+			tp.input = price
+		} else {
+			tp.output = price
+		}
+	}
+	if len(tiers) == 0 {
+		return
+	}
+	threshold := 0
+	for candidate := range tiers {
+		if threshold == 0 || candidate < threshold {
+			threshold = candidate
+		}
+	}
+	tp := tiers[threshold]
+	inputMultiplier, outputMultiplier := 1.0, 1.0
+	if tp.input > 0 && pricing.InputCostPerToken > 0 {
+		inputMultiplier = tp.input / pricing.InputCostPerToken
+	}
+	if tp.output > 0 && pricing.OutputCostPerToken > 0 {
+		outputMultiplier = tp.output / pricing.OutputCostPerToken
+	}
+	if inputMultiplier <= 1 && outputMultiplier <= 1 {
+		return
+	}
+	pricing.LongContextInputTokenThreshold = threshold
+	pricing.LongContextInputCostMultiplier = inputMultiplier
+	pricing.LongContextOutputCostMultiplier = outputMultiplier
+}
+
+func isLopsidedLongContextLadder(pricing *LiteLLMModelPricing) bool {
+	if pricing == nil || pricing.LongContextInputTokenThreshold <= 0 {
+		return false
+	}
+	return (pricing.LongContextInputCostMultiplier > 1) != (pricing.LongContextOutputCostMultiplier > 1)
+}
+
+func warnLopsidedLongContextLadders(entries []string) {
+	if len(entries) == 0 {
+		return
+	}
+	sort.Strings(entries)
+	total := len(entries)
+	if total > 20 {
+		entries = append(entries[:20], "...")
+	}
+	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: %d model(s) derive a one-sided long-context ladder (surcharge on only input or only output); base prices and above-tier prices likely come from different price versions: %s", total, strings.Join(entries, ", "))
+}
+
+func orphanCacheTierFields(rawEntry json.RawMessage) []string {
+	if !bytes.Contains(rawEntry, []byte("_above_")) {
+		return nil
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(rawEntry, &fields); err != nil {
+		return nil
+	}
+	positive := func(key string) bool {
+		price, ok := fields[key].(float64)
+		return ok && price > 0
+	}
+	var orphans []string
+	for key := range fields {
+		m := cacheTierPricePattern.FindStringSubmatch(key)
+		if m == nil || !positive(key) {
+			continue
+		}
+		stem, hourly, tier := m[1], m[2], m[3]
+		if positive(stem+hourly+tier) || positive(stem+hourly) || positive(stem+tier) || positive(stem) {
+			continue
+		}
+		orphans = append(orphans, key)
+	}
+	sort.Strings(orphans)
+	return orphans
+}
+
+func warnOrphanCacheTierFields(entries []string) {
+	if len(entries) == 0 {
+		return
+	}
+	sort.Strings(entries)
+	total := len(entries)
+	if total > 20 {
+		entries = append(entries[:20], "...")
+	}
+	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: %d model(s) carry cache above-tier prices without a base cache price; that cache item bills at $0 until the catalog/override supplies the base: %s", total, strings.Join(entries, ", "))
+}
+
+// applyPricingOverrides patches existing catalog or fallback entries field by
+// field. Override-only models are merged after the fallback layer so a partial
+// patch cannot hide a complete fallback entry with the same name.
+func (s *PricingService) applyPricingOverrides(rawData map[string]json.RawMessage) map[string]json.RawMessage {
+	overrides := s.loadPricingOverrideEntries()
+	if len(overrides) == 0 {
+		return rawData
+	}
+	for name, patch := range overrides {
+		base, ok := rawData[name]
+		if !ok {
+			continue
+		}
+		merged, valid := mergePricingOverrideEntry(base, patch)
+		if !valid {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override entry %q skipped: not a JSON object", name)
+			continue
+		}
+		rawData[name] = merged
+	}
+	return rawData
+}
+
+func (s *PricingService) loadPricingOverrideEntries() map[string]json.RawMessage {
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+	path := strings.TrimSpace(s.cfg.Pricing.OverrideFile)
+	if path == "" {
+		return nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override merge skipped: %v", err)
+		return nil
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(body, &entries); err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override merge skipped: %v", err)
+		return nil
+	}
+	return entries
+}
+
+func mergePricingOverrideEntry(base, patch json.RawMessage) (json.RawMessage, bool) {
+	var patchFields map[string]any
+	if err := json.Unmarshal(patch, &patchFields); err != nil || patchFields == nil {
+		return nil, false
+	}
+	merged := make(map[string]any, len(patchFields))
+	if len(base) > 0 {
+		if err := json.Unmarshal(base, &merged); err != nil {
+			merged = make(map[string]any, len(patchFields))
+		}
+	}
+	for key, value := range patchFields {
+		if value == nil {
+			delete(merged, key)
+			continue
+		}
+		merged[key] = value
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
+	overrides := s.loadPricingOverrideEntries()
+	if len(overrides) == 0 {
+		return data
+	}
+	if data == nil {
+		data = make(map[string]*LiteLLMModelPricing)
+	}
+	leftover := make(map[string]json.RawMessage)
+	for name, patch := range overrides {
+		if _, ok := data[name]; !ok {
+			leftover[name] = patch
+		}
+	}
+	if len(leftover) == 0 {
+		return data
+	}
+	if body, err := json.Marshal(leftover); err == nil {
+		if parsed, err := s.parsePricingData(body); err == nil {
+			maps.Copy(data, parsed)
+		}
+	}
+	var missing []string
+	for name := range leftover {
+		if _, ok := data[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return data
+	}
+	sort.Strings(missing)
+	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override had no effect for %d model(s): %s (unknown model name, or patch-only entry without price fields)", len(missing), strings.Join(missing, ", "))
+	return data
+}
+
+func (s *PricingService) buildPricingData(body []byte) (map[string]*LiteLLMModelPricing, string, error) {
+	fingerprint := s.customPricingFilesFingerprint()
+	data, err := s.parsePricingData(body)
+	if err != nil {
+		return nil, "", err
+	}
+	data = s.mergeFallbackPricingData(data)
+	data = s.mergeOverrideOnlyModels(data)
+	return data, fingerprint, nil
 }
 
 // loadPricingData 从本地文件加载价格数据
@@ -547,20 +934,20 @@ func (s *PricingService) loadPricingData(filePath string) error {
 		return fmt.Errorf("read file failed: %w", err)
 	}
 
-	// 使用灵活的解析方式
-	pricingData, err := s.parsePricingData(data)
+	pricingData, customFilesHash, err := s.buildPricingData(data)
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
 	}
-	pricingData = s.mergeFallbackPricingData(pricingData)
 
 	// 计算哈希
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.Lock()
+	warnDroppedLongContextLadders(s.pricingData, pricingData)
 	s.pricingData = pricingData
 	s.localHash = hashStr
+	s.customFilesHash = customFilesHash
 
 	info, _ := os.Stat(filePath)
 	if info != nil {
@@ -603,6 +990,33 @@ func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelP
 		logger.LegacyPrintf("service.pricing", "[Pricing] Merged %d fallback-only models", merged)
 	}
 	return data
+}
+
+// warnDroppedLongContextLadders makes catalog regressions visible when a
+// reload unexpectedly removes a previously active long-context tier.
+// The caller holds s.mu for writing.
+func warnDroppedLongContextLadders(old, next map[string]*LiteLLMModelPricing) {
+	if len(old) == 0 {
+		return
+	}
+	var dropped []string
+	for name, previous := range old {
+		if previous == nil || previous.LongContextInputTokenThreshold <= 0 {
+			continue
+		}
+		if current, ok := next[name]; ok && (current == nil || current.LongContextInputTokenThreshold <= 0) {
+			dropped = append(dropped, name)
+		}
+	}
+	if len(dropped) == 0 {
+		return
+	}
+	sort.Strings(dropped)
+	total := len(dropped)
+	if total > 20 {
+		dropped = append(dropped[:20], "...")
+	}
+	logger.LegacyPrintf("service.pricing", "[Pricing] Long-context ladder dropped for %d model(s) after reload: %s (verify catalog/override data if unintended)", total, strings.Join(dropped, ", "))
 }
 
 // useFallbackPricing 使用回退价格文件

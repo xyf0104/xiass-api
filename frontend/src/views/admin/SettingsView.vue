@@ -4414,6 +4414,42 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketEnabled") }}
+                    </h3>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketEnabledDesc") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    id="codex-ticket-enabled"
+                    v-model="form.openai_codex_ticket_enabled"
+                  />
+                </div>
+                <div>
+                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
+                  </p>
+                  <input
+                    id="codex-ticket-harvest-proxy"
+                    v-model="form.openai_codex_ticket_harvest_proxy_url"
+                    type="text"
+                    class="input mt-3 w-full font-mono text-sm"
+                    :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
+                    autocomplete="off"
+                  />
+                  <p
+                    v-if="form.openai_codex_ticket_harvest_proxy_configured"
+                    class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
+                  </p>
+                </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
@@ -6982,6 +7018,30 @@
                 </p>
               </div>
               <Toggle v-model="form.model_pricing_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.pluginManagement.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.pluginManagement.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.pluginManagement.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.pluginManagement.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.plugin_management_enabled" />
             </div>
           </div>
         </div>
@@ -9625,6 +9685,9 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  openai_codex_ticket_enabled: false,
+  openai_codex_ticket_harvest_proxy_url: "",
+  openai_codex_ticket_harvest_proxy_configured: false,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -9644,6 +9707,8 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   // XIASS Model Pricing feature switch
   model_pricing_enabled: true,
+  // Plugin management menu visibility; plugin runtime is unaffected.
+  plugin_management_enabled: false,
   // Retained to hydrate legacy settings; the customer channel catalog has no UI.
   available_channels_enabled: false,
   // Affiliate (邀请返利) feature switch
@@ -11187,6 +11252,9 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      openai_codex_ticket_enabled: form.openai_codex_ticket_enabled,
+      openai_codex_ticket_harvest_proxy_url:
+        form.openai_codex_ticket_harvest_proxy_url?.trim() || "",
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -11286,6 +11354,7 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       // XIASS Model Pricing feature switch
       model_pricing_enabled: form.model_pricing_enabled,
+      plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,

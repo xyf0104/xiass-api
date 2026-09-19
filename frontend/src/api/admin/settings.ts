@@ -602,6 +602,9 @@ export interface SystemSettings {
   openai_codex_client_version: string;
   openai_codex_client_version_synced: string;
   openai_codex_version_auto_sync_enabled: boolean;
+  openai_codex_ticket_enabled: boolean;
+  openai_codex_ticket_harvest_proxy_url: string;
+  openai_codex_ticket_harvest_proxy_configured: boolean;
   // codex_cli_only 加固
   min_codex_version: string;
   max_codex_version: string;
@@ -689,6 +692,9 @@ export interface SystemSettings {
 
   // XIASS Model Pricing feature switch
   model_pricing_enabled: boolean;
+
+  // Plugin management menu visibility; plugin runtime is unaffected.
+  plugin_management_enabled: boolean;
 
   // Available Channels feature switch
   available_channels_enabled: boolean;
@@ -913,6 +919,8 @@ export interface UpdateSettingsRequest {
   openai_codex_user_agent?: string;
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
+  openai_codex_ticket_enabled?: boolean;
+  openai_codex_ticket_harvest_proxy_url?: string;
   // codex_cli_only 加固
   min_codex_version?: string;
   max_codex_version?: string;
@@ -986,6 +994,9 @@ export interface UpdateSettingsRequest {
 
   // XIASS Model Pricing feature switch
   model_pricing_enabled?: boolean;
+
+  // Plugin management menu visibility; plugin runtime is unaffected.
+  plugin_management_enabled?: boolean;
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;

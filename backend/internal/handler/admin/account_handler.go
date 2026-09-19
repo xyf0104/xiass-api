@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -65,6 +66,8 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	codexTicketSettings     *service.SettingService
+	cfg                     *config.Config
 }
 
 type antigravityAccountTokenRefresher interface {
@@ -118,6 +121,11 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
+}
+
+// SetCodexTicketSettings supplies the live policy without mutating shared config.
+func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService) {
+	h.codexTicketSettings = settings
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -239,6 +247,7 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
+	simpleMode              bool                         `json:"-"`
 	CurrentConcurrency      int                          `json:"current_concurrency"`
 	GroupCurrentConcurrency *int                         `json:"group_current_concurrency,omitempty"`
 	SchedulerScore          *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
@@ -263,6 +272,116 @@ type AccountListLiteItem struct {
 	Status          string  `json:"status"`
 	Schedulable     bool    `json:"schedulable"`
 	ExecutionNodeID string  `json:"execution_node_id"`
+	GroupIDs        []int64 `json:"group_ids,omitempty"`
+}
+
+type simpleModeGroupReference struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+}
+
+type simpleModeAccountGroupReference struct {
+	AccountID int64                     `json:"account_id"`
+	GroupID   int64                     `json:"group_id"`
+	Priority  int                       `json:"priority"`
+	CreatedAt time.Time                 `json:"created_at"`
+	Group     *simpleModeGroupReference `json:"group,omitempty"`
+}
+
+func simpleModeGroupReferenceFromDTO(group *dto.Group) *simpleModeGroupReference {
+	if group == nil {
+		return nil
+	}
+	return &simpleModeGroupReference{ID: group.ID, Name: group.Name, Platform: group.Platform, Status: group.Status}
+}
+
+func simpleModeCompositeGroupIDs(account *dto.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func simpleModeCompositeServiceGroupIDs(account *service.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func filterSimpleModeGroupIDs(groupIDs []int64, hidden map[int64]struct{}) []int64 {
+	visible := make([]int64, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if _, ok := hidden[groupID]; !ok {
+			visible = append(visible, groupID)
+		}
+	}
+	return visible
+}
+
+func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
+	type alias AccountWithConcurrency
+	if !a.simpleMode || a.Account == nil {
+		return json.Marshal(alias(a))
+	}
+	hidden := simpleModeCompositeGroupIDs(a.Account)
+	groups := make([]simpleModeGroupReference, 0, len(a.Groups))
+	for _, group := range a.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			continue
+		}
+		if ref := simpleModeGroupReferenceFromDTO(group); ref != nil {
+			groups = append(groups, *ref)
+		}
+	}
+	accountGroups := make([]simpleModeAccountGroupReference, 0, len(a.AccountGroups))
+	for _, accountGroup := range a.AccountGroups {
+		if _, hiddenGroup := hidden[accountGroup.GroupID]; hiddenGroup {
+			continue
+		}
+		accountGroups = append(accountGroups, simpleModeAccountGroupReference{
+			AccountID: accountGroup.AccountID,
+			GroupID:   accountGroup.GroupID,
+			Priority:  accountGroup.Priority,
+			CreatedAt: accountGroup.CreatedAt,
+			Group:     simpleModeGroupReferenceFromDTO(accountGroup.Group),
+		})
+	}
+	return json.Marshal(struct {
+		alias
+		GroupIDs      []int64                           `json:"group_ids,omitempty"`
+		Groups        []simpleModeGroupReference        `json:"groups"`
+		AccountGroups []simpleModeAccountGroupReference `json:"account_groups"`
+	}{
+		alias:         alias(a),
+		GroupIDs:      filterSimpleModeGroupIDs(a.GroupIDs, hidden),
+		Groups:        groups,
+		AccountGroups: accountGroups,
+	})
 }
 
 type AccountSchedulerScore struct {
@@ -283,10 +402,38 @@ const accountListGroupUngroupedQueryValue = "ungrouped"
 
 func (h *AccountHandler) accountResponseFromService(account *service.Account) *dto.Account {
 	out := dto.AccountFromService(account)
+	h.enrichCodexTicketStatus(account, out)
 	if h != nil && h.ollamaCloudUsage != nil && out != nil {
 		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
 	}
 	return out
+}
+
+func (h *AccountHandler) accountListResponseFromService(account *service.Account) *dto.Account {
+	out := dto.AccountFromServiceShallow(account)
+	h.enrichCodexTicketStatus(account, out)
+	if out != nil && account != nil {
+		out.Proxy = dto.ProxyFromService(account.Proxy)
+	}
+	if h != nil && h.ollamaCloudUsage != nil && out != nil {
+		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
+	}
+	return out
+}
+
+func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *dto.Account) {
+	if h == nil || h.cfg == nil || out == nil {
+		return
+	}
+	cfg := h.cfg.Gateway.OpenAICodexTicket
+	if h.codexTicketSettings != nil {
+		cfg.Enabled = h.codexTicketSettings.GetOpenAICodexTicketEnabled(context.Background(), cfg.Enabled)
+	}
+	out.CodexTurnTickets = service.OpenAICodexTicketStatuses(account, cfg, time.Now())
+}
+
+func (h *AccountHandler) isSimpleMode() bool {
+	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
 }
 
 // ensureAccountManagementAccess protects specialized admin endpoints that do
@@ -308,6 +455,7 @@ func (h *AccountHandler) ensureAccountManagementAccess(ctx context.Context, acco
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
+		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
 	}
 	if account == nil {
@@ -771,6 +919,10 @@ func (h *AccountHandler) List(c *gin.Context) {
 		items := make([]AccountListLiteItem, len(accounts))
 		for i := range accounts {
 			account := &accounts[i]
+			groupIDs := account.GroupIDs
+			if h.isSimpleMode() {
+				groupIDs = filterSimpleModeGroupIDs(groupIDs, simpleModeCompositeServiceGroupIDs(account))
+			}
 			items[i] = AccountListLiteItem{
 				ID:              account.ID,
 				Name:            account.Name,
@@ -782,6 +934,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 				Status:          account.Status,
 				Schedulable:     account.Schedulable,
 				ExecutionNodeID: account.ExecutionNodeID(""),
+				GroupIDs:        groupIDs,
+			}
+		}
+		etag := buildAccountsListETag(items, total, page, pageSize, platform, accountType, status, search, subscriptionPlan, loginMethod, focusedAccountID, activeConcurrencyGroupID, groupConcurrencyCounts, true)
+		if etag != "" {
+			c.Header("ETag", etag)
+			c.Header("Vary", "If-None-Match")
+			if ifNoneMatchMatched(c.GetHeader("If-None-Match"), etag) {
+				c.Status(http.StatusNotModified)
+				return
 			}
 		}
 		c.Header("Cache-Control", "private, no-store, max-age=0")
@@ -924,6 +1086,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		acc := &accounts[i]
 		item := AccountWithConcurrency{
 			Account:            h.accountResponseFromService(acc),
+			simpleMode:         h.isSimpleMode(),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
@@ -975,8 +1138,8 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
-func buildAccountsListETag(
-	items []AccountWithConcurrency,
+func buildAccountsListETag[T any](
+	items []T,
 	total int64,
 	page, pageSize int,
 	platform, accountType, status, search, subscriptionPlan, loginMethod string,
@@ -986,20 +1149,20 @@ func buildAccountsListETag(
 	lite bool,
 ) string {
 	payload := struct {
-		Total                    int64                    `json:"total"`
-		Page                     int                      `json:"page"`
-		PageSize                 int                      `json:"page_size"`
-		Platform                 string                   `json:"platform"`
-		AccountType              string                   `json:"type"`
-		Status                   string                   `json:"status"`
-		Search                   string                   `json:"search"`
-		SubscriptionPlan         string                   `json:"subscription_plan"`
-		LoginMethod              string                   `json:"login_method"`
-		FocusedAccountID         int64                    `json:"account_id"`
-		ActiveConcurrencyGroupID int64                    `json:"active_concurrency_group"`
-		GroupConcurrencyCounts   map[int64]int            `json:"group_current_concurrency"`
-		Lite                     bool                     `json:"lite"`
-		Items                    []AccountWithConcurrency `json:"items"`
+		Total                    int64         `json:"total"`
+		Page                     int           `json:"page"`
+		PageSize                 int           `json:"page_size"`
+		Platform                 string        `json:"platform"`
+		AccountType              string        `json:"type"`
+		Status                   string        `json:"status"`
+		Search                   string        `json:"search"`
+		SubscriptionPlan         string        `json:"subscription_plan"`
+		LoginMethod              string        `json:"login_method"`
+		FocusedAccountID         int64         `json:"account_id"`
+		ActiveConcurrencyGroupID int64         `json:"active_concurrency_group"`
+		GroupConcurrencyCounts   map[int64]int `json:"group_current_concurrency"`
+		Lite                     bool          `json:"lite"`
+		Items                    []T           `json:"items"`
 	}{
 		Total:                    total,
 		Page:                     page,
@@ -1105,6 +1268,10 @@ func (h *AccountHandler) CheckMixedChannel(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), req.GroupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	if len(req.GroupIDs) == 0 {
 		response.Success(c, gin.H{"has_risk": false})
@@ -1147,6 +1314,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	var req CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), req.GroupIDs); err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 	if err := service.ValidateOpenAILongContextBillingExtra(req.Platform, req.Extra); err != nil {
@@ -1295,6 +1466,12 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
+	}
+	if req.GroupIDs != nil {
+		if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), *req.GroupIDs); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
@@ -2347,6 +2524,14 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			return
 		}
 	}
+	groupIDs := make([]int64, 0)
+	for _, item := range req.Accounts {
+		groupIDs = append(groupIDs, item.GroupIDs...)
+	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), groupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
@@ -2564,6 +2749,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	if len(req.AccountIDs) == 0 && req.Filters == nil {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
+	}
+	if req.GroupIDs != nil {
+		if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), *req.GroupIDs); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 	if req.Filters != nil {
 		req.Filters.SubscriptionPlan = strings.ToLower(strings.TrimSpace(req.Filters.SubscriptionPlan))
@@ -3293,22 +3484,28 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 // POST /api/v1/admin/accounts/models/sync-upstream-preview
 func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform" binding:"required"`
-		Type     string `json:"type" binding:"required"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key" binding:"required"`
+		Platform     string            `json:"platform" binding:"required"`
+		Type         string            `json:"type" binding:"required"`
+		BaseURL      string            `json:"base_url"`
+		APIKey       string            `json:"api_key" binding:"required"`
+		ModelMapping map[string]string `json:"model_mapping"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
+	modelMapping := make(map[string]any, len(req.ModelMapping))
+	for sourceModel, upstreamModel := range req.ModelMapping {
+		modelMapping[sourceModel] = upstreamModel
+	}
 	tempAccount := &service.Account{
 		Platform: req.Platform,
 		Type:     req.Type,
 		Credentials: map[string]any{
-			"api_key":  req.APIKey,
-			"base_url": req.BaseURL,
+			"api_key":       req.APIKey,
+			"base_url":      req.BaseURL,
+			"model_mapping": modelMapping,
 		},
 	}
 

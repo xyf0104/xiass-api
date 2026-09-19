@@ -11,13 +11,18 @@ package claude
 // 缺少任何"官方 Claude Code 请求才会带"的 beta，都会被降级到第三方额度，
 // 对应报错：`Third-party apps now draw from your extra usage, not your plan limits.`
 const (
-	BetaOAuth                    = "oauth-2025-04-20"
-	BetaClaudeCode               = "claude-code-20250219"
-	BetaInterleavedThinking      = "interleaved-thinking-2025-05-14"
-	BetaFineGrainedToolStreaming = "fine-grained-tool-streaming-2025-05-14"
-	BetaTokenCounting            = "token-counting-2024-11-01"
-	BetaContext1M                = "context-1m-2025-08-07"
-	BetaFastMode                 = "fast-mode-2026-02-01"
+	BetaOAuth                       = "oauth-2025-04-20"
+	BetaClaudeCode                  = "claude-code-20250219"
+	BetaInterleavedThinking         = "interleaved-thinking-2025-05-14"
+	BetaFineGrainedToolStreaming    = "fine-grained-tool-streaming-2025-05-14"
+	BetaTokenCounting               = "token-counting-2024-11-01"
+	BetaContext1M                   = "context-1m-2025-08-07"
+	BetaFastMode                    = "fast-mode-2026-02-01"
+	BetaThinkingBindingControls     = "thinking-binding-controls-2026-08-01"
+	BetaMidConversationOutputConfig = "mid-conversation-output-config-2026-07-01"
+	BetaServerSideFallback          = "server-side-fallback-2026-07-01"
+	BetaFallbackCredit              = "fallback-credit-2026-07-01"
+	BetaFallbackCreditLegacy        = "fallback-credit-2026-06-01"
 
 	// 新增（对齐官方 CLI 2.1.9x 以来的流量）
 	BetaPromptCachingScope = "prompt-caching-scope-2026-01-05"
@@ -66,7 +71,7 @@ const DefaultCacheControlTTL = "5m"
 // CLICurrentVersion 是 sub2api 当前对外伪装的 Claude Code CLI 版本号（三段 semver）。
 // 用于 billing attribution block 中的 cc_version=X.Y.Z.{fp} 前缀以及 fingerprint 计算。
 // 必须与 DefaultHeaders["User-Agent"] 中的版本号严格一致；不一致会被 Anthropic 判第三方。
-const CLICurrentVersion = "2.1.220"
+const CLICurrentVersion = "2.1.258"
 
 // FullClaudeCodeMimicryBetas 返回最"像"真实 Claude Code CLI 的完整 beta 列表，
 // 用于 OAuth 账号伪装成 Claude Code 时使用。

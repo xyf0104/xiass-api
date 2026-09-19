@@ -103,6 +103,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		scheduleOllamaCloudUsageActivity(s.deferredService, account)
 	}
 
+	// Once a plugin may have delivered the request upstream, switching accounts
+	// can duplicate a paid or mutating operation.
+	var pluginErr *PluginTransportError
+	if errors.As(err, &pluginErr) && pluginErr.RequestSent {
+		return err
+	}
+
 	if classifyOpenAITransportError(err).Persistent {
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
 	}

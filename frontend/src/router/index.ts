@@ -585,6 +585,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/plugins',
+    name: 'AdminPlugins',
+    component: () => import('@/views/admin/PluginsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Plugin Management',
+      titleKey: 'admin.plugins.title',
+      descriptionKey: 'admin.plugins.description'
+    }
+  },
+  {
     path: '/admin/execution-nodes',
     name: 'AdminExecutionNodes',
     component: () => import('@/views/admin/ExecutionNodesView.vue'),

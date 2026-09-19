@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -19,22 +20,25 @@ import (
 )
 
 func (s *OpenAIGatewayService) validateUpstreamBaseURL(raw string) (string, error) {
-	if s.cfg != nil && !s.cfg.Security.URLAllowlist.Enabled {
-		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
-		if err != nil {
-			return "", fmt.Errorf("invalid base_url: %w", err)
-		}
-		return normalized, nil
-	}
-	normalized, err := urlvalidator.ValidateHTTPSURL(raw, urlvalidator.ValidationOptions{
-		AllowedHosts:     s.cfg.Security.URLAllowlist.UpstreamHosts,
-		RequireAllowlist: true,
-		AllowPrivate:     s.cfg.Security.URLAllowlist.AllowPrivateHosts,
-	})
+	normalized, err := s.validateOutboundURL(raw)
 	if err != nil {
 		return "", fmt.Errorf("invalid base_url: %w", err)
 	}
 	return normalized, nil
+}
+
+func (s *OpenAIGatewayService) validateOutboundURL(raw string) (string, error) {
+	if s == nil || s.cfg == nil {
+		return urlvalidator.ValidateURLFormat(raw, false)
+	}
+	if !s.cfg.Security.URLAllowlist.Enabled {
+		return urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+	}
+	return urlvalidator.ValidateHTTPSURL(raw, urlvalidator.ValidationOptions{
+		AllowedHosts:     s.cfg.Security.URLAllowlist.UpstreamHosts,
+		RequireAllowlist: true,
+		AllowPrivate:     s.cfg.Security.URLAllowlist.AllowPrivateHosts,
+	})
 }
 
 // buildOpenAIResponsesURL 组装 OpenAI Responses 端点。
@@ -662,6 +666,82 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse
 	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
 		return body, false, nil
 	}
+	root := parseRawJSONView(body)
+	input := root.Get("input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+	if !root.IsObject() || !gjson.ValidBytes(body) || !utf8.Valid(body) || hasDuplicateJSONObjectKeys(root) {
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+
+	items := make([]string, 0)
+	changed := false
+	fallback := false
+	var itemErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !item.IsObject() {
+			items = append(items, item.Raw)
+			return true
+		}
+		if hasDuplicateJSONObjectKeys(item) {
+			fallback = true
+			return false
+		}
+		typ := strings.TrimSpace(item.Get("type").String())
+		id := strings.TrimSpace(item.Get("id").String())
+		encrypted := item.Get("encrypted_content")
+		if (typ == "reasoning" && (encrypted.Type != gjson.String || strings.TrimSpace(encrypted.Str) == "")) ||
+			(typ == "item_reference" && strings.HasPrefix(id, "rs_")) {
+			changed = true
+			return true
+		}
+		stripID := typ == "reasoning" && strings.HasPrefix(id, "rs_")
+		addSummary := typ == "reasoning" && item.Get("summary").Type == gjson.Null
+		stripCallID := shouldStripOpenAIResponsesNonPairCallID(typ) && item.Get("call_id").Exists()
+		if !stripID && !addSummary && !stripCallID {
+			items = append(items, item.Raw)
+			return true
+		}
+		var decoded map[string]any
+		if err := decodeOpenAIJSONUseNumber([]byte(item.Raw), &decoded); err != nil {
+			itemErr = err
+			return false
+		}
+		if stripID {
+			delete(decoded, "id")
+		}
+		if addSummary {
+			decoded["summary"] = []any{}
+		}
+		if stripCallID {
+			delete(decoded, "call_id")
+		}
+		encoded, err := marshalOpenAIUpstreamJSON(decoded)
+		if err != nil {
+			itemErr = err
+			return false
+		}
+		items = append(items, string(encoded))
+		changed = true
+		return true
+	})
+	if fallback {
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+	if itemErr != nil {
+		return body, false, fmt.Errorf("normalize API-key store=false reasoning replay: %w", itemErr)
+	}
+	if !changed {
+		return body, false, nil
+	}
+	return replaceOpenAIRawInput(body, input, items), true, nil
+}
+
+func normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
+	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
+		return body, false, nil
+	}
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
 		return body, false, nil
@@ -1113,6 +1193,12 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 
 	normalized := body
 	changed := false
+	if oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBody(normalized); err != nil {
+		return body, false, err
+	} else if oauthChanged {
+		normalized = oauthBody
+		changed = true
+	}
 
 	for _, field := range openAIChatGPTInternalUnsupportedFields {
 		if value := gjson.GetBytes(normalized, field); !value.Exists() {
@@ -1309,6 +1395,61 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 	return &value
 }
 
+func explicitRequestedReasoningEffortFromBody(body []byte) string {
+	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
+		if raw := strings.TrimSpace(gjson.GetBytes(body, path).String()); raw != "" {
+			return raw
+		}
+	}
+	return ""
+}
+
+// CanonicalRequestedReasoningEffort extracts the client-requested value before
+// group policy rewriting and model-family normalization. Unknown values are
+// intentionally omitted instead of being mislabeled in usage records.
+func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *string {
+	if raw := explicitRequestedReasoningEffortFromBody(body); raw != "" {
+		canonical := NormalizeMaxReasoningEffort(raw)
+		if canonical == "" {
+			return nil
+		}
+		return &canonical
+	}
+	for _, model := range modelCandidates {
+		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
+			return &value
+		}
+	}
+	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); model != "" {
+		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
+			return &value
+		}
+	}
+	return nil
+}
+
+func canonicalReasoningEffortFromModelSuffix(model string) string {
+	modelID := strings.TrimSpace(model)
+	if modelID == "" {
+		return ""
+	}
+	if slash := strings.LastIndex(modelID, "/"); slash >= 0 {
+		modelID = modelID[slash+1:]
+	}
+	parts := strings.FieldsFunc(strings.ToLower(modelID), func(r rune) bool {
+		switch r {
+		case '-', '_', ' ':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	return NormalizeMaxReasoningEffort(parts[len(parts)-1])
+}
+
 func extractOpenAIServiceTier(reqBody map[string]any) *string {
 	if reqBody == nil {
 		return nil
@@ -1396,6 +1537,14 @@ func (s *OpenAIGatewayService) evaluateOpenAIFastPolicy(ctx context.Context, acc
 	return evaluateOpenAIFastPolicyWithSettings(settings, openAIFastPolicyUserID(ctx), account, model, tier)
 }
 
+func (s *OpenAIGatewayService) shouldForceOpenAIFastPriorityForMissingTier(ctx context.Context, account *Account, model string) bool {
+	if account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	action, _ := s.evaluateOpenAIFastPolicy(ctx, account, model, OpenAIFastTierMissing)
+	return action == OpenAIFastPolicyActionForcePriority
+}
+
 // evaluateOpenAIFastPolicyWithSettings is the pure-function core extracted so
 // long-lived sessions (e.g. WS) can prefetch settings once and avoid hitting
 // the settingService on every frame. See WSSession entry and
@@ -1418,7 +1567,11 @@ func evaluateOpenAIFastPolicyWithSettings(settings *OpenAIFastPolicySettings, us
 				continue
 			}
 			ruleTier := strings.ToLower(strings.TrimSpace(rule.ServiceTier))
-			if ruleTier != "" && ruleTier != OpenAIFastTierAny && ruleTier != tier {
+			if tier == OpenAIFastTierMissing {
+				if ruleTier != OpenAIFastTierMissing {
+					continue
+				}
+			} else if ruleTier != "" && ruleTier != OpenAIFastTierAny && ruleTier != tier {
 				continue
 			}
 			eff := BetaPolicyRule{
@@ -1487,6 +1640,14 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 	return nil
 }
 
+func openAIGroupForcesFast(ctx context.Context, account *Account) bool {
+	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	group, _ := ctx.Value(ctxkey.Group).(*Group)
+	return IsGroupContextValid(group) && groupSupportsOpenAIFast(group.Platform) && group.ForceOpenAIFast
+}
+
 // applyOpenAIFastPolicyToBody applies the OpenAI fast policy to a raw request
 // body. When action=filter it removes the service_tier field; when
 // action=block it returns (body, *OpenAIFastBlockedError). On pass it
@@ -1502,8 +1663,22 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 	if len(body) == 0 {
 		return body, nil
 	}
+	if openAIGroupForcesFast(ctx, account) {
+		updated, err := sjson.SetBytes(body, "service_tier", OpenAIFastTierPriority)
+		if err != nil {
+			return body, fmt.Errorf("force group service_tier priority on body: %w", err)
+		}
+		body = updated
+	}
 	rawTier := gjson.GetBytes(body, "service_tier").String()
 	if rawTier == "" {
+		if s.shouldForceOpenAIFastPriorityForMissingTier(ctx, account, model) {
+			updated, err := sjson.SetBytes(body, "service_tier", OpenAIFastTierPriority)
+			if err != nil {
+				return body, fmt.Errorf("force missing service_tier priority on body: %w", err)
+			}
+			return updated, nil
+		}
 		return body, nil
 	}
 	normTier := normalizedOpenAIServiceTierValue(rawTier)
@@ -1613,8 +1788,22 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
+	if openAIGroupForcesFast(ctx, account) {
+		updated, err := sjson.SetBytes(frame, "service_tier", OpenAIFastTierPriority)
+		if err != nil {
+			return frame, nil, fmt.Errorf("force group service_tier priority in ws frame: %w", err)
+		}
+		frame = updated
+	}
 	rawTier := gjson.GetBytes(frame, "service_tier").String()
 	if rawTier == "" {
+		if s.shouldForceOpenAIFastPriorityForMissingTier(ctx, account, model) {
+			updated, err := sjson.SetBytes(frame, "service_tier", OpenAIFastTierPriority)
+			if err != nil {
+				return frame, nil, fmt.Errorf("force missing service_tier priority in ws frame: %w", err)
+			}
+			return updated, nil, nil
+		}
 		return frame, nil, nil
 	}
 	normTier := normalizedOpenAIServiceTierValue(rawTier)
@@ -1966,7 +2155,7 @@ func supportsOpenAIReasoningEffortMax(model string) bool {
 	normalized := strings.ToLower(lastOpenAIModelSegment(model))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	switch {
-	case strings.HasPrefix(normalized, "deepseek-v4"):
+	case strings.HasPrefix(normalized, "deepseek-v4"), strings.HasPrefix(normalized, "deepseek-flash"):
 		return true
 	case strings.HasPrefix(normalized, "glm-"):
 		return true

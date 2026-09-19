@@ -110,6 +110,17 @@
       </div>
     </nav>
 
+    <div v-if="adsPowerHelperMissing" class="rounded-md border border-red-200 bg-red-50/95 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/80 dark:text-red-200" role="alert" data-testid="reauthorization-adspower-helper-missing">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p>本次 Ads 授权已停止：未检测到可用的 XIASS AdsPower 助手或 AdsPower。安装后请在“Ads 设置”填写 API Key，并使用与账号所属 XIASS 服务器出口 IP 一致的代理节点。</p>
+        <div class="flex flex-wrap gap-2">
+          <a class="btn btn-secondary btn-sm" :href="adsPowerHelperMacDownloadURL"><Icon name="download" size="sm" />macOS 安装包</a>
+          <a class="btn btn-secondary btn-sm" :href="adsPowerHelperWindowsDownloadURL"><Icon name="download" size="sm" />Windows 安装包</a>
+          <button type="button" class="btn btn-primary btn-sm" @click="showAdsPowerSetup = true"><Icon name="cog" size="sm" />Ads 设置</button>
+        </div>
+      </div>
+    </div>
+
     <section v-if="activeWorkspace === 'reauthorization' || activeWorkspace === 'history'" class="oauth-workbench-filterbar" aria-label="授权账号筛选">
       <SearchInput
         v-model="workbenchSearch"
@@ -382,6 +393,12 @@ import {
 } from '@/api/admin/openaiReauthorization'
 import type { Account, AdminGroup, Proxy } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import {
+  adsPowerHelperMacDownloadURL,
+  adsPowerHelperUnavailableMessage,
+  adsPowerHelperWindowsDownloadURL,
+  isAdsPowerHelperAvailable,
+} from '@/utils/adspowerHelper'
 
 const route = useRoute()
 const router = useRouter()
@@ -409,6 +426,7 @@ const pendingDeleteAccount = ref<Account | null>(null)
 const workbenchSearch = ref('')
 const workbenchPoolFilter = ref('')
 const showAdsPowerSetup = ref(false)
+const adsPowerHelperMissing = ref(false)
 const adsPowerServerOrigin = window.location.origin
 const adsPowerEnvironmentKey = ref(defaultAdsPowerEnvironmentKey())
 type AuthorizationBrowserMode = 'server' | 'adspower'
@@ -1115,10 +1133,22 @@ async function startAccount(account: Account, acknowledgeRisk = false, browserMo
     if (browserMode === 'adspower' && task.browser_mode === 'adspower' && task.stage === 'external_browser') {
       const launch = await openAIReauthorizationAPI.launchAdsPower(task.task_id)
       if (launch.delivery === 'queued') {
+		adsPowerHelperMissing.value = false
         popup?.close()
         operationNotice.value = `#${account.id} ${account.name} 已发送到 XIASS 常驻助手。`
-      } else if (popup) popup.location.href = launch.helper_url
-      else window.location.assign(launch.helper_url)
+		} else if (!await isAdsPowerHelperAvailable()) {
+			adsPowerHelperMissing.value = true
+			popup?.close()
+			mergeTask(await openAIReauthorizationAPI.cancel(task.task_id))
+			const next = new Map(localErrors.value)
+			next.set(account.id, adsPowerHelperUnavailableMessage)
+			localErrors.value = next
+			return
+		} else {
+			adsPowerHelperMissing.value = false
+			if (popup) popup.location.href = launch.helper_url
+			else window.location.assign(launch.helper_url)
+		}
     } else if (popup) {
       popup.close()
     }

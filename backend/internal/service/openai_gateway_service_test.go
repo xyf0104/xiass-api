@@ -560,6 +560,37 @@ func TestOpenAIGatewayService_BindHTTPResponseAccount(t *testing.T) {
 	require.Equal(t, account.ID, got)
 }
 
+func TestOpenAIGatewayService_BindHTTPResponseAccount_DetachesCanceledRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	groupID := int64(4201)
+	c.Set("api_key", &APIKey{ID: 501, GroupID: &groupID})
+	SetOpenAIHTTPResponseOwner(c, 601, 501)
+
+	cache := &responseBindContextProbeCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := &Account{ID: 37001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+	startedAt := time.Now()
+
+	svc.bindHTTPResponseAccount(requestCtx, c, account, "resp_http_canceled_001")
+
+	require.Len(t, cache.setContextErrors, 3)
+	for _, contextErr := range cache.setContextErrors {
+		require.NoError(t, contextErr, "response affinity writes must survive downstream cancellation")
+	}
+	require.Len(t, cache.setDeadlines, 3)
+	for _, deadline := range cache.setDeadlines {
+		require.True(t, deadline.After(startedAt))
+		require.LessOrEqual(t, deadline.Sub(startedAt), openAIWSStateStoreRedisTimeout+100*time.Millisecond)
+	}
+	require.Len(t, cache.sessionBindings, 3)
+	require.Contains(t, cache.sessionBindings, openAIWSResponseAccountCacheKey("resp_http_canceled_001"))
+}
+
 func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
@@ -680,6 +711,23 @@ type stubGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
 	refreshTTLs     map[string]time.Duration
+}
+
+type responseBindContextProbeCache struct {
+	stubGatewayCache
+	setContextErrors []error
+	setDeadlines     []time.Time
+}
+
+func (c *responseBindContextProbeCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
+	c.setContextErrors = append(c.setContextErrors, ctx.Err())
+	if deadline, ok := ctx.Deadline(); ok {
+		c.setDeadlines = append(c.setDeadlines, deadline)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.stubGatewayCache.SetSessionAccountID(ctx, groupID, sessionHash, accountID, ttl)
 }
 
 func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -1182,6 +1230,49 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 		t.Fatalf("expected account 1")
 	}
 	require.Equal(t, time.Minute, cache.refreshTTLs["openai:"+sessionHash])
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_StickyCapacitySpilloverKeepsBinding_XIASSCoverage(t *testing.T) {
+	sessionHash := "sticky-spillover"
+	groupID := int64(1)
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 6, Priority: 1, GroupIDs: []int64{groupID}},
+			{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 6, Priority: 1, GroupIDs: []int64{groupID}},
+		},
+	}
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{"openai:" + sessionHash: 1},
+	}
+	concurrencyCache := stubConcurrencyCache{
+		acquireResults: map[int64]bool{1: false, 2: true},
+		waitCounts:     map[int64]int{1: 1},
+		loadMap: map[int64]*AccountLoadInfo{
+			1: {AccountID: 1, LoadRate: 100},
+			2: {AccountID: 2, LoadRate: 10},
+		},
+	}
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 1
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        repo,
+		cache:              cache,
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(2), selection.Account.ID, "capacity spillover should use the other account for this request")
+	require.True(t, selection.Acquired)
+	require.Equal(t, int64(1), cache.sessionBindings["openai:"+sessionHash], "capacity spillover must not migrate the durable sticky binding")
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_StickyCapacitySpilloverKeepsBinding(t *testing.T) {
@@ -3681,7 +3772,10 @@ func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `data: {"type":"response.in_progress"`)
 }
 
-func TestHandleSSEToJSON_ResponseFailedReturnsProtocolError(t *testing.T) {
+// 无账号时没有可换的对象：newOpenAIStreamFailoverError 要拿 account 记录 ops 归属与
+// 账号健康，故这一支保持原有的协议错误行为。带真实账号的同一报文改为换号，
+// 由 TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver 钉死（issue #5281）。
+func TestHandleSSEToJSON_ResponseFailedWithoutAccountReturnsProtocolError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

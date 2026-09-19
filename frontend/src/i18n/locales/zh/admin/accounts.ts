@@ -401,12 +401,30 @@ export default {
         balance: '余额 --',
         window5h: '5 小时窗口',
         windowWeekly: '每周窗口',
+        windowMonthly: '月度窗口',
         probe: '查询',
         probeTooltip: '请求供应商额度端点，查询 5 小时 / 每周滚动窗口用量',
         balanceProbeTooltip: '请求供应商余额端点，查询账户余额',
         balanceLow: '余额不足',
         noBalanceEndpoint: '该平台暂无余额查询接口',
         resetSoon: '即将重置',
+      },
+      opencodeGo: {
+        accountMode: {
+          zen: 'Zen',
+          zenDesc: '按量付费网关，消耗账户余额，按 Token 计费。',
+          go: 'GO',
+          goDesc: '订阅制网关，按 5 小时 / 每周 / 每月滚动用量窗口限流。',
+        },
+        protocolRules: {
+          title: '模型协议分流',
+          hint: '自适应模式下按模型匹配上游协议。支持精确 ID 或末尾 * 通配（如 grok-*、qwen*）；自上而下第一条命中生效；未命中走 Chat Completions。',
+          patternPlaceholder: 'grok-* 或 deepseek-v4-flash',
+          add: '添加规则',
+          remove: '删除规则',
+          restoreDefaults: '恢复默认',
+          fallback: '未命中以上规则 -> Chat Completions（/v1/chat/completions）',
+        },
       },
       types: {
         oauth: 'OAuth',
@@ -666,6 +684,14 @@ export default {
       apiKeyRequired: 'API Key *',
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: '您的 Claude Console API Key',
+      upstreamRequestIdHeader: '上游ID',
+      upstreamRequestIdHeaderPlaceholder: '留空不记录',
+      upstreamRequestIdHeaderHelp: {
+        intro: '填写直接上游在响应头中声明请求标识的头名，记录到用量明细的“上游ID”列；留空则不记录。',
+        examplesTitle: '常见取值',
+        sub2apiNote: '对应对方用量明细的请求ID列',
+        official: '{platform} 官方 API',
+      },
       // OpenAI specific hints
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
@@ -690,8 +716,9 @@ export default {
         wsModeHttpBridge: 'HTTP 桥接（http_bridge）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '独享（dedicated）',
-        wsModeConcurrencyHint: '启用 WS mode 后，该账号并发数将作为该账号 WS 连接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 连接池。',
+        wsModeCtxPoolHint: '网关 → 从连接池获取上游 WS 连接，数量由配置决定。',
+        wsModePassthroughHint: '网关 → 上游 WS，不使用连接池。',
+        wsModeHttpBridgeHint: '网关转换 → 上游 HTTP/SSE。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '仅对 OpenAI OAuth 生效。开启后该账号才允许使用 OpenAI WebSocket Mode 协议。',

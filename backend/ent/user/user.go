@@ -35,8 +35,6 @@ const (
 	FieldConcurrency = "concurrency"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
-	// FieldRestrictPublicGroups holds the string denoting the restrict_public_groups field in the database.
-	FieldRestrictPublicGroups = "restrict_public_groups"
 	// FieldUsername holds the string denoting the username field in the database.
 	FieldUsername = "username"
 	// FieldNotes holds the string denoting the notes field in the database.
@@ -53,6 +51,8 @@ const (
 	FieldLastLoginAt = "last_login_at"
 	// FieldLastActiveAt holds the string denoting the last_active_at field in the database.
 	FieldLastActiveAt = "last_active_at"
+	// FieldRestrictPublicGroups holds the string denoting the restrict_public_groups field in the database.
+	FieldRestrictPublicGroups = "restrict_public_groups"
 	// FieldBalanceNotifyEnabled holds the string denoting the balance_notify_enabled field in the database.
 	FieldBalanceNotifyEnabled = "balance_notify_enabled"
 	// FieldBalanceNotifyThresholdType holds the string denoting the balance_notify_threshold_type field in the database.
@@ -206,7 +206,6 @@ var Columns = []string{
 	FieldFrozenBalance,
 	FieldConcurrency,
 	FieldStatus,
-	FieldRestrictPublicGroups,
 	FieldUsername,
 	FieldNotes,
 	FieldTotpSecretEncrypted,
@@ -215,6 +214,7 @@ var Columns = []string{
 	FieldSignupSource,
 	FieldLastLoginAt,
 	FieldLastActiveAt,
+	FieldRestrictPublicGroups,
 	FieldBalanceNotifyEnabled,
 	FieldBalanceNotifyThresholdType,
 	FieldBalanceNotifyThreshold,
@@ -271,8 +271,6 @@ var (
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	StatusValidator func(string) error
-	// DefaultRestrictPublicGroups holds the default value on creation for the "restrict_public_groups" field.
-	DefaultRestrictPublicGroups bool
 	// DefaultUsername holds the default value on creation for the "username" field.
 	DefaultUsername string
 	// UsernameValidator is a validator for the "username" field. It is called by the builders before save.
@@ -285,6 +283,8 @@ var (
 	DefaultSignupSource string
 	// SignupSourceValidator is a validator for the "signup_source" field. It is called by the builders before save.
 	SignupSourceValidator func(string) error
+	// DefaultRestrictPublicGroups holds the default value on creation for the "restrict_public_groups" field.
+	DefaultRestrictPublicGroups bool
 	// DefaultBalanceNotifyEnabled holds the default value on creation for the "balance_notify_enabled" field.
 	DefaultBalanceNotifyEnabled bool
 	// DefaultBalanceNotifyThresholdType holds the default value on creation for the "balance_notify_threshold_type" field.
@@ -355,11 +355,6 @@ func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
 }
 
-// ByRestrictPublicGroups orders the results by the restrict_public_groups field.
-func ByRestrictPublicGroups(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRestrictPublicGroups, opts...).ToFunc()
-}
-
 // ByUsername orders the results by the username field.
 func ByUsername(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUsername, opts...).ToFunc()
@@ -398,6 +393,11 @@ func ByLastLoginAt(opts ...sql.OrderTermOption) OrderOption {
 // ByLastActiveAt orders the results by the last_active_at field.
 func ByLastActiveAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastActiveAt, opts...).ToFunc()
+}
+
+// ByRestrictPublicGroups orders the results by the restrict_public_groups field.
+func ByRestrictPublicGroups(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRestrictPublicGroups, opts...).ToFunc()
 }
 
 // ByBalanceNotifyEnabled orders the results by the balance_notify_enabled field.

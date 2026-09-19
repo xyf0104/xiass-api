@@ -64,6 +64,8 @@ const usageLogsUpstreamModelMismatchIndex = "idx_usage_logs_upstream_model_misma
 const usageLogsEffectiveModelIndexesMigration = "228_add_usage_log_effective_model_indexes_notx.sql"
 const usageLogsEffectiveRequestedModelIndex = "idx_usage_logs_effective_requested_model_created"
 const usageLogsEffectiveUpstreamModelIndex = "idx_usage_logs_effective_upstream_model_created"
+const usageLogsUpstreamRequestIDIndexMigration = "254_add_usage_log_upstream_request_id_index_notx.sql"
+const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
 
 // freshInstallBusinessSeedMigrations are historical, data-only migrations that
 // remain immutable for existing installations. A genuinely empty database records
@@ -388,6 +390,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 			}
 		}
 		return nil
+	case usageLogsUpstreamRequestIDIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamRequestIDIndex)
 	default:
 		return nil
 	}

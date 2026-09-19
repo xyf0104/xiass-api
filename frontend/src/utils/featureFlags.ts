@@ -70,6 +70,7 @@
 
 import { useAppStore } from '@/stores/app'
 import type { PublicSettings } from '@/types'
+import { DEFAULT_INTERVAL_SECONDS } from '@/constants/channelMonitor'
 
 export type FeatureFlagMode = 'opt-in' | 'opt-out'
 
@@ -98,10 +99,30 @@ export const FeatureFlags = {
     mode: 'opt-out',
     label: 'Channel Monitor',
   }),
+  availableChannels: defineFlag({
+    key: 'available_channels_enabled',
+    mode: 'opt-in',
+    label: 'Available Channels',
+  }),
+  subscription: defineFlag({
+    key: 'subscription_enabled',
+    mode: 'opt-out',
+    label: 'Subscription',
+  }),
   modelPricing: defineFlag({
     key: 'model_pricing_enabled',
     mode: 'opt-out',
     label: 'Model Pricing',
+  }),
+  pluginManagement: defineFlag({
+    key: 'plugin_management_enabled',
+    mode: 'opt-in',
+    label: 'Plugin Management',
+  }),
+  modelPlaza: defineFlag({
+    key: 'model_plaza_enabled',
+    mode: 'opt-in',
+    label: 'Model Plaza',
   }),
   payment: defineFlag({
     key: 'payment_enabled',
@@ -129,13 +150,48 @@ export type RegisteredFeatureFlag = keyof typeof FeatureFlags
  */
 export function isFeatureFlagEnabled(flag: FeatureFlagDefinition): boolean {
   const appStore = useAppStore()
-  const raw = appStore.cachedPublicSettings?.[flag.key] as
-    | boolean
-    | undefined
+  return resolveFeatureFlag(appStore.cachedPublicSettings, flag)
+}
+
+export function resolveFeatureFlag(
+  settings: Partial<PublicSettings> | null | undefined,
+  flag: FeatureFlagDefinition,
+): boolean {
+  const raw = settings?.[flag.key] as boolean | undefined
   if (typeof raw === 'boolean') return raw
   // Settings not yet loaded → fall back to the flag's declared mode:
   //   opt-out → visible by default, opt-in → hidden by default.
   return flag.mode === 'opt-out'
+}
+
+export function isChannelMonitorRouteEnabled(): boolean {
+  return isFeatureFlagEnabled(FeatureFlags.channelMonitor)
+}
+
+export type ChannelMonitorMode = 'v1' | 'v2'
+
+export function getChannelMonitorMode(): ChannelMonitorMode {
+  const appStore = useAppStore()
+  return appStore.cachedPublicSettings?.channel_monitor_mode === 'v2' ? 'v2' : 'v1'
+}
+
+export function isChannelMonitorV1Mode(): boolean {
+  return isChannelMonitorRouteEnabled() && getChannelMonitorMode() === 'v1'
+}
+
+export function isChannelMonitorV2Mode(): boolean {
+  return isChannelMonitorRouteEnabled() && getChannelMonitorMode() === 'v2'
+}
+
+export function getChannelMonitorRefreshIntervalSeconds(): number {
+  const appStore = useAppStore()
+  const configured = appStore.cachedPublicSettings?.channel_monitor_default_interval_seconds
+  return configured && configured > 0 ? configured : DEFAULT_INTERVAL_SECONDS
+}
+
+export function isChannelMonitorThroughputHidden(): boolean {
+  const appStore = useAppStore()
+  return Boolean(appStore.cachedPublicSettings?.channel_monitor_hide_throughput)
 }
 
 /**
@@ -151,4 +207,9 @@ export function makeSidebarFlag(flag: FeatureFlagDefinition): () => boolean {
 export function isChannelMonitorQuotaVisible(): boolean {
   const appStore = useAppStore()
   return appStore.cachedPublicSettings?.channel_monitor_show_quota === true
+}
+
+export function isChannelMonitorUserRankingHidden(): boolean {
+  const appStore = useAppStore()
+  return Boolean(appStore.cachedPublicSettings?.channel_monitor_hide_user_ranking)
 }

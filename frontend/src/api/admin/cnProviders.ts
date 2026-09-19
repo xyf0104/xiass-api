@@ -5,7 +5,7 @@
 import { apiClient } from '../client'
 
 export interface CNQuotaTier {
-  window: '5h' | 'weekly'
+  window: '5h' | 'weekly' | 'monthly'
   used_percent: number
   reset_at?: string
 }

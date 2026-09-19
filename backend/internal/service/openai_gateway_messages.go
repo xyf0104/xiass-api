@@ -265,7 +265,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 	if account.Platform == PlatformOpenAI {
-		if policyBody, changed := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, responsesBody); changed {
+		policyBody, changed, policyErr := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, responsesBody)
+		if policyErr != nil {
+			if IsReasoningEffortPolicyDenied(policyErr) {
+				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+				writeAnthropicError(c, http.StatusForbidden, "forbidden_error", policyErr.Error())
+			}
+			return nil, policyErr
+		}
+		if changed {
 			responsesBody = policyBody
 			if responsesReq.Reasoning != nil {
 				responsesReq.Reasoning.Effort = gjson.GetBytes(responsesBody, "reasoning.effort").String()
@@ -357,6 +365,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
 	}
+	if err := s.applyOpenAICodexTicket(ctx, account, upstreamModel, upstreamReq.Header); err != nil {
+		return nil, err
+	}
 
 	// 7. Send request
 	proxyURL := ""
@@ -379,7 +390,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
 		}
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}

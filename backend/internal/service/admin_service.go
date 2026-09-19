@@ -6,6 +6,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -40,6 +41,7 @@ type AdminService interface {
 	GetGroup(ctx context.Context, id int64) (*Group, error)
 	GetGroupModelsListCandidates(ctx context.Context, id int64, platform string) ([]string, error)
 	CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error)
+	ValidateAccountGroupBindings(ctx context.Context, groupIDs []int64) error
 	// DuplicateGroup creates an inactive independent copy of a group's configuration
 	// and account bindings while preserving each binding's priority.
 	DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error)
@@ -48,6 +50,7 @@ type AdminService interface {
 	RecoverDuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*Group, error)
 	UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error)
 	DeleteGroup(ctx context.Context, id int64) error
+	DeleteGroupIfEmpty(ctx context.Context, id int64) error
 	ListCompositeRoutes(ctx context.Context, groupID int64) ([]CompositeModelRoute, error)
 	CreateCompositeRoute(ctx context.Context, groupID int64, input CompositeRouteInput) (*CompositeModelRoute, error)
 	UpdateCompositeRoute(ctx context.Context, groupID, routeID int64, input CompositeRouteInput) (*CompositeModelRoute, error)
@@ -140,6 +143,24 @@ type AdminService interface {
 	ResetAccountQuota(ctx context.Context, id int64) error
 }
 
+type AdminGroupOperation string
+
+const (
+	AdminGroupOperationBasic          AdminGroupOperation = "basic"
+	AdminGroupOperationDuplicate      AdminGroupOperation = "duplicate"
+	AdminGroupOperationCompositeRoute AdminGroupOperation = "composite_route"
+	AdminGroupOperationMultiplier     AdminGroupOperation = "multiplier"
+	AdminGroupOperationRPMOverride    AdminGroupOperation = "rpm_override"
+	AdminGroupOperationSort           AdminGroupOperation = "sort"
+)
+
+func ValidateSimpleModeGroupOperation(cfg *config.Config, operation AdminGroupOperation) error {
+	if cfg != nil && cfg.RunMode == config.RunModeSimple && operation != AdminGroupOperationBasic {
+		return infraerrors.New(http.StatusForbidden, "SIMPLE_MODE_OPERATION_UNSUPPORTED", "This operation is not supported in simple mode")
+	}
+	return nil
+}
+
 // AntigravityOAuthCredentialsApplier is the narrow persistence boundary used
 // by the interactive re-authorization flow. Keeping it separate from the
 // generic account update contract prevents a partial credential document from
@@ -156,15 +177,16 @@ type AntigravityOAuthCredentialsInput struct {
 
 // CreateUserInput represents input for creating a new user via admin operations.
 type CreateUserInput struct {
-	Email         string
-	Password      string
-	Username      string
-	Notes         string
-	Role          string // 空字符串表示使用默认角色(user);合法值 admin/user
-	Balance       *float64
-	Concurrency   int
-	RPMLimit      int
-	AllowedGroups []int64
+	Email                string
+	Password             string
+	Username             string
+	Notes                string
+	Role                 string // 空字符串表示使用默认角色(user);合法值 admin/user
+	Balance              *float64
+	Concurrency          int
+	RPMLimit             int
+	AllowedGroups        []int64
+	RestrictPublicGroups bool
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
 }
@@ -261,10 +283,15 @@ type CreateGroupInput struct {
 	VideoPrice480P     *float64
 	VideoPrice720P     *float64
 	VideoPrice1080P    *float64
+	VideoModelPrices   map[string]map[string]float64
 	// Codex alpha/search 网页搜索单次价格（USD/次，仅 openai 平台使用）；nil/负数按默认价 0.01 处理
-	WebSearchPricePerCall *float64
-	ClaudeCodeOnly        bool   // 仅允许 Claude Code 客户端
-	FallbackGroupID       *int64 // 降级分组 ID
+	WebSearchPricePerCall        *float64
+	SearchPricePer1k             *float64
+	AudioRealtimePricePerMin     *float64
+	AudioTTSPricePerMillionChars *float64
+	AudioSTTPricePerHour         *float64
+	ClaudeCodeOnly               bool   // 仅允许 Claude Code 客户端
+	FallbackGroupID              *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	// 模型优先路由配置（anthropic/openai 平台使用）
@@ -277,17 +304,22 @@ type CreateGroupInput struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
+	ForceOpenAIFast             bool
+	FreeOpenAIFast              bool
 	DefaultMappedModel          string
 	RequireOAuthOnly            bool
 	RequirePrivacySet           bool
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
+	ModelAllowlist              GroupModelAllowlist
 	ModelsListConfig            GroupModelsListConfig
+	CodexModelsManifestConfig   GroupCodexModelsManifestConfig
 	// RPMLimit 分组 RPM 上限（0 = 不限制）
 	RPMLimit int
 	// CostRatio 成本比例（成本价/官方价），用于前端展示；nil 表示不设置
 	CostRatio *float64
 	// MaxReasoningEffort OpenAI/Codex 请求的推理强度上限，空字符串表示不限制。
-	MaxReasoningEffort string
+	MaxReasoningEffort          string
+	MaxReasoningEffortOverLimit string
 	// ReasoningEffortMappings OpenAI/Codex 推理强度精确映射。
 	ReasoningEffortMappings []ReasoningEffortMapping
 	// 分组利润控制（五个 token 平台分组可启用；margin/buffer 为小数，nil 按 0 处理）
@@ -333,10 +365,15 @@ type UpdateGroupInput struct {
 	VideoPrice480P     *float64
 	VideoPrice720P     *float64
 	VideoPrice1080P    *float64
+	VideoModelPrices   map[string]map[string]float64
 	// Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示不修改，负数表示清除回默认价 0.01
-	WebSearchPricePerCall *float64
-	ClaudeCodeOnly        *bool  // 仅允许 Claude Code 客户端
-	FallbackGroupID       *int64 // 降级分组 ID
+	WebSearchPricePerCall        *float64
+	SearchPricePer1k             *float64
+	AudioRealtimePricePerMin     *float64
+	AudioTTSPricePerMillionChars *float64
+	AudioSTTPricePerHour         *float64
+	ClaudeCodeOnly               *bool  // 仅允许 Claude Code 客户端
+	FallbackGroupID              *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	// 模型优先路由配置（anthropic/openai 平台使用）
@@ -349,17 +386,22 @@ type UpdateGroupInput struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       *bool
 	AllowLive                   *bool
+	ForceOpenAIFast             *bool
+	FreeOpenAIFast              *bool
 	DefaultMappedModel          *string
 	RequireOAuthOnly            *bool
 	RequirePrivacySet           *bool
 	MessagesDispatchModelConfig *OpenAIMessagesDispatchModelConfig
+	ModelAllowlist              *GroupModelAllowlist
 	ModelsListConfig            *GroupModelsListConfig
+	CodexModelsManifestConfig   *GroupCodexModelsManifestConfig
 	// RPMLimit 分组 RPM 上限（0 = 不限制），nil 表示未提供不改动。
 	RPMLimit *int
 	// CostRatio 成本比例（成本价/官方价），用于前端展示；nil 表示不改动
 	CostRatio *float64
 	// MaxReasoningEffort 空字符串表示清除上限；nil 表示未提供不改动。
-	MaxReasoningEffort *string
+	MaxReasoningEffort          *string
+	MaxReasoningEffortOverLimit *string
 	// ReasoningEffortMappings nil 表示不修改，空数组表示清空，非空数组表示替换。
 	ReasoningEffortMappings *[]ReasoningEffortMapping
 	// 分组利润控制（nil 表示不修改；margin/buffer 为小数）
@@ -540,13 +582,15 @@ type UpdateProxyInput struct {
 	Protocol       string
 	Host           string
 	Port           int
-	Username       string
-	Password       string
+	Username       *string
+	Password       *string
 	Status         string
 	ExpiresAt      *time.Time
+	ClearExpiresAt bool
 	FallbackMode   string
 	BackupProxyID  *int64
-	ExpiryWarnDays int
+	ClearBackupID  bool
+	ExpiryWarnDays *int
 }
 
 type GenerateRedeemCodesInput struct {
@@ -680,9 +724,11 @@ var ErrRPMStatusUnavailable = infraerrors.New(http.StatusNotImplemented, "RPM_ST
 
 // adminServiceImpl implements AdminService
 type adminServiceImpl struct {
+	cfg                  *config.Config
 	userRepo             UserRepository
 	groupRepo            GroupRepository
 	groupDuplicateRepo   GroupDuplicateRepository
+	emptyGroupDeleteRepo EmptyGroupDeleteRepository
 	accountRepo          AccountRepository
 	accountDuplicateRepo AccountDuplicateRepository
 	accountBillingRepo   AccountBillingSettingsRepository
@@ -738,10 +784,68 @@ func NewAdminService(
 	compositeRouteRepo CompositeModelRouteRepository,
 	compositeResolver *CompositeRouteResolver,
 ) *adminServiceImpl {
+	return newAdminService(nil, userRepo, groupRepo, accountRepo, proxyRepo, apiKeyRepo, redeemCodeRepo, userGroupRateRepo, userRPMCache, billingCacheService, proxyProber, proxyLatencyCache, authCacheInvalidator, entClient, settingService, defaultSubAssigner, userSubRepo, privacyClientFactory, runtimeBlocker, affiliateService, compositeRouteRepo, compositeResolver)
+}
+
+// NewAdminServiceWithConfig wires run-mode policy into the admin service while
+// retaining NewAdminService for tests and older XIASS integration code.
+func NewAdminServiceWithConfig(
+	cfg *config.Config,
+	userRepo UserRepository,
+	groupRepo AdminGroupRepository,
+	accountRepo AdminAccountRepository,
+	proxyRepo ProxyRepository,
+	apiKeyRepo APIKeyRepository,
+	redeemCodeRepo RedeemCodeRepository,
+	userGroupRateRepo UserGroupRateRepository,
+	userRPMCache UserRPMCache,
+	billingCacheService *BillingCacheService,
+	proxyProber ProxyExitInfoProber,
+	proxyLatencyCache ProxyLatencyCache,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	entClient *dbent.Client,
+	settingService *SettingService,
+	defaultSubAssigner DefaultSubscriptionAssigner,
+	userSubRepo UserSubscriptionRepository,
+	privacyClientFactory PrivacyClientFactory,
+	runtimeBlocker AccountRuntimeBlocker,
+	affiliateService *AffiliateService,
+	compositeRouteRepo CompositeModelRouteRepository,
+	compositeResolver *CompositeRouteResolver,
+) *adminServiceImpl {
+	return newAdminService(cfg, userRepo, groupRepo, accountRepo, proxyRepo, apiKeyRepo, redeemCodeRepo, userGroupRateRepo, userRPMCache, billingCacheService, proxyProber, proxyLatencyCache, authCacheInvalidator, entClient, settingService, defaultSubAssigner, userSubRepo, privacyClientFactory, runtimeBlocker, affiliateService, compositeRouteRepo, compositeResolver)
+}
+
+func newAdminService(
+	cfg *config.Config,
+	userRepo UserRepository,
+	groupRepo AdminGroupRepository,
+	accountRepo AdminAccountRepository,
+	proxyRepo ProxyRepository,
+	apiKeyRepo APIKeyRepository,
+	redeemCodeRepo RedeemCodeRepository,
+	userGroupRateRepo UserGroupRateRepository,
+	userRPMCache UserRPMCache,
+	billingCacheService *BillingCacheService,
+	proxyProber ProxyExitInfoProber,
+	proxyLatencyCache ProxyLatencyCache,
+	authCacheInvalidator APIKeyAuthCacheInvalidator,
+	entClient *dbent.Client,
+	settingService *SettingService,
+	defaultSubAssigner DefaultSubscriptionAssigner,
+	userSubRepo UserSubscriptionRepository,
+	privacyClientFactory PrivacyClientFactory,
+	runtimeBlocker AccountRuntimeBlocker,
+	affiliateService *AffiliateService,
+	compositeRouteRepo CompositeModelRouteRepository,
+	compositeResolver *CompositeRouteResolver,
+) *adminServiceImpl {
 	return &adminServiceImpl{
+		cfg:                  cfg,
 		userRepo:             userRepo,
 		groupRepo:            groupRepo,
 		groupDuplicateRepo:   groupRepo,
+		emptyGroupDeleteRepo: groupRepo,
 		accountRepo:          accountRepo,
 		accountDuplicateRepo: accountRepo,
 		accountBillingRepo:   accountRepo,

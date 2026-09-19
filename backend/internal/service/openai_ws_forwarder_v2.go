@@ -61,6 +61,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		wsPath,
 	)
 
+	originalScopeBody := payloadAsJSONBytes(reqBody)
+	executionScope, _ := captureOpenAIWSExecutionScope(c, originalScopeBody, getAPIKeyIDFromContext(c))
 	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
 	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
 	turnState := ""
@@ -113,14 +115,22 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	stateStore := s.ownedOpenAIWSStateStore(c, account)
 	groupID := getOpenAIGroupIDFromContext(c)
+	sessionStateStore := stateStore
+	if executionScope != "" {
+		sessionStateStore = s.getOpenAIWSStateStore()
+	}
 	sessionHash := s.GenerateSessionHash(c, nil)
 	if sessionHash == "" {
 		var legacySessionHash string
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
 	}
-	if turnState == "" && stateStore != nil && sessionHash != "" {
-		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
+	sessionStateKey := sessionHash
+	if executionScope != "" {
+		sessionStateKey = executionScope
+	}
+	if turnState == "" && sessionStateStore != nil && sessionStateKey != "" {
+		if savedTurnState, ok := sessionStateStore.GetSessionTurnState(groupID, sessionStateKey); ok {
 			turnState = savedTurnState
 		}
 	}
@@ -131,8 +141,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 	storeDisabled := s.isOpenAIWSStoreDisabledInRequest(reqBody, account)
-	if stateStore != nil && storeDisabled && previousResponseID == "" && sessionHash != "" {
-		if connID, ok := stateStore.GetSessionConn(groupID, sessionHash); ok {
+	if sessionStateStore != nil && storeDisabled && previousResponseID == "" && sessionStateKey != "" {
+		if connID, ok := sessionStateStore.GetSessionConn(groupID, sessionStateKey); ok {
 			preferredConnID = connID
 		}
 	}
@@ -308,8 +318,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 	if handshakeTurnState != "" {
 		s.noteOpenAICodexTurnStateProvenance(c, account, handshakeTurnState)
-		if stateStore != nil && sessionHash != "" {
-			stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
+		if sessionStateStore != nil && sessionStateKey != "" {
+			sessionStateStore.BindSessionTurnState(groupID, sessionStateKey, handshakeTurnState, s.openAIWSSessionStickyTTL())
 		}
 		if c != nil {
 			c.Header(http.CanonicalHeaderKey(openAIWSTurnStateHeader), handshakeTurnState)
@@ -860,8 +870,8 @@ readLoop:
 		logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 		stateStore.BindResponseConn(responseID, lease.ConnID(), ttl)
 	}
-	if stateStore != nil && storeDisabled && sessionHash != "" {
-		stateStore.BindSessionConn(groupID, sessionHash, lease.ConnID(), s.openAIWSSessionStickyTTL())
+	if sessionStateStore != nil && storeDisabled && sessionStateKey != "" {
+		sessionStateStore.BindSessionConn(groupID, sessionStateKey, lease.ConnID(), s.openAIWSSessionStickyTTL())
 	}
 	firstTokenMsValue := -1
 	if firstTokenMs != nil {

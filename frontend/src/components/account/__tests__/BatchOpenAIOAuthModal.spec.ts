@@ -4,8 +4,13 @@ import { defineComponent } from 'vue'
 import { createPinia } from 'pinia'
 import BatchOpenAIOAuthModal from '../BatchOpenAIOAuthModal.vue'
 import { batchOAuthAPI, type BatchOAuthTask } from '@/api/admin/openaiBatchOAuth'
+import { isAdsPowerHelperAvailable } from '@/utils/adspowerHelper'
 
 vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), sms: vi.fn(), cancel: vi.fn(), complete: vi.fn(), restart: vi.fn(), launchAdsPower: vi.fn() } }))
+vi.mock('@/utils/adspowerHelper', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/utils/adspowerHelper')>()),
+  isAdsPowerHelperAvailable: vi.fn(),
+}))
 vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(async () => ({ data: { items: [{ id: 4, name: '号池分组1', proxy_id: 9 }] } })) } }))
 const SelectStub = defineComponent({ props: ['modelValue', 'options'], emits: ['update:modelValue'], template: `<select :value="modelValue ?? ''" @change="$emit('update:modelValue', $event.target.value === '' ? null : Number.isNaN(Number($event.target.value)) ? $event.target.value : Number($event.target.value))"><option v-for="o in options" :value="o.value ?? ''">{{ o.label }}</option></select>` })
 const base = { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' }
@@ -22,6 +27,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [], max_concurrency: 3, max_restarts: 2 })
   vi.mocked(batchOAuthAPI.create).mockResolvedValue(task())
+  vi.mocked(isAdsPowerHelperAvailable).mockResolvedValue(true)
 })
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 describe('batch OAuth modal', () => {

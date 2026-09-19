@@ -1,7 +1,6 @@
 package domain
 
-// GroupModelsListConfig controls the optional custom /v1/models response list.
-type GroupModelsListConfig struct {
-	Enabled bool     `json:"enabled"`
-	Models  []string `json:"models,omitempty"`
-}
+// GroupModelsListConfig is retained as a source-compatibility alias while
+// existing XIASS integrations migrate to the upstream model_allowlist field.
+// New code should use GroupModelAllowlist.
+type GroupModelsListConfig = GroupModelAllowlist

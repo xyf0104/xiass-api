@@ -20,6 +20,7 @@ import (
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	captureOpenAIRequestOwnership(c, body)
+	captureOpenAIWSExecutionScope(c, body, getAPIKeyIDFromContext(c))
 	beginUpstreamResponseModelObservation(c)
 	filteredBody, filterErr := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
 	if filterErr != nil {
@@ -96,7 +97,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
 		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
-			account, wsDecision.Transport, passthroughEnabled, compactPath,
+			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
 		)
 		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
 		if err != nil {
@@ -160,7 +161,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
-	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
+	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		if reasoningErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+		}
+		if reasoningChanged {
+			body = normalizedReasoningBody
+			originalBody = normalizedReasoningBody
+			requestView = newOpenAIRequestView(normalizedReasoningBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
 		if sanitizeErr != nil {
 			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
@@ -947,7 +960,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Send request
 		upstreamStart := time.Now()
 		freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
-		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
@@ -955,7 +968,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			headerGuard.close()
 			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, startTime, originalModel, reasoningEffortValue,
+				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
+				startTime, originalModel, reasoningEffortValue,
 				firstOutputTimeout, "response_headers", nil,
 			)
 		}
@@ -1031,7 +1045,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request after %s (account: %s)", reason, account.Name)
 				continue
 			}
-			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -1247,6 +1261,11 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 	if account == nil || account.Type != AccountTypeAPIKey {
 		return false
 	}
+	if account.IsOpenCodeGo() {
+		// OpenCode Go/Zen resolves the native upstream protocol per model. The
+		// generic OpenAI-compatible probe must not override that routing table.
+		return false
+	}
 	if account.IsCNProvider() {
 		// CN 的显式协议配置优先于异步探针 Extra；adaptive 仅 DeepSeek 有原生
 		// Responses，Kimi/GLM 回退 Chat Completions。
@@ -1398,6 +1417,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		stripOpenAILegacyResponsesBeta(req.Header)
 	}
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	if err := s.applyOpenAICodexTicket(ctx, account, extractOpenAICodexTicketModel(body), req.Header); err != nil {
+		return nil, err
+	}
 	applyOpenAICodexBetaFeatures(c, account, req.Header, body)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")

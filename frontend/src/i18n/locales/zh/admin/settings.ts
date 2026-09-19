@@ -239,6 +239,12 @@ export default {
           enabled: '启用模型价格',
           enabledHint: '关闭后用户端模型价格入口隐藏，价格接口返回空数组；模型渠道可单独保持开启。',
         },
+        pluginManagement: {
+          title: '插件管理',
+          description: '控制管理员侧边栏是否显示插件管理入口。此开关不控制插件运行状态，默认关闭。',
+          enabled: '显示插件管理菜单',
+          enabledHint: '关闭后仅隐藏侧边栏菜单；已加载或正在运行的插件不会因此停止。',
+        },
         availableChannels: {
           title: '模型渠道',
           description: '向已登录用户展示上游原生的可用渠道、关联分组和支持模型聚合视图。默认关闭。',
@@ -706,6 +712,14 @@ export default {
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
         codexHardeningTitle: 'Codex 设置',
+        codexTicketEnabled: '292 Ticket 防降智',
+        codexTicketEnabledDesc:
+          '默认关闭。开启后后台为 ChatGPT OAuth 账号采集 292 位 x-codex-turn-state Ticket，并按账号和模型注入正式请求；关闭时完全沿用原转发链路。',
+        codexTicketHarvestProxy: 'Ticket 采集代理',
+        codexTicketHarvestProxyDesc:
+          '仅用于后台采集 Ticket，正式业务请求仍走账号自己的代理。支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H 完整 URL；保存后动态生效，无需重启。留空保存会保留已配置值。',
+        codexTicketHarvestProxyPlaceholder: "http://user:pass{'@'}proxy.example.com:1080",
+        codexTicketHarvestProxyConfigured: '已配置（密码已隐藏）。更换时请粘贴完整的新代理 URL。',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
           '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效（全局）。在 User-Agent/Originator 之外，用版本区间、引擎指纹门与黑/白名单巩固判定。',

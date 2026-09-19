@@ -178,6 +178,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	}
 	setOpenAICodexRoutingHint(headers, account, routingModel, routingServiceTier)
 	s.guardOpenAICodexTurnStateEcho(c, account, headers)
+	if err := s.applyOpenAICodexTicket(ctx, account, routingModel, headers); err != nil {
+		return nil, sessionResolution, err
+	}
 	logOpenAIRoutingDiagnostics(
 		ctx,
 		account,

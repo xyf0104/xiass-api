@@ -75,6 +75,8 @@ type AccountTestService struct {
 	cfg                       *config.Config
 	settingService            *SettingService
 	tlsFPProfileService       *TLSFingerprintProfileService
+	openaiGatewayService      *OpenAIGatewayService
+	pluginManager             *PluginManager
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
 	modelMetadataRegistryMu   sync.Mutex
@@ -86,6 +88,66 @@ func (s *AccountTestService) SetSettingService(settingService *SettingService) {
 	if s != nil {
 		s.settingService = settingService
 	}
+}
+
+func (s *AccountTestService) SetOpenAIGatewayService(gateway *OpenAIGatewayService) {
+	if s != nil {
+		s.openaiGatewayService = gateway
+	}
+}
+
+func (s *AccountTestService) SetPluginManager(pluginManager *PluginManager) {
+	if s != nil {
+		s.pluginManager = pluginManager
+	}
+}
+
+// FetchOpenAIAccountModels uses the shared cached discovery path for the test picker.
+// Picker-only labels and image models are added to a private copy so the shared cache
+// remains authoritative for gateway model discovery.
+func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, account *Account) ([]openai.Model, error) {
+	if s == nil || s.openaiGatewayService == nil {
+		return nil, errors.New("OpenAI model discovery service is unavailable")
+	}
+	response, err := s.openaiGatewayService.FetchOpenAIModelsList(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Data []openai.Model `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return nil, fmt.Errorf("decode OpenAI account models: %w", err)
+	}
+	for i := range payload.Data {
+		model := &payload.Data[i]
+		if strings.TrimSpace(model.DisplayName) == "" {
+			model.DisplayName = openaiCodexDisplayName(model.ID)
+		}
+		if strings.TrimSpace(model.Type) == "" {
+			model.Type = "model"
+		}
+	}
+	if account != nil && account.IsOpenAIOAuthLike() {
+		seen := make(map[string]bool, len(payload.Data))
+		for _, model := range payload.Data {
+			seen[model.ID] = true
+		}
+		for _, model := range openai.DefaultModels {
+			if IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) && !seen[model.ID] {
+				payload.Data = append(payload.Data, model)
+				seen[model.ID] = true
+			}
+		}
+		for model := range account.GetModelMapping() {
+			if IsGPTImageGenerationModel(model) && !strings.Contains(model, "*") && !seen[model] {
+				payload.Data = append(payload.Data, openai.Model{
+					ID: model, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(model),
+				})
+			}
+		}
+	}
+	return payload.Data, nil
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -738,7 +800,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 	}
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.doOpenAIAccountTestUpstream(req, proxyURL, account, true)
 	if err != nil {
 		if pelicanProbe(c) != nil {
 			return s.pelicanError(c, "upstream_network_error")
@@ -957,7 +1019,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 			}
 		}
 	}
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.doOpenAIAccountTestUpstream(req, proxyURL, account, true)
 	if err != nil {
 		if pelicanProbe(c) != nil {
 			return s.pelicanError(c, "upstream_network_error")
@@ -1124,7 +1186,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		proxyURL = account.requestProxyURL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	resp, err := s.doOpenAIAccountTestUpstream(req, proxyURL, account, true)
 	if err != nil {
 		if s.accountRepo != nil {
 			updates := buildOpenAICompactProbeExtraUpdates(nil, nil, err, time.Now())
@@ -1975,22 +2037,25 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	c.Writer.Flush()
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
-	s.sendEvent(c, TestEvent{Type: "content", Text: "Calling Codex /responses image tool...\n"})
-
 	parsed := &OpenAIImagesRequest{
 		Endpoint: openAIImagesGenerationsEndpoint,
 		Model:    strings.TrimSpace(modelID),
 		Prompt:   prompt,
 	}
 	applyOpenAIImagesDefaults(parsed)
-	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Responses driver: %s; image model: %s\n", openAIImagesResponsesMainModelValue(), parsed.Model)})
-
-	responsesBody, err := buildOpenAIImagesResponsesRequest(parsed, parsed.Model)
+	upstreamModel := account.GetMappedModel(parsed.Model)
+	responsesBody, targetURL, err := buildOpenAIImagesOAuthPayload(parsed, upstreamModel)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
 	}
+	direct := usesCodexDirectImages(upstreamModel)
+	if direct {
+		s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Calling Codex /images/generations; image model: %s\n", upstreamModel)})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Calling Codex /responses image tool; driver: %s; image model: %s\n", openAIImagesResponsesMainModelValue(), upstreamModel)})
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexAPIURL, bytes.NewReader(responsesBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(responsesBody))
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
 	}
@@ -2012,6 +2077,10 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	if direct {
+		req.Header.Del("OpenAI-Beta")
+		req.Header.Set("Accept", "application/json")
+	}
 	canonical := resolveCodexOutboundIdentity("")
 	req.Header.Set("originator", canonical.originator)
 	if customUA := strings.TrimSpace(credentialAccount.GetOpenAIUserAgent()); customUA != "" {
@@ -2028,7 +2097,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.requestProxyURL()
 	}
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.doOpenAIAccountTestUpstream(req, proxyURL, account, false)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Responses API request failed: %s", err.Error()))
 	}
@@ -2042,7 +2111,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 		message := strings.TrimSpace(extractUpstreamErrorMessage(body))
 		if message == "" {
-			message = fmt.Sprintf("Responses API returned %d", resp.StatusCode)
+			message = fmt.Sprintf("Image upstream returned %d", resp.StatusCode)
 		}
 		return s.sendErrorAndEnd(c, message)
 	}
@@ -2053,18 +2122,26 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	}
 	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 
-	results, _, _, _, _, err := collectOpenAIImagesFromResponsesBody(body)
+	var results []openAIResponsesImageResult
+	if direct {
+		results, err = parseCodexDirectImagesResponse(body)
+	} else {
+		if upstreamErr := extractOpenAIImagesUpstreamError(body); upstreamErr != nil {
+			return s.sendErrorAndEnd(c, upstreamErr.clientMessage())
+		}
+		results, _, _, _, _, err = collectOpenAIImagesFromResponsesBody(body)
+	}
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse image response: %s", err.Error()))
 	}
 	if len(results) == 0 {
-		if upstreamErr := extractOpenAIImagesUpstreamError(body); upstreamErr != nil {
-			return s.sendErrorAndEnd(c, upstreamErr.clientMessage())
-		}
 		if textErr := openAIImagesTextFallbackError(body); textErr != nil {
 			return s.sendErrorAndEnd(c, textErr.clientMessage())
 		}
-		return s.sendErrorAndEnd(c, "No images returned from responses API")
+		if direct {
+			return s.sendErrorAndEnd(c, "No images returned from Codex Images API")
+		}
+		return s.sendErrorAndEnd(c, "No images returned from Codex Responses API")
 	}
 
 	for _, item := range results {

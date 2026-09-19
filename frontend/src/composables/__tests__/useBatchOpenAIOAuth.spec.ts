@@ -4,8 +4,13 @@ import { flushPromises } from '@vue/test-utils'
 import { batchOAuthAPI, type BatchOAuthTask, type BatchOAuthConfig } from '@/api/admin/openaiBatchOAuth'
 import { batchTaskWillAutoRestart, useBatchOpenAIOAuth } from '../useBatchOpenAIOAuth'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
+import { isAdsPowerHelperAvailable } from '@/utils/adspowerHelper'
 
 vi.mock('@/api/admin/openaiBatchOAuth', () => ({ batchOAuthAPI: { list: vi.fn(), create: vi.fn(), complete: vi.fn(), cancel: vi.fn(), restart: vi.fn(), remove: vi.fn(), sms: vi.fn(), launchAdsPower: vi.fn() } }))
+vi.mock('@/utils/adspowerHelper', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/utils/adspowerHelper')>()),
+  isAdsPowerHelperAvailable: vi.fn(),
+}))
 const settings: BatchOAuthConfig = { group_ids: [4, 9], proxy_id: 3, pool_id: 2, concurrency: 3, priority: 1, codex_fingerprint_mode: 'off' }
 const credentials = parseAccountCredentials(Array.from({ length: 5 }, (_, i) => `person${i}@example.test----password-${i}----JBSWY3DPEHPK3PXP`).join('\n')).rows.map(row => ({
   account: row.account,
@@ -28,6 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   server = []
   created = vi.fn()
+  vi.mocked(isAdsPowerHelperAvailable).mockResolvedValue(true)
   vi.mocked(batchOAuthAPI.list).mockImplementation(async () => ({ items: server.map(t => ({ ...t })), max_concurrency: 3, max_restarts: 2 }))
   vi.mocked(batchOAuthAPI.create).mockImplementation(async input => {
     const result = task(input.idempotency_key, input.email)
@@ -108,6 +114,22 @@ describe('batch OAuth orchestration', () => {
     expect(batchOAuthAPI.launchAdsPower).toHaveBeenCalledOnce()
     expect(popup.close).toHaveBeenCalledOnce()
     expect(popup.location.href).toBe('about:blank')
+  })
+
+  it('stops a local AdsPower task and exposes the installer state when the helper is unavailable', async () => {
+    adsTasks()
+    const popup = { opener: window, closed: false, location: { href: 'about:blank' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    vi.mocked(isAdsPowerHelperAvailable).mockResolvedValue(false)
+    vi.mocked(batchOAuthAPI.launchAdsPower).mockResolvedValue({ helper_url: 'http://127.0.0.1:34987/launch?ticket=missing', expires_at: '' })
+    const c = await setup()
+    c.start(credentials.slice(0, 1), { ...settings, browser_mode: 'adspower' })
+    await flushPromises()
+    await c.refresh()
+    expect(batchOAuthAPI.cancel).toHaveBeenCalledOnce()
+    expect(c.adsPowerHelperMissing.value).toBe(true)
+    expect(c.rows.value[0].error).toContain('未检测到可用的 XIASS AdsPower 助手')
+    expect(popup.close).toHaveBeenCalled()
   })
 
   it('reuses an issued launch response after a blocked popup instead of consuming another launch ticket', async () => {

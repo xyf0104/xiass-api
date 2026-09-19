@@ -284,6 +284,7 @@ type UsageLogFilters struct {
 	ModelFilterSource     string
 	RequestType           *int16
 	Stream                *bool
+	NativeCompactionV2    *bool
 	BillingType           *int8
 	BillingMode           string
 	UpstreamModelMismatch *bool

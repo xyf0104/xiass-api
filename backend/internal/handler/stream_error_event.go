@@ -20,6 +20,8 @@ type responsesFailedError struct {
 
 // responsesFailedBody 对齐 apicompat.makeResponsesCompletedEvent 输出的 response 子对象字段集。
 // Output 用空 slice（不是 nil）确保 marshal 为 `[]` 而非 `null`。
+// CreatedAt 不带 omitempty：严格客户端把它当必填字段，缺失会以
+// `missing field 'created_at'` 反序列化失败——那正是本文件要避免的"客户端读不懂终止事件"。
 type responsesFailedBody struct {
 	ID        string               `json:"id"`
 	Object    string               `json:"object"`
@@ -30,8 +32,9 @@ type responsesFailedBody struct {
 	Error     responsesFailedError `json:"error"`
 }
 
-// responsesFailedEvent 是写入 SSE data 行的顶层结构。
-// 故意不带 sequence_number：spec 标记可选，且本函数被调用时无法可靠拿到 last seq。
+// responsesFailedEvent 是写入 SSE data 行的顶层结构。合成终止事件不携带
+// sequence_number，避免与随后可能到达的真实上游帧产生序号冲突；真实上游
+// Responses 事件仍由 apicompat wire 按 Codex 客户端约定保留序号。
 type responsesFailedEvent struct {
 	Type     string              `json:"type"`
 	Response responsesFailedBody `json:"response"`
@@ -47,8 +50,6 @@ type responsesFailedEvent struct {
 // 而抛出 "stream closed before response.completed"。
 //
 // 字段集对齐 apicompat.makeResponsesCompletedEvent：id/object/model/status/output/error。
-// 故意不写 sequence_number：本函数被调用时无法可靠拿到当前流的 last sequence，
-// 而 OpenAI spec 将 sequence_number 设为可选；省略避免破坏单调性约束。
 //
 // 返回 true 表示已尝试 SSE 写出（不论 Write 是否成功，caller 都应直接 return）。
 // 返回 false 表示 writer 不支持 Flusher，无法以 SSE 形式回报错误；

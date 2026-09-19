@@ -567,6 +567,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 	updates[SettingKeyChannelMonitorHideThroughput] = strconv.FormatBool(settings.ChannelMonitorHideThroughput)
 	updates[SettingKeyChannelMonitorShowQuota] = strconv.FormatBool(settings.ChannelMonitorShowQuota)
+	updates[SettingKeyChannelMonitorHideUserRanking] = strconv.FormatBool(settings.ChannelMonitorHideUserRanking)
 
 	// Grok default mapping policy
 	if value := strings.TrimSpace(settings.GrokDefaultTextModel); value != "" {
@@ -586,10 +587,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// XIASS model prices are deliberately independent from available channels.
 	updates[SettingKeyModelPricingEnabled] = strconv.FormatBool(settings.ModelPricingEnabled)
 
+	// Subscription feature switch
+	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
+
 	// Model plaza feature switches + description
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
 	updates[SettingKeyModelPlazaRequireAuth] = strconv.FormatBool(settings.ModelPlazaRequireAuth)
 	updates[SettingKeyModelPlazaDescription] = settings.ModelPlazaDescription
+	updates[SettingKeyPluginManagementEnabled] = strconv.FormatBool(settings.PluginManagementEnabled)
 
 	// Affiliate (邀请返利) feature switch
 	updates[SettingKeyAffiliateEnabled] = strconv.FormatBool(settings.AffiliateEnabled)
@@ -661,6 +666,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
+	updates[SettingKeyOpenAICodexTicketEnabled] = strconv.FormatBool(settings.OpenAICodexTicketEnabled)
+	if err := ValidateOpenAICodexTicketHarvestProxyURL(settings.OpenAICodexTicketHarvestProxyURL); err != nil {
+		return nil, infraerrors.BadRequest("INVALID_CODEX_HARVEST_PROXY", err.Error())
+	}
+	updates[SettingKeyOpenAICodexTicketHarvestProxyURL] = strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -941,6 +951,8 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 版本号缓存只做失效，不在此重算：生效值还取决于自动同步写入的 synced 键，
 	// 这里没有它的最新值，重算会把同步结果覆盖成陈旧值。
 	s.InvalidateOpenAICodexClientVersionCache()
+	s.InvalidateOpenAICodexTicketEnabledCache()
+	s.InvalidateOpenAICodexTicketHarvestProxyCache()
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,

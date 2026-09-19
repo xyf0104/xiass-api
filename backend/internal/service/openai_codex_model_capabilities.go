@@ -10,6 +10,7 @@ import (
 
 var codexToolCapabilityFields = []string{
 	"supports_search_tool", "apply_patch_tool_type", "comp_hash", "tool_mode", "use_responses_lite",
+	"multi_agent_reasoning_effort", "multi_agent_version",
 }
 
 // ApplyCodexBridgedRouteSearchCapability completes only missing fields in custom

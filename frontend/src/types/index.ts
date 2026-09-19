@@ -189,6 +189,7 @@ export interface CustomMenuItem {
   icon_svg: string
   url: string
   page_slug?: string
+  hide_open_button?: boolean
   visibility: 'user' | 'admin'
   sort_order: number
 }
@@ -261,10 +262,18 @@ export interface PublicSettings {
   account_quota_notify_enabled: boolean
   balance_low_notify_threshold: number
   channel_monitor_enabled: boolean
+  channel_monitor_mode?: 'v1' | 'v2'
   channel_monitor_default_interval_seconds: number
+  channel_monitor_hide_throughput?: boolean
   channel_monitor_show_quota?: boolean
+  channel_monitor_hide_user_ranking?: boolean
   model_pricing_enabled: boolean
+  plugin_management_enabled: boolean
   available_channels_enabled: boolean
+  subscription_enabled: boolean
+  payment_balance_disabled: boolean
+  model_plaza_enabled: boolean
+  model_plaza_require_auth: boolean
   service_quota_enabled: boolean
   affiliate_enabled: boolean
   allow_user_view_error_requests?: boolean
@@ -545,6 +554,8 @@ export type GroupPlatform =
   | 'kimi'
   | 'zhipu'
   | 'deepseek'
+  | 'minimax'
+  | 'opencode_go'
   | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
@@ -651,15 +662,22 @@ export interface AdminGroup extends Group {
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
 
   // 分组排序
   sort_order: number
 }
 
-export interface ModelsListConfig {
+export interface ModelAllowlist {
   enabled: boolean
   models: string[]
+}
+
+export interface CodexModelsManifestConfig {
+  enabled: boolean
+  account_ids: number[]
+  fallback_to_scheduler: boolean
 }
 
 export type CompositeRouteMatchType = 'exact' | 'prefix'
@@ -824,7 +842,8 @@ export interface CreateGroupRequest {
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
   default_mapped_model?: string
@@ -888,7 +907,8 @@ export interface UpdateGroupRequest {
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
-  models_list_config?: ModelsListConfig
+  model_allowlist?: ModelAllowlist
+  codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
   default_mapped_model?: string
@@ -916,6 +936,8 @@ export type AccountPlatform =
   | 'kimi'
   | 'zhipu'
   | 'deepseek'
+  | 'minimax'
+  | 'opencode_go'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'

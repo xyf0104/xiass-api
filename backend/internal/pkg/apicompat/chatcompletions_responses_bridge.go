@@ -285,7 +285,48 @@ func responsesInputToChatMessagesWithOptions(instructions string, inputRaw json.
 	if err != nil {
 		return nil, err
 	}
-	return normalizeChatMessagesWithToolOutputMedia(built, mediaByCallID), nil
+	normalized := normalizeChatMessagesWithToolOutputMedia(built, mediaByCallID)
+	return normalizeResponsesDerivedChatMessageRoles(normalized), nil
+}
+
+// normalizeResponsesDerivedChatMessageRoles keeps system content at the start
+// for strict Chat Completions providers. Leading instructions are merged and
+// later developer/system notices retain their position as user messages.
+func normalizeResponsesDerivedChatMessageRoles(messages []ChatMessage) []ChatMessage {
+	isInstructionRole := func(role string) bool {
+		return role == "system" || role == "developer"
+	}
+
+	leading := 0
+	for leading < len(messages) && isInstructionRole(messages[leading].Role) {
+		leading++
+	}
+
+	out := make([]ChatMessage, 0, len(messages))
+	switch leading {
+	case 0:
+	case 1:
+		out = append(out, messages[0])
+	default:
+		merged := make([]string, 0, leading)
+		for _, message := range messages[:leading] {
+			if text := strings.TrimSpace(chatMessageContentText(message.Content)); text != "" {
+				merged = append(merged, text)
+			}
+		}
+		if len(merged) > 0 {
+			content, _ := json.Marshal(strings.Join(merged, "\n\n"))
+			out = append(out, ChatMessage{Role: "system", Content: content})
+		}
+	}
+
+	for _, message := range messages[leading:] {
+		if isInstructionRole(message.Role) {
+			message.Role = "user"
+		}
+		out = append(out, message)
+	}
+	return out
 }
 
 // buildChatMessagesFromItems walks the Responses input items and appends the
@@ -469,6 +510,17 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			})
 			pendingReasoning = ""
 			continue
+		case "agent_message":
+			text := agentMessageText(item["content"])
+			if text == "" {
+				pendingReasoning = ""
+				continue
+			}
+			content, _ := json.Marshal(text)
+			messages = append(messages, ChatMessage{Role: "user", Content: content})
+			pendingReasoning = ""
+			lastTurnReasoning = ""
+			continue
 		case "input_text", "text":
 			content, _ := json.Marshal(rawString(item["text"]))
 			messages = append(messages, ChatMessage{Role: "user", Content: content})
@@ -526,6 +578,31 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 	}
 
 	return messages, mediaByCallID, nil
+}
+
+func agentMessageText(raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return ""
+	}
+	var builder strings.Builder
+	for _, part := range parts {
+		switch rawString(part["type"]) {
+		case "input_text", "text":
+			_, _ = builder.WriteString(rawString(part["text"]))
+		case "encrypted_content":
+			_, _ = builder.WriteString(rawString(part["encrypted_content"]))
+		}
+	}
+	return builder.String()
 }
 
 // extractToolOutputMedia rewrites only recognized image nodes. Media-free

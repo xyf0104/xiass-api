@@ -8,7 +8,7 @@ import GroupsView from "../GroupsView.vue";
 const {
   listGroups,
   getAllGroups,
-  getModelsListCandidates,
+  getModelAllowlistCandidates,
   getUsageSummary,
   getCapacitySummary,
   getLiveCapability,
@@ -21,7 +21,7 @@ const {
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   getAllGroups: vi.fn(),
-  getModelsListCandidates: vi.fn(),
+  getModelAllowlistCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
@@ -38,7 +38,7 @@ vi.mock("@/api/admin", () => ({
     groups: {
       list: listGroups,
       getAll: getAllGroups,
-      getModelsListCandidates,
+      getModelAllowlistCandidates,
       getUsageSummary,
       getCapacitySummary,
       getLiveCapability,
@@ -130,7 +130,7 @@ describe("GroupsView OpenAI model routing preferences", () => {
     vi.clearAllMocks();
     listGroups.mockResolvedValue({ items: [group], total: 1, page: 1, page_size: 20, pages: 1 });
     getAllGroups.mockResolvedValue([]);
-    getModelsListCandidates.mockResolvedValue([]);
+    getModelAllowlistCandidates.mockResolvedValue([]);
     getUsageSummary.mockResolvedValue([]);
     getCapacitySummary.mockResolvedValue([]);
     getLiveCapability.mockResolvedValue({ supported: false });

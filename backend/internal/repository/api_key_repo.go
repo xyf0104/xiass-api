@@ -155,6 +155,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				user.FieldBalance,
 				user.FieldConcurrency,
 				user.FieldBalanceNotifyEnabled,
+				user.FieldRestrictPublicGroups,
 				user.FieldBalanceNotifyThresholdType,
 				user.FieldBalanceNotifyThreshold,
 				user.FieldBalanceNotifyExtraEmails,
@@ -206,11 +207,15 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldSupportedModelScopes,
 				group.FieldAllowMessagesDispatch,
 				group.FieldAllowLive,
+				group.FieldForceOpenaiFast,
+				group.FieldFreeOpenaiFast,
 				group.FieldDefaultMappedModel,
 				group.FieldMessagesDispatchModelConfig,
-				group.FieldModelsListConfig,
+				group.FieldModelAllowlist,
+				group.FieldCodexModelsManifestConfig,
 				group.FieldRpmLimit,
 				group.FieldMaxReasoningEffort,
+				group.FieldMaxReasoningEffortOverLimit,
 				group.FieldReasoningEffortMappings,
 				group.FieldPeakRateEnabled,
 				group.FieldPeakStart,
@@ -928,11 +933,11 @@ func userEntityToService(u *dbent.User) *service.User {
 		TotpEnabled:                u.TotpEnabled,
 		TotpEnabledAt:              u.TotpEnabledAt,
 		BalanceNotifyEnabled:       u.BalanceNotifyEnabled,
+		RestrictPublicGroups:       u.RestrictPublicGroups,
 		BalanceNotifyThresholdType: u.BalanceNotifyThresholdType,
 		BalanceNotifyThreshold:     u.BalanceNotifyThreshold,
 		TotalRecharged:             u.TotalRecharged,
 		RPMLimit:                   u.RpmLimit,
-		RestrictPublicGroups:       u.RestrictPublicGroups,
 		CreatedAt:                  u.CreatedAt,
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
@@ -958,7 +963,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 			modelPricing = []service.ChannelModelPricing{}
 		}
 	}
-	return &service.Group{
+	out := &service.Group{
 		ID:                              g.ID,
 		Name:                            g.Name,
 		Description:                     derefString(g.Description),
@@ -986,7 +991,12 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		VideoPrice480P:                  g.VideoPrice480p,
 		VideoPrice720P:                  g.VideoPrice720p,
 		VideoPrice1080P:                 g.VideoPrice1080p,
+		VideoModelPrices:                g.VideoModelPrices,
 		WebSearchPricePerCall:           g.WebSearchPricePerCall,
+		SearchPricePer1k:                g.SearchPricePer1k,
+		AudioRealtimePricePerMin:        g.AudioRealtimePricePerMin,
+		AudioTTSPricePerMillionChars:    g.AudioTtsPricePerMillionChars,
+		AudioSTTPricePerHour:            g.AudioSttPricePerHour,
 		LongContextPricingEnabled:       g.LongContextPricingEnabled,
 		ModelPricing:                    modelPricing,
 		DefaultValidityDays:             g.DefaultValidityDays,
@@ -1001,14 +1011,18 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		SortOrder:                       g.SortOrder,
 		AllowMessagesDispatch:           g.AllowMessagesDispatch,
 		AllowLive:                       g.AllowLive,
+		ForceOpenAIFast:                 g.ForceOpenaiFast,
+		FreeOpenAIFast:                  g.FreeOpenaiFast,
 		RequireOAuthOnly:                g.RequireOauthOnly,
 		RequirePrivacySet:               g.RequirePrivacySet,
 		DefaultMappedModel:              g.DefaultMappedModel,
 		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
-		ModelsListConfig:                g.ModelsListConfig,
+		ModelAllowlist:                  service.GroupModelAllowlistFromDomain(g.ModelAllowlist),
+		CodexModelsManifestConfig:       g.CodexModelsManifestConfig,
 		RPMLimit:                        g.RpmLimit,
 		CostRatio:                       g.CostRatio,
 		MaxReasoningEffort:              g.MaxReasoningEffort,
+		MaxReasoningEffortOverLimit:     g.MaxReasoningEffortOverLimit,
 		ReasoningEffortMappings:         g.ReasoningEffortMappings,
 		PeakRateEnabled:                 g.PeakRateEnabled,
 		PeakStart:                       g.PeakStart,
@@ -1020,6 +1034,8 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
+	out.SyncModelListCompatibility()
+	return out
 }
 
 func derefString(s *string) string {

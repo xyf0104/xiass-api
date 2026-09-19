@@ -110,7 +110,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, buildErr
 		}
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -646,6 +646,11 @@ func grokSupportsReasoningEffort(model string) bool {
 	default:
 		return false
 	}
+}
+
+func GrokSupportsXHighReasoningEffort(model string) bool {
+	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
+	return model == "grok-4.6" || model == "grok-4.6-latest"
 }
 
 var grokResponsesUnsupportedRecursiveFields = map[string]struct{}{
@@ -1216,7 +1221,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 		proxyURL = account.requestProxyURL()
 	}
 
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return "", OpenAIUsage{}, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}

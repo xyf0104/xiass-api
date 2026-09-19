@@ -4,7 +4,7 @@ package ent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -484,6 +484,12 @@ func (_c *GroupCreate) SetNillableVideoPrice1080p(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetVideoModelPrices sets the "video_model_prices" field.
+func (_c *GroupCreate) SetVideoModelPrices(v map[string]map[string]float64) *GroupCreate {
+	_c.mutation.SetVideoModelPrices(v)
+	return _c
+}
+
 // SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
 func (_c *GroupCreate) SetWebSearchPricePerCall(v float64) *GroupCreate {
 	_c.mutation.SetWebSearchPricePerCall(v)
@@ -494,6 +500,62 @@ func (_c *GroupCreate) SetWebSearchPricePerCall(v float64) *GroupCreate {
 func (_c *GroupCreate) SetNillableWebSearchPricePerCall(v *float64) *GroupCreate {
 	if v != nil {
 		_c.SetWebSearchPricePerCall(*v)
+	}
+	return _c
+}
+
+// SetSearchPricePer1k sets the "search_price_per_1k" field.
+func (_c *GroupCreate) SetSearchPricePer1k(v float64) *GroupCreate {
+	_c.mutation.SetSearchPricePer1k(v)
+	return _c
+}
+
+// SetNillableSearchPricePer1k sets the "search_price_per_1k" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSearchPricePer1k(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetSearchPricePer1k(*v)
+	}
+	return _c
+}
+
+// SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
+func (_c *GroupCreate) SetAudioRealtimePricePerMin(v float64) *GroupCreate {
+	_c.mutation.SetAudioRealtimePricePerMin(v)
+	return _c
+}
+
+// SetNillableAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAudioRealtimePricePerMin(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetAudioRealtimePricePerMin(*v)
+	}
+	return _c
+}
+
+// SetAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field.
+func (_c *GroupCreate) SetAudioTtsPricePerMillionChars(v float64) *GroupCreate {
+	_c.mutation.SetAudioTtsPricePerMillionChars(v)
+	return _c
+}
+
+// SetNillableAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAudioTtsPricePerMillionChars(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetAudioTtsPricePerMillionChars(*v)
+	}
+	return _c
+}
+
+// SetAudioSttPricePerHour sets the "audio_stt_price_per_hour" field.
+func (_c *GroupCreate) SetAudioSttPricePerHour(v float64) *GroupCreate {
+	_c.mutation.SetAudioSttPricePerHour(v)
+	return _c
+}
+
+// SetNillableAudioSttPricePerHour sets the "audio_stt_price_per_hour" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAudioSttPricePerHour(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetAudioSttPricePerHour(*v)
 	}
 	return _c
 }
@@ -513,7 +575,7 @@ func (_c *GroupCreate) SetNillableLongContextPricingEnabled(v *bool) *GroupCreat
 }
 
 // SetModelPricing sets the "model_pricing" field.
-func (_c *GroupCreate) SetModelPricing(v json.RawMessage) *GroupCreate {
+func (_c *GroupCreate) SetModelPricing(v jsontext.Value) *GroupCreate {
 	_c.mutation.SetModelPricing(v)
 	return _c
 }
@@ -648,6 +710,34 @@ func (_c *GroupCreate) SetNillableAllowLive(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetForceOpenaiFast sets the "force_openai_fast" field.
+func (_c *GroupCreate) SetForceOpenaiFast(v bool) *GroupCreate {
+	_c.mutation.SetForceOpenaiFast(v)
+	return _c
+}
+
+// SetNillableForceOpenaiFast sets the "force_openai_fast" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableForceOpenaiFast(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetForceOpenaiFast(*v)
+	}
+	return _c
+}
+
+// SetFreeOpenaiFast sets the "free_openai_fast" field.
+func (_c *GroupCreate) SetFreeOpenaiFast(v bool) *GroupCreate {
+	_c.mutation.SetFreeOpenaiFast(v)
+	return _c
+}
+
+// SetNillableFreeOpenaiFast sets the "free_openai_fast" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableFreeOpenaiFast(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetFreeOpenaiFast(*v)
+	}
+	return _c
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_c *GroupCreate) SetRequireOauthOnly(v bool) *GroupCreate {
 	_c.mutation.SetRequireOauthOnly(v)
@@ -704,16 +794,30 @@ func (_c *GroupCreate) SetNillableMessagesDispatchModelConfig(v *domain.OpenAIMe
 	return _c
 }
 
-// SetModelsListConfig sets the "models_list_config" field.
-func (_c *GroupCreate) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupCreate {
-	_c.mutation.SetModelsListConfig(v)
+// SetModelAllowlist sets the "model_allowlist" field.
+func (_c *GroupCreate) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupCreate {
+	_c.mutation.SetModelAllowlist(v)
 	return _c
 }
 
-// SetNillableModelsListConfig sets the "models_list_config" field if the given value is not nil.
-func (_c *GroupCreate) SetNillableModelsListConfig(v *domain.GroupModelsListConfig) *GroupCreate {
+// SetNillableModelAllowlist sets the "model_allowlist" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableModelAllowlist(v *domain.GroupModelAllowlist) *GroupCreate {
 	if v != nil {
-		_c.SetModelsListConfig(*v)
+		_c.SetModelAllowlist(*v)
+	}
+	return _c
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (_c *GroupCreate) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupCreate {
+	_c.mutation.SetCodexModelsManifestConfig(v)
+	return _c
+}
+
+// SetNillableCodexModelsManifestConfig sets the "codex_models_manifest_config" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexModelsManifestConfig(v *domain.GroupCodexModelsManifestConfig) *GroupCreate {
+	if v != nil {
+		_c.SetCodexModelsManifestConfig(*v)
 	}
 	return _c
 }
@@ -756,6 +860,20 @@ func (_c *GroupCreate) SetMaxReasoningEffort(v string) *GroupCreate {
 func (_c *GroupCreate) SetNillableMaxReasoningEffort(v *string) *GroupCreate {
 	if v != nil {
 		_c.SetMaxReasoningEffort(*v)
+	}
+	return _c
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (_c *GroupCreate) SetMaxReasoningEffortOverLimit(v string) *GroupCreate {
+	_c.mutation.SetMaxReasoningEffortOverLimit(v)
+	return _c
+}
+
+// SetNillableMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableMaxReasoningEffortOverLimit(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetMaxReasoningEffortOverLimit(*v)
 	}
 	return _c
 }
@@ -1057,6 +1175,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
 	}
+	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
+		v := group.DefaultForceOpenaiFast
+		_c.mutation.SetForceOpenaiFast(v)
+	}
+	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
+		v := group.DefaultFreeOpenaiFast
+		_c.mutation.SetFreeOpenaiFast(v)
+	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		v := group.DefaultRequireOauthOnly
 		_c.mutation.SetRequireOauthOnly(v)
@@ -1073,9 +1199,13 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultMessagesDispatchModelConfig
 		_c.mutation.SetMessagesDispatchModelConfig(v)
 	}
-	if _, ok := _c.mutation.ModelsListConfig(); !ok {
-		v := group.DefaultModelsListConfig
-		_c.mutation.SetModelsListConfig(v)
+	if _, ok := _c.mutation.ModelAllowlist(); !ok {
+		v := group.DefaultModelAllowlist
+		_c.mutation.SetModelAllowlist(v)
+	}
+	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
+		v := group.DefaultCodexModelsManifestConfig
+		_c.mutation.SetCodexModelsManifestConfig(v)
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		v := group.DefaultRpmLimit
@@ -1084,6 +1214,10 @@ func (_c *GroupCreate) defaults() error {
 	if _, ok := _c.mutation.MaxReasoningEffort(); !ok {
 		v := group.DefaultMaxReasoningEffort
 		_c.mutation.SetMaxReasoningEffort(v)
+	}
+	if _, ok := _c.mutation.MaxReasoningEffortOverLimit(); !ok {
+		v := group.DefaultMaxReasoningEffortOverLimit
+		_c.mutation.SetMaxReasoningEffortOverLimit(v)
 	}
 	if _, ok := _c.mutation.ReasoningEffortMappings(); !ok {
 		v := group.DefaultReasoningEffortMappings
@@ -1204,6 +1338,26 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.VideoRateMultiplier(); !ok {
 		return &ValidationError{Name: "video_rate_multiplier", err: errors.New(`ent: missing required field "Group.video_rate_multiplier"`)}
 	}
+	if v, ok := _c.mutation.SearchPricePer1k(); ok {
+		if err := group.SearchPricePer1kValidator(v); err != nil {
+			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.AudioRealtimePricePerMin(); ok {
+		if err := group.AudioRealtimePricePerMinValidator(v); err != nil {
+			return &ValidationError{Name: "audio_realtime_price_per_min", err: fmt.Errorf(`ent: validator failed for field "Group.audio_realtime_price_per_min": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.AudioTtsPricePerMillionChars(); ok {
+		if err := group.AudioTtsPricePerMillionCharsValidator(v); err != nil {
+			return &ValidationError{Name: "audio_tts_price_per_million_chars", err: fmt.Errorf(`ent: validator failed for field "Group.audio_tts_price_per_million_chars": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.AudioSttPricePerHour(); ok {
+		if err := group.AudioSttPricePerHourValidator(v); err != nil {
+			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.LongContextPricingEnabled(); !ok {
 		return &ValidationError{Name: "long_context_pricing_enabled", err: errors.New(`ent: missing required field "Group.long_context_pricing_enabled"`)}
 	}
@@ -1231,6 +1385,12 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
 	}
+	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
+		return &ValidationError{Name: "force_openai_fast", err: errors.New(`ent: missing required field "Group.force_openai_fast"`)}
+	}
+	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
+		return &ValidationError{Name: "free_openai_fast", err: errors.New(`ent: missing required field "Group.free_openai_fast"`)}
+	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		return &ValidationError{Name: "require_oauth_only", err: errors.New(`ent: missing required field "Group.require_oauth_only"`)}
 	}
@@ -1248,8 +1408,11 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.MessagesDispatchModelConfig(); !ok {
 		return &ValidationError{Name: "messages_dispatch_model_config", err: errors.New(`ent: missing required field "Group.messages_dispatch_model_config"`)}
 	}
-	if _, ok := _c.mutation.ModelsListConfig(); !ok {
-		return &ValidationError{Name: "models_list_config", err: errors.New(`ent: missing required field "Group.models_list_config"`)}
+	if _, ok := _c.mutation.ModelAllowlist(); !ok {
+		return &ValidationError{Name: "model_allowlist", err: errors.New(`ent: missing required field "Group.model_allowlist"`)}
+	}
+	if _, ok := _c.mutation.CodexModelsManifestConfig(); !ok {
+		return &ValidationError{Name: "codex_models_manifest_config", err: errors.New(`ent: missing required field "Group.codex_models_manifest_config"`)}
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "Group.rpm_limit"`)}
@@ -1260,6 +1423,14 @@ func (_c *GroupCreate) check() error {
 	if v, ok := _c.mutation.MaxReasoningEffort(); ok {
 		if err := group.MaxReasoningEffortValidator(v); err != nil {
 			return &ValidationError{Name: "max_reasoning_effort", err: fmt.Errorf(`ent: validator failed for field "Group.max_reasoning_effort": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.MaxReasoningEffortOverLimit(); !ok {
+		return &ValidationError{Name: "max_reasoning_effort_over_limit", err: errors.New(`ent: missing required field "Group.max_reasoning_effort_over_limit"`)}
+	}
+	if v, ok := _c.mutation.MaxReasoningEffortOverLimit(); ok {
+		if err := group.MaxReasoningEffortOverLimitValidator(v); err != nil {
+			return &ValidationError{Name: "max_reasoning_effort_over_limit", err: fmt.Errorf(`ent: validator failed for field "Group.max_reasoning_effort_over_limit": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.ReasoningEffortMappings(); !ok {
@@ -1433,9 +1604,29 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldVideoPrice1080p, field.TypeFloat64, value)
 		_node.VideoPrice1080p = &value
 	}
+	if value, ok := _c.mutation.VideoModelPrices(); ok {
+		_spec.SetField(group.FieldVideoModelPrices, field.TypeJSON, value)
+		_node.VideoModelPrices = value
+	}
 	if value, ok := _c.mutation.WebSearchPricePerCall(); ok {
 		_spec.SetField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
 		_node.WebSearchPricePerCall = &value
+	}
+	if value, ok := _c.mutation.SearchPricePer1k(); ok {
+		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
+		_node.SearchPricePer1k = &value
+	}
+	if value, ok := _c.mutation.AudioRealtimePricePerMin(); ok {
+		_spec.SetField(group.FieldAudioRealtimePricePerMin, field.TypeFloat64, value)
+		_node.AudioRealtimePricePerMin = &value
+	}
+	if value, ok := _c.mutation.AudioTtsPricePerMillionChars(); ok {
+		_spec.SetField(group.FieldAudioTtsPricePerMillionChars, field.TypeFloat64, value)
+		_node.AudioTtsPricePerMillionChars = &value
+	}
+	if value, ok := _c.mutation.AudioSttPricePerHour(); ok {
+		_spec.SetField(group.FieldAudioSttPricePerHour, field.TypeFloat64, value)
+		_node.AudioSttPricePerHour = &value
 	}
 	if value, ok := _c.mutation.LongContextPricingEnabled(); ok {
 		_spec.SetField(group.FieldLongContextPricingEnabled, field.TypeBool, value)
@@ -1489,6 +1680,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
 		_node.AllowLive = value
 	}
+	if value, ok := _c.mutation.ForceOpenaiFast(); ok {
+		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
+		_node.ForceOpenaiFast = value
+	}
+	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
+		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+		_node.FreeOpenaiFast = value
+	}
 	if value, ok := _c.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
 		_node.RequireOauthOnly = value
@@ -1505,9 +1704,13 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
 		_node.MessagesDispatchModelConfig = value
 	}
-	if value, ok := _c.mutation.ModelsListConfig(); ok {
-		_spec.SetField(group.FieldModelsListConfig, field.TypeJSON, value)
-		_node.ModelsListConfig = value
+	if value, ok := _c.mutation.ModelAllowlist(); ok {
+		_spec.SetField(group.FieldModelAllowlist, field.TypeJSON, value)
+		_node.ModelAllowlist = value
+	}
+	if value, ok := _c.mutation.CodexModelsManifestConfig(); ok {
+		_spec.SetField(group.FieldCodexModelsManifestConfig, field.TypeJSON, value)
+		_node.CodexModelsManifestConfig = value
 	}
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
@@ -1520,6 +1723,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.MaxReasoningEffort(); ok {
 		_spec.SetField(group.FieldMaxReasoningEffort, field.TypeString, value)
 		_node.MaxReasoningEffort = value
+	}
+	if value, ok := _c.mutation.MaxReasoningEffortOverLimit(); ok {
+		_spec.SetField(group.FieldMaxReasoningEffortOverLimit, field.TypeString, value)
+		_node.MaxReasoningEffortOverLimit = value
 	}
 	if value, ok := _c.mutation.ReasoningEffortMappings(); ok {
 		_spec.SetField(group.FieldReasoningEffortMappings, field.TypeJSON, value)
@@ -2227,6 +2434,24 @@ func (u *GroupUpsert) ClearVideoPrice1080p() *GroupUpsert {
 	return u
 }
 
+// SetVideoModelPrices sets the "video_model_prices" field.
+func (u *GroupUpsert) SetVideoModelPrices(v map[string]map[string]float64) *GroupUpsert {
+	u.Set(group.FieldVideoModelPrices, v)
+	return u
+}
+
+// UpdateVideoModelPrices sets the "video_model_prices" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateVideoModelPrices() *GroupUpsert {
+	u.SetExcluded(group.FieldVideoModelPrices)
+	return u
+}
+
+// ClearVideoModelPrices clears the value of the "video_model_prices" field.
+func (u *GroupUpsert) ClearVideoModelPrices() *GroupUpsert {
+	u.SetNull(group.FieldVideoModelPrices)
+	return u
+}
+
 // SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
 func (u *GroupUpsert) SetWebSearchPricePerCall(v float64) *GroupUpsert {
 	u.Set(group.FieldWebSearchPricePerCall, v)
@@ -2251,6 +2476,102 @@ func (u *GroupUpsert) ClearWebSearchPricePerCall() *GroupUpsert {
 	return u
 }
 
+// SetSearchPricePer1k sets the "search_price_per_1k" field.
+func (u *GroupUpsert) SetSearchPricePer1k(v float64) *GroupUpsert {
+	u.Set(group.FieldSearchPricePer1k, v)
+	return u
+}
+
+// UpdateSearchPricePer1k sets the "search_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSearchPricePer1k() *GroupUpsert {
+	u.SetExcluded(group.FieldSearchPricePer1k)
+	return u
+}
+
+// AddSearchPricePer1k adds v to the "search_price_per_1k" field.
+func (u *GroupUpsert) AddSearchPricePer1k(v float64) *GroupUpsert {
+	u.Add(group.FieldSearchPricePer1k, v)
+	return u
+}
+
+// ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
+func (u *GroupUpsert) ClearSearchPricePer1k() *GroupUpsert {
+	u.SetNull(group.FieldSearchPricePer1k)
+	return u
+}
+
+// SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
+func (u *GroupUpsert) SetAudioRealtimePricePerMin(v float64) *GroupUpsert {
+	u.Set(group.FieldAudioRealtimePricePerMin, v)
+	return u
+}
+
+// UpdateAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAudioRealtimePricePerMin() *GroupUpsert {
+	u.SetExcluded(group.FieldAudioRealtimePricePerMin)
+	return u
+}
+
+// AddAudioRealtimePricePerMin adds v to the "audio_realtime_price_per_min" field.
+func (u *GroupUpsert) AddAudioRealtimePricePerMin(v float64) *GroupUpsert {
+	u.Add(group.FieldAudioRealtimePricePerMin, v)
+	return u
+}
+
+// ClearAudioRealtimePricePerMin clears the value of the "audio_realtime_price_per_min" field.
+func (u *GroupUpsert) ClearAudioRealtimePricePerMin() *GroupUpsert {
+	u.SetNull(group.FieldAudioRealtimePricePerMin)
+	return u
+}
+
+// SetAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsert) SetAudioTtsPricePerMillionChars(v float64) *GroupUpsert {
+	u.Set(group.FieldAudioTtsPricePerMillionChars, v)
+	return u
+}
+
+// UpdateAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAudioTtsPricePerMillionChars() *GroupUpsert {
+	u.SetExcluded(group.FieldAudioTtsPricePerMillionChars)
+	return u
+}
+
+// AddAudioTtsPricePerMillionChars adds v to the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsert) AddAudioTtsPricePerMillionChars(v float64) *GroupUpsert {
+	u.Add(group.FieldAudioTtsPricePerMillionChars, v)
+	return u
+}
+
+// ClearAudioTtsPricePerMillionChars clears the value of the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsert) ClearAudioTtsPricePerMillionChars() *GroupUpsert {
+	u.SetNull(group.FieldAudioTtsPricePerMillionChars)
+	return u
+}
+
+// SetAudioSttPricePerHour sets the "audio_stt_price_per_hour" field.
+func (u *GroupUpsert) SetAudioSttPricePerHour(v float64) *GroupUpsert {
+	u.Set(group.FieldAudioSttPricePerHour, v)
+	return u
+}
+
+// UpdateAudioSttPricePerHour sets the "audio_stt_price_per_hour" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAudioSttPricePerHour() *GroupUpsert {
+	u.SetExcluded(group.FieldAudioSttPricePerHour)
+	return u
+}
+
+// AddAudioSttPricePerHour adds v to the "audio_stt_price_per_hour" field.
+func (u *GroupUpsert) AddAudioSttPricePerHour(v float64) *GroupUpsert {
+	u.Add(group.FieldAudioSttPricePerHour, v)
+	return u
+}
+
+// ClearAudioSttPricePerHour clears the value of the "audio_stt_price_per_hour" field.
+func (u *GroupUpsert) ClearAudioSttPricePerHour() *GroupUpsert {
+	u.SetNull(group.FieldAudioSttPricePerHour)
+	return u
+}
+
 // SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
 func (u *GroupUpsert) SetLongContextPricingEnabled(v bool) *GroupUpsert {
 	u.Set(group.FieldLongContextPricingEnabled, v)
@@ -2264,7 +2585,7 @@ func (u *GroupUpsert) UpdateLongContextPricingEnabled() *GroupUpsert {
 }
 
 // SetModelPricing sets the "model_pricing" field.
-func (u *GroupUpsert) SetModelPricing(v json.RawMessage) *GroupUpsert {
+func (u *GroupUpsert) SetModelPricing(v jsontext.Value) *GroupUpsert {
 	u.Set(group.FieldModelPricing, v)
 	return u
 }
@@ -2449,6 +2770,30 @@ func (u *GroupUpsert) UpdateAllowLive() *GroupUpsert {
 	return u
 }
 
+// SetForceOpenaiFast sets the "force_openai_fast" field.
+func (u *GroupUpsert) SetForceOpenaiFast(v bool) *GroupUpsert {
+	u.Set(group.FieldForceOpenaiFast, v)
+	return u
+}
+
+// UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateForceOpenaiFast() *GroupUpsert {
+	u.SetExcluded(group.FieldForceOpenaiFast)
+	return u
+}
+
+// SetFreeOpenaiFast sets the "free_openai_fast" field.
+func (u *GroupUpsert) SetFreeOpenaiFast(v bool) *GroupUpsert {
+	u.Set(group.FieldFreeOpenaiFast, v)
+	return u
+}
+
+// UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateFreeOpenaiFast() *GroupUpsert {
+	u.SetExcluded(group.FieldFreeOpenaiFast)
+	return u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (u *GroupUpsert) SetRequireOauthOnly(v bool) *GroupUpsert {
 	u.Set(group.FieldRequireOauthOnly, v)
@@ -2497,15 +2842,27 @@ func (u *GroupUpsert) UpdateMessagesDispatchModelConfig() *GroupUpsert {
 	return u
 }
 
-// SetModelsListConfig sets the "models_list_config" field.
-func (u *GroupUpsert) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsert {
-	u.Set(group.FieldModelsListConfig, v)
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsert) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsert {
+	u.Set(group.FieldModelAllowlist, v)
 	return u
 }
 
-// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
-func (u *GroupUpsert) UpdateModelsListConfig() *GroupUpsert {
-	u.SetExcluded(group.FieldModelsListConfig)
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelAllowlist() *GroupUpsert {
+	u.SetExcluded(group.FieldModelAllowlist)
+	return u
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsert) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsert {
+	u.Set(group.FieldCodexModelsManifestConfig, v)
+	return u
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexModelsManifestConfig() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexModelsManifestConfig)
 	return u
 }
 
@@ -2560,6 +2917,18 @@ func (u *GroupUpsert) SetMaxReasoningEffort(v string) *GroupUpsert {
 // UpdateMaxReasoningEffort sets the "max_reasoning_effort" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateMaxReasoningEffort() *GroupUpsert {
 	u.SetExcluded(group.FieldMaxReasoningEffort)
+	return u
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsert) SetMaxReasoningEffortOverLimit(v string) *GroupUpsert {
+	u.Set(group.FieldMaxReasoningEffortOverLimit, v)
+	return u
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateMaxReasoningEffortOverLimit() *GroupUpsert {
+	u.SetExcluded(group.FieldMaxReasoningEffortOverLimit)
 	return u
 }
 
@@ -3294,6 +3663,27 @@ func (u *GroupUpsertOne) ClearVideoPrice1080p() *GroupUpsertOne {
 	})
 }
 
+// SetVideoModelPrices sets the "video_model_prices" field.
+func (u *GroupUpsertOne) SetVideoModelPrices(v map[string]map[string]float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetVideoModelPrices(v)
+	})
+}
+
+// UpdateVideoModelPrices sets the "video_model_prices" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateVideoModelPrices() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateVideoModelPrices()
+	})
+}
+
+// ClearVideoModelPrices clears the value of the "video_model_prices" field.
+func (u *GroupUpsertOne) ClearVideoModelPrices() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearVideoModelPrices()
+	})
+}
+
 // SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
 func (u *GroupUpsertOne) SetWebSearchPricePerCall(v float64) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3322,6 +3712,118 @@ func (u *GroupUpsertOne) ClearWebSearchPricePerCall() *GroupUpsertOne {
 	})
 }
 
+// SetSearchPricePer1k sets the "search_price_per_1k" field.
+func (u *GroupUpsertOne) SetSearchPricePer1k(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchPricePer1k(v)
+	})
+}
+
+// AddSearchPricePer1k adds v to the "search_price_per_1k" field.
+func (u *GroupUpsertOne) AddSearchPricePer1k(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddSearchPricePer1k(v)
+	})
+}
+
+// UpdateSearchPricePer1k sets the "search_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSearchPricePer1k() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchPricePer1k()
+	})
+}
+
+// ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
+func (u *GroupUpsertOne) ClearSearchPricePer1k() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertOne) SetAudioRealtimePricePerMin(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioRealtimePricePerMin(v)
+	})
+}
+
+// AddAudioRealtimePricePerMin adds v to the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertOne) AddAudioRealtimePricePerMin(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioRealtimePricePerMin(v)
+	})
+}
+
+// UpdateAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAudioRealtimePricePerMin() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioRealtimePricePerMin()
+	})
+}
+
+// ClearAudioRealtimePricePerMin clears the value of the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertOne) ClearAudioRealtimePricePerMin() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioRealtimePricePerMin()
+	})
+}
+
+// SetAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertOne) SetAudioTtsPricePerMillionChars(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioTtsPricePerMillionChars(v)
+	})
+}
+
+// AddAudioTtsPricePerMillionChars adds v to the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertOne) AddAudioTtsPricePerMillionChars(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioTtsPricePerMillionChars(v)
+	})
+}
+
+// UpdateAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAudioTtsPricePerMillionChars() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioTtsPricePerMillionChars()
+	})
+}
+
+// ClearAudioTtsPricePerMillionChars clears the value of the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertOne) ClearAudioTtsPricePerMillionChars() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioTtsPricePerMillionChars()
+	})
+}
+
+// SetAudioSttPricePerHour sets the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertOne) SetAudioSttPricePerHour(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioSttPricePerHour(v)
+	})
+}
+
+// AddAudioSttPricePerHour adds v to the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertOne) AddAudioSttPricePerHour(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioSttPricePerHour(v)
+	})
+}
+
+// UpdateAudioSttPricePerHour sets the "audio_stt_price_per_hour" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAudioSttPricePerHour() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioSttPricePerHour()
+	})
+}
+
+// ClearAudioSttPricePerHour clears the value of the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertOne) ClearAudioSttPricePerHour() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioSttPricePerHour()
+	})
+}
+
 // SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
 func (u *GroupUpsertOne) SetLongContextPricingEnabled(v bool) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3337,7 +3839,7 @@ func (u *GroupUpsertOne) UpdateLongContextPricingEnabled() *GroupUpsertOne {
 }
 
 // SetModelPricing sets the "model_pricing" field.
-func (u *GroupUpsertOne) SetModelPricing(v json.RawMessage) *GroupUpsertOne {
+func (u *GroupUpsertOne) SetModelPricing(v jsontext.Value) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.SetModelPricing(v)
 	})
@@ -3553,6 +4055,34 @@ func (u *GroupUpsertOne) UpdateAllowLive() *GroupUpsertOne {
 	})
 }
 
+// SetForceOpenaiFast sets the "force_openai_fast" field.
+func (u *GroupUpsertOne) SetForceOpenaiFast(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetForceOpenaiFast(v)
+	})
+}
+
+// UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateForceOpenaiFast() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetFreeOpenaiFast sets the "free_openai_fast" field.
+func (u *GroupUpsertOne) SetFreeOpenaiFast(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFreeOpenaiFast(v)
+	})
+}
+
+// UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateFreeOpenaiFast() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFreeOpenaiFast()
+	})
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (u *GroupUpsertOne) SetRequireOauthOnly(v bool) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3609,17 +4139,31 @@ func (u *GroupUpsertOne) UpdateMessagesDispatchModelConfig() *GroupUpsertOne {
 	})
 }
 
-// SetModelsListConfig sets the "models_list_config" field.
-func (u *GroupUpsertOne) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertOne {
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsertOne) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
-		s.SetModelsListConfig(v)
+		s.SetModelAllowlist(v)
 	})
 }
 
-// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
-func (u *GroupUpsertOne) UpdateModelsListConfig() *GroupUpsertOne {
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelAllowlist() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
-		s.UpdateModelsListConfig()
+		s.UpdateModelAllowlist()
+	})
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsertOne) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexModelsManifestConfig(v)
+	})
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexModelsManifestConfig() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexModelsManifestConfig()
 	})
 }
 
@@ -3683,6 +4227,20 @@ func (u *GroupUpsertOne) SetMaxReasoningEffort(v string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateMaxReasoningEffort() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateMaxReasoningEffort()
+	})
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsertOne) SetMaxReasoningEffortOverLimit(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetMaxReasoningEffortOverLimit(v)
+	})
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateMaxReasoningEffortOverLimit() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateMaxReasoningEffortOverLimit()
 	})
 }
 
@@ -4593,6 +5151,27 @@ func (u *GroupUpsertBulk) ClearVideoPrice1080p() *GroupUpsertBulk {
 	})
 }
 
+// SetVideoModelPrices sets the "video_model_prices" field.
+func (u *GroupUpsertBulk) SetVideoModelPrices(v map[string]map[string]float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetVideoModelPrices(v)
+	})
+}
+
+// UpdateVideoModelPrices sets the "video_model_prices" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateVideoModelPrices() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateVideoModelPrices()
+	})
+}
+
+// ClearVideoModelPrices clears the value of the "video_model_prices" field.
+func (u *GroupUpsertBulk) ClearVideoModelPrices() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearVideoModelPrices()
+	})
+}
+
 // SetWebSearchPricePerCall sets the "web_search_price_per_call" field.
 func (u *GroupUpsertBulk) SetWebSearchPricePerCall(v float64) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -4621,6 +5200,118 @@ func (u *GroupUpsertBulk) ClearWebSearchPricePerCall() *GroupUpsertBulk {
 	})
 }
 
+// SetSearchPricePer1k sets the "search_price_per_1k" field.
+func (u *GroupUpsertBulk) SetSearchPricePer1k(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchPricePer1k(v)
+	})
+}
+
+// AddSearchPricePer1k adds v to the "search_price_per_1k" field.
+func (u *GroupUpsertBulk) AddSearchPricePer1k(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddSearchPricePer1k(v)
+	})
+}
+
+// UpdateSearchPricePer1k sets the "search_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSearchPricePer1k() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchPricePer1k()
+	})
+}
+
+// ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
+func (u *GroupUpsertBulk) ClearSearchPricePer1k() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertBulk) SetAudioRealtimePricePerMin(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioRealtimePricePerMin(v)
+	})
+}
+
+// AddAudioRealtimePricePerMin adds v to the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertBulk) AddAudioRealtimePricePerMin(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioRealtimePricePerMin(v)
+	})
+}
+
+// UpdateAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAudioRealtimePricePerMin() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioRealtimePricePerMin()
+	})
+}
+
+// ClearAudioRealtimePricePerMin clears the value of the "audio_realtime_price_per_min" field.
+func (u *GroupUpsertBulk) ClearAudioRealtimePricePerMin() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioRealtimePricePerMin()
+	})
+}
+
+// SetAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertBulk) SetAudioTtsPricePerMillionChars(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioTtsPricePerMillionChars(v)
+	})
+}
+
+// AddAudioTtsPricePerMillionChars adds v to the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertBulk) AddAudioTtsPricePerMillionChars(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioTtsPricePerMillionChars(v)
+	})
+}
+
+// UpdateAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAudioTtsPricePerMillionChars() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioTtsPricePerMillionChars()
+	})
+}
+
+// ClearAudioTtsPricePerMillionChars clears the value of the "audio_tts_price_per_million_chars" field.
+func (u *GroupUpsertBulk) ClearAudioTtsPricePerMillionChars() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioTtsPricePerMillionChars()
+	})
+}
+
+// SetAudioSttPricePerHour sets the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertBulk) SetAudioSttPricePerHour(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAudioSttPricePerHour(v)
+	})
+}
+
+// AddAudioSttPricePerHour adds v to the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertBulk) AddAudioSttPricePerHour(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddAudioSttPricePerHour(v)
+	})
+}
+
+// UpdateAudioSttPricePerHour sets the "audio_stt_price_per_hour" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAudioSttPricePerHour() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAudioSttPricePerHour()
+	})
+}
+
+// ClearAudioSttPricePerHour clears the value of the "audio_stt_price_per_hour" field.
+func (u *GroupUpsertBulk) ClearAudioSttPricePerHour() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAudioSttPricePerHour()
+	})
+}
+
 // SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
 func (u *GroupUpsertBulk) SetLongContextPricingEnabled(v bool) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -4636,7 +5327,7 @@ func (u *GroupUpsertBulk) UpdateLongContextPricingEnabled() *GroupUpsertBulk {
 }
 
 // SetModelPricing sets the "model_pricing" field.
-func (u *GroupUpsertBulk) SetModelPricing(v json.RawMessage) *GroupUpsertBulk {
+func (u *GroupUpsertBulk) SetModelPricing(v jsontext.Value) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.SetModelPricing(v)
 	})
@@ -4852,6 +5543,34 @@ func (u *GroupUpsertBulk) UpdateAllowLive() *GroupUpsertBulk {
 	})
 }
 
+// SetForceOpenaiFast sets the "force_openai_fast" field.
+func (u *GroupUpsertBulk) SetForceOpenaiFast(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetForceOpenaiFast(v)
+	})
+}
+
+// UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateForceOpenaiFast() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetFreeOpenaiFast sets the "free_openai_fast" field.
+func (u *GroupUpsertBulk) SetFreeOpenaiFast(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFreeOpenaiFast(v)
+	})
+}
+
+// UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateFreeOpenaiFast() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFreeOpenaiFast()
+	})
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (u *GroupUpsertBulk) SetRequireOauthOnly(v bool) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -4908,17 +5627,31 @@ func (u *GroupUpsertBulk) UpdateMessagesDispatchModelConfig() *GroupUpsertBulk {
 	})
 }
 
-// SetModelsListConfig sets the "models_list_config" field.
-func (u *GroupUpsertBulk) SetModelsListConfig(v domain.GroupModelsListConfig) *GroupUpsertBulk {
+// SetModelAllowlist sets the "model_allowlist" field.
+func (u *GroupUpsertBulk) SetModelAllowlist(v domain.GroupModelAllowlist) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
-		s.SetModelsListConfig(v)
+		s.SetModelAllowlist(v)
 	})
 }
 
-// UpdateModelsListConfig sets the "models_list_config" field to the value that was provided on create.
-func (u *GroupUpsertBulk) UpdateModelsListConfig() *GroupUpsertBulk {
+// UpdateModelAllowlist sets the "model_allowlist" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelAllowlist() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
-		s.UpdateModelsListConfig()
+		s.UpdateModelAllowlist()
+	})
+}
+
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (u *GroupUpsertBulk) SetCodexModelsManifestConfig(v domain.GroupCodexModelsManifestConfig) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexModelsManifestConfig(v)
+	})
+}
+
+// UpdateCodexModelsManifestConfig sets the "codex_models_manifest_config" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexModelsManifestConfig() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexModelsManifestConfig()
 	})
 }
 
@@ -4982,6 +5715,20 @@ func (u *GroupUpsertBulk) SetMaxReasoningEffort(v string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateMaxReasoningEffort() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateMaxReasoningEffort()
+	})
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsertBulk) SetMaxReasoningEffortOverLimit(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetMaxReasoningEffortOverLimit(v)
+	})
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateMaxReasoningEffortOverLimit() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateMaxReasoningEffortOverLimit()
 	})
 }
 

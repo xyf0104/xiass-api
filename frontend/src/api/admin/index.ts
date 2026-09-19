@@ -40,6 +40,7 @@ import executionNodesAPI from './executionNodes'
 import { accountPoolsAPI } from './accountPools'
 import openAIReauthorizationAPI from './openaiReauthorization'
 import adsPowerAPI from './adspower'
+import pluginsAPI from './plugins'
 
 /**
  * Unified admin API object for convenient access
@@ -81,7 +82,8 @@ export const adminAPI = {
   executionNodes: executionNodesAPI,
   accountPools: accountPoolsAPI,
   openAIReauthorization: openAIReauthorizationAPI,
-  adsPower: adsPowerAPI
+  adsPower: adsPowerAPI,
+  plugins: pluginsAPI
 }
 
 export {
@@ -121,7 +123,8 @@ export {
   executionNodesAPI,
   accountPoolsAPI,
   openAIReauthorizationAPI,
-  adsPowerAPI
+  adsPowerAPI,
+  pluginsAPI
 }
 
 export default adminAPI
@@ -133,3 +136,4 @@ export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from 
 export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
 export type { TLSFingerprintProfile, CreateProfileRequest, UpdateProfileRequest } from './tlsFingerprintProfile'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
+export type { PluginInstallation, PluginUISession } from './plugins'

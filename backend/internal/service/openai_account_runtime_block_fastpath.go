@@ -133,6 +133,13 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return false
 	}
 
+	if isOpenAIImagesSelfBuiltRequest(ctx) && isOpenAIImageCapabilityLossError(statusCode, responseBody) {
+		if s != nil && s.rateLimitService != nil {
+			_ = s.rateLimitService.HandleOpenAIImageCapabilityLoss(stateCtx, account, statusCode, responseBody)
+		}
+		return false
+	}
+
 	if s == nil || account == nil {
 		return false
 	}
@@ -543,9 +550,14 @@ func (s *OpenAIGatewayService) clearOpenAIAccountRuntimeBlockIfUnchanged(account
 	s.openaiAccountRuntimeBlockGeneration.Store(accountID, s.openaiAccountRuntimeBlockSequence.Add(1))
 }
 
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string, compact ...bool) bool {
 	if s == nil {
 		return false
+	}
+	requireCompact := len(compact) > 0 && compact[0]
+	outboundModel := s.openAICodexTicketOutboundModel(account, requestedModel, requireCompact)
+	if s.openAICodexTicketBlocksAccount(account, outboundModel) {
+		return true
 	}
 	snapshot := s.peekOpenAIAccountRuntimeBlock(account)
 	if snapshot.blocked {

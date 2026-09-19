@@ -320,6 +320,36 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 	return s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
 }
 
+// SelectGrokMediaVideoRequestAccount only admits the account that owns the
+// asynchronous video task. Lookup requests must not escape to another account
+// or mutate the long-lived task ownership binding.
+func (s *OpenAIGatewayService) SelectGrokMediaVideoRequestAccount(
+	ctx context.Context, groupID *int64, sessionHash string, accountID int64, requestedModel string,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	decision := OpenAIAccountScheduleDecision{Layer: openAIAccountScheduleLayerSessionSticky}
+	if accountID <= 0 || strings.TrimSpace(sessionHash) == "" {
+		return nil, decision, ErrNoAvailableAccounts
+	}
+	ctx = WithOpenAIProfitControlSuppressed(ctx)
+	scheduler := &defaultOpenAIAccountScheduler{service: s}
+	selection, err := scheduler.selectBySessionHash(ctx, OpenAIAccountScheduleRequest{
+		GroupID: groupID, Platform: PlatformGrok, SessionHash: sessionHash,
+		StickyAccountID: accountID, PreserveStickyBinding: true,
+		RequestedModel: requestedModel, RequiredTransport: OpenAIUpstreamTransportHTTPSSE,
+		RequirePrivacySet: s.openAIGroupRequiresPrivacySet(ctx, groupID),
+	})
+	if err != nil {
+		return nil, decision, err
+	}
+	if selection == nil || selection.Account == nil {
+		return nil, decision, ErrNoAvailableAccounts
+	}
+	decision.StickySessionHit = true
+	decision.SelectedAccountID = selection.Account.ID
+	decision.SelectedAccountType = selection.Account.Type
+	return selection, decision, nil
+}
+
 func (s *OpenAIGatewayService) ForwardGrokMedia(
 	ctx context.Context,
 	c *gin.Context,

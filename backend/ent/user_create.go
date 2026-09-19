@@ -158,20 +158,6 @@ func (_c *UserCreate) SetNillableStatus(v *string) *UserCreate {
 	return _c
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (_c *UserCreate) SetRestrictPublicGroups(v bool) *UserCreate {
-	_c.mutation.SetRestrictPublicGroups(v)
-	return _c
-}
-
-// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
-func (_c *UserCreate) SetNillableRestrictPublicGroups(v *bool) *UserCreate {
-	if v != nil {
-		_c.SetRestrictPublicGroups(*v)
-	}
-	return _c
-}
-
 // SetUsername sets the "username" field.
 func (_c *UserCreate) SetUsername(v string) *UserCreate {
 	_c.mutation.SetUsername(v)
@@ -280,6 +266,20 @@ func (_c *UserCreate) SetLastActiveAt(v time.Time) *UserCreate {
 func (_c *UserCreate) SetNillableLastActiveAt(v *time.Time) *UserCreate {
 	if v != nil {
 		_c.SetLastActiveAt(*v)
+	}
+	return _c
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (_c *UserCreate) SetRestrictPublicGroups(v bool) *UserCreate {
+	_c.mutation.SetRestrictPublicGroups(v)
+	return _c
+}
+
+// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
+func (_c *UserCreate) SetNillableRestrictPublicGroups(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetRestrictPublicGroups(*v)
 	}
 	return _c
 }
@@ -634,10 +634,6 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
-	if _, ok := _c.mutation.RestrictPublicGroups(); !ok {
-		v := user.DefaultRestrictPublicGroups
-		_c.mutation.SetRestrictPublicGroups(v)
-	}
 	if _, ok := _c.mutation.Username(); !ok {
 		v := user.DefaultUsername
 		_c.mutation.SetUsername(v)
@@ -653,6 +649,10 @@ func (_c *UserCreate) defaults() error {
 	if _, ok := _c.mutation.SignupSource(); !ok {
 		v := user.DefaultSignupSource
 		_c.mutation.SetSignupSource(v)
+	}
+	if _, ok := _c.mutation.RestrictPublicGroups(); !ok {
+		v := user.DefaultRestrictPublicGroups
+		_c.mutation.SetRestrictPublicGroups(v)
 	}
 	if _, ok := _c.mutation.BalanceNotifyEnabled(); !ok {
 		v := user.DefaultBalanceNotifyEnabled
@@ -726,9 +726,6 @@ func (_c *UserCreate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "User.status": %w`, err)}
 		}
 	}
-	if _, ok := _c.mutation.RestrictPublicGroups(); !ok {
-		return &ValidationError{Name: "restrict_public_groups", err: errors.New(`ent: missing required field "User.restrict_public_groups"`)}
-	}
 	if _, ok := _c.mutation.Username(); !ok {
 		return &ValidationError{Name: "username", err: errors.New(`ent: missing required field "User.username"`)}
 	}
@@ -750,6 +747,9 @@ func (_c *UserCreate) check() error {
 		if err := user.SignupSourceValidator(v); err != nil {
 			return &ValidationError{Name: "signup_source", err: fmt.Errorf(`ent: validator failed for field "User.signup_source": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.RestrictPublicGroups(); !ok {
+		return &ValidationError{Name: "restrict_public_groups", err: errors.New(`ent: missing required field "User.restrict_public_groups"`)}
 	}
 	if _, ok := _c.mutation.BalanceNotifyEnabled(); !ok {
 		return &ValidationError{Name: "balance_notify_enabled", err: errors.New(`ent: missing required field "User.balance_notify_enabled"`)}
@@ -833,10 +833,6 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
-	if value, ok := _c.mutation.RestrictPublicGroups(); ok {
-		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
-		_node.RestrictPublicGroups = value
-	}
 	if value, ok := _c.mutation.Username(); ok {
 		_spec.SetField(user.FieldUsername, field.TypeString, value)
 		_node.Username = value
@@ -868,6 +864,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LastActiveAt(); ok {
 		_spec.SetField(user.FieldLastActiveAt, field.TypeTime, value)
 		_node.LastActiveAt = &value
+	}
+	if value, ok := _c.mutation.RestrictPublicGroups(); ok {
+		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
+		_node.RestrictPublicGroups = value
 	}
 	if value, ok := _c.mutation.BalanceNotifyEnabled(); ok {
 		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)
@@ -1289,18 +1289,6 @@ func (u *UserUpsert) UpdateStatus() *UserUpsert {
 	return u
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (u *UserUpsert) SetRestrictPublicGroups(v bool) *UserUpsert {
-	u.Set(user.FieldRestrictPublicGroups, v)
-	return u
-}
-
-// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
-func (u *UserUpsert) UpdateRestrictPublicGroups() *UserUpsert {
-	u.SetExcluded(user.FieldRestrictPublicGroups)
-	return u
-}
-
 // SetUsername sets the "username" field.
 func (u *UserUpsert) SetUsername(v string) *UserUpsert {
 	u.Set(user.FieldUsername, v)
@@ -1418,6 +1406,18 @@ func (u *UserUpsert) UpdateLastActiveAt() *UserUpsert {
 // ClearLastActiveAt clears the value of the "last_active_at" field.
 func (u *UserUpsert) ClearLastActiveAt() *UserUpsert {
 	u.SetNull(user.FieldLastActiveAt)
+	return u
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (u *UserUpsert) SetRestrictPublicGroups(v bool) *UserUpsert {
+	u.Set(user.FieldRestrictPublicGroups, v)
+	return u
+}
+
+// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
+func (u *UserUpsert) UpdateRestrictPublicGroups() *UserUpsert {
+	u.SetExcluded(user.FieldRestrictPublicGroups)
 	return u
 }
 
@@ -1716,20 +1716,6 @@ func (u *UserUpsertOne) UpdateStatus() *UserUpsertOne {
 	})
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (u *UserUpsertOne) SetRestrictPublicGroups(v bool) *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.SetRestrictPublicGroups(v)
-	})
-}
-
-// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateRestrictPublicGroups() *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateRestrictPublicGroups()
-	})
-}
-
 // SetUsername sets the "username" field.
 func (u *UserUpsertOne) SetUsername(v string) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
@@ -1867,6 +1853,20 @@ func (u *UserUpsertOne) UpdateLastActiveAt() *UserUpsertOne {
 func (u *UserUpsertOne) ClearLastActiveAt() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.ClearLastActiveAt()
+	})
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (u *UserUpsertOne) SetRestrictPublicGroups(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRestrictPublicGroups(v)
+	})
+}
+
+// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateRestrictPublicGroups() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRestrictPublicGroups()
 	})
 }
 
@@ -2347,20 +2347,6 @@ func (u *UserUpsertBulk) UpdateStatus() *UserUpsertBulk {
 	})
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (u *UserUpsertBulk) SetRestrictPublicGroups(v bool) *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.SetRestrictPublicGroups(v)
-	})
-}
-
-// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateRestrictPublicGroups() *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateRestrictPublicGroups()
-	})
-}
-
 // SetUsername sets the "username" field.
 func (u *UserUpsertBulk) SetUsername(v string) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
@@ -2498,6 +2484,20 @@ func (u *UserUpsertBulk) UpdateLastActiveAt() *UserUpsertBulk {
 func (u *UserUpsertBulk) ClearLastActiveAt() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.ClearLastActiveAt()
+	})
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (u *UserUpsertBulk) SetRestrictPublicGroups(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetRestrictPublicGroups(v)
+	})
+}
+
+// UpdateRestrictPublicGroups sets the "restrict_public_groups" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateRestrictPublicGroups() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateRestrictPublicGroups()
 	})
 }
 

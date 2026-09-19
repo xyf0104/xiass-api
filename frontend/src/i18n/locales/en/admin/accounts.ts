@@ -195,12 +195,30 @@ export default {
         balance: 'Balance --',
         window5h: '5-hour window',
         windowWeekly: 'Weekly window',
+        windowMonthly: 'Monthly window',
         probe: 'Query',
         probeTooltip: 'Query the provider quota endpoint for 5-hour / weekly rolling window usage',
         balanceProbeTooltip: 'Query the provider balance endpoint for the account balance',
         balanceLow: 'Insufficient balance',
         noBalanceEndpoint: 'This platform has no balance query endpoint',
         resetSoon: 'reset soon',
+      },
+      opencodeGo: {
+        accountMode: {
+          zen: 'Zen',
+          zenDesc: 'Pay-as-you-go gateway. Consumes account credits, billed per token.',
+          go: 'GO',
+          goDesc: 'Subscription gateway, rate-limited by 5-hour / weekly / monthly usage windows.',
+        },
+        protocolRules: {
+          title: 'Model protocol routing',
+          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins; unmatched models use Chat Completions.',
+          patternPlaceholder: 'grok-* or deepseek-v4-flash',
+          add: 'Add rule',
+          remove: 'Remove rule',
+          restoreDefaults: 'Restore defaults',
+          fallback: 'Unmatched models -> Chat Completions (/v1/chat/completions)',
+        },
       },
       types: {
         oauth: 'OAuth',
@@ -595,6 +613,14 @@ export default {
       apiKeyRequired: 'API Key *',
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: 'Your Claude Console API Key',
+      upstreamRequestIdHeader: 'Upstream ID',
+      upstreamRequestIdHeaderPlaceholder: 'Leave empty to record nothing',
+      upstreamRequestIdHeaderHelp: {
+        intro: 'Name of the response header in which the direct upstream declares its request ID. The value is recorded in the "Upstream ID" column of the usage log; leave empty to record nothing.',
+        examplesTitle: 'Common values',
+        sub2apiNote: 'Matches the request ID column of its usage log',
+        official: '{platform} official API',
+      },
       // OpenAI specific hints
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
@@ -620,9 +646,10 @@ export default {
         wsModeHttpBridge: 'HTTP Bridge (http_bridge)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
-        wsModeConcurrencyHint:
-          'When WS mode is enabled, account concurrency becomes the WS connection pool limit for this account.',
-        wsModePassthroughHint: 'Passthrough mode does not use the WS connection pool.',
+        wsModeCtxPoolHint:
+          'Gateway → acquire upstream WS connections from the pool; capacity is determined by configuration.',
+        wsModePassthroughHint: 'Gateway → upstream WS, without a connection pool.',
+        wsModeHttpBridgeHint: 'Gateway conversion → upstream HTTP/SSE.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',

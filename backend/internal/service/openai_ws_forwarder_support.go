@@ -339,6 +339,31 @@ func (s *OpenAIGatewayService) handleOpenAIWSErrorEventTransientFailure(ctx cont
 	}
 }
 
+// handleOpenAIWSFailureAccountSideEffects applies structured credential and
+// transient failures once for an error/response.failed pair.
+func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx context.Context, account *Account, canonicalModel string, headers http.Header, payload []byte) bool {
+	message := extractOpenAISSEErrorMessage(payload)
+	status := openAIStreamFailureStatus(payload, message)
+	switch status {
+	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
+		return true
+	case http.StatusForbidden:
+		if !openAIStream403AccountFailure(payload, message) {
+			return false
+		}
+		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
+		return true
+	}
+
+	status = openAIWSPayloadTransientStatus(payload)
+	if status == 0 {
+		return false
+	}
+	s.handleOpenAIAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)
+	return true
+}
+
 func (s *OpenAIGatewayService) handleOpenAIWSDialTransientFailure(ctx context.Context, account *Account, canonicalModel string, err error) {
 	var dialErr *openAIWSDialError
 	if !errors.As(err, &dialErr) || dialErr == nil || !shouldCooldownOpenAITransientUpstreamError(dialErr.StatusCode, dialErr.ResponseBody) {

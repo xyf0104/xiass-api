@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OpenAIReauthorizationView from '../OpenAIReauthorizationView.vue'
+import { isAdsPowerHelperAvailable } from '@/utils/adspowerHelper'
 
 const mocks = vi.hoisted(() => ({
   accountsAPI: {
@@ -41,6 +42,10 @@ vi.mock('@/api/admin', () => ({
   proxiesAPI: mocks.proxiesAPI,
 }))
 vi.mock('@/api/admin/openaiReauthorization', () => ({ openAIReauthorizationAPI: mocks.openAIReauthorizationAPI }))
+vi.mock('@/utils/adspowerHelper', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/utils/adspowerHelper')>()),
+  isAdsPowerHelperAvailable: vi.fn(),
+}))
 vi.mock('@/api/admin/accountPools', () => ({
   accountPoolsAPI: mocks.accountPoolsAPI,
   buildAccountPoolLookup: (pools: Array<{ id: number; account_ids: number[] }>) => Object.fromEntries(pools.flatMap(pool => pool.account_ids.map(id => [String(id), pool]))),
@@ -172,6 +177,7 @@ describe('OpenAIReauthorizationView', () => {
     openAIReauthorizationAPI.launchAdsPower.mockReset()
     openAIReauthorizationAPI.remove.mockReset()
     openAIReauthorizationAPI.sms.mockReset()
+    vi.mocked(isAdsPowerHelperAvailable).mockReset().mockResolvedValue(true)
     vi.stubGlobal('scrollTo', vi.fn())
   })
 

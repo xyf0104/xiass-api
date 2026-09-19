@@ -87,6 +87,18 @@ const brands: Record<GroupPlatform, BrandStyle> = {
     background: '#EDF1FF',
     color: '#4D6BFE'
   },
+  minimax: {
+    label: 'MiniMax',
+    model: 'minimax',
+    background: '#111318',
+    color: '#FFFFFF'
+  },
+  opencode_go: {
+    label: 'OpenCode Go',
+    model: 'opencode_go',
+    background: '#EEF2F7',
+    color: '#334155'
+  },
   composite: {
     label: 'Composite',
     model: 'composite',

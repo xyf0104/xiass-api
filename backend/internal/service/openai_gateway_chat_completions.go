@@ -59,6 +59,18 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
+}
+
+func (s *OpenAIGatewayService) forwardAsChatCompletions(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	promptCacheKey string,
+	defaultMappedModel string,
+	compatPromptCacheTenantIsolated bool,
+) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	setCodexToolNameReverse(c, nil)
 
@@ -153,9 +165,13 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false
-	if promptCacheKey == "" && account.Type == AccountTypeOAuth && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+	if promptCacheKey == "" && !isResponsesShape && (account.UsesOpenAICodexProtocol() || account.IsOpenAIApiKey()) && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 		promptCacheKey = deriveCompatPromptCacheKey(&chatReq, upstreamModel)
 		compatPromptCacheInjected = promptCacheKey != ""
+		if compatPromptCacheInjected && account.IsOpenAIApiKey() {
+			promptCacheKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)
+			compatPromptCacheTenantIsolated = true
+		}
 	}
 
 	// 3. Build the upstream (Responses API) body.
@@ -316,7 +332,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	if promptCacheKey != "" {
 		apiKeyID := getAPIKeyIDFromContext(c)
-		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
+		sessionKey := promptCacheKey
+		if !compatPromptCacheTenantIsolated {
+			sessionKey = isolateOpenAISessionID(apiKeyID, promptCacheKey)
+		}
+		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}
 
 	// 7. Send request
@@ -325,7 +345,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		proxyURL = account.requestProxyURL()
 	}
 	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -342,7 +362,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 			}
-			return s.ForwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel)
+			return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
 		}
 		if account.Type == AccountTypeAPIKey &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&

@@ -13,6 +13,7 @@ describe('usageServiceTier utils', () => {
     expect(normalizeUsageServiceTier('priority')).toBe('priority')
     expect(normalizeUsageServiceTier('ultrafast')).toBe('ultrafast')
     expect(normalizeUsageServiceTier('flex')).toBe('flex')
+    expect(normalizeUsageServiceTier('ultrafast')).toBe('ultrafast')
   })
 
   it('formats empty values as standard', () => {

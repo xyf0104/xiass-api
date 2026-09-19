@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/tidwall/gjson"
@@ -20,6 +21,21 @@ const (
 	openAIResponsesObjectUnionMaxSize    = 1 << 20
 	openAIResponsesObjectUnionMaxDepth   = 32
 )
+
+func shouldRepairOpenAIResponsesNullToolSchemaType(platform string) bool {
+	return platform == PlatformOpenAI || platform == PlatformAnthropic || platform == PlatformGrok || IsCNProvider(platform)
+}
+
+func sanitizeOpenAIResponsesToolSchemasForPlatform(body []byte, platform string) ([]byte, bool, error) {
+	if !shouldRepairOpenAIResponsesNullToolSchemaType(platform) {
+		return body, false, nil
+	}
+	normalized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+	if err != nil {
+		return body, false, fmt.Errorf("sanitize OpenAI Responses tool parameters: %w", err)
+	}
+	return normalized, changed, nil
+}
 
 // openAIResponsesToolSchemaEdit records one bounded byte-range edit so all
 // schema repairs can be applied in a single body copy.

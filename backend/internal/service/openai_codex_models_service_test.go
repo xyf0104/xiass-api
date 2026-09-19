@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"golang.org/x/net/http2"
 )
 
@@ -493,9 +495,10 @@ func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testin
 	if err != nil {
 		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
 	}
-	if got, want := string(manifest.Body), `{"models":[{"slug":"gpt-5.6"},{"slug":"gpt-5.6-codex"}]}`; got != want {
-		t.Errorf("converted body: got %q, want %q", got, want)
-	}
+	require.Equal(t, "gpt-5.6", gjson.GetBytes(manifest.Body, "models.0.slug").String())
+	require.Equal(t, "gpt-5.6-codex", gjson.GetBytes(manifest.Body, "models.1.slug").String())
+	require.NotEmpty(t, gjson.GetBytes(manifest.Body, "models.0.model_messages.instructions_template").String())
+	require.Greater(t, gjson.GetBytes(manifest.Body, "models.0.context_window").Int(), int64(0))
 	require.Equal(t, codexModelsManifestBodyETag(manifest.Body), manifest.ETag)
 	require.Equal(t, `W/"openai-list"`, manifest.upstreamETag)
 }
@@ -596,11 +599,6 @@ func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
 		want string
 	}{
 		{
-			name: "standard list",
-			body: `{"object":"list","data":[{"id":"m-1"},{"id":"m-2"}]}`,
-			want: `{"models":[{"slug":"m-1"},{"slug":"m-2"}]}`,
-		},
-		{
 			name: "codex manifest unchanged",
 			body: `{"models":[{"slug":"m-1"}]}`,
 			want: `{"models":[{"slug":"m-1"}]}`,
@@ -639,6 +637,17 @@ func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
 			}
 		})
 	}
+
+	converted := convertOpenAIModelListToCodexManifest([]byte(`{"object":"list","data":[{"id":"m-1"},{"id":"m-2"}]}`))
+	var manifest struct {
+		Models []struct {
+			Slug          string          `json:"slug"`
+			ModelMessages json.RawMessage `json:"model_messages"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(converted, &manifest))
+	require.Equal(t, []string{"m-1", "m-2"}, []string{manifest.Models[0].Slug, manifest.Models[1].Slug})
+	require.NotEmpty(t, manifest.Models[0].ModelMessages, "converted API-key models must include the complete Codex capability contract")
 }
 
 func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
@@ -966,27 +975,30 @@ func TestFetchCodexModelsManifestAPIKeyCacheBoundsEntriesAndBodySize(t *testing.
 		t.Fatalf("body-size bounded cache calls: got %d, want 3", got)
 	}
 
-	for i := int64(10); i < 75; i++ {
+	firstAccountID := int64(10)
+	lastAccountID := firstAccountID + int64(openAIModelsCacheMaxEntries)
+	for i := firstAccountID; i <= lastAccountID; i++ {
 		account := newCodexModelsAPIKeyTestAccount("https://bounded.example")
 		account.ID = i
 		fetch(account)
 	}
 	last := newCodexModelsAPIKeyTestAccount("https://bounded.example")
-	last.ID = 74
+	last.ID = lastAccountID
 	fetch(last)
-	if got := calls.Load(); got != 68 {
-		t.Fatalf("most recent cache entry was not retained: calls=%d, want 68", got)
+	wantAfterFill := int32(3 + openAIModelsCacheMaxEntries + 1)
+	if got := calls.Load(); got != wantAfterFill {
+		t.Fatalf("most recent cache entry was not retained: calls=%d, want %d", got, wantAfterFill)
 	}
 	first := newCodexModelsAPIKeyTestAccount("https://bounded.example")
-	first.ID = 10
+	first.ID = firstAccountID
 	fetch(first)
-	if got := calls.Load(); got != 69 {
-		t.Errorf("oldest cache entry was not evicted: calls=%d, want 69", got)
+	if got, want := calls.Load(), wantAfterFill+1; got != want {
+		t.Errorf("oldest cache entry was not evicted: calls=%d, want %d", got, want)
 	}
 }
 
 func TestCodexModelsManifestCacheReturnsImmutableCopies(t *testing.T) {
-	cache := &codexModelsManifestCache{}
+	cache := &openAIModelsCache{}
 	now := time.Now()
 	original := &CodexModelsManifest{Body: []byte(`{"models":[{"slug":"original"}]}`), ETag: `"original"`}
 	cache.set("key", original, now)
@@ -994,14 +1006,14 @@ func TestCodexModelsManifestCacheReturnsImmutableCopies(t *testing.T) {
 	original.Body[0] = 'x'
 	original.ETag = `"mutated-before-read"`
 	first, state := cache.get("key", now)
-	require.Equal(t, codexModelsManifestCacheFresh, state)
+	require.Equal(t, openAIModelsCacheFresh, state)
 	require.JSONEq(t, `{"models":[{"slug":"original"}]}`, string(first.Body))
 	require.Equal(t, `"original"`, first.ETag)
 
 	first.Body[0] = 'x'
 	first.ETag = `"mutated-after-read"`
 	second, state := cache.get("key", now)
-	require.Equal(t, codexModelsManifestCacheFresh, state)
+	require.Equal(t, openAIModelsCacheFresh, state)
 	require.JSONEq(t, `{"models":[{"slug":"original"}]}`, string(second.Body))
 	require.Equal(t, `"original"`, second.ETag)
 	require.NotSame(t, first, second)
@@ -1033,12 +1045,12 @@ func TestFetchCodexModelsManifestAPIKeyServesStaleWhileRefreshing(t *testing.T) 
 		t.Fatalf("initial fetch returned error: %v", err)
 	}
 
-	s.codexModelsManifestCache.mu.Lock()
-	for key, entry := range s.codexModelsManifestCache.entries {
+	s.openAIModelsCache.mu.Lock()
+	for key, entry := range s.openAIModelsCache.entries {
 		entry.expiresAt = time.Now().Add(-time.Second)
-		s.codexModelsManifestCache.entries[key] = entry
+		s.openAIModelsCache.entries[key] = entry
 	}
-	s.codexModelsManifestCache.mu.Unlock()
+	s.openAIModelsCache.mu.Unlock()
 
 	resultCh := make(chan struct {
 		manifest *CodexModelsManifest
@@ -1126,12 +1138,12 @@ func TestFetchCodexModelsManifestAPIKeyRevalidatesStaleETag(t *testing.T) {
 	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", ""); err != nil {
 		t.Fatalf("initial fetch returned error: %v", err)
 	}
-	s.codexModelsManifestCache.mu.Lock()
-	for key, entry := range s.codexModelsManifestCache.entries {
+	s.openAIModelsCache.mu.Lock()
+	for key, entry := range s.openAIModelsCache.entries {
 		entry.expiresAt = time.Now().Add(-time.Second)
-		s.codexModelsManifestCache.entries[key] = entry
+		s.openAIModelsCache.entries[key] = entry
 	}
-	s.codexModelsManifestCache.mu.Unlock()
+	s.openAIModelsCache.mu.Unlock()
 
 	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
 	if err != nil {
@@ -1148,12 +1160,12 @@ func TestFetchCodexModelsManifestAPIKeyRevalidatesStaleETag(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for {
-		s.codexModelsManifestCache.mu.Lock()
+		s.openAIModelsCache.mu.Lock()
 		fresh := false
-		for _, entry := range s.codexModelsManifestCache.entries {
+		for _, entry := range s.openAIModelsCache.entries {
 			fresh = time.Now().Before(entry.expiresAt)
 		}
-		s.codexModelsManifestCache.mu.Unlock()
+		s.openAIModelsCache.mu.Unlock()
 		if fresh {
 			break
 		}

@@ -100,6 +100,18 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
+	Plugins                 PluginConfig                  `mapstructure:"plugins"`
+}
+
+// PluginConfig controls administrator-uploaded local process plugins. XIASS
+// ships no plugin packages and rejects unsigned packages unless explicitly enabled.
+type PluginConfig struct {
+	DataDir              string            `mapstructure:"data_dir"`
+	AllowUnsigned        bool              `mapstructure:"allow_unsigned"`
+	TrustedPublishers    map[string]string `mapstructure:"trusted_publishers"`
+	MaxUploadBytes       int64             `mapstructure:"max_upload_bytes"`
+	MaxUncompressedBytes int64             `mapstructure:"max_uncompressed_bytes"`
+	StartTimeoutSeconds  int               `mapstructure:"start_timeout_seconds"`
 }
 
 type LogConfig struct {
@@ -652,6 +664,8 @@ type PricingConfig struct {
 	DataDir string `mapstructure:"data_dir"`
 	// 回退文件路径
 	FallbackFile string `mapstructure:"fallback_file"`
+	// 覆盖补丁文件路径（可选）
+	OverrideFile string `mapstructure:"override_file"`
 	// 更新间隔（小时）
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
@@ -982,6 +996,9 @@ type GatewayConfig struct {
 	// OpenAICompactModel: /responses/compact 上游使用的模型。
 	// compact 端点支持模型滞后于普通 /responses 时，可用该配置降级规避上游错误。
 	OpenAICompactModel string `mapstructure:"openai_compact_model"`
+	// OpenAICodexTicket: ChatGPT OAuth 账号按 (账号, 模型) 捕获并复用
+	// x-codex-turn-state 门票。功能默认关闭。
+	OpenAICodexTicket OpenAICodexTicketConfig `mapstructure:"openai_codex_ticket"`
 	// OpenAIWS: OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
 	// Live: ChatGPT Frameless Live 会话配置。
@@ -1202,6 +1219,21 @@ func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 		return UMQModeSerialize // 向后兼容
 	}
 	return ""
+}
+
+// OpenAICodexTicketConfig controls the optional ChatGPT OAuth turn-state
+// ticket harvester. Business requests keep using the account's own proxy;
+// HarvestProxyURL is used only by the background ticket probe.
+type OpenAICodexTicketConfig struct {
+	Enabled                      bool     `mapstructure:"enabled"`
+	TargetLength                 int      `mapstructure:"target_length"`
+	TTLSeconds                   int      `mapstructure:"ttl_seconds"`
+	RefreshBeforeSeconds         int      `mapstructure:"refresh_before_seconds"`
+	HarvestProxyURL              string   `mapstructure:"harvest_proxy_url"`
+	HarvestProbeIntervalSeconds  int      `mapstructure:"harvest_probe_interval_seconds"`
+	HarvestAttemptTimeoutSeconds int      `mapstructure:"harvest_attempt_timeout_seconds"`
+	FailClosed                   bool     `mapstructure:"fail_closed"`
+	Models                       []string `mapstructure:"models"`
 }
 
 // DefaultOpenAIWSClientFirstMessageTimeoutSeconds preserves the legacy ingress deadline.
@@ -2288,6 +2320,14 @@ func setDefaults() {
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
 
+	// Local process plugins are opt-in and empty on every new XIASS installation.
+	viper.SetDefault("plugins.data_dir", "")
+	viper.SetDefault("plugins.allow_unsigned", false)
+	viper.SetDefault("plugins.trusted_publishers", map[string]string{})
+	viper.SetDefault("plugins.max_upload_bytes", int64(128*1024*1024))
+	viper.SetDefault("plugins.max_uncompressed_bytes", int64(256*1024*1024))
+	viper.SetDefault("plugins.start_timeout_seconds", 15)
+
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
 
@@ -2364,6 +2404,15 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	viper.SetDefault("gateway.openai_compact_model", "gpt-5.4")
+	viper.SetDefault("gateway.openai_codex_ticket.enabled", false)
+	viper.SetDefault("gateway.openai_codex_ticket.target_length", 292)
+	viper.SetDefault("gateway.openai_codex_ticket.ttl_seconds", 3600)
+	viper.SetDefault("gateway.openai_codex_ticket.refresh_before_seconds", 600)
+	viper.SetDefault("gateway.openai_codex_ticket.harvest_proxy_url", "")
+	viper.SetDefault("gateway.openai_codex_ticket.harvest_probe_interval_seconds", 6)
+	viper.SetDefault("gateway.openai_codex_ticket.harvest_attempt_timeout_seconds", 25)
+	viper.SetDefault("gateway.openai_codex_ticket.fail_closed", true)
+	viper.SetDefault("gateway.openai_codex_ticket.models", []string{"gpt-6-astra", "gpt-5.6-sol"})
 	viper.SetDefault("gateway.grok.free_quota_soft_gate_enabled", true)
 	viper.SetDefault("gateway.grok.password_auth_enabled", false)
 	viper.SetDefault("gateway.grok.free_quota_token_limit", int64(500_000))
@@ -2635,6 +2684,15 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.Plugins.MaxUploadBytes <= 0 || c.Plugins.MaxUploadBytes > 1024*1024*1024 {
+		return fmt.Errorf("plugins.max_upload_bytes must be between 1 and 1073741824")
+	}
+	if c.Plugins.MaxUncompressedBytes < c.Plugins.MaxUploadBytes || c.Plugins.MaxUncompressedBytes > 2*1024*1024*1024 {
+		return fmt.Errorf("plugins.max_uncompressed_bytes must be between max_upload_bytes and 2147483648")
+	}
+	if c.Plugins.StartTimeoutSeconds < 1 || c.Plugins.StartTimeoutSeconds > 120 {
+		return fmt.Errorf("plugins.start_timeout_seconds must be between 1 and 120")
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)

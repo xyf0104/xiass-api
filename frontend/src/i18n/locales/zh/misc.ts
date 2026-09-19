@@ -62,6 +62,8 @@ export default {
   purchase: {
     title: '充值/订阅',
     description: '通过内嵌页面完成充值/订阅',
+    rechargeDescription: '通过内嵌页面完成充值',
+    subscriptionDescription: '通过内嵌页面完成订阅',
     openInNewTab: '新窗口打开',
     notEnabledTitle: '该功能未开启',
     notEnabledDesc: '管理员暂未开启充值/订阅入口，请联系管理员。',

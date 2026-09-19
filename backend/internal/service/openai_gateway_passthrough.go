@@ -355,7 +355,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 		upstreamStart := time.Now()
 		freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
@@ -638,6 +638,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		stripOpenAILegacyResponsesBeta(req.Header)
 	}
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	if err := s.applyOpenAICodexTicket(ctx, account, extractOpenAICodexTicketModel(body), req.Header); err != nil {
+		return nil, err
+	}
 	applyOpenAICodexBetaFeatures(c, account, req.Header, body)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "passthrough", req.Header, body, "not_applicable")
@@ -1855,6 +1858,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						UpstreamInTok:  usage.InputTokens,
 						UpstreamOutTok: usage.OutputTokens,
 					})
+				}
+				if openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
 				}
 				if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 					if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {

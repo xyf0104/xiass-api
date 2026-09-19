@@ -1503,6 +1503,13 @@ func (a *Account) IsOpenAIOAuthLike() bool {
 	return a != nil && a.IsOpenAI() && (a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken)
 }
 
+// UsesOpenAICodexProtocol preserves legacy OAuth routing for account fixtures
+// and imported rows whose platform is implicit, while also covering setup-token
+// accounts that explicitly belong to OpenAI.
+func (a *Account) UsesOpenAICodexProtocol() bool {
+	return a != nil && (a.Type == AccountTypeOAuth || a.IsOpenAIOAuthLike())
+}
+
 func (a *Account) IsOpenAIChatGPTSubscription() bool {
 	if !a.IsOpenAIOAuth() {
 		return false
@@ -1531,7 +1538,7 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
 // 此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() && !a.IsCNProvider() {
+	if !a.IsOpenAI() && !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
 	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
@@ -1559,6 +1566,10 @@ func (a *Account) GetOpenAIBaseURL() string {
 		return DefaultZhipuPayGBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultChatBaseURL()
 	default:
 		return "https://api.openai.com"
 	}
@@ -1583,7 +1594,7 @@ func (a *Account) IsCodingPlan() bool {
 
 // GetAPIProtocol 返回国产供应商账号的上游 API 协议。
 func (a *Account) GetAPIProtocol() string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return APIProtocolChatCompletions
 	}
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
@@ -1592,13 +1603,43 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolAnthropic:
 		return APIProtocolAnthropic
 	case APIProtocolResponses:
-		if a.Platform == PlatformDeepseek {
+		if a.SupportsNativeCNResponses() {
 			return APIProtocolResponses
 		}
 	case APIProtocolChatCompletions:
 		return APIProtocolChatCompletions
 	}
+	if a.IsOpenCodeGo() {
+		return APIProtocolAdaptive
+	}
 	return APIProtocolChatCompletions
+}
+
+// SupportsNativeCNResponses reports whether the provider exposes a native
+// Responses endpoint. The historical name is retained for compatibility and
+// also covers OpenCode Go's multi-protocol gateway.
+func (a *Account) SupportsNativeCNResponses() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Platform {
+	case PlatformDeepseek, PlatformKimi, PlatformMiniMax, PlatformOpenCodeGo:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Account) UsesNativeCNResponses() bool {
+	if a == nil || !a.SupportsNativeCNResponses() {
+		return false
+	}
+	switch a.GetAPIProtocol() {
+	case APIProtocolResponses, APIProtocolAdaptive:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsAdaptiveAPIProtocol 报告账号是否按入站协议动态选择供应商原生端点。
@@ -1610,7 +1651,7 @@ func (a *Account) IsAdaptiveAPIProtocol() bool {
 // adaptive 账号优先使用 api_base_urls 中的分协议地址，缺失时按平台和
 // account_mode 使用官方默认端点。base_url 继续作为 Chat Completions 地址兼容旧字段。
 func (a *Account) GetCNProtocolBaseURL(protocol string) string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
 	if a.IsAdaptiveAPIProtocol() {
@@ -1641,6 +1682,10 @@ func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
 			return DefaultZhipuAnthropicBaseURL
 		case PlatformDeepseek:
 			return DefaultDeepseekAnthropicBaseURL
+		case PlatformMiniMax:
+			return DefaultMiniMaxAnthropicBaseURL
+		case PlatformOpenCodeGo:
+			return a.openCodeDefaultAnthropicBaseURL()
 		}
 	case APIProtocolChatCompletions, APIProtocolResponses:
 		switch a.Platform {
@@ -1656,6 +1701,10 @@ func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
 			return DefaultZhipuPayGBaseURL
 		case PlatformDeepseek:
 			return DefaultDeepseekBaseURL
+		case PlatformMiniMax:
+			return DefaultMiniMaxBaseURL
+		case PlatformOpenCodeGo:
+			return a.openCodeDefaultChatBaseURL()
 		}
 	}
 	return ""
@@ -1690,6 +1739,10 @@ func (a *Account) GetAnthropicProtocolBaseURL() string {
 		return DefaultZhipuAnthropicBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekAnthropicBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxAnthropicBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultAnthropicBaseURL()
 	default:
 		return ""
 	}
@@ -1713,6 +1766,10 @@ func (a *Account) GetOpenAIFormatBaseURL() string {
 		return DefaultZhipuPayGBaseURL
 	case PlatformDeepseek:
 		return DefaultDeepseekBaseURL
+	case PlatformMiniMax:
+		return DefaultMiniMaxBaseURL
+	case PlatformOpenCodeGo:
+		return a.openCodeDefaultChatBaseURL()
 	default:
 		return a.GetOpenAIBaseURL()
 	}

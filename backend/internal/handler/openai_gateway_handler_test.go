@@ -1895,7 +1895,9 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload              string
+	firstPayload string
+	// midPayload is sent after the first completed turn, before secondPayload.
+	midPayload                string
 	secondPayload             string
 	userAgent                 *string
 	ingressMode               string
@@ -1903,6 +1905,10 @@ type openAIResponsesWSUsageLogCase struct {
 	billingModelSource        string
 	accountModelMapping       map[string]any
 	afterFirstUpstreamRequest func(channelSvc *service.ChannelService) error
+	group                     *service.Group
+	firstFrameCloseExpected   bool
+	midFrameCloseExpected     bool
+	secondTurnCloseExpected   bool
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -2689,8 +2695,11 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	gin.SetMode(gin.TestMode)
 
 	turnCount := 1
+	if strings.TrimSpace(tc.midPayload) != "" {
+		turnCount++
+	}
 	if strings.TrimSpace(tc.secondPayload) != "" {
-		turnCount = 2
+		turnCount++
 	}
 	upstreamPayloadCh := make(chan []byte, turnCount)
 	upstreamErrCh := make(chan error, 1)
@@ -2843,6 +2852,9 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		GroupID: &groupID,
 		User:    &service.User{ID: 1701, Status: service.StatusActive},
 	}
+	if tc.group != nil {
+		apiKey.Group = tc.group
+	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
@@ -2873,6 +2885,18 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.firstPayload))
 	cancelWrite()
 	require.NoError(t, err)
+	if tc.firstFrameCloseExpected {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		require.Error(t, readErr)
+		var closeErr coderws.CloseError
+		require.ErrorAs(t, readErr, &closeErr)
+		require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+		require.Contains(t, closeErr.Reason, "not available for this group")
+		_ = clientConn.CloseNow()
+		return openAIResponsesWSUsageLogResult{}
+	}
 
 	clientEvents := make([][]byte, 0, turnCount)
 	readCompleted := func() {
@@ -2884,11 +2908,42 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		clientEvents = append(clientEvents, append([]byte(nil), event...))
 	}
 	readCompleted()
-	if turnCount == 2 {
+	if strings.TrimSpace(tc.midPayload) != "" {
+		writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.midPayload))
+		cancelWrite()
+		require.NoError(t, err)
+		if tc.midFrameCloseExpected {
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.Error(t, readErr)
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, readErr, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+			require.Contains(t, closeErr.Reason, "not available for this group")
+			_ = clientConn.CloseNow()
+			return openAIResponsesWSUsageLogResult{}
+		}
+		readCompleted()
+	}
+	if strings.TrimSpace(tc.secondPayload) != "" {
 		writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
 		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.secondPayload))
 		cancelWrite()
 		require.NoError(t, err)
+		if tc.secondTurnCloseExpected {
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.Error(t, readErr)
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, readErr, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+			require.Contains(t, closeErr.Reason, "not available for this group")
+			_ = clientConn.CloseNow()
+			return openAIResponsesWSUsageLogResult{}
+		}
 		readCompleted()
 	}
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")

@@ -152,6 +152,9 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
+	if normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody) {
+		result.Modified = true
+	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
 	needsToolContinuation := NeedsToolContinuation(reqBody)
 
@@ -1090,10 +1093,14 @@ func normalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any) bool {
 }
 
 func normalizeOpenAIModelForUpstream(account *Account, model string) string {
-	if account == nil || account.Type == AccountTypeOAuth {
+	if account == nil || account.UsesOpenAICodexProtocol() {
 		return normalizeCodexModel(model)
 	}
-	return strings.TrimSpace(model)
+	model = strings.TrimSpace(model)
+	if account.Platform == PlatformDeepseek {
+		return normalizeClaudeCodeLongContextModel(model)
+	}
+	return model
 }
 
 func SupportsVerbosity(model string) bool {

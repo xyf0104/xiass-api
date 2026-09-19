@@ -710,6 +710,17 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		if status < 400 {
+			// A marked in-band error is a visible request failure even though the
+			// wire status is 2xx. Non-request-scoped errors already own the upstream
+			// attribution and must remain a single row. Request-scoped results are
+			// independent, so recovered provider attempts are retained separately.
+			streamErrs := service.GetOpsStreamErrors(c)
+			if len(streamErrs) > 0 {
+				logOpsStreamError(c, ops, status)
+				if !opsStreamErrorsAllRequestScoped(streamErrs) {
+					return
+				}
+			}
 			// Even when the client request succeeds, we still want to persist upstream error attempts
 			// (retries/failover) so ops can observe upstream instability that gets "covered" by retries.
 			var events []*service.OpsUpstreamErrorEvent
@@ -745,10 +756,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 			if !hasUpstreamContext {
-				// 没有上游错误上下文，但网关可能在已固化的 200 流上就地补发了 SSE 错误帧
-				// （如 ping 等待后并发超限、Wait 后二次计费校验失败）。这类失败若不在此补记，
-				// 会因 wire 状态码为 200 而在错误看板里彻底隐形。
-				logOpsStreamError(c, ops, status)
+				if len(streamErrs) == 0 {
+					logOpsStreamError(c, ops, status)
+				}
 				return
 			}
 
@@ -1101,40 +1111,52 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	}
 }
 
-// logOpsStreamError 记录一次挂在已固化 HTTP 200 SSE 流上的就地错误。
-// 由于 wire 状态码停留在 200，常规的 status>=400 捕获路径永远不会触发；
-// handleStreamingAwareError 通过 service.MarkOpsStreamError 标记这类错误，
-// 此函数据此补记一条错误日志，让并发限流/流内失败在错误看板里可见。
-//
-// 仅在 status<400 且不存在上游错误上下文时调用：上游透传错误已由中间件的
-// upstream-context 分支落库，无需在此重复记录。
+// logOpsStreamError records in-band failures carried by 2xx responses. Each
+// WebSocket turn owns an immutable snapshot; HTTP/SSE uses the single marker.
 func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) {
-	streamErr, ok := service.GetOpsStreamError(c)
-	if !ok {
+	for _, streamErr := range service.GetOpsStreamErrors(c) {
+		logOpsStreamErrorValue(c, ops, wireStatus, streamErr)
+	}
+}
+
+func opsStreamErrorsAllRequestScoped(streamErrs []service.OpsStreamError) bool {
+	if len(streamErrs) == 0 {
+		return false
+	}
+	for _, streamErr := range streamErrs {
+		if !streamErr.RequestScoped {
+			return false
+		}
+	}
+	return true
+}
+
+func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus int, streamErr service.OpsStreamError) {
+	if streamErr.SkipMonitoring || (streamErr.Turn == 0 && !streamErr.RequestScoped && shouldSkipFinalOpsFailure(c)) {
 		return
 	}
 
-	// 命中 skip_monitoring=true 透传规则的请求跳过落库，与其它分支一致。
-	if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
-		if skip, _ := v.(bool); skip {
-			return
-		}
-	}
-
-	// 复用与 status>=400 分支相同的设置过滤（context canceled / 无可用账号等）。
 	if shouldSkipOpsErrorLog(c.Request.Context(), ops, streamErr.Message, streamErr.Message, c.Request.URL.Path) {
 		return
 	}
 
-	// 分级用「本应返回的状态码」(如并发限流 429)，wire 状态码缺省时回退。
 	classifyStatus := streamErr.IntendedStatus
 	if classifyStatus <= 0 {
 		classifyStatus = wireStatus
 	}
 	normalizedType := normalizeOpsErrorType(streamErr.ErrType, streamErr.Code)
-	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	var phase, errorOwner, errorSource string
+	var isBusinessLimited bool
+	if streamErr.RequestScoped {
+		phase = classifyOpsPhase(normalizedType, streamErr.Message, streamErr.Code)
+		isBusinessLimited = true
+		errorOwner = classifyOpsErrorOwner(phase, streamErr.Message)
+		errorSource = classifyOpsErrorSource(phase, streamErr.Message)
+	} else {
+		phase, isBusinessLimited, errorOwner, errorSource = classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	}
 	recordedStatus := wireStatus
-	if streamErr.CountTowardsSLA && streamErr.IntendedStatus >= 400 {
+	if streamErr.IntendedStatus >= 400 && (streamErr.CountTowardsSLA || streamErr.RequestScoped) {
 		recordedStatus = streamErr.IntendedStatus
 	}
 	errorBody := ""
@@ -1163,9 +1185,13 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	fallbackPlatform := guessPlatformFromPath(c.Request.URL.Path)
 	platform := resolveOpsPlatform(c.Request.Context(), apiKey, fallbackPlatform)
 
-	requestID := c.Writer.Header().Get("X-Request-Id")
+	requestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
-		requestID = c.Writer.Header().Get("x-request-id")
+		requestID = c.Writer.Header().Get("X-Request-Id")
+		if requestID == "" {
+			requestID = c.Writer.Header().Get("x-request-id")
+		}
 	}
 
 	entry := &service.OpsInsertErrorLogInput{
@@ -1181,8 +1207,7 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 			}
 			return ""
 		}(),
-		// 就地 SSE 错误只出现在流式请求上。
-		Stream:           true,
+		Stream:           !streamErr.NonStream,
 		InboundEndpoint:  GetInboundEndpoint(c),
 		UpstreamEndpoint: GetUpstreamEndpoint(c, platform),
 		RequestedModel:   modelName,
@@ -1223,6 +1248,12 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		CreatedAt: time.Now(),
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	if !streamErr.RequestScoped {
+		applyOpsUpstreamFieldsFromContext(c, entry)
+	}
+	if streamErr.Turn > 0 && !streamErr.RequestScoped {
+		applyOpsStreamErrorSnapshot(entry, streamErr)
+	}
 
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
@@ -1243,6 +1274,70 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	}
 
 	enqueueOpsErrorLog(ops, entry)
+}
+
+func applyOpsStreamErrorSnapshot(entry *service.OpsInsertErrorLogInput, streamErr service.OpsStreamError) {
+	if entry == nil {
+		return
+	}
+	if streamErr.AccountID > 0 {
+		accountID := streamErr.AccountID
+		entry.AccountID = &accountID
+	}
+	entry.UpstreamModel = strings.TrimSpace(streamErr.UpstreamModel)
+	entry.UpstreamStatusCode = nil
+	if streamErr.UpstreamStatus > 0 {
+		status := streamErr.UpstreamStatus
+		entry.UpstreamStatusCode = &status
+	}
+	entry.UpstreamErrorMessage = nil
+	if message := strings.TrimSpace(streamErr.UpstreamMessage); message != "" {
+		entry.UpstreamErrorMessage = &message
+	}
+	entry.UpstreamErrorDetail = nil
+	if detail := strings.TrimSpace(streamErr.UpstreamDetail); detail != "" {
+		entry.UpstreamErrorDetail = &detail
+	}
+	entry.UpstreamErrors = streamErr.UpstreamErrors
+	lastStage := ""
+	for i := len(streamErr.UpstreamErrors) - 1; i >= 0; i-- {
+		if streamErr.UpstreamErrors[i] != nil {
+			lastStage = streamErr.UpstreamErrors[i].Stage
+			break
+		}
+	}
+	if lastStage == string(service.GatewayFailureStageAccountAuth) {
+		entry.ErrorPhase = string(service.GatewayFailureStageAccountAuth)
+		entry.ErrorOwner = "provider"
+		entry.ErrorSource = "gateway"
+		entry.IsBusinessLimited = false
+	} else if streamErr.UpstreamStatus > 0 || len(streamErr.UpstreamErrors) > 0 {
+		entry.ErrorPhase = "upstream"
+		entry.ErrorOwner = "provider"
+		entry.ErrorSource = "upstream_http"
+		entry.IsBusinessLimited = false
+	}
+}
+
+func shouldSkipFinalOpsFailure(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
+		if skip, _ := v.(bool); skip {
+			return true
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i] != nil {
+					return events[i].SkipMonitoring
+				}
+			}
+		}
+	}
+	return false
 }
 
 // isCountTokensRequest checks if the request is a count_tokens request

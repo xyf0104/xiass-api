@@ -253,10 +253,17 @@ type OpenAIWSIngressHooks struct {
 	InitialRequestModel string
 	// MaxReasoningEffort limits explicit reasoning effort values for this WS session.
 	MaxReasoningEffort string
+	// MaxReasoningEffortOverLimit is the access control when an explicit effort
+	// exceeds the ceiling: downgrade (default) or deny.
+	MaxReasoningEffortOverLimit string
 	// ReasoningEffortMappings rewrites explicit effort values for this WS session.
 	ReasoningEffortMappings []ReasoningEffortMapping
 	BeforeTurn              func(turn int) error
 	BeforeRequest           func(turn int, payload []byte, originalModel string) error
+	// BeforeFrame validates non-turn frames such as session.update before they
+	// can mutate session-level routing state. BeforeRequest remains scoped to
+	// response.create turns for existing ingress callers.
+	BeforeFrame func(turn int, payload []byte, originalModel string) error
 	// MapRequestModel resolves the current turn's client model to the model
 	// that must be written into the upstream response.create frame.
 	MapRequestModel func(turn int, originalModel string) (string, error)

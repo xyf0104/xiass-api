@@ -73,9 +73,23 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+		sessionID = strings.TrimSpace(openAIRequestPayloadView(body).Get("prompt_cache_key").String())
 	}
 	return sessionID
+}
+
+// openAIRequestPayloadView unwraps Responses WebSocket event envelopes while
+// leaving ordinary HTTP objects untouched even when they contain a response
+// field for another purpose.
+func openAIRequestPayloadView(body []byte) gjson.Result {
+	root := parseRawJSONView(body)
+	eventType := strings.ToLower(strings.TrimSpace(root.Get("type").String()))
+	if strings.HasPrefix(eventType, "response.") {
+		if response := root.Get("response"); response.Exists() && response.IsObject() {
+			return response
+		}
+	}
+	return root
 }
 
 // explicitOpenAIRequestSessionID extends the common OpenAI session signals
@@ -596,26 +610,30 @@ func openAICodexSnapshotStaleForPause(extra map[string]any, now time.Time) bool 
 // timestamp and falls back to codex_<window>_reset_after_seconds anchored at
 // codex_usage_updated_at, mirroring AccountUsageService's window-progress logic.
 func openAIQuotaWindowReset(extra map[string]any, window string, now time.Time) bool {
+	resetAt, ok := openAICodexWindowResetAt(extra, window)
+	return ok && !now.Before(resetAt)
+}
+
+// Absolute timestamps win. Relative reset durations must be anchored to the
+// observation timestamp so repeated scheduler reads cannot move the window.
+func openAICodexWindowResetAt(extra map[string]any, window string) (time.Time, bool) {
 	if len(extra) == 0 {
-		return false
+		return time.Time{}, false
 	}
 	if resetAtRaw, ok := extra["codex_"+window+"_reset_at"]; ok {
 		if resetAt, err := parseTime(fmt.Sprint(resetAtRaw)); err == nil {
-			return !now.Before(resetAt)
+			return resetAt, true
 		}
 	}
 	resetAfter := parseExtraInt(extra["codex_"+window+"_reset_after_seconds"])
 	if resetAfter <= 0 {
-		return false
+		return time.Time{}, false
 	}
-	base := now
-	if updatedRaw, ok := extra["codex_usage_updated_at"]; ok {
-		if updatedAt, err := parseTime(fmt.Sprint(updatedRaw)); err == nil {
-			base = updatedAt
-		}
+	updatedAt, err := parseTime(fmt.Sprint(extra["codex_usage_updated_at"]))
+	if err != nil {
+		return time.Time{}, false
 	}
-	resetAt := base.Add(time.Duration(resetAfter) * time.Second)
-	return !now.Before(resetAt)
+	return updatedAt.Add(time.Duration(resetAfter) * time.Second), true
 }
 
 func readOpenAIQuotaUsedPercent(extra map[string]any, window string) float64 {

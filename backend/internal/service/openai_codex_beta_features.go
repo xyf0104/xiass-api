@@ -21,7 +21,7 @@ func MarkOpenAINativeCompactionV2(c *gin.Context) {
 	}
 }
 
-func isOpenAINativeCompactionV2(c *gin.Context) bool {
+func IsOpenAINativeCompactionV2(c *gin.Context) bool {
 	return c != nil && c.GetBool(openAINativeCompactionV2Key)
 }
 
@@ -66,7 +66,7 @@ func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Heade
 	if h == nil {
 		return
 	}
-	nativeCompaction := isOpenAINativeCompactionV2(c)
+	nativeCompaction := IsOpenAINativeCompactionV2(c)
 	for _, candidate := range body {
 		if HasCompactionTriggerInInput(candidate) || gjson.GetBytes(candidate, "compaction_trigger").Exists() {
 			nativeCompaction = true

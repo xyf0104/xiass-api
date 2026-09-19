@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -22,6 +23,11 @@ import (
 
 // Account management implementations
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
+	if groupID > 0 {
+		if err := s.ValidateAccountGroupBindings(ctx, []int64{groupID}); err != nil {
+			return nil, 0, err
+		}
+	}
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
 	if err != nil {
@@ -573,6 +579,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	// Credential-copy ownership is server-managed and can only be established by
 	// DuplicateAccount after all ordinary create/import normalization completes.
 	delete(accountExtra, OpenAIOAuthCredentialSourceIDExtraKey)
+	accountExtra = MergeOpenAICodexTicketExtra(accountExtra, nil)
 	// Imported runtime observations belong to the source row, not a new account.
 	if input.Platform == PlatformOpenAI && input.Type == AccountTypeOAuth {
 		accountExtra = stripOpenAIQuotaRuntimeExtra(accountExtra)
@@ -978,6 +985,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				normalizedExtra[key] = v
 			}
 		}
+		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
@@ -1364,6 +1372,11 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
 	delete(updates, OpenAIOAuthCredentialSourceIDExtraKey)
+	for key := range updates {
+		if IsOpenAICodexTicketExtraKey(key) {
+			delete(updates, key)
+		}
+	}
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
@@ -1404,6 +1417,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, AccountExecutionProxyExtraKey)
 	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
 	delete(input.Extra, OpenAIOAuthCredentialSourceIDExtraKey)
+	for key := range input.Extra {
+		if IsOpenAICodexTicketExtraKey(key) {
+			delete(input.Extra, key)
+		}
+	}
 	fingerprintModeValue, hasFingerprintModeUpdate := input.Extra[codexFingerprintModeExtraKey]
 	if hasFingerprintModeUpdate {
 		mode, ok := fingerprintModeValue.(string)
@@ -2315,6 +2333,9 @@ func (s *adminServiceImpl) checkMixedChannelRisk(ctx context.Context, currentAcc
 }
 
 func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs []int64) error {
+	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
+		return err
+	}
 	if len(groupIDs) == 0 {
 		return nil
 	}
@@ -2338,6 +2359,35 @@ func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs [
 	for _, groupID := range groupIDs {
 		if _, err := s.groupRepo.GetByID(ctx, groupID); err != nil {
 			return fmt.Errorf("get group: %w", err)
+		}
+	}
+	return nil
+}
+
+// ValidateAccountGroupBindings is the fail-closed boundary for every account
+// write or filter that accepts explicit group IDs in SIMPLE mode.
+func (s *adminServiceImpl) ValidateAccountGroupBindings(ctx context.Context, groupIDs []int64) error {
+	if len(groupIDs) == 0 || s.cfg == nil || s.cfg.RunMode != config.RunModeSimple {
+		return nil
+	}
+	if s.groupRepo == nil {
+		return errors.New("group repository not configured")
+	}
+	seen := make(map[int64]struct{}, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if groupID <= 0 {
+			return fmt.Errorf("get group: %w", ErrGroupNotFound)
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("get group: %w", err)
+		}
+		if !IsGroupBindableInSimpleMode(group) {
+			return infraerrors.BadRequest("SIMPLE_MODE_GROUP_NOT_BINDABLE", "composite groups cannot be bound in simple mode")
 		}
 	}
 	return nil
@@ -2387,7 +2437,7 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 		return infraerrors.New(http.StatusBadRequest, "SPARK_SHADOW_NO_QUOTA_RESET",
 			"cannot reset quota for a spark shadow account; manage it on the parent account")
 	}
-	return s.accountRepo.ResetQuotaUsed(ctx, id)
+	return s.accountRepo.ResetQuotaUsedAndClearRateLimitCooldown(ctx, id)
 }
 
 // EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，

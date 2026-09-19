@@ -1335,13 +1335,15 @@ func TestOpenAIGatewayService_Forward_WSv2_TurnStateAndMetadataReplayOnReconnect
 	require.NotNil(t, result1)
 
 	sessionHash := svc.GenerateSessionHash(c1, reqBody)
-	store := svc.ownedOpenAIWSStateStore(c1, account)
-	turnState, ok := store.GetSessionTurnState(0, sessionHash)
+	executionScope, _ := resolveOpenAIWSExecutionScope(c1, reqBody, 101)
+	require.NotEmpty(t, sessionHash)
+	require.NotEmpty(t, executionScope)
+	turnState, ok := svc.getOpenAIWSStateStore().GetSessionTurnState(0, executionScope)
 	require.True(t, ok)
 	require.Equal(t, "turn_state_first", turnState)
 
 	// 主动淘汰连接，模拟下一次请求发生重连。
-	connID, hasConn := store.GetResponseConn(result1.RequestID)
+	connID, hasConn := svc.ownedOpenAIWSStateStore(c1, account).GetResponseConn(result1.RequestID)
 	require.True(t, hasConn)
 	svc.getOpenAIWSConnPool().evictConn(account.ID, connID)
 
@@ -1858,6 +1860,7 @@ func TestOpenAIGatewayService_Forward_WSv2ReadTimeoutAppliesPerRead(t *testing.T
 type openAIWSCaptureDialer struct {
 	mu          sync.Mutex
 	conn        *openAIWSCaptureConn
+	conns       []*openAIWSCaptureConn
 	lastHeaders http.Header
 	handshake   http.Header
 	dialCount   int
@@ -1876,8 +1879,13 @@ func (d *openAIWSCaptureDialer) Dial(
 	d.lastHeaders = cloneHeader(headers)
 	d.dialCount++
 	respHeaders := cloneHeader(d.handshake)
+	conn := d.conn
+	if len(d.conns) > 0 {
+		conn = d.conns[0]
+		d.conns = d.conns[1:]
+	}
 	d.mu.Unlock()
-	return d.conn, 0, respHeaders, nil
+	return conn, 0, respHeaders, nil
 }
 
 func (d *openAIWSCaptureDialer) DialCount() int {

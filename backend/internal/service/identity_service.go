@@ -23,11 +23,62 @@ import (
 var (
 	// 匹配 User-Agent 版本号: xxx/x.y.z
 	userAgentVersionRegex = regexp.MustCompile(`/(\d+)\.(\d+)\.(\d+)`)
+
+	// Only canonical product/x.y.z user agents may become a persistent account identity.
+	fingerprintUserAgentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+/\d+\.\d+\.\d+(\s|$)`)
+
+	// Replace only the version prefix and preserve the client's descriptive suffix.
+	claudeCLIUAVersionPrefixRegex = regexp.MustCompile(`(?i)^(claude-cli)/\d+\.\d+\.\d+`)
 )
+
+const (
+	claudeCLIUserAgentProduct     = "claude-cli"
+	maxFingerprintUserAgentLength = 256
+	maxClaudeCLIMajorVersionSkew  = 2
+)
+
+func isAcceptableFingerprintUserAgent(ua string) bool {
+	ua = strings.TrimSpace(ua)
+	if ua == "" || len(ua) > maxFingerprintUserAgentLength {
+		return false
+	}
+	if !fingerprintUserAgentPattern.MatchString(ua) {
+		return false
+	}
+	if extractProduct(ua) != claudeCLIUserAgentProduct {
+		return true
+	}
+	major, _, _, ok := parseUserAgentVersion(ua)
+	if !ok {
+		return false
+	}
+	currentMajor, _, _, currentOK := parseUserAgentVersion(claudeCLIUserAgentProduct + "/" + claude.CLIVersion())
+	if !currentOK {
+		return true
+	}
+	return major <= currentMajor+maxClaudeCLIMajorVersionSkew
+}
+
+// floorClaudeCLIUserAgentVersion upgrades stale persistent Claude CLI identities
+// to the current built-in floor while preserving the rest of the user agent.
+func floorClaudeCLIUserAgentVersion(ua string) (string, bool) {
+	if extractProduct(ua) != claudeCLIUserAgentProduct {
+		return ua, false
+	}
+	floorUA := claudeCLIUserAgentProduct + "/" + claude.CLICurrentVersion
+	if !isNewerVersion(floorUA, ua) {
+		return ua, false
+	}
+	floored := claudeCLIUAVersionPrefixRegex.ReplaceAllString(ua, "${1}/"+claude.CLICurrentVersion)
+	if floored == ua {
+		return ua, false
+	}
+	return floored, true
+}
 
 // 默认指纹值（当客户端未提供时使用）
 var defaultFingerprint = Fingerprint{
-	UserAgent:               "claude-cli/" + claude.CLICurrentVersion + " (external, cli)",
+	UserAgent:               "claude-cli/" + claude.CLIVersion() + " (external, cli)",
 	StainlessLang:           "js",
 	StainlessPackageVersion: "0.94.0",
 	StainlessOS:             "Linux",
@@ -76,20 +127,45 @@ func NewIdentityService(cache IdentityCache) *IdentityService {
 // 如果缓存存在，检测user-agent版本，新版本则更新
 // 如果缓存不存在，生成随机ClientID并从请求头创建指纹，然后缓存
 func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, accountID int64, headers http.Header) (*Fingerprint, error) {
+	clientUA := strings.TrimSpace(headers.Get("User-Agent"))
+	uaAcceptable := isAcceptableFingerprintUserAgent(clientUA)
+
 	// 尝试从缓存获取指纹
 	cached, err := s.cache.GetFingerprint(ctx, accountID)
 	if err == nil && cached != nil {
 		needWrite := false
 
-		// 检查客户端的user-agent是否是更新版本
-		clientUA := headers.Get("User-Agent")
-		if clientUA != "" && isNewerVersion(clientUA, cached.UserAgent) {
-			// 版本升级：merge 语义 — 仅更新请求中实际携带的字段，保留缓存值
-			// 避免缺失的头被硬编码默认值覆盖（如新 CLI 版本 + 旧 SDK 默认值的不一致）
+		if !uaAcceptable && clientUA != "" && isNewerVersion(clientUA, cached.UserAgent) {
+			logger.LegacyPrintf("service.identity",
+				"Rejected fingerprint user-agent for account %d: %q (malformed or implausible version)",
+				accountID, clientUA)
+		}
+
+		if !isAcceptableFingerprintUserAgent(cached.UserAgent) {
+			poisoned := cached.UserAgent
+			if uaAcceptable {
+				mergeHeadersIntoFingerprint(cached, headers)
+			} else {
+				cached.UserAgent = defaultFingerprint.UserAgent
+			}
+			needWrite = true
+			logger.LegacyPrintf("service.identity",
+				"Replaced malformed cached fingerprint for account %d: %q -> %q",
+				accountID, poisoned, cached.UserAgent)
+		} else if uaAcceptable && isNewerVersion(clientUA, cached.UserAgent) {
 			mergeHeadersIntoFingerprint(cached, headers)
 			needWrite = true
 			logger.LegacyPrintf("service.identity", "Updated fingerprint for account %d: %s (merge update)", accountID, clientUA)
-		} else if time.Since(time.Unix(cached.UpdatedAt, 0)) > 24*time.Hour {
+		}
+
+		if flooredUA, changed := floorClaudeCLIUserAgentVersion(cached.UserAgent); changed {
+			cached.UserAgent = flooredUA
+			needWrite = true
+			logger.LegacyPrintf("service.identity",
+				"Floored cached fingerprint claude-cli version for account %d: %s", accountID, flooredUA)
+		}
+
+		if !needWrite && time.Since(time.Unix(cached.UpdatedAt, 0)) > 24*time.Hour {
 			// 距上次写入超过24小时，续期TTL
 			needWrite = true
 		}
@@ -101,6 +177,12 @@ func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, accountID 
 			}
 		}
 		return cached, nil
+	}
+
+	if !uaAcceptable && clientUA != "" {
+		logger.LegacyPrintf("service.identity",
+			"Rejected fingerprint user-agent for account %d: %q (malformed or implausible version)",
+			accountID, clientUA)
 	}
 
 	// 缓存不存在或解析失败，创建新指纹
@@ -123,9 +205,10 @@ func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, accountID 
 func (s *IdentityService) createFingerprintFromHeaders(headers http.Header) *Fingerprint {
 	fp := &Fingerprint{}
 
-	// 获取User-Agent
-	if ua := headers.Get("User-Agent"); ua != "" {
-		fp.UserAgent = ua
+	// Only persist a valid client identity; stale Claude CLI versions are raised
+	// to the same floor used when healing existing cached fingerprints.
+	if ua := strings.TrimSpace(headers.Get("User-Agent")); isAcceptableFingerprintUserAgent(ua) {
+		fp.UserAgent, _ = floorClaudeCLIUserAgentVersion(ua)
 	} else {
 		fp.UserAgent = defaultFingerprint.UserAgent
 	}

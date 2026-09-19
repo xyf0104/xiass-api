@@ -185,20 +185,6 @@ func (_u *UserUpdate) SetNillableStatus(v *string) *UserUpdate {
 	return _u
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (_u *UserUpdate) SetRestrictPublicGroups(v bool) *UserUpdate {
-	_u.mutation.SetRestrictPublicGroups(v)
-	return _u
-}
-
-// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableRestrictPublicGroups(v *bool) *UserUpdate {
-	if v != nil {
-		_u.SetRestrictPublicGroups(*v)
-	}
-	return _u
-}
-
 // SetUsername sets the "username" field.
 func (_u *UserUpdate) SetUsername(v string) *UserUpdate {
 	_u.mutation.SetUsername(v)
@@ -332,6 +318,20 @@ func (_u *UserUpdate) SetNillableLastActiveAt(v *time.Time) *UserUpdate {
 // ClearLastActiveAt clears the value of the "last_active_at" field.
 func (_u *UserUpdate) ClearLastActiveAt() *UserUpdate {
 	_u.mutation.ClearLastActiveAt()
+	return _u
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (_u *UserUpdate) SetRestrictPublicGroups(v bool) *UserUpdate {
+	_u.mutation.SetRestrictPublicGroups(v)
+	return _u
+}
+
+// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableRestrictPublicGroups(v *bool) *UserUpdate {
+	if v != nil {
+		_u.SetRestrictPublicGroups(*v)
+	}
 	return _u
 }
 
@@ -1047,9 +1047,6 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(user.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.RestrictPublicGroups(); ok {
-		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
-	}
 	if value, ok := _u.mutation.Username(); ok {
 		_spec.SetField(user.FieldUsername, field.TypeString, value)
 	}
@@ -1085,6 +1082,9 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.LastActiveAtCleared() {
 		_spec.ClearField(user.FieldLastActiveAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.RestrictPublicGroups(); ok {
+		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.BalanceNotifyEnabled(); ok {
 		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)
@@ -1878,20 +1878,6 @@ func (_u *UserUpdateOne) SetNillableStatus(v *string) *UserUpdateOne {
 	return _u
 }
 
-// SetRestrictPublicGroups sets the "restrict_public_groups" field.
-func (_u *UserUpdateOne) SetRestrictPublicGroups(v bool) *UserUpdateOne {
-	_u.mutation.SetRestrictPublicGroups(v)
-	return _u
-}
-
-// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableRestrictPublicGroups(v *bool) *UserUpdateOne {
-	if v != nil {
-		_u.SetRestrictPublicGroups(*v)
-	}
-	return _u
-}
-
 // SetUsername sets the "username" field.
 func (_u *UserUpdateOne) SetUsername(v string) *UserUpdateOne {
 	_u.mutation.SetUsername(v)
@@ -2025,6 +2011,20 @@ func (_u *UserUpdateOne) SetNillableLastActiveAt(v *time.Time) *UserUpdateOne {
 // ClearLastActiveAt clears the value of the "last_active_at" field.
 func (_u *UserUpdateOne) ClearLastActiveAt() *UserUpdateOne {
 	_u.mutation.ClearLastActiveAt()
+	return _u
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (_u *UserUpdateOne) SetRestrictPublicGroups(v bool) *UserUpdateOne {
+	_u.mutation.SetRestrictPublicGroups(v)
+	return _u
+}
+
+// SetNillableRestrictPublicGroups sets the "restrict_public_groups" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableRestrictPublicGroups(v *bool) *UserUpdateOne {
+	if v != nil {
+		_u.SetRestrictPublicGroups(*v)
+	}
 	return _u
 }
 
@@ -2770,9 +2770,6 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(user.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.RestrictPublicGroups(); ok {
-		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
-	}
 	if value, ok := _u.mutation.Username(); ok {
 		_spec.SetField(user.FieldUsername, field.TypeString, value)
 	}
@@ -2808,6 +2805,9 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if _u.mutation.LastActiveAtCleared() {
 		_spec.ClearField(user.FieldLastActiveAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.RestrictPublicGroups(); ok {
+		_spec.SetField(user.FieldRestrictPublicGroups, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.BalanceNotifyEnabled(); ok {
 		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)

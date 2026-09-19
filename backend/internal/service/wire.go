@@ -237,6 +237,7 @@ func ProvideAccountTestService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
+	pluginManager *PluginManager,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -249,7 +250,9 @@ func ProvideAccountTestService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
+	service.SetPluginManager(pluginManager)
 	return service
 }
 
@@ -492,12 +495,14 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	ollamaCloudUsage *OllamaCloudUsageService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
 	return svc
 }
 
@@ -901,6 +906,7 @@ var ProviderSet = wire.NewSet(
 	NewGroupService,
 	NewCompositeRouteResolver,
 	ProvideAccountService,
+	NewPluginManager,
 	NewProxyService,
 	NewRedeemService,
 	NewPromoService,
@@ -910,7 +916,7 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	ProvideAnnouncementService,
-	NewAdminService,
+	NewAdminServiceWithConfig,
 	wire.Bind(new(AdminService), new(*adminServiceImpl)),
 	wire.Bind(new(InactiveUserDeleter), new(*adminServiceImpl)),
 	NewUserGroupAccountAllowlistService,

@@ -174,12 +174,19 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 
 	var buf bytes.Buffer
 	outputIndex := 0
-	appendEvent := func(eventType string, data []byte) {
+	sequenceNumber := 0
+	appendEvent := func(eventType string, data []byte) bool {
+		numbered, err := sjson.SetBytes(data, "sequence_number", sequenceNumber)
+		if err != nil {
+			return false
+		}
+		sequenceNumber++
 		_, _ = buf.WriteString("event: ")
 		_, _ = buf.WriteString(eventType)
 		_, _ = buf.WriteString("\ndata: ")
-		_, _ = buf.Write(data)
+		_, _ = buf.Write(numbered)
 		_, _ = buf.WriteString("\n\n")
+		return true
 	}
 	for _, item := range gjson.GetBytes(response, "output").Array() {
 		if !item.IsObject() {
@@ -193,7 +200,9 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 		if err != nil {
 			return nil, false
 		}
-		appendEvent("response.output_item.done", event)
+		if !appendEvent("response.output_item.done", event) {
+			return nil, false
+		}
 		outputIndex++
 	}
 
@@ -201,7 +210,9 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	appendEvent("response.completed", completed)
+	if !appendEvent("response.completed", completed) {
+		return nil, false
+	}
 	return buf.Bytes(), true
 }
 

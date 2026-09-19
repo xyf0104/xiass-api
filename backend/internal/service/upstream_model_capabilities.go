@@ -45,6 +45,7 @@ type UpstreamModelMetadata struct {
 	SupportedReasoningLevels []string                   `json:"supported_reasoning_levels,omitempty"`
 	InputModalities          []string                   `json:"input_modalities,omitempty"`
 	ContextWindow            int64                      `json:"context_window,omitempty"`
+	MaxContextWindow         int64                      `json:"max_context_window,omitempty"`
 	MaxOutputTokens          int64                      `json:"max_output_tokens,omitempty"`
 	CodexToolCapabilities    map[string]json.RawMessage `json:"codex_tool_capabilities,omitempty"`
 }
@@ -107,6 +108,9 @@ func (a *Account) SetUpstreamModelMetadataSnapshot(snapshot UpstreamModelMetadat
 	if a == nil {
 		return
 	}
+	if strings.TrimSpace(snapshot.Identity) == "" {
+		snapshot.Identity = upstreamModelCapabilityIdentity(a)
+	}
 	if a.Extra == nil {
 		a.Extra = make(map[string]any)
 	}
@@ -146,7 +150,26 @@ func (a *Account) GetUpstreamModelMetadata(modelID string) (UpstreamModelMetadat
 }
 
 func isOpenAICompatibleCapabilitySyncAccount(account *Account) bool {
-	return account != nil && account.Type == AccountTypeAPIKey && (account.IsOpenAI() || account.IsCNProvider())
+	if account == nil {
+		return false
+	}
+	if account.Type == AccountTypeAPIKey {
+		return account.IsOpenAI() || account.IsCNProvider()
+	}
+	if account.Type != AccountTypeOAuth || !account.IsOpenAI() || account.Credentials == nil {
+		return false
+	}
+	// OAuth picker manifests are shared product metadata and must not be persisted
+	// as account capabilities. An explicit account model mapping is the opt-in that
+	// makes the fetched catalog account-specific and safe to retain.
+	switch mapping := account.Credentials["model_mapping"].(type) {
+	case map[string]any:
+		return len(mapping) > 0
+	case map[string]string:
+		return len(mapping) > 0
+	default:
+		return false
+	}
 }
 
 func upstreamModelCapabilityIdentity(account *Account) string {
@@ -223,7 +246,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		})
 	}
 	if len(body) > 0 {
-		_, directMetadata, parseErr := extractUpstreamModelCatalog(body)
+		_, directMetadata, parseErr := extractUpstreamModelCatalog(body, account != nil && account.IsGrok())
 		if parseErr == nil {
 			catalog.Metadata = directMetadata
 		}
@@ -271,10 +294,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
 	persistedCapabilities := false
-	if len(completeMetadata) > 0 && account.ID > 0 {
-		if s == nil || s.accountRepo == nil {
-			return nil, newUpstreamModelSyncInternalError("Failed to save upstream model metadata", errors.New("account repository is not configured"))
-		}
+	if len(completeMetadata) > 0 && account.ID > 0 && s != nil && s.accountRepo != nil {
 		snapshot := UpstreamModelMetadataSnapshot{
 			Identity: capabilityIdentity,
 			Source:   upstreamModelCapabilitySource(sourceParts),
@@ -438,6 +458,7 @@ func upstreamModelMetadataIsUseful(metadata UpstreamModelMetadata) bool {
 		len(metadata.InputModalities) > 0 ||
 		len(metadata.CodexToolCapabilities) > 0 ||
 		metadata.ContextWindow > 0 ||
+		metadata.MaxContextWindow > 0 ||
 		metadata.MaxOutputTokens > 0
 }
 
@@ -501,6 +522,10 @@ func mergeUpstreamModelMetadata(primary, fallback UpstreamModelMetadata) (Upstre
 	}
 	if merged.ContextWindow <= 0 && fallback.ContextWindow > 0 {
 		merged.ContextWindow = fallback.ContextWindow
+		changed = true
+	}
+	if merged.MaxContextWindow <= 0 && fallback.MaxContextWindow > 0 {
+		merged.MaxContextWindow = fallback.MaxContextWindow
 		changed = true
 	}
 	if merged.MaxOutputTokens <= 0 && fallback.MaxOutputTokens > 0 {
@@ -682,6 +707,7 @@ func upstreamMetadataFromModelsDevModel(modelID string, model modelsDevModel) Up
 		SupportedReasoningLevels: levels,
 		InputModalities:          normalizeCodexInputModalities(model.Modalities.Input),
 		ContextWindow:            model.Limit.Context,
+		MaxContextWindow:         model.Limit.Context,
 		MaxOutputTokens:          model.Limit.Output,
 	}
 	if len(levels) > 0 {
@@ -725,10 +751,14 @@ type upstreamModelCapabilityEntry struct {
 	Limit                    modelsDevLimit             `json:"limit"`
 }
 
-func extractUpstreamModelCatalog(body []byte) ([]string, map[string]UpstreamModelMetadata, error) {
+func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]UpstreamModelMetadata, error) {
 	entries, err := extractUpstreamModelRawEntries(body)
 	if err != nil {
 		return nil, nil, err
+	}
+	selectID := upstreamModelEntryID
+	if grok {
+		selectID = grokUpstreamModelEntryID
 	}
 	models := make([]string, 0, len(entries))
 	metadata := make(map[string]UpstreamModelMetadata)
@@ -737,7 +767,7 @@ func extractUpstreamModelCatalog(body []byte) ([]string, map[string]UpstreamMode
 		if err := json.Unmarshal(raw, &capability); err != nil {
 			continue
 		}
-		modelID := strings.TrimSpace(upstreamModelEntryID(capability.upstreamModelEntry))
+		modelID := strings.TrimSpace(selectID(capability.upstreamModelEntry))
 		if modelID == "" {
 			continue
 		}
@@ -793,6 +823,13 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 	if contextWindow <= 0 {
 		contextWindow = entry.Limit.Context
 	}
+	maxContextWindow := entry.MaxContextWindow
+	if maxContextWindow <= 0 {
+		maxContextWindow = contextWindow
+	}
+	if maxContextWindow > 0 && (contextWindow <= 0 || contextWindow > maxContextWindow) {
+		contextWindow = maxContextWindow
+	}
 	maxOutputTokens := entry.MaxOutputTokens
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = entry.Limit.Output
@@ -814,6 +851,7 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 		SupportedReasoningLevels: levels,
 		InputModalities:          normalizeCodexInputModalities(modalities),
 		ContextWindow:            contextWindow,
+		MaxContextWindow:         maxContextWindow,
 		MaxOutputTokens:          maxOutputTokens,
 	}
 }

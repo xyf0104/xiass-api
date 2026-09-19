@@ -94,6 +94,7 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 	"codex_5h_",
 	"codex_7d_",
 	"codex_reset_credit_",
+	"codex_turn_ticket:",
 	"passive_usage_",
 	"upstream_billing_probe",
 	"upstream_billing_rate_sync",
@@ -1071,8 +1072,8 @@ func lockAndMergeAccountProbeExtra(
 			AND credentials = $4::jsonb
 			AND proxy_id IS NOT DISTINCT FROM $5,
 			COALESCE(
-				platform IN ('openai', 'anthropic')
-				AND $2 IN ('openai', 'anthropic')
+				platform IN (`+ollamaCloudUsagePlatformsSQL+`)
+				AND $2 IN (`+ollamaCloudUsagePlatformsSQL+`)
 				AND type = 'apikey'
 				AND $3 = 'apikey'
 				AND credentials -> 'api_key' IS NOT DISTINCT FROM $4::jsonb -> 'api_key'
@@ -1086,7 +1087,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe',
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot'
+			extra -> 'ollama_cloud_usage_snapshot',
+			COALESCE(extra, '{}'::jsonb)
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -1112,6 +1114,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
+		currentExtraJSON             []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -1123,6 +1126,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
+		&currentExtraJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -1130,7 +1134,14 @@ func lockAndMergeAccountProbeExtra(
 		return nil, err
 	}
 
-	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	var currentExtra map[string]any
+	if len(currentExtraJSON) > 0 {
+		if err := json.Unmarshal(currentExtraJSON, &currentExtra); err != nil {
+			logger.LegacyPrintf("repository.account", "[Account] current extra unmarshal failed, codex ticket preservation skipped: id=%d err=%v", account.ID, err)
+			currentExtra = nil
+		}
+	}
+	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -1259,7 +1270,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 			extra = CASE
 				-- 凭证整体未变化 ⇒ Ollama 组身份必然未变化；顶层 DISTINCT 守卫防止
 				-- 非 Ollama 账号的无变化持久化误清探测快照或重写 NULL extra。
-				WHEN platform IN ('openai', 'anthropic')
+				WHEN platform IN (`+ollamaCloudUsagePlatformsSQL+`)
 					AND type = 'apikey'
 					AND credentials IS DISTINCT FROM $1::jsonb
 					AND (
@@ -1864,7 +1875,6 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 		SELECT id
 		FROM accounts
 		WHERE deleted_at IS NULL
-			AND schedulable = TRUE
 			AND platform = ANY($1)
 			AND id > $2`
 	if options.ActiveOnly {
@@ -3824,7 +3834,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
 			}
 		}
-		eligibleAccount := "platform IN ('openai', 'anthropic') AND type = 'apikey'"
+		eligibleAccount := "platform IN (" + ollamaCloudUsagePlatformsSQL + ") AND type = 'apikey'"
 		groupIdentityChanged := ""
 		if len(ollamaGroupIdentityChanges) > 0 {
 			groupIdentityChanged = "(" + eligibleAccount + " AND (" + joinClauses(ollamaGroupIdentityChanges, " OR ") + "))"
@@ -4652,23 +4662,32 @@ func (r *accountRepository) IncrementQuotaUsed(ctx context.Context, id int64, am
 	return nil
 }
 
-// ResetQuotaUsed 重置账号所有维度的配额用量为 0
-// 保留固定重置模式的配置字段（quota_daily_reset_mode 等），仅清零用量和窗口起始时间
-func (r *accountRepository) ResetQuotaUsed(ctx context.Context, id int64) error {
-	_, err := r.sql.ExecContext(ctx,
+// ResetQuotaUsedAndClearRateLimitCooldown resets quota usage and the
+// account-level rate-limit cooldown atomically. Other scheduler blocks remain.
+func (r *accountRepository) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
+	result, err := r.sql.ExecContext(ctx,
 		`UPDATE accounts SET extra = (
 			COALESCE(extra, '{}'::jsonb)
 			|| '{"quota_used": 0, "quota_daily_used": 0, "quota_weekly_used": 0}'::jsonb
-		) - 'quota_daily_start' - 'quota_weekly_start' - 'quota_daily_reset_at' - 'quota_weekly_reset_at', updated_at = NOW()
+		) - 'quota_daily_start' - 'quota_weekly_start' - 'quota_daily_reset_at' - 'quota_weekly_reset_at',
+		rate_limited_at = NULL, rate_limit_reset_at = NULL, updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL`,
 		id)
 	if err != nil {
 		return err
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAccountNotFound
+	}
 	// 重置配额后触发调度快照刷新，使账号重新参与调度
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue quota reset failed: account=%d err=%v", id, err)
 	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil
 }
 

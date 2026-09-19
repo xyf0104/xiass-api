@@ -9,7 +9,7 @@ const {
   routeQuery,
   listGroups,
   getAllGroups,
-  getModelsListCandidates,
+  getModelAllowlistCandidates,
   getUsageSummary,
   getCapacitySummary,
   getLiveCapability,
@@ -27,7 +27,7 @@ const {
   routeQuery: {} as Record<string, string>,
   listGroups: vi.fn(),
   getAllGroups: vi.fn(),
-  getModelsListCandidates: vi.fn(),
+  getModelAllowlistCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock("@/api/admin", () => ({
     groups: {
       list: listGroups,
       getAll: getAllGroups,
-      getModelsListCandidates,
+      getModelAllowlistCandidates,
       getUsageSummary,
       getCapacitySummary,
       getLiveCapability,
@@ -259,7 +259,7 @@ describe("GroupsView group user account search", () => {
       pages: 1,
     });
     getAllGroups.mockResolvedValue([]);
-    getModelsListCandidates.mockResolvedValue([]);
+    getModelAllowlistCandidates.mockResolvedValue([]);
     getUsageSummary.mockResolvedValue([]);
     getCapacitySummary.mockResolvedValue([]);
     getLiveCapability.mockResolvedValue({ supported: false });

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -30,6 +31,7 @@ const (
 	OpsUpstreamLatencyMsKey  = "ops_upstream_latency_ms"
 	OpsResponseLatencyMsKey  = "ops_response_latency_ms"
 	OpsTimeToFirstTokenMsKey = "ops_time_to_first_token_ms"
+	OpsUpstreamModelKey      = "ops_upstream_model"
 	// OpenAI WS 关键观测字段
 	OpsOpenAIWSQueueWaitMsKey = "ops_openai_ws_queue_wait_ms"
 	OpsOpenAIWSConnPickMsKey  = "ops_openai_ws_conn_pick_ms"
@@ -44,7 +46,9 @@ const (
 	// 上就地(in-band)补发错误帧时记录的 OpsStreamError。因为 wire 状态码停留在 200，
 	// ops_error_logger 的 status>=400 采集路径永远不会触发，这类流内失败
 	//（例如等待并发槽位超时后回退的限流、Wait 后二次计费校验失败）本会在错误看板里隐形。
-	OpsStreamErrorKey = "ops_stream_error"
+	OpsStreamErrorKey  = "ops_stream_error"
+	OpsStreamErrorsKey = "ops_stream_errors"
+	OpsStreamTurnKey   = "ops_stream_turn"
 
 	// Client-side configuration denials should remain visible in ops_error_logs,
 	// but should be excluded from SLA/error-rate calculations.
@@ -78,6 +82,23 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 		return
 	}
 	c.Set(key, value)
+}
+
+func SetOpsUpstreamModel(c *gin.Context, model string) {
+	if c == nil {
+		return
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		c.Set(OpsUpstreamModelKey, model)
+	}
+}
+
+// ClearOpsUpstreamModel invalidates attempt-scoped model attribution before a
+// newly selected account starts credential resolution or upstream dispatch.
+func ClearOpsUpstreamModel(c *gin.Context) {
+	if c != nil {
+		c.Set(OpsUpstreamModelKey, "")
+	}
 }
 
 func MarkOpsClientBusinessLimited(c *gin.Context, reason string) {
@@ -134,6 +155,32 @@ type OpsStreamError struct {
 	// CountTowardsSLA 表示虽然 wire 状态已固化为 200，请求在应用语义上仍然失败，
 	// Ops 应使用 IntendedStatus 计入错误率/SLA。
 	CountTowardsSLA bool
+	// Turn identifies a WebSocket turn. HTTP/SSE requests leave it at zero.
+	Turn            int
+	SkipMonitoring  bool
+	AccountID       int64
+	UpstreamModel   string
+	UpstreamStatus  int
+	UpstreamMessage string
+	UpstreamDetail  string
+	UpstreamErrors  []*OpsUpstreamErrorEvent
+	RequestScoped   bool
+	NonStream       bool
+}
+
+const maxOpsStreamErrorsPerRequest = 64
+
+// BeginOpsStreamTurn resets attempt-local Ops state for a new WebSocket turn.
+func BeginOpsStreamTurn(c *gin.Context, turn int) {
+	if c == nil || turn <= 0 {
+		return
+	}
+	c.Set(OpsStreamTurnKey, turn)
+	c.Set(OpsSkipPassthroughKey, false)
+	c.Set(OpsUpstreamErrorsKey, []*OpsUpstreamErrorEvent{})
+	c.Set(OpsUpstreamStatusCodeKey, 0)
+	c.Set(OpsUpstreamErrorMessageKey, "")
+	c.Set(OpsUpstreamErrorDetailKey, "")
 }
 
 // MarkOpsStreamError 记录一次就地 SSE 错误，供 ops 日志采集。
@@ -160,17 +207,112 @@ func MarkOpsStreamFailure(c *gin.Context, errType, code, message string, intende
 	})
 }
 
+func MarkOpsStreamErrorValue(c *gin.Context, streamErr OpsStreamError) {
+	markOpsStreamError(c, streamErr)
+}
+
 func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 	if c == nil {
-		return
-	}
-	if _, exists := c.Get(OpsStreamErrorKey); exists {
 		return
 	}
 	streamErr.ErrType = strings.TrimSpace(streamErr.ErrType)
 	streamErr.Code = strings.TrimSpace(streamErr.Code)
 	streamErr.Message = strings.TrimSpace(streamErr.Message)
+	if !streamErr.RequestScoped {
+		streamErr.SkipMonitoring = currentOpsFailureSkipMonitoring(c)
+	}
+	snapshotOpsStreamErrorContext(c, &streamErr)
+	if GetOpenAIClientTransport(c) == OpenAIClientTransportWS {
+		if value, ok := c.Get(OpsStreamTurnKey); ok {
+			streamErr.Turn, _ = value.(int)
+		}
+		var errorsForRequest []OpsStreamError
+		if value, ok := c.Get(OpsStreamErrorsKey); ok {
+			errorsForRequest, _ = value.([]OpsStreamError)
+		}
+		if len(errorsForRequest) > 0 && errorsForRequest[len(errorsForRequest)-1].Turn == streamErr.Turn {
+			return
+		}
+		errorsForRequest = append(errorsForRequest, streamErr)
+		if len(errorsForRequest) > maxOpsStreamErrorsPerRequest {
+			errorsForRequest = append([]OpsStreamError(nil), errorsForRequest[len(errorsForRequest)-maxOpsStreamErrorsPerRequest:]...)
+		}
+		c.Set(OpsStreamErrorsKey, errorsForRequest)
+		c.Set(OpsStreamErrorKey, streamErr)
+		return
+	}
+	if _, exists := c.Get(OpsStreamErrorKey); exists {
+		return
+	}
 	c.Set(OpsStreamErrorKey, streamErr)
+}
+
+func snapshotOpsStreamErrorContext(c *gin.Context, streamErr *OpsStreamError) {
+	if c == nil || streamErr == nil {
+		return
+	}
+	if c.Request != nil {
+		if accountID, ok := c.Request.Context().Value(ctxkey.AccountID).(int64); ok && accountID > 0 {
+			streamErr.AccountID = accountID
+		}
+	}
+	if value, ok := c.Get(OpsUpstreamModelKey); ok {
+		streamErr.UpstreamModel, _ = value.(string)
+		streamErr.UpstreamModel = strings.TrimSpace(streamErr.UpstreamModel)
+	}
+	if streamErr.RequestScoped {
+		return
+	}
+	if value, ok := c.Get(OpsUpstreamStatusCodeKey); ok {
+		switch status := value.(type) {
+		case int:
+			streamErr.UpstreamStatus = status
+		case int64:
+			streamErr.UpstreamStatus = int(status)
+		}
+	}
+	if value, ok := c.Get(OpsUpstreamErrorMessageKey); ok {
+		streamErr.UpstreamMessage, _ = value.(string)
+		streamErr.UpstreamMessage = strings.TrimSpace(streamErr.UpstreamMessage)
+	}
+	if value, ok := c.Get(OpsUpstreamErrorDetailKey); ok {
+		streamErr.UpstreamDetail, _ = value.(string)
+		streamErr.UpstreamDetail = strings.TrimSpace(streamErr.UpstreamDetail)
+	}
+	if value, ok := c.Get(OpsUpstreamErrorsKey); ok {
+		if events, ok := value.([]*OpsUpstreamErrorEvent); ok {
+			streamErr.UpstreamErrors = make([]*OpsUpstreamErrorEvent, 0, len(events))
+			for _, event := range events {
+				if event == nil {
+					streamErr.UpstreamErrors = append(streamErr.UpstreamErrors, nil)
+					continue
+				}
+				copyOfEvent := *event
+				streamErr.UpstreamErrors = append(streamErr.UpstreamErrors, &copyOfEvent)
+			}
+		}
+	}
+}
+
+func currentOpsFailureSkipMonitoring(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if value, ok := c.Get(OpsSkipPassthroughKey); ok {
+		if skip, _ := value.(bool); skip {
+			return true
+		}
+	}
+	if value, ok := c.Get(OpsUpstreamErrorsKey); ok {
+		if events, ok := value.([]*OpsUpstreamErrorEvent); ok {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i] != nil {
+					return events[i].SkipMonitoring
+				}
+			}
+		}
+	}
+	return false
 }
 
 // GetOpsStreamError 返回本请求记录的就地 SSE 错误（若有）。
@@ -184,6 +326,21 @@ func GetOpsStreamError(c *gin.Context) (OpsStreamError, bool) {
 	}
 	se, ok := v.(OpsStreamError)
 	return se, ok
+}
+
+func GetOpsStreamErrors(c *gin.Context) []OpsStreamError {
+	if c == nil {
+		return nil
+	}
+	if value, ok := c.Get(OpsStreamErrorsKey); ok {
+		if errorsForRequest, ok := value.([]OpsStreamError); ok && len(errorsForRequest) > 0 {
+			return append([]OpsStreamError(nil), errorsForRequest...)
+		}
+	}
+	if streamErr, ok := GetOpsStreamError(c); ok {
+		return []OpsStreamError{streamErr}
+	}
+	return nil
 }
 
 // SetOpsUpstreamError is the exported wrapper for setOpsUpstreamError, used by
@@ -254,6 +411,11 @@ type OpsUpstreamErrorEvent struct {
 
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+
+	// SkipMonitoring is request-local rule state. It is intentionally excluded
+	// from persisted attempt JSON. Only the final client-visible failure may use
+	// it to suppress an Ops error record; recovered attempts remain telemetry.
+	SkipMonitoring bool `json:"-"`
 }
 
 type opsUpstreamProxyMode uint8
@@ -365,6 +527,38 @@ func applyOpsUpstreamProxySnapshot(ev *OpsUpstreamErrorEvent, snapshot opsUpstre
 func appendOpenAIOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	applyOpsUpstreamProxySnapshot(&ev, currentOpsUpstreamProxySnapshot(c))
 	appendOpsUpstreamError(c, ev)
+}
+
+func opsUpstreamProxyAttribution(account *Account) (*int64, string) {
+	if account == nil {
+		return nil, opsProxyNameUnknown
+	}
+	if account.ProxyID == nil || account.Proxy == nil {
+		return nil, opsProxyNameDirect
+	}
+	if account.Proxy.ID <= 0 {
+		return nil, opsProxyNameUnknown
+	}
+	proxyID := account.Proxy.ID
+	return &proxyID, sanitizeManagedOpsProxyName(account.Proxy.Name)
+}
+
+func opsUpstreamProxyID(account *Account) *int64 {
+	proxyID, _ := opsUpstreamProxyAttribution(account)
+	return proxyID
+}
+
+func opsUpstreamProxyName(account *Account) string {
+	_, name := opsUpstreamProxyAttribution(account)
+	return name
+}
+
+func opsUpstreamWSProxyAttribution(account *Account) (*int64, string) {
+	proxyID, name := opsUpstreamProxyAttribution(account)
+	if proxyID == nil {
+		return nil, opsProxyNameUnknown
+	}
+	return proxyID, name
 }
 
 func setUnknownOpsUpstreamProxy(ev *OpsUpstreamErrorEvent) {
@@ -546,11 +740,10 @@ func boundOpsUpstreamErrorsInContext(events []*OpsUpstreamErrorEvent) []*OpsUpst
 	return bounded
 }
 
-// checkSkipMonitoringForUpstreamEvent checks whether the upstream error event
-// matches a passthrough rule with skip_monitoring=true and, if so, sets the
-// OpsSkipPassthroughKey on the context.  This ensures intermediate retry /
-// failover errors (which never go through the final applyErrorPassthroughRule
-// path) can still suppress ops_error_logs recording.
+// checkSkipMonitoringForUpstreamEvent snapshots whether this attempt matches a
+// skip_monitoring passthrough rule. The final failure decides whether the
+// request error is hidden; an intermediate recovered attempt cannot suppress a
+// later client-visible failure.
 func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEvent) {
 	if ev.UpstreamStatusCode == 0 {
 		return
@@ -571,7 +764,7 @@ func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEve
 
 	rule := svc.MatchRule(ev.Platform, ev.UpstreamStatusCode, []byte(body))
 	if rule != nil && rule.SkipMonitoring {
-		c.Set(OpsSkipPassthroughKey, true)
+		ev.SkipMonitoring = true
 	}
 }
 

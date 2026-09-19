@@ -160,7 +160,7 @@ func TestHandleNativeNonStreamingResponse_FeedsImageCounter(t *testing.T) {
 	}
 
 	svc := &GeminiMessagesCompatService{}
-	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false)
+	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 1, observedGeminiImageOutputs(c))

@@ -29,6 +29,7 @@ type dashboardTrendCacheKey struct {
 	Model                 string `json:"model"`
 	RequestType           *int16 `json:"request_type"`
 	Stream                *bool  `json:"stream"`
+	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
 	ExecutionNodeID       string `json:"execution_node_id,omitempty"`
@@ -45,6 +46,7 @@ type dashboardModelGroupCacheKey struct {
 	ModelSource           string `json:"model_source,omitempty"`
 	RequestType           *int16 `json:"request_type"`
 	Stream                *bool  `json:"stream"`
+	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
 	ExecutionNodeID       string `json:"execution_node_id,omitempty"`
@@ -90,6 +92,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 	model string,
 	requestType *int16,
 	stream *bool,
+	nativeCompactionV2 *bool,
 	billingType *int8,
 	upstreamModelMismatch *bool,
 	executionNodeID string,
@@ -105,6 +108,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 		Model:                 model,
 		RequestType:           requestType,
 		Stream:                stream,
+		NativeCompactionV2:    nativeCompactionV2,
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		ExecutionNodeID:       executionNodeID,
@@ -113,7 +117,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 	entry, hit, err := dashboardTrendCache.GetOrLoad(key, func() (any, error) {
 		return h.dashboardService.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-			Model: model, RequestType: requestType, Stream: stream, BillingType: billingType,
+			Model: model, RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
 			ExecutionNodeID:       executionNodeID,
 			ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(ctx),
@@ -133,6 +137,7 @@ func (h *DashboardHandler) getModelStatsCached(
 	modelSource string,
 	requestType *int16,
 	stream *bool,
+	nativeCompactionV2 *bool,
 	billingType *int8,
 	upstreamModelMismatch *bool,
 	executionNodeID string,
@@ -147,6 +152,7 @@ func (h *DashboardHandler) getModelStatsCached(
 		ModelSource:           usagestats.NormalizeModelSource(modelSource),
 		RequestType:           requestType,
 		Stream:                stream,
+		NativeCompactionV2:    nativeCompactionV2,
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		ExecutionNodeID:       executionNodeID,
@@ -155,7 +161,7 @@ func (h *DashboardHandler) getModelStatsCached(
 	entry, hit, err := dashboardModelStatsCache.GetOrLoad(key, func() (any, error) {
 		return h.dashboardService.GetModelStatsWithUsageFiltersBySource(ctx, startTime, endTime, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-			RequestType: requestType, Stream: stream, BillingType: billingType,
+			RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
 			ExecutionNodeID:       executionNodeID,
 			ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(ctx),
@@ -174,6 +180,7 @@ func (h *DashboardHandler) getGroupStatsCached(
 	userID, apiKeyID, accountID, groupID int64,
 	requestType *int16,
 	stream *bool,
+	nativeCompactionV2 *bool,
 	billingType *int8,
 	upstreamModelMismatch *bool,
 	executionNodeID string,
@@ -187,6 +194,7 @@ func (h *DashboardHandler) getGroupStatsCached(
 		GroupID:               groupID,
 		RequestType:           requestType,
 		Stream:                stream,
+		NativeCompactionV2:    nativeCompactionV2,
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 		ExecutionNodeID:       executionNodeID,
@@ -195,7 +203,7 @@ func (h *DashboardHandler) getGroupStatsCached(
 	entry, hit, err := dashboardGroupStatsCache.GetOrLoad(key, func() (any, error) {
 		return h.dashboardService.GetGroupStatsWithUsageFilters(ctx, startTime, endTime, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-			RequestType: requestType, Stream: stream, BillingType: billingType,
+			RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
 			ExecutionNodeID:       executionNodeID,
 			ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(ctx),

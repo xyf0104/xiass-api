@@ -119,6 +119,7 @@ func newHelperServer(cfg *config) *helperServer {
 
 func (s *helperServer) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("OPTIONS /healthz", s.healthOptions)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /setup", s.setupPage)
 	mux.HandleFunc("GET /api/setup", s.setupState)
@@ -135,6 +136,7 @@ func (s *helperServer) callbackRoutes() http.Handler {
 }
 
 func (s *helperServer) health(w http.ResponseWriter, r *http.Request) {
+	setHealthCORSHeaders(w)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	_, adsPower := s.runtimeSnapshot()
@@ -144,6 +146,18 @@ func (s *helperServer) health(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, `{"status":"ok"}`)
+}
+
+func (s *helperServer) healthOptions(w http.ResponseWriter, _ *http.Request) {
+	setHealthCORSHeaders(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setHealthCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	w.Header().Set("Cache-Control", "no-store")
 }
 
 func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {

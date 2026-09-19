@@ -70,6 +70,7 @@ import { computed, ref } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adsPowerAPI } from '@/api/admin/adspower'
+import { adsPowerHelperMacDownloadURL, adsPowerHelperWindowsDownloadURL } from '@/utils/adspowerHelper'
 
 const props = defineProps<{
   show: boolean
@@ -79,9 +80,8 @@ const props = defineProps<{
 
 defineEmits<{ close: [] }>()
 
-const helperReleaseBase = 'https://github.com/xyf0104/xiass-api/releases/download/adspower-helper-latest'
-const macDownloadURL = `${helperReleaseBase}/xiass-adspower-helper-macos-universal.dmg`
-const windowsDownloadURL = `${helperReleaseBase}/xiass-adspower-helper-windows-x64.exe`
+const macDownloadURL = adsPowerHelperMacDownloadURL
+const windowsDownloadURL = adsPowerHelperWindowsDownloadURL
 const pairing = ref(false)
 const pairingError = ref('')
 const setupURL = computed(() => {

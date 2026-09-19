@@ -470,7 +470,7 @@
     <BaseDialog
       :show="showCreateModal"
       :title="t('admin.groups.createGroup')"
-      width="normal"
+      width="wide"
       @close="closeCreateModal"
     >
       <form
@@ -790,43 +790,27 @@
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ t("admin.groups.modelsList.title") }}
+                {{ t("admin.groups.modelAllowlist.title") }}
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.hint") }}
+                {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <button
-              type="button"
-              @click="createModelsListState.enabled = !createModelsListState.enabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors',
-                createModelsListState.enabled
-                  ? 'bg-primary-500'
-                  : 'bg-gray-300 dark:bg-dark-600',
-              ]"
-            >
-              <span
-                :class="[
-                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                  createModelsListState.enabled ? 'translate-x-6' : 'translate-x-1',
-                ]"
-              />
-            </button>
+            <Toggle v-model="createModelAllowlistState.enabled" />
           </div>
           <div
-            v-if="createModelsListState.enabled"
+            v-if="createModelAllowlistState.enabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
-              v-if="!createModelsListLoading && createModelsListState.items.length > 0"
+              v-if="!createModelAllowlistLoading && createModelAllowlistState.items.length > 0"
               class="flex items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs dark:border-dark-600 dark:bg-dark-800"
             >
               <span class="text-gray-500 dark:text-gray-400">
                 {{
-                  t("admin.groups.modelsList.selectedSummary", {
-                    selected: createModelsListSelectedCount,
-                    total: createModelsListState.items.length,
+                  t("admin.groups.modelAllowlist.selectedSummary", {
+                    selected: createModelAllowlistSelectedCount,
+                    total: createModelAllowlistState.items.length,
                   })
                 }}
               </span>
@@ -834,33 +818,33 @@
                 <button
                   type="button"
                   class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
-                  @click="selectAllModelsListItems(createModelsListState)"
+                  @click="selectAllModelAllowlistItems(createModelAllowlistState)"
                 >
-                  {{ t("admin.groups.modelsList.selectAll") }}
+                  {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
                 <button
                   type="button"
                   class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                  @click="invertModelsListSelection(createModelsListState)"
+                  @click="invertModelAllowlistSelection(createModelAllowlistState)"
                 >
-                  {{ t("admin.groups.modelsList.invertSelection") }}
+                  {{ t("admin.groups.modelAllowlist.invertSelection") }}
                 </button>
               </div>
             </div>
             <div
               class="max-h-64 space-y-2 overflow-y-auto p-2"
             >
-              <p v-if="createModelsListLoading" class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.loading") }}
+              <p v-if="createModelAllowlistLoading" class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.modelAllowlist.loading") }}
               </p>
               <p
-                v-else-if="createModelsListState.items.length === 0"
+                v-else-if="createModelAllowlistState.items.length === 0"
                 class="text-xs text-gray-500 dark:text-gray-400"
               >
-                {{ t("admin.groups.modelsList.empty") }}
+                {{ t("admin.groups.modelAllowlist.empty") }}
               </p>
               <div
-                v-for="(item, index) in createModelsListState.items"
+                v-for="(item, index) in createModelAllowlistState.items"
                 :key="item.id"
                 class="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
               >
@@ -871,24 +855,51 @@
                 />
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
+                  <span
+                    v-if="item.id.endsWith('*')"
+                    class="ml-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
+                  >
+                    {{ t("admin.groups.modelAllowlist.wildcardTag") }}
+                  </span>
                 </span>
                 <button
                   type="button"
                   :disabled="index === 0"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
-                  @click="moveCreateModelsListItem(index, index - 1)"
+                  @click="moveCreateModelAllowlistItem(index, index - 1)"
                 >
                   <Icon name="arrowUp" size="sm" />
                 </button>
                 <button
                   type="button"
-                  :disabled="index === createModelsListState.items.length - 1"
+                  :disabled="index === createModelAllowlistState.items.length - 1"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
-                  @click="moveCreateModelsListItem(index, index + 1)"
+                  @click="moveCreateModelAllowlistItem(index, index + 1)"
                 >
                   <Icon name="arrowDown" size="sm" />
                 </button>
               </div>
+            </div>
+            <div class="border-t border-gray-200 px-3 py-2 dark:border-dark-600">
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="createAllowlistCustomEntry"
+                  type="text"
+                  :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
+                  class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
+                  @keydown.enter.prevent="submitCreateAllowlistCustomEntry"
+                />
+                <button
+                  type="button"
+                  class="btn btn-secondary shrink-0 whitespace-nowrap"
+                  @click="submitCreateAllowlistCustomEntry"
+                >
+                  {{ t("admin.groups.modelAllowlist.addCustom") }}
+                </button>
+              </div>
+              <p v-if="createAllowlistCustomErrorKey" class="mt-1 text-xs text-red-500">
+                {{ t(createAllowlistCustomErrorKey) }}
+              </p>
             </div>
           </div>
         </div>
@@ -2300,7 +2311,7 @@
     <BaseDialog
       :show="showEditModal"
       :title="t('admin.groups.editGroup')"
-      width="normal"
+      width="wide"
       @close="closeEditModal"
     >
       <form
@@ -2622,43 +2633,27 @@
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ t("admin.groups.modelsList.title") }}
+                {{ t("admin.groups.modelAllowlist.title") }}
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.hint") }}
+                {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <button
-              type="button"
-              @click="editModelsListState.enabled = !editModelsListState.enabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors',
-                editModelsListState.enabled
-                  ? 'bg-primary-500'
-                  : 'bg-gray-300 dark:bg-dark-600',
-              ]"
-            >
-              <span
-                :class="[
-                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                  editModelsListState.enabled ? 'translate-x-6' : 'translate-x-1',
-                ]"
-              />
-            </button>
+            <Toggle v-model="editModelAllowlistState.enabled" />
           </div>
           <div
-            v-if="editModelsListState.enabled"
+            v-if="editModelAllowlistState.enabled"
             class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/50 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div
-              v-if="!editModelsListLoading && editModelsListState.items.length > 0"
+              v-if="!editModelAllowlistLoading && editModelAllowlistState.items.length > 0"
               class="flex items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs dark:border-dark-600 dark:bg-dark-800"
             >
               <span class="text-gray-500 dark:text-gray-400">
                 {{
-                  t("admin.groups.modelsList.selectedSummary", {
-                    selected: editModelsListSelectedCount,
-                    total: editModelsListState.items.length,
+                  t("admin.groups.modelAllowlist.selectedSummary", {
+                    selected: editModelAllowlistSelectedCount,
+                    total: editModelAllowlistState.items.length,
                   })
                 }}
               </span>
@@ -2666,33 +2661,33 @@
                 <button
                   type="button"
                   class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
-                  @click="selectAllModelsListItems(editModelsListState)"
+                  @click="selectAllModelAllowlistItems(editModelAllowlistState)"
                 >
-                  {{ t("admin.groups.modelsList.selectAll") }}
+                  {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
                 <button
                   type="button"
                   class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                  @click="invertModelsListSelection(editModelsListState)"
+                  @click="invertModelAllowlistSelection(editModelAllowlistState)"
                 >
-                  {{ t("admin.groups.modelsList.invertSelection") }}
+                  {{ t("admin.groups.modelAllowlist.invertSelection") }}
                 </button>
               </div>
             </div>
             <div
               class="max-h-64 space-y-2 overflow-y-auto p-2"
             >
-              <p v-if="editModelsListLoading" class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.loading") }}
+              <p v-if="editModelAllowlistLoading" class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.modelAllowlist.loading") }}
               </p>
               <p
-                v-else-if="editModelsListState.items.length === 0"
+                v-else-if="editModelAllowlistState.items.length === 0"
                 class="text-xs text-gray-500 dark:text-gray-400"
               >
-                {{ t("admin.groups.modelsList.empty") }}
+                {{ t("admin.groups.modelAllowlist.empty") }}
               </p>
               <div
-                v-for="(item, index) in editModelsListState.items"
+                v-for="(item, index) in editModelAllowlistState.items"
                 :key="item.id"
                 class="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
               >
@@ -2703,24 +2698,51 @@
                 />
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
+                  <span
+                    v-if="item.id.endsWith('*')"
+                    class="ml-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
+                  >
+                    {{ t("admin.groups.modelAllowlist.wildcardTag") }}
+                  </span>
                 </span>
                 <button
                   type="button"
                   :disabled="index === 0"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
-                  @click="moveEditModelsListItem(index, index - 1)"
+                  @click="moveEditModelAllowlistItem(index, index - 1)"
                 >
                   <Icon name="arrowUp" size="sm" />
                 </button>
                 <button
                   type="button"
-                  :disabled="index === editModelsListState.items.length - 1"
+                  :disabled="index === editModelAllowlistState.items.length - 1"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
-                  @click="moveEditModelsListItem(index, index + 1)"
+                  @click="moveEditModelAllowlistItem(index, index + 1)"
                 >
                   <Icon name="arrowDown" size="sm" />
                 </button>
               </div>
+            </div>
+            <div class="border-t border-gray-200 px-3 py-2 dark:border-dark-600">
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="editAllowlistCustomEntry"
+                  type="text"
+                  :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
+                  class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
+                  @keydown.enter.prevent="submitEditAllowlistCustomEntry"
+                />
+                <button
+                  type="button"
+                  class="btn btn-secondary shrink-0 whitespace-nowrap"
+                  @click="submitEditAllowlistCustomEntry"
+                >
+                  {{ t("admin.groups.modelAllowlist.addCustom") }}
+                </button>
+              </div>
+              <p v-if="editAllowlistCustomErrorKey" class="mt-1 text-xs text-red-500">
+                {{ t(editAllowlistCustomErrorKey) }}
+              </p>
             </div>
           </div>
         </div>
@@ -3350,6 +3372,16 @@
             </div>
           </div>
         </div>
+
+        <!-- 固定账号获取 Codex Model Manifest（仅 openai 平台，仅编辑对话框） -->
+        <CodexManifestAccountsField
+          v-if="editForm.platform === 'openai' && editingGroup"
+          ref="editCodexManifestRef"
+          :group-id="editingGroup.id"
+          :model-value="editCodexManifestConfig"
+          :account-names="editCodexManifestAccountNames"
+          @update:model-value="Object.assign(editCodexManifestConfig, $event)"
+        />
 
         <div class="border-t border-gray-200 pt-4 mt-4 dark:border-dark-400">
           <div class="flex items-start justify-between gap-4">
@@ -4811,6 +4843,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { useAppStore } from "@/stores/app";
+import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
 import type {
@@ -4821,6 +4854,7 @@ import type {
   CompositeRouteDecision,
   CompositeRouteEndpoint,
   CompositeRouteMatchType,
+  CodexModelsManifestConfig,
   GroupPlatform,
   SubscriptionType,
 } from "@/types";
@@ -4842,6 +4876,7 @@ import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
 import DataTable from "@/components/common/DataTable.vue";
 import Pagination from "@/components/common/Pagination.vue";
+import Toggle from "@/components/common/Toggle.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -4853,6 +4888,7 @@ import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesMo
 import UserAccountAllowlistDialog from "@/components/admin/group/UserAccountAllowlistDialog.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
+import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
 import PricingEntryCard from "@/components/admin/channel/PricingEntryCard.vue";
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
@@ -4880,14 +4916,15 @@ import {
   type MessagesDispatchMappingRow,
 } from "./groupsMessagesDispatch";
 import {
-  buildModelsListConfig,
-  createModelsListState as createInitialModelsListState,
-  invertModelsListSelection,
-  moveModelsListItem,
-  selectAllModelsListItems,
-  setModelsListCandidates,
-} from "./groupsModelsList";
-import { createModelsListCandidatesTracker } from "./groupsModelsListCandidates";
+  addCustomModelAllowlistItem,
+  buildModelAllowlistConfig,
+  createModelAllowlistState as createInitialModelAllowlistState,
+  invertModelAllowlistSelection,
+  moveModelAllowlistItem,
+  selectAllModelAllowlistItems,
+  setModelAllowlistCandidates,
+} from "./groupModelAllowlist";
+import { createModelAllowlistCandidatesTracker } from "./modelAllowlistCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
 import {
   isProfitControlPlatform,
@@ -4984,6 +5021,7 @@ const groupPricingToAPI = (
 const { t } = useI18n();
 const route = useRoute();
 const appStore = useAppStore();
+const authStore = useAuthStore();
 const onboardingStore = useOnboardingStore();
 const { sharedReadOnly, loadExecutionNodeAdminAccess } = useExecutionNodeAdminAccess();
 const ensureSharedWrite = (): boolean => {
@@ -5816,23 +5854,63 @@ const compositeRouteForm = reactive<CompositeRouteFormState>({
 });
 const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
-const createModelsListState = reactive(createInitialModelsListState());
-const editModelsListState = reactive(createInitialModelsListState());
-const createModelsListLoading = ref(false);
-const editModelsListLoading = ref(false);
+const createModelAllowlistState = reactive(createInitialModelAllowlistState());
+const editModelAllowlistState = reactive(createInitialModelAllowlistState());
+const createModelAllowlistLoading = ref(false);
+const editModelAllowlistLoading = ref(false);
 type ReasoningEffortPolicyFieldsExpose = {
   validate: () => boolean;
   resetValidation: () => void;
 };
 const createReasoningEffortPolicyRef = ref<ReasoningEffortPolicyFieldsExpose | null>(null);
 const editReasoningEffortPolicyRef = ref<ReasoningEffortPolicyFieldsExpose | null>(null);
-const modelsListCandidatesTracker = createModelsListCandidatesTracker();
-const createModelsListSelectedCount = computed(
-  () => createModelsListState.items.filter((item) => item.selected).length,
+type CodexManifestAccountsFieldExpose = {
+  validate: () => boolean;
+  resetValidation: () => void;
+};
+const editCodexManifestRef = ref<CodexManifestAccountsFieldExpose | null>(null);
+const createCodexManifestDefaults = (): CodexModelsManifestConfig => ({
+  enabled: false,
+  account_ids: [],
+  fallback_to_scheduler: false,
+});
+const editCodexManifestConfig = ref<CodexModelsManifestConfig>(
+  createCodexManifestDefaults(),
 );
-const editModelsListSelectedCount = computed(
-  () => editModelsListState.items.filter((item) => item.selected).length,
+const editCodexManifestAccountNames = ref<Record<number, string>>({});
+const modelAllowlistCandidatesTracker = createModelAllowlistCandidatesTracker();
+const createModelAllowlistSelectedCount = computed(
+  () => createModelAllowlistState.items.filter((item) => item.selected).length,
 );
+const editModelAllowlistSelectedCount = computed(
+  () => editModelAllowlistState.items.filter((item) => item.selected).length,
+);
+const createAllowlistCustomEntry = ref("");
+const editAllowlistCustomEntry = ref("");
+const createAllowlistCustomErrorKey = ref<string | null>(null);
+const editAllowlistCustomErrorKey = ref<string | null>(null);
+
+const submitCreateAllowlistCustomEntry = () => {
+  const error = addCustomModelAllowlistItem(
+    createModelAllowlistState,
+    createAllowlistCustomEntry.value,
+  );
+  createAllowlistCustomErrorKey.value = error
+    ? `admin.groups.modelAllowlist.errors.${error}`
+    : null;
+  if (!error) createAllowlistCustomEntry.value = "";
+};
+
+const submitEditAllowlistCustomEntry = () => {
+  const error = addCustomModelAllowlistItem(
+    editModelAllowlistState,
+    editAllowlistCustomEntry.value,
+  );
+  editAllowlistCustomErrorKey.value = error
+    ? `admin.groups.modelAllowlist.errors.${error}`
+    : null;
+  if (!error) editAllowlistCustomEntry.value = "";
+};
 
 const createForm = reactive({
   name: "",
@@ -6151,50 +6229,51 @@ const removeEditRoutingRule = (rule: ModelRoutingRule) => {
   editModelRoutingRules.value.splice(index, 1);
 };
 
-const resetModelsListState = (
-  state: typeof createModelsListState,
-  config?: Parameters<typeof createInitialModelsListState>[0],
+const resetModelAllowlistState = (
+  state: typeof createModelAllowlistState,
+  config?: Parameters<typeof createInitialModelAllowlistState>[0],
 ) => {
-  const fresh = createInitialModelsListState(config);
+  const fresh = createInitialModelAllowlistState(config);
   state.enabled = fresh.enabled;
   state.savedModels = fresh.savedModels;
   state.items = fresh.items;
 };
 
-const loadModelsListCandidates = async (
+const loadModelAllowlistCandidates = async (
   mode: "create" | "edit",
   groupID: number,
   platform: GroupPlatform,
 ) => {
+  if (authStore.isSimpleMode) return;
   const request = { mode, groupID, platform };
-  const requestID = modelsListCandidatesTracker.next(request);
-  const state = mode === "create" ? createModelsListState : editModelsListState;
-  const loadingRef = mode === "create" ? createModelsListLoading : editModelsListLoading;
+  const requestID = modelAllowlistCandidatesTracker.next(request);
+  const state = mode === "create" ? createModelAllowlistState : editModelAllowlistState;
+  const loadingRef = mode === "create" ? createModelAllowlistLoading : editModelAllowlistLoading;
   loadingRef.value = true;
   try {
-    const models = await adminAPI.groups.getModelsListCandidates(groupID, platform);
-    if (!modelsListCandidatesTracker.isCurrent(requestID, request)) {
+    const models = await adminAPI.groups.getModelAllowlistCandidates(groupID, platform);
+    if (!modelAllowlistCandidatesTracker.isCurrent(requestID, request)) {
       return;
     }
-    setModelsListCandidates(state, models);
+    setModelAllowlistCandidates(state, models);
   } catch (error) {
-    if (!modelsListCandidatesTracker.isCurrent(requestID, request)) {
+    if (!modelAllowlistCandidatesTracker.isCurrent(requestID, request)) {
       return;
     }
-    console.error("Error loading group models list candidates:", error);
+    console.error("Error loading group model allowlist candidates:", error);
   } finally {
-    if (modelsListCandidatesTracker.isCurrent(requestID, request)) {
+    if (modelAllowlistCandidatesTracker.isCurrent(requestID, request)) {
       loadingRef.value = false;
     }
   }
 };
 
-const moveCreateModelsListItem = (fromIndex: number, toIndex: number) => {
-  moveModelsListItem(createModelsListState, fromIndex, toIndex);
+const moveCreateModelAllowlistItem = (fromIndex: number, toIndex: number) => {
+  moveModelAllowlistItem(createModelAllowlistState, fromIndex, toIndex);
 };
 
-const moveEditModelsListItem = (fromIndex: number, toIndex: number) => {
-  moveModelsListItem(editModelsListState, fromIndex, toIndex);
+const moveEditModelAllowlistItem = (fromIndex: number, toIndex: number) => {
+  moveModelAllowlistItem(editModelAllowlistState, fromIndex, toIndex);
 };
 
 // 将 UI 格式的路由规则转换为 API 格式
@@ -6775,7 +6854,7 @@ const openCreateModal = () => {
   if (createForm.platform === "openai" && createForm.model_routing_enabled) {
     void loadModelRoutingPools();
   }
-  loadModelsListCandidates("create", 0, createForm.platform);
+  loadModelAllowlistCandidates("create", 0, createForm.platform);
 };
 
 const closeCreateModal = () => {
@@ -6837,7 +6916,7 @@ const closeCreateModal = () => {
   createForm.max_reasoning_effort = "";
   createForm.reasoning_effort_mappings = [];
   createReasoningEffortPolicyRef.value?.resetValidation();
-  resetModelsListState(createModelsListState);
+  resetModelAllowlistState(createModelAllowlistState);
   createModelRoutingRules.value = [];
 };
 
@@ -6937,7 +7016,9 @@ const handleCreateGroup = async () => {
       model_routing_enabled:
         supportsModelRoutingPlatform(createForm.platform) &&
         createForm.model_routing_enabled,
-      models_list_config: buildModelsListConfig(createModelsListState),
+      model_allowlist: buildModelAllowlistConfig(createModelAllowlistState),
+      // 创建分组时固定账号 manifest 由编辑流程显式开启，避免新分组误用旧账号。
+      codex_models_manifest_config: createCodexManifestDefaults(),
       supported_model_scopes: normalizeSupportedModelScopesForPlatform(
         createForm.platform,
         createForm.supported_model_scopes,
@@ -7120,7 +7201,28 @@ const handleEdit = async (group: AdminGroup) => {
     group.reasoning_effort_mappings,
     group.platform,
   );
-  resetModelsListState(editModelsListState, group.models_list_config);
+  resetModelAllowlistState(editModelAllowlistState, group.model_allowlist);
+  const savedCodexManifestConfig =
+    group.codex_models_manifest_config ?? createCodexManifestDefaults();
+  editCodexManifestConfig.value = {
+    enabled: savedCodexManifestConfig.enabled ?? false,
+    account_ids: [...(savedCodexManifestConfig.account_ids ?? [])],
+    fallback_to_scheduler: savedCodexManifestConfig.fallback_to_scheduler ?? false,
+  };
+  editCodexManifestAccountNames.value = {};
+  for (const id of editCodexManifestConfig.value.account_ids) {
+    adminAPI.accounts
+      .getById(id)
+      .then((account) => {
+        editCodexManifestAccountNames.value = {
+          ...editCodexManifestAccountNames.value,
+          [id]: account.name,
+        };
+      })
+      .catch(() => {
+        // 账号已删除时由字段回退显示 #<id>，不阻断分组编辑。
+      });
+  }
   if (group.platform === "openai" && group.model_routing_enabled) {
     void loadModelRoutingPools();
   }
@@ -7129,7 +7231,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.model_routing,
     group.model_routing_pools,
   );
-  loadModelsListCandidates("edit", group.id, group.platform);
+  loadModelAllowlistCandidates("edit", group.id, group.platform);
   showEditModal.value = true;
 };
 
@@ -7167,7 +7269,10 @@ const closeEditModal = () => {
   editForm.audio_stt_price_per_hour = null;
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
-  resetModelsListState(editModelsListState);
+  resetModelAllowlistState(editModelAllowlistState);
+  editCodexManifestConfig.value = createCodexManifestDefaults();
+  editCodexManifestAccountNames.value = {};
+  editCodexManifestRef.value?.resetValidation();
 };
 
 const handleUpdateGroup = async () => {
@@ -7185,6 +7290,15 @@ const handleUpdateGroup = async () => {
     return;
   }
   if (!validateProfitControlForm(editForm)) {
+    return;
+  }
+  if (
+    editForm.platform === "openai" &&
+    editCodexManifestConfig.value.enabled &&
+    editCodexManifestConfig.value.account_ids.length === 0
+  ) {
+    appStore.showError(t("admin.groups.codexModelsManifest.selectAtLeastOne"));
+    editCodexManifestRef.value?.validate();
     return;
   }
 
@@ -7225,7 +7339,16 @@ const handleUpdateGroup = async () => {
       model_routing_enabled:
         supportsModelRoutingPlatform(editForm.platform) &&
         editForm.model_routing_enabled,
-      models_list_config: buildModelsListConfig(editModelsListState),
+      model_allowlist: buildModelAllowlistConfig(editModelAllowlistState),
+      codex_models_manifest_config:
+        editForm.platform === "openai"
+          ? {
+              enabled: editCodexManifestConfig.value.enabled,
+              account_ids: [...editCodexManifestConfig.value.account_ids],
+              fallback_to_scheduler:
+                editCodexManifestConfig.value.fallback_to_scheduler,
+            }
+          : createCodexManifestDefaults(),
       supported_model_scopes: normalizeSupportedModelScopesForPlatform(
         editForm.platform,
         editForm.supported_model_scopes,
@@ -7641,11 +7764,11 @@ watch(
       createForm.require_privacy_set = false;
     }
     resetDisabledBatchImagePricing(createForm);
-    resetModelsListState(createModelsListState);
+    resetModelAllowlistState(createModelAllowlistState);
     if (newVal === "openai" && createForm.model_routing_enabled) {
       void loadModelRoutingPools();
     }
-    loadModelsListCandidates("create", 0, newVal);
+    loadModelAllowlistCandidates("create", 0, newVal);
   },
 );
 
@@ -7698,8 +7821,8 @@ watch(
       void loadModelRoutingPools();
     }
     if (editingGroup.value) {
-      resetModelsListState(editModelsListState, editForm.platform === editingGroup.value.platform ? editingGroup.value.models_list_config : undefined);
-      loadModelsListCandidates("edit", editingGroup.value.id, newVal);
+      resetModelAllowlistState(editModelAllowlistState, editForm.platform === editingGroup.value.platform ? editingGroup.value.model_allowlist : undefined);
+      loadModelAllowlistCandidates("edit", editingGroup.value.id, newVal);
     }
   },
 );
@@ -7731,22 +7854,6 @@ watch(
     resetDisabledBatchImagePricing(editForm);
   },
 );
-
-watch(
-  () => editForm.platform,
-  (newVal) => {
-    if (!['anthropic', 'antigravity'].includes(newVal)) {
-      editForm.fallback_group_id_on_invalid_request = null
-    }
-    if (!supportsMessagesDispatchPlatform(newVal)) {
-      editForm.allow_messages_dispatch = false
-      editForm.default_mapped_model = ''
-    }
-    if (!supportsLivePlatform(newVal)) {
-      editForm.allow_live = false
-    }
-  }
-)
 
 // 点击外部关闭账号搜索下拉框
 const handleClickOutside = (event: MouseEvent) => {
@@ -7809,7 +7916,7 @@ onMounted(() => {
   void loadExecutionNodeAdminAccess(true);
   void loadGroups().then(openRequestedAccountAllowlist);
   void loadLiveCapability();
-  loadModelsListCandidates("create", 0, createForm.platform);
+  loadModelAllowlistCandidates("create", 0, createForm.platform);
   startCapacityRefresh();
   document.addEventListener("click", handleClickOutside);
 });

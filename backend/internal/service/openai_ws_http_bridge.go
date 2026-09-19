@@ -369,7 +369,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 	turnStart := time.Now()
 	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		if turn == 1 {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
@@ -405,7 +405,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if upstreamMsg == "" {
 			upstreamMsg = http.StatusText(resp.StatusCode)
 		}
-		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		if account.Platform == PlatformGrok {
 			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
 			upstreamModel := s.resolveGrokWSUpstreamModel(ctx, account, body, originalModel)
@@ -583,7 +583,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			if eventType == "error" {
 				errCodeRaw, errTypeRaw, _ := parseOpenAIWSErrorEventFields(upstreamMessage)
 				statusCode = openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
-				shouldFailover = s.shouldFailoverOpenAIUpstreamResponse(statusCode, errMessage, upstreamMessage)
+				shouldFailover = s.shouldFailoverOpenAIUpstreamResponse(account, statusCode, errMessage, upstreamMessage)
 				if reason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMessage); reason == openAIWSFallbackReasonInvalidEncryptedContent {
 					s.markOpenAIWSInvalidEncryptedContentLineageFromPayload(
 						c,

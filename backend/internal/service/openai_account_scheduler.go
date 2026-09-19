@@ -125,6 +125,7 @@ type openAIAccountSchedulerMetrics struct {
 	selectTotal            atomic.Int64
 	stickyPreviousHitTotal atomic.Int64
 	stickySessionHitTotal  atomic.Int64
+	stickyHitTotal         atomic.Int64
 	loadBalanceSelectTotal atomic.Int64
 	accountSwitchTotal     atomic.Int64
 	latencyMsTotal         atomic.Int64
@@ -167,6 +168,9 @@ func (m *openAIAccountSchedulerMetrics) recordSelect(decision OpenAIAccountSched
 	}
 	if decision.StickySessionHit {
 		m.stickySessionHitTotal.Add(1)
+	}
+	if decision.StickyPreviousHit || decision.StickySessionHit {
+		m.stickyHitTotal.Add(1)
 	}
 	if decision.Layer == openAIAccountScheduleLayerLoadBalance {
 		m.loadBalanceSelectTotal.Add(1)
@@ -374,11 +378,10 @@ func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *open
 func (s *defaultOpenAIAccountScheduler) Select(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
-) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
 	if s != nil && s.service != nil && s.service.openAIGroupRequiresPrivacySet(ctx, req.GroupID) {
 		req.RequirePrivacySet = true
 	}
-	decision := OpenAIAccountScheduleDecision{}
 	start := time.Now()
 	defer func() {
 		decision.LatencyMs = time.Since(start).Milliseconds()
@@ -436,7 +439,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 	}
 
-	selection, err := s.selectBySessionHash(ctx, req)
+	selection, err = s.selectBySessionHash(ctx, req)
 	if err != nil {
 		return nil, decision, err
 	}
@@ -485,6 +488,11 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 
 	accountID := req.StickyAccountID
+	clearBinding := func() {
+		if !req.PreserveStickyBinding {
+			_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		}
+	}
 	if accountID <= 0 {
 		var err error
 		accountID, err = s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
@@ -497,7 +505,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 	if err := s.service.requireAccountCandidate(ctx, req.GroupID, accountID); err != nil {
 		if errors.Is(err, ErrUserGroupAccountNotAllowed) {
-			_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+			clearBinding()
 		}
 		return nil, nil
 	}
@@ -509,30 +517,30 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 
 	account, err := s.service.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	if !s.isAccountRequestCompatible(ctx, account, req) {
 		return nil, nil
 	}
 	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 	if account == nil || !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	// Sticky sessions remain subject to Grok's rolling free-quota and
 	// model-specific cooldowns; otherwise a stale binding can bypass the normal
 	// candidate filters indefinitely.
 	if len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
@@ -542,12 +550,14 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	now := time.Now()
 	if isGrokTeamModelRateLimited(account, upstreamModel, now) ||
 		isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		clearBinding()
 		return nil, nil
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
-		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		if !req.PreserveStickyBinding {
+			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
@@ -558,7 +568,9 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	cfg := s.service.schedulingConfig()
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	if s.service.concurrencyService != nil {
-		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		if !req.PreserveStickyBinding {
+			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
@@ -1023,8 +1035,8 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	hasResetSample := false
 	if weights.Reset > 0 {
 		for _, candidate := range candidates {
-			end := candidate.account.SessionWindowEnd
-			if end == nil || !now.Before(*end) {
+			end, ok := openAISchedulingResetWindowEnd(candidate.account, now)
+			if !ok {
 				continue
 			}
 			remaining := end.Sub(now).Seconds()
@@ -1057,7 +1069,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 		resetFactor := 0.0
 		if weights.Reset > 0 && hasResetSample {
-			if end := item.account.SessionWindowEnd; end != nil && now.Before(*end) {
+			if end, ok := openAISchedulingResetWindowEnd(item.account, now); ok {
 				if maxResetRemaining > minResetRemaining {
 					resetFactor = 1 - clamp01((end.Sub(now).Seconds()-minResetRemaining)/(maxResetRemaining-minResetRemaining))
 				} else {
@@ -2008,6 +2020,7 @@ func (s *defaultOpenAIAccountScheduler) SnapshotMetrics() OpenAIAccountScheduler
 	selectTotal := s.metrics.selectTotal.Load()
 	prevHit := s.metrics.stickyPreviousHitTotal.Load()
 	sessionHit := s.metrics.stickySessionHitTotal.Load()
+	stickyHit := s.metrics.stickyHitTotal.Load()
 	switchTotal := s.metrics.accountSwitchTotal.Load()
 	latencyTotal := s.metrics.latencyMsTotal.Load()
 	loadSkewTotal := s.metrics.loadSkewMilliTotal.Load()
@@ -2023,7 +2036,7 @@ func (s *defaultOpenAIAccountScheduler) SnapshotMetrics() OpenAIAccountScheduler
 	}
 	if selectTotal > 0 {
 		snapshot.SchedulerLatencyMsAvg = float64(latencyTotal) / float64(selectTotal)
-		snapshot.StickyHitRatio = float64(prevHit+sessionHit) / float64(selectTotal)
+		snapshot.StickyHitRatio = float64(stickyHit) / float64(selectTotal)
 		snapshot.AccountSwitchRate = float64(switchTotal) / float64(selectTotal)
 		snapshot.LoadSkewAvg = float64(loadSkewTotal) / 1000 / float64(selectTotal)
 	}
@@ -2800,8 +2813,8 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 	}
 	if weights.Reset > 0 {
 		for _, candidate := range candidates {
-			end := candidate.account.SessionWindowEnd
-			if end == nil || !now.Before(*end) {
+			end, ok := openAISchedulingResetWindowEnd(candidate.account, now)
+			if !ok {
 				continue
 			}
 			remaining := end.Sub(now).Seconds()
@@ -2831,7 +2844,7 @@ func buildOpenAIAccountSchedulerScoreSnapshot(
 		ttftFactor := 0.5
 		resetFactor := 0.0
 		if weights.Reset > 0 && hasResetSample {
-			if end := candidate.account.SessionWindowEnd; end != nil && now.Before(*end) {
+			if end, ok := openAISchedulingResetWindowEnd(candidate.account, now); ok {
 				if maxResetRemaining > minResetRemaining {
 					resetFactor = 1 - clamp01((end.Sub(now).Seconds()-minResetRemaining)/(maxResetRemaining-minResetRemaining))
 				} else {
@@ -3020,20 +3033,78 @@ func openAIQuotaHeadroomFactor(account *Account, now time.Time) float64 {
 	if account == nil || len(account.Extra) == 0 || openAIQuotaHeadroomSnapshotStale(account.Extra, now) {
 		return openAIQuotaHeadroomNeutralFactor
 	}
-	primaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_primary_used_percent", "codex_7d_used_percent")
-	if !ok || openAIQuotaWindowResetAny(account.Extra, now, "primary", "7d") {
+	weeklyUsedPercent, weeklyWindow, weeklyOK, shortUsedPercent, shortWindow, shortOK := openAIQuotaHeadroomWindows(account.Extra)
+	if !weeklyOK || openAIQuotaWindowReset(account.Extra, weeklyWindow, now) {
 		return openAIQuotaHeadroomNeutralFactor
 	}
 
-	factor := 1 - clamp01(primaryUsedPercent/100)
-	if secondaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_secondary_used_percent", "codex_5h_used_percent"); ok &&
-		!openAIQuotaWindowResetAny(account.Extra, now, "secondary", "5h") {
-		secondaryRemaining := 1 - clamp01(secondaryUsedPercent/100)
+	factor := 1 - clamp01(weeklyUsedPercent/100)
+	if shortOK && !openAIQuotaWindowReset(account.Extra, shortWindow, now) {
+		secondaryRemaining := 1 - clamp01(shortUsedPercent/100)
 		if secondaryRemaining < openAIQuotaHeadroomSecondaryLowRemain {
 			factor *= openAIQuotaHeadroomNeutralFactor
 		}
 	}
 	return factor
+}
+
+func openAIQuotaHeadroomWindows(extra map[string]any) (weeklyUsed float64, weeklyWindow string, weeklyOK bool, shortUsed float64, shortWindow string, shortOK bool) {
+	weeklyUsed, weeklyOK = resolveAccountExtraNumber(extra, "codex_7d_used_percent")
+	if weeklyOK {
+		weeklyWindow = "7d"
+	}
+	shortUsed, shortOK = resolveAccountExtraNumber(extra, "codex_5h_used_percent")
+	if shortOK {
+		shortWindow = "5h"
+	}
+
+	weeklyRole, shortRole := openAIQuotaRawWindowRoles(extra)
+	if !weeklyOK {
+		weeklyUsed, weeklyOK = resolveAccountExtraNumber(extra, "codex_"+weeklyRole+"_used_percent")
+		weeklyWindow = weeklyRole
+	}
+	if !shortOK {
+		shortUsed, shortOK = resolveAccountExtraNumber(extra, "codex_"+shortRole+"_used_percent")
+		shortWindow = shortRole
+	}
+	return weeklyUsed, weeklyWindow, weeklyOK, shortUsed, shortWindow, shortOK
+}
+
+func openAIQuotaRawWindowRoles(extra map[string]any) (weeklyRole, shortRole string) {
+	primaryMinutes, hasPrimary := resolveAccountExtraNumber(extra, "codex_primary_window_minutes")
+	secondaryMinutes, hasSecondary := resolveAccountExtraNumber(extra, "codex_secondary_window_minutes")
+	switch {
+	case hasPrimary && hasSecondary:
+		if primaryMinutes < secondaryMinutes {
+			return "secondary", "primary"
+		}
+		return "primary", "secondary"
+	case hasPrimary:
+		if primaryMinutes <= 360 {
+			return "secondary", "primary"
+		}
+		return "primary", "secondary"
+	case hasSecondary:
+		if secondaryMinutes <= 360 {
+			return "primary", "secondary"
+		}
+		return "secondary", "primary"
+	default:
+		return "primary", "secondary"
+	}
+}
+
+func openAISchedulingResetWindowEnd(account *Account, now time.Time) (time.Time, bool) {
+	if account == nil {
+		return time.Time{}, false
+	}
+	if end, ok := openAICodexWindowResetAt(account.Extra, "5h"); ok && now.Before(end) {
+		return end, true
+	}
+	if end := account.SessionWindowEnd; end != nil && now.Before(*end) {
+		return *end, true
+	}
+	return time.Time{}, false
 }
 
 func openAIQuotaHeadroomSnapshotStale(extra map[string]any, now time.Time) bool {

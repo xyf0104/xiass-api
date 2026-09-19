@@ -29,6 +29,39 @@ type groupRepository struct {
 	sql    sqlExecutor
 }
 
+// lockLiveGroups makes account-group inserts participate in the same row-lock
+// protocol as guarded group deletion. FOR SHARE conflicts with the deleter's
+// FOR UPDATE lock, and READ COMMITTED rechecks deleted_at after any wait.
+func lockLiveGroups(ctx context.Context, exec sqlExecutor, groupIDs []int64) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	unique := make(map[int64]struct{}, len(groupIDs))
+	for _, id := range groupIDs {
+		unique[id] = struct{}{}
+	}
+	rows, err := exec.QueryContext(ctx, `/* account_group_live_group_lock */
+		SELECT id FROM groups
+		WHERE id = ANY($1) AND deleted_at IS NULL
+		ORDER BY id
+		FOR SHARE`, pq.Array(groupIDs))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	locked := 0
+	for rows.Next() {
+		locked++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if locked != len(unique) {
+		return service.ErrGroupNotFound
+	}
+	return nil
+}
+
 func NewGroupRepository(client *dbent.Client, sqlDB *sql.DB) service.GroupRepository {
 	return newGroupRepositoryWithSQL(client, sqlDB)
 }
@@ -54,6 +87,7 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 }
 
 func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *service.Group) error {
+	groupIn.SyncModelListCompatibility()
 	if groupIn == nil {
 		return errors.New("group is nil")
 	}
@@ -88,6 +122,10 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableVideoPrice720p(groupIn.VideoPrice720P).
 		SetNillableVideoPrice1080p(groupIn.VideoPrice1080P).
 		SetNillableWebSearchPricePerCall(groupIn.WebSearchPricePerCall).
+		SetNillableSearchPricePer1k(groupIn.SearchPricePer1k).
+		SetNillableAudioRealtimePricePerMin(groupIn.AudioRealtimePricePerMin).
+		SetNillableAudioTtsPricePerMillionChars(groupIn.AudioTTSPricePerMillionChars).
+		SetNillableAudioSttPricePerHour(groupIn.AudioSTTPricePerHour).
 		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
 		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
@@ -98,14 +136,18 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
+		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetModelAllowlist(service.DomainGroupModelAllowlist(groupIn.ModelAllowlist)).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetNillableCostRatio(groupIn.CostRatio).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
+		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
@@ -116,6 +158,9 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetProfitSafetyBuffer(groupIn.ProfitSafetyBuffer)
 	if groupIn.DuplicateOperationID != "" {
 		builder = builder.SetDuplicateOperationID(groupIn.DuplicateOperationID)
+	}
+	if groupIn.VideoModelPrices != nil {
+		builder = builder.SetVideoModelPrices(groupIn.VideoModelPrices)
 	}
 
 	// 设置模型路由配置
@@ -240,6 +285,7 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 }
 
 func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) error {
+	groupIn.SyncModelListCompatibility()
 	modelPricing, err := marshalGroupModelPricing(groupIn.ModelPricing)
 	if err != nil {
 		return err
@@ -277,13 +323,17 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
+		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetModelAllowlist(service.DomainGroupModelAllowlist(groupIn.ModelAllowlist)).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
+		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
@@ -339,10 +389,35 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearVideoPrice1080p()
 	}
+	if groupIn.VideoModelPrices != nil {
+		builder = builder.SetVideoModelPrices(groupIn.VideoModelPrices)
+	} else {
+		builder = builder.ClearVideoModelPrices()
+	}
 	if groupIn.WebSearchPricePerCall != nil {
 		builder = builder.SetWebSearchPricePerCall(*groupIn.WebSearchPricePerCall)
 	} else {
 		builder = builder.ClearWebSearchPricePerCall()
+	}
+	if groupIn.SearchPricePer1k != nil {
+		builder = builder.SetSearchPricePer1k(*groupIn.SearchPricePer1k)
+	} else {
+		builder = builder.ClearSearchPricePer1k()
+	}
+	if groupIn.AudioRealtimePricePerMin != nil {
+		builder = builder.SetAudioRealtimePricePerMin(*groupIn.AudioRealtimePricePerMin)
+	} else {
+		builder = builder.ClearAudioRealtimePricePerMin()
+	}
+	if groupIn.AudioTTSPricePerMillionChars != nil {
+		builder = builder.SetAudioTtsPricePerMillionChars(*groupIn.AudioTTSPricePerMillionChars)
+	} else {
+		builder = builder.ClearAudioTtsPricePerMillionChars()
+	}
+	if groupIn.AudioSTTPricePerHour != nil {
+		builder = builder.SetAudioSttPricePerHour(*groupIn.AudioSTTPricePerHour)
+	} else {
+		builder = builder.ClearAudioSttPricePerHour()
 	}
 	if groupIn.CostRatio != nil {
 		builder = builder.SetCostRatio(*groupIn.CostRatio)
@@ -417,6 +492,15 @@ func (r *groupRepository) List(ctx context.Context, params pagination.Pagination
 
 func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
 	q := r.client.Group.Query()
+	return r.listWithFiltersQuery(ctx, q, params, platform, status, search, isExclusive)
+}
+
+func (r *groupRepository) ListBindableWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
+	q := r.client.Group.Query().Where(group.PlatformNEQ(service.PlatformComposite))
+	return r.listWithFiltersQuery(ctx, q, params, platform, status, search, isExclusive)
+}
+
+func (r *groupRepository) listWithFiltersQuery(ctx context.Context, q *dbent.GroupQuery, params pagination.PaginationParams, platform, status, search string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
 
 	if platform != "" {
 		q = q.Where(group.PlatformEQ(platform))
@@ -826,12 +910,14 @@ func (r *groupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, grou
 }
 
 func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
-	g, err := r.client.Group.Query().Where(group.IDEQ(id)).Only(ctx)
-	if err != nil {
-		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
-	}
-	groupSvc := groupEntityToService(g)
+	return r.deleteCascade(ctx, id, false)
+}
 
+func (r *groupRepository) DeleteCascadeIfEmpty(ctx context.Context, id int64) ([]int64, error) {
+	return r.deleteCascade(ctx, id, true)
+}
+
+func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEmpty bool) ([]int64, error) {
 	// 使用 ent 事务统一包裹：避免手工基于 *sql.Tx 构造 ent client 带来的驱动断言问题，
 	// 同时保证级联删除的原子性。
 	tx, err := r.client.Tx(ctx)
@@ -849,13 +935,14 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 
 	// Lock the group row to avoid concurrent writes while we cascade.
 	// 这里使用 exec.QueryContext 手动扫描，确保同一事务内加锁并能区分"未找到"与其他错误。
-	rows, err := exec.QueryContext(ctx, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
+	rows, err := exec.QueryContext(ctx, "SELECT id, subscription_type FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
 	if err != nil {
 		return nil, err
 	}
 	var lockedID int64
+	var subscriptionType string
 	if rows.Next() {
-		if err := rows.Scan(&lockedID); err != nil {
+		if err := rows.Scan(&lockedID, &subscriptionType); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -869,9 +956,22 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	if lockedID == 0 {
 		return nil, service.ErrGroupNotFound
 	}
+	if requireEmpty {
+		var hasAccount bool
+		if err := scanSingleRow(ctx, exec, `SELECT EXISTS (
+			SELECT 1 FROM account_groups ag
+			JOIN accounts a ON a.id = ag.account_id
+			WHERE ag.group_id = $1 AND a.deleted_at IS NULL
+		)`, []any{id}, &hasAccount); err != nil {
+			return nil, err
+		}
+		if hasAccount {
+			return nil, service.ErrGroupNotEmpty
+		}
+	}
 
 	var affectedUserIDs []int64
-	if groupSvc.IsSubscriptionType() {
+	if subscriptionType == service.SubscriptionTypeSubscription {
 		// 只查询未软删除的订阅，避免通知已取消订阅的用户
 		rows, err := exec.QueryContext(ctx, "SELECT user_id FROM user_subscriptions WHERE group_id = $1 AND deleted_at IS NULL", id)
 		if err != nil {
@@ -1039,8 +1139,21 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 		return nil
 	}
 
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	exec := sqlExecutor(r.client)
+	if tx != nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+	if err := lockLiveGroups(ctx, exec, []int64{groupID}); err != nil {
+		return err
+	}
+
 	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
-	_, err := r.sql.ExecContext(
+	_, err = exec.ExecContext(
 		ctx,
 		`INSERT INTO account_groups (account_id, group_id, priority, created_at)
 		 SELECT unnest($1::bigint[]), $2, 50, NOW()
@@ -1050,6 +1163,11 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 	)
 	if err != nil {
 		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 
 	// 发送调度器事件

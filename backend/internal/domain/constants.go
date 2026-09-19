@@ -26,6 +26,8 @@ const (
 	PlatformKimi        = "kimi"     // Kimi (Moonshot)
 	PlatformZhipu       = "zhipu"    // Zhipu GLM (BigModel)
 	PlatformDeepseek    = "deepseek" // DeepSeek
+	PlatformMiniMax     = "minimax"  // MiniMax
+	PlatformOpenCodeGo  = "opencode_go"
 	PlatformComposite   = "composite"
 )
 
@@ -34,6 +36,8 @@ const (
 const (
 	AccountModePayG   = "payg"
 	AccountModeCoding = "coding"
+	AccountModeZen    = "zen"
+	AccountModeGo     = "go"
 )
 
 // API protocol constants 国产供应商的上游 API 协议维度。存储于

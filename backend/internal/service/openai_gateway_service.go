@@ -24,6 +24,7 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -223,6 +224,7 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 type OpenAIUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
+	ImageCacheReadTokens     int `json:"image_cache_read_tokens,omitempty"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
@@ -231,10 +233,11 @@ type OpenAIUsage struct {
 
 // OpenAIForwardResult represents the result of forwarding
 type OpenAIForwardResult struct {
-	RequestID  string
-	ResponseID string
-	Usage      OpenAIUsage
-	Model      string // 原始模型（用于响应和日志显示）
+	RequestID       string
+	ResponseID      string
+	UpstreamHeaders http.Header
+	Usage           OpenAIUsage
+	Model           string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -259,8 +262,11 @@ type OpenAIForwardResult struct {
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
 	ReasoningEffort *string
-	Stream          bool
-	OpenAIWSMode    bool
+	// RequestedReasoningEffort is the inbound value before group mapping or
+	// ceiling policy. Persistence falls back to ReasoningEffort when absent.
+	RequestedReasoningEffort *string
+	Stream                   bool
+	OpenAIWSMode             bool
 	// UpstreamTerminalEvent is the normalized terminal event observed on an
 	// upstream Responses WebSocket turn. Empty preserves legacy/non-WS success.
 	UpstreamTerminalEvent string
@@ -302,6 +308,18 @@ func (r *OpenAIForwardResult) SucceededForScheduling() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+const openAIResponsesUpstreamEndpoint = "/v1/responses"
+
+func stampOpenAIResponsesUpstreamEndpoint(c *gin.Context, result *OpenAIForwardResult) {
+	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
+	if result == nil {
+		return
+	}
+	if strings.TrimSpace(result.UpstreamEndpoint) == "" {
+		result.UpstreamEndpoint = openAIResponsesUpstreamEndpoint
 	}
 }
 
@@ -434,6 +452,7 @@ type OpenAIGatewayService struct {
 	candidatePolicy       AccountCandidateAccessPolicy
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
+	pluginManager         *PluginManager
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -446,6 +465,7 @@ type OpenAIGatewayService struct {
 	openaiWSStateStore             OpenAIWSStateStore
 	openaiScheduler                OpenAIAccountScheduler
 	openaiWSPassthroughDialer      openAIWSClientDialer
+	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
 	openaiAccountStats             *openAIAccountRuntimeStats
 	openaiModelTransient           *openAIAccountModelTransientState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
@@ -463,11 +483,17 @@ type OpenAIGatewayService struct {
 	openaiWSRetryMetrics                openAIWSRetryMetrics
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
-	codexModelsManifestCache            codexModelsManifestCache
+	openAIModelsCache                   openAIModelsCache
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	openaiCodexTurnStateOrigins         sync.Map
 	openaiCodexTurnStateWrites          atomic.Int64
+	openaiCodexTickets                  sync.Map
+	openaiCodexTicketFlight             singleflight.Group
+	openaiCodexTicketLifecycleMu        sync.Mutex
+	openaiCodexTicketCancel             context.CancelFunc
+	openaiCodexTicketDone               chan struct{}
+	openaiCodexTicketStopped            bool
 }
 
 // SetAccountCandidateAccessPolicy attaches the optional per-user group
@@ -567,6 +593,7 @@ func NewOpenAIGatewayService(
 	if openAITokenProvider != nil {
 		openAITokenProvider.SetAccountRuntimeBlocker(svc)
 	}
+	svc.StartOpenAICodexTicketHarvester()
 	svc.logOpenAIWSModeBootstrap()
 	return svc
 }
@@ -891,14 +918,20 @@ func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context
 
 	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
 	if account != nil {
-		appendOpenAIOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		event := OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: statusCode,
 			Kind:               "ws_error",
 			Message:            upstreamMessage,
-		})
+		}
+		if _, frozen := c.Get(opsOpenAIProxySnapshotKey); frozen {
+			appendOpenAIOpsUpstreamError(c, event)
+		} else {
+			event.ProxyID, event.ProxyName = opsUpstreamWSProxyAttribution(account)
+			appendOpsUpstreamError(c, event)
+		}
 	}
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
@@ -1213,6 +1246,15 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return accessToken, "oauth", nil
 		}
 		// 降级：TokenProvider 未配置时直接从账号读取
+		accessToken := account.GetOpenAIAccessToken()
+		if accessToken == "" {
+			return "", "", errors.New("access_token not found in credentials")
+		}
+		return accessToken, "oauth", nil
+	case AccountTypeSetupToken:
+		if !account.IsOpenAIOAuthLike() {
+			return "", "", fmt.Errorf("unsupported account type: %s", account.Type)
+		}
 		accessToken := account.GetOpenAIAccessToken()
 		if accessToken == "" {
 			return "", "", errors.New("access_token not found in credentials")

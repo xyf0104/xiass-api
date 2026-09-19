@@ -15,6 +15,12 @@ type Model struct {
 // text aliases (for example, "grok" and "grok-latest").
 const DefaultTextModel = "grok-4.5"
 
+const (
+	DefaultImagineVideoModel         = "grok-imagine-video"
+	DefaultImagineVideo15Model       = "grok-imagine-video-1.5"
+	DefaultImagineVideo15LegacyModel = "grok-imagine-video-1.5-preview"
+)
+
 var defaultModels = []Model{
 	{ID: "grok-4.5", Object: "model", OwnedBy: "xai", DisplayName: "Grok 4.5"},
 	{ID: "grok-4.3", Object: "model", OwnedBy: "xai", DisplayName: "Grok 4.3"},
@@ -105,6 +111,30 @@ func StripGrokProviderPrefix(model string) string {
 	return trimmed
 }
 
+func IsGrokModelID(model string) bool {
+	normalized := strings.ToLower(StripGrokProviderPrefix(model))
+	return strings.HasPrefix(normalized, "grok") || strings.HasPrefix(normalized, "imagine")
+}
+
+func IsGrokImagineModel(model string) bool {
+	normalized := strings.ToLower(StripGrokProviderPrefix(model))
+	if strings.HasPrefix(normalized, "imagine") {
+		return true
+	}
+	switch {
+	case normalized == "grok-imagine",
+		normalized == "grok-imagine-1",
+		normalized == "grok-imagine-edit",
+		normalized == "grok-video-1.5":
+		return true
+	case strings.HasPrefix(normalized, "grok-imagine-image"),
+		strings.HasPrefix(normalized, "grok-imagine-video"):
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveGrokTextResponsesModelID canonicalizes a Grok text alias before it is
 // sent upstream. Empty values and aliases that resolve to DefaultTextModel use
 // the optional caller-provided default when present.
@@ -125,4 +155,17 @@ func ResolveGrokTextResponsesModelID(model string, defaultText ...string) string
 		return canonical
 	}
 	return StripGrokProviderPrefix(trimmed)
+}
+
+// CanonicalImagineVideoModel normalizes video aliases into stable pricing keys.
+func CanonicalImagineVideoModel(model string) string {
+	m := strings.ToLower(StripGrokProviderPrefix(model))
+	switch {
+	case m == "" || m == DefaultImagineVideoModel || m == "grok-imagine-video-preview":
+		return DefaultImagineVideoModel
+	case strings.HasPrefix(m, "grok-imagine-video-1.5") || m == "grok-video-1.5":
+		return DefaultImagineVideo15Model
+	default:
+		return m
+	}
 }

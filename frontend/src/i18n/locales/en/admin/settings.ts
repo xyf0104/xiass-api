@@ -239,6 +239,12 @@ export default {
           enabled: 'Enable Model Pricing',
           enabledHint: 'When off, the model-pricing entry is hidden and its endpoint returns an empty list. Available Channels remains independent.',
         },
+        pluginManagement: {
+          title: 'Plugin Management',
+          description: 'Controls whether the plugin management entry appears in the admin sidebar. This switch does not control plugin runtime state and is off by default.',
+          enabled: 'Show Plugin Management',
+          enabledHint: 'Turning this off only hides the sidebar entry; loaded or running plugins are not stopped.',
+        },
         availableChannels: {
           title: 'Model Channels',
           description: 'Show logged-in users the upstream aggregate view of channels, linked groups, and supported models. Disabled by default.',
@@ -713,6 +719,14 @@ export default {
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
         codexHardeningTitle: "Codex Settings",
+        codexTicketEnabled: "292 Ticket anti-degradation",
+        codexTicketEnabledDesc:
+          "Off by default. When enabled, the background harvester collects 292-character x-codex-turn-state tickets for ChatGPT OAuth accounts and injects them by account and model. When disabled, forwarding behavior is unchanged.",
+        codexTicketHarvestProxy: "Ticket harvest proxy",
+        codexTicketHarvestProxyDesc:
+          "Used only by the background ticket harvester; production requests still use each account's own proxy. Accepts full HTTP, HTTPS, SOCKS5, and SOCKS5H URLs. Changes apply without a restart. Saving an empty value preserves the configured proxy.",
+        codexTicketHarvestProxyPlaceholder: "http://user:pass{'@'}proxy.example.com:1080",
+        codexTicketHarvestProxyConfigured: "Configured with the password hidden. Paste a complete new proxy URL to replace it.",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:
           "Only affects OpenAI OAuth accounts with 'Codex official clients only' enabled (global). Beyond User-Agent/Originator, harden the decision with a version range, an engine-fingerprint gate, and black/whitelists.",

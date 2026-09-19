@@ -261,6 +261,8 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexTicketEnabled               *bool   `json:"openai_codex_ticket_enabled"`
+	OpenAICodexTicketHarvestProxyURL       string  `json:"openai_codex_ticket_harvest_proxy_url"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -351,9 +353,10 @@ type UpdateSettingsRequest struct {
 	ModelPricingEnabled      *bool `json:"model_pricing_enabled"`
 
 	// Model Plaza feature switches + description
-	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth *bool   `json:"model_plaza_require_auth"`
-	ModelPlazaDescription *string `json:"model_plaza_description"`
+	ModelPlazaEnabled       *bool   `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth   *bool   `json:"model_plaza_require_auth"`
+	ModelPlazaDescription   *string `json:"model_plaza_description"`
+	PluginManagementEnabled *bool   `json:"plugin_management_enabled"`
 
 	// Affiliate (邀请返利) feature switch
 	AffiliateEnabled *bool `json:"affiliate_enabled"`
@@ -1824,6 +1827,19 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
 		}(),
+		OpenAICodexTicketEnabled: func() bool {
+			if req.OpenAICodexTicketEnabled != nil {
+				return *req.OpenAICodexTicketEnabled
+			}
+			return previousSettings.OpenAICodexTicketEnabled
+		}(),
+		OpenAICodexTicketHarvestProxyURL: func() string {
+			next := strings.TrimSpace(req.OpenAICodexTicketHarvestProxyURL)
+			if service.IsMaskedProxyURL(next) {
+				return previousSettings.OpenAICodexTicketHarvestProxyURL
+			}
+			return next
+		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
 		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
@@ -2013,6 +2029,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.ModelPlazaDescription
 			}
 			return previousSettings.ModelPlazaDescription
+		}(),
+		PluginManagementEnabled: func() bool {
+			if req.PluginManagementEnabled != nil {
+				return *req.PluginManagementEnabled
+			}
+			return previousSettings.PluginManagementEnabled
 		}(),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {
@@ -2357,6 +2379,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
+		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
+		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,
@@ -2439,9 +2464,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 		ModelPricingEnabled:      updatedSettings.ModelPricingEnabled,
 
-		ModelPlazaEnabled:     updatedSettings.ModelPlazaEnabled,
-		ModelPlazaRequireAuth: updatedSettings.ModelPlazaRequireAuth,
-		ModelPlazaDescription: updatedSettings.ModelPlazaDescription,
+		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
+		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,
+		ModelPlazaDescription:   updatedSettings.ModelPlazaDescription,
+		PluginManagementEnabled: updatedSettings.PluginManagementEnabled,
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 

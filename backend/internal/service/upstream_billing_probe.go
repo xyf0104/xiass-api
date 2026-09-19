@@ -128,6 +128,28 @@ type UpstreamBillingProbeResult struct {
 	Error     string                        `json:"error,omitempty"`
 }
 
+// UpstreamBillingRateSnapshotItem is the compact, credential-free payload
+// used by the account table's background billing-rate refresh.
+type UpstreamBillingRateSnapshotItem struct {
+	AccountID int64                         `json:"account_id"`
+	Snapshot  *UpstreamBillingProbeSnapshot `json:"snapshot"`
+}
+
+func BuildUpstreamBillingRateSnapshotItems(accounts []Account) []UpstreamBillingRateSnapshotItem {
+	items := make([]UpstreamBillingRateSnapshotItem, 0, len(accounts))
+	for _, account := range accounts {
+		var snapshot *UpstreamBillingProbeSnapshot
+		if account.Type == AccountTypeAPIKey {
+			snapshot = decodeUpstreamBillingProbeSnapshot(account.Extra)
+		}
+		items = append(items, UpstreamBillingRateSnapshotItem{
+			AccountID: account.ID,
+			Snapshot:  snapshot,
+		})
+	}
+	return items
+}
+
 type upstreamBillingProbeResponse struct {
 	Object                  string   `json:"object"`
 	SchemaVersion           int      `json:"schema_version"`
