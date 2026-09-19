@@ -292,6 +292,30 @@ func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testin
 	require.EqualValues(t, 1, oauthCalls.Load())
 }
 
+func TestRefreshCachedOpenAIModelsRechecksFreshCacheBeforeFetch(t *testing.T) {
+	s := newCodexModelsAPIKeyTestService(nil)
+	request := openAIModelsRequest{
+		url:                "https://models.example/v1/models",
+		accountID:          7,
+		standardModelsList: true,
+	}
+	cacheKey := buildOpenAIModelsCacheKey(request)
+	cached := &OpenAIModelsResponse{Body: []byte(`{"object":"list","data":[{"id":"cached"}]}`)}
+	s.openAIModelsCache.set(cacheKey, cached, time.Now())
+
+	var calls atomic.Int32
+	result := <-s.refreshCachedOpenAIModels(cacheKey, request, func(context.Context, string) (*OpenAIModelsResponse, error) {
+		calls.Add(1)
+		return &OpenAIModelsResponse{Body: []byte(`{"object":"list","data":[{"id":"unexpected"}]}`)}, nil
+	}, "")
+
+	require.NoError(t, result.Err)
+	manifest, ok := result.Val.(*OpenAIModelsResponse)
+	require.True(t, ok)
+	require.JSONEq(t, string(cached.Body), string(manifest.Body))
+	require.Zero(t, calls.Load())
+}
+
 func TestFetchOpenAIModelsListResolvesShadowOAuthCredentials(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"parent-model"}]}`)
 	parent := newCodexModelsTestAccount()

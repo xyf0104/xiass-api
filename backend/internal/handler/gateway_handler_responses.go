@@ -172,6 +172,23 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+	sessionSlotAccounts := make(map[int64]*service.Account)
+	upstreamServedSession := false
+	releaseSessionSlot := func(account *service.Account) {
+		if account == nil {
+			return
+		}
+		h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
+		delete(sessionSlotAccounts, account.ID)
+	}
+	defer func() {
+		if upstreamServedSession {
+			return
+		}
+		for _, account := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
+		}
+	}()
 
 	for {
 		if requestCtx.Err() != nil {
@@ -209,6 +226,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			}
 		}
 		account := selection.Account
+		sessionSlotAccounts[account.ID] = account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		// 4. Acquire account concurrency slot
@@ -248,6 +266,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
 				return
 			}
+			releaseSessionSlot(account)
 			continue
 		}
 		account = latest
@@ -255,9 +274,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			reqLog.Warn("gateway.responses.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
 			fs.FailedAccountIDs[latest.ID] = struct{}{}
+			releaseSessionSlot(latest)
 			continue
 		}
 		selection.Account = account
+		sessionSlotAccounts[account.ID] = account
 		if selection.ProfitGateActive() {
 			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, sessionHash, account.ID); err != nil {
 				reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -302,6 +323,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				action := fs.HandleFailoverError(requestCtx, h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch action {
 				case FailoverContinue:
+					releaseSessionSlot(account)
 					continue
 				case FailoverExhausted:
 					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
@@ -324,6 +346,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			)
 			return
 		}
+		upstreamServedSession = true
 
 		// 6. Record usage
 		userAgent := c.GetHeader("User-Agent")

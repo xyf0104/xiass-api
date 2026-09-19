@@ -30,6 +30,37 @@ type AccountProxyBinding struct {
 	Proxy          *Proxy `json:"proxy,omitempty"`
 }
 
+type preservedAccountProxyBindingsContextKey struct{}
+
+// WithPreservedAccountProxyBindings allows trusted server-side copy, update,
+// and restore flows to retain bindings that became unavailable after they were
+// originally configured. It never permits missing proxies, and callers must
+// pass only bindings already owned by the source account or backup record.
+func WithPreservedAccountProxyBindings(ctx context.Context, bindings []AccountProxyBindingInput) context.Context {
+	if ctx == nil || len(bindings) == 0 {
+		return ctx
+	}
+	preserved := make(map[int64]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if binding.ProxyID > 0 {
+			preserved[binding.ProxyID] = struct{}{}
+		}
+	}
+	if len(preserved) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, preservedAccountProxyBindingsContextKey{}, preserved)
+}
+
+func preservedAccountProxyBinding(ctx context.Context, proxyID int64) bool {
+	if ctx == nil || proxyID <= 0 {
+		return false
+	}
+	preserved, _ := ctx.Value(preservedAccountProxyBindingsContextKey{}).(map[int64]struct{})
+	_, ok := preserved[proxyID]
+	return ok
+}
+
 func normalizeAccountProxyBindingInputs(bindings []AccountProxyBindingInput) ([]AccountProxyBindingInput, int, error) {
 	if len(bindings) == 0 {
 		return nil, 0, nil
@@ -94,10 +125,10 @@ func (s *adminServiceImpl) validateAccountProxyBindings(
 		if proxy == nil {
 			return nil, 0, nil, fmt.Errorf("proxy %d does not exist", binding.ProxyID)
 		}
-		if !proxy.IsActive() {
+		if !proxy.IsActive() && !preservedAccountProxyBinding(ctx, binding.ProxyID) {
 			return nil, 0, nil, fmt.Errorf("proxy %d is inactive", binding.ProxyID)
 		}
-		if proxy.IsExpired(now) {
+		if proxy.IsExpired(now) && !preservedAccountProxyBinding(ctx, binding.ProxyID) {
 			return nil, 0, nil, fmt.Errorf("proxy %d is expired", binding.ProxyID)
 		}
 	}

@@ -161,6 +161,63 @@ func TestOpenAINewAcquiredSelectionResult_ReleasesSlotWhenHydrationFails(t *test
 	}
 }
 
+func TestGatewayNewSelectionResult_ReleasesSlotOnceWhenHydrationFails(t *testing.T) {
+	cache := &snapshotHydrationCache{
+		accounts: map[int64]*Account{},
+	}
+	svc := &GatewayService{
+		schedulerSnapshot: NewSchedulerSnapshotService(cache, nil, stubOpenAIAccountRepo{}, nil, nil),
+	}
+	releaseCalls := 0
+
+	selection, err := svc.newSelectionResult(context.Background(), &Account{ID: 1002}, true, func() {
+		releaseCalls++
+	}, nil)
+
+	if err == nil {
+		t.Fatalf("expected hydration error")
+	}
+	if selection != nil {
+		t.Fatalf("expected nil selection on hydration error")
+	}
+	if releaseCalls != 1 {
+		t.Fatalf("expected release to be called once, got %d", releaseCalls)
+	}
+}
+
+func TestGatewayNewSelectionResult_PreservesReleaseOwnershipOnSuccess(t *testing.T) {
+	account := &Account{ID: 1003}
+	cache := &snapshotHydrationCache{
+		accounts: map[int64]*Account{account.ID: account},
+	}
+	svc := &GatewayService{
+		schedulerSnapshot: NewSchedulerSnapshotService(cache, nil, nil, nil, nil),
+	}
+	releaseCalls := 0
+	release := func() {
+		releaseCalls++
+	}
+
+	selection, err := svc.newSelectionResult(context.Background(), account, true, release, nil)
+	if err != nil {
+		t.Fatalf("newSelectionResult error: %v", err)
+	}
+	if selection == nil {
+		t.Fatalf("expected selection")
+	}
+	if releaseCalls != 0 {
+		t.Fatalf("expected release ownership to remain with selection, got %d early calls", releaseCalls)
+	}
+	if selection.ReleaseFunc == nil {
+		t.Fatalf("expected release function on selection")
+	}
+
+	selection.ReleaseFunc()
+	if releaseCalls != 1 {
+		t.Fatalf("expected selection release to call original release once, got %d", releaseCalls)
+	}
+}
+
 func TestGatewaySelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedulerSnapshot(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		snapshot: []*Account{

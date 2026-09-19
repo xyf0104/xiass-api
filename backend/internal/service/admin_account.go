@@ -426,17 +426,17 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			return nil, err
 		}
 	}
-	normalizedBindings, totalProxyConcurrency, proxyMap, err := s.validateAccountProxyBindings(ctx, input.ProxyBindings)
+	preserveBindingsCtx := WithPreservedAccountProxyBindings(ctx, proxyBindings)
+	normalizedBindings, totalProxyConcurrency, proxyMap, err := s.validateAccountProxyBindings(preserveBindingsCtx, input.ProxyBindings)
 	if err != nil {
 		return nil, err
 	}
 	if len(normalizedBindings) > 0 {
 		input.ProxyBindings = normalizedBindings
-		input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
 		input.Concurrency = totalProxyConcurrency
 		accountExtra = setAccountProxyBindingsExtra(accountExtra, normalizedBindings)
-		if s.executionNodeRoutingActive(ctx) {
-			accountExtra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
+		if !s.executionNodeRoutingActive(ctx) {
+			input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
 		}
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
@@ -894,7 +894,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	)
 	if input.ProxyBindings != nil {
 		proxyBindingsChanged = true
-		normalizedBindings, totalProxyConcurrency, _, err = s.validateAccountProxyBindings(ctx, *input.ProxyBindings)
+		preserveBindingsCtx := WithPreservedAccountProxyBindings(ctx, AccountProxyBindingInputsFromExtra(account.Extra))
+		normalizedBindings, totalProxyConcurrency, _, err = s.validateAccountProxyBindings(preserveBindingsCtx, *input.ProxyBindings)
 		if err != nil {
 			return nil, infraerrors.BadRequest("INVALID_ACCOUNT_PROXY_BINDINGS", err.Error())
 		}
@@ -1063,15 +1064,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if proxyBindingsChanged {
 		account.Extra = setAccountProxyBindingsExtra(account.Extra, normalizedBindings)
 		if len(normalizedBindings) > 0 {
-			account.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
-			account.Proxy = nil
+			if !s.executionNodeRoutingActive(ctx) {
+				account.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
+				account.Proxy = nil
+			}
 			account.Concurrency = totalProxyConcurrency
-			if account.Extra == nil {
-				account.Extra = make(map[string]any)
-			}
-			if s.executionNodeRoutingActive(ctx) {
-				account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
-			}
 		} else {
 			account.ProxyBindings = nil
 			account.MultiProxyConfigured = false

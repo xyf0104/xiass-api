@@ -171,6 +171,23 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 	}
+	sessionSlotAccounts := make(map[int64]*service.Account)
+	upstreamServedSession := false
+	releaseSessionSlot := func(account *service.Account) {
+		if account == nil {
+			return
+		}
+		h.gatewayService.ReleaseAccountSession(context.Background(), account, selectionSessionHash)
+		delete(sessionSlotAccounts, account.ID)
+	}
+	defer func() {
+		if upstreamServedSession {
+			return
+		}
+		for _, account := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), account, selectionSessionHash)
+		}
+	}()
 
 	for {
 		if c.Request.Context().Err() != nil {
@@ -208,6 +225,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		account := selection.Account
+		sessionSlotAccounts[account.ID] = account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		// 4. Acquire account concurrency slot
@@ -245,6 +263,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)
 				return
 			}
+			releaseSessionSlot(account)
 			continue
 		}
 		account = latest
@@ -252,9 +271,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			reqLog.Warn("gateway.cc.account_proxy_slot_acquire_failed", zap.Int64("account_id", latest.ID), zap.Error(err))
 			fs.FailedAccountIDs[latest.ID] = struct{}{}
+			releaseSessionSlot(latest)
 			continue
 		}
 		selection.Account = account
+		sessionSlotAccounts[account.ID] = account
 		if selection.ProfitGateActive() {
 			if err := h.gatewayService.BindStickySessionAfterProfitAdmission(admissionCtx, apiKey.GroupID, selectionSessionHash, account.ID); err != nil {
 				reqLog.Warn("gateway.cc.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -267,6 +288,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			fs.FailedAccountIDs[account.ID] = struct{}{}
+			releaseSessionSlot(account)
 			continue
 		}
 
@@ -315,6 +337,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch action {
 				case FailoverContinue:
+					releaseSessionSlot(account)
 					continue
 				case FailoverExhausted:
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
@@ -337,6 +360,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			)
 			return
 		}
+		upstreamServedSession = true
 
 		// 6. Record usage
 		userAgent := c.GetHeader("User-Agent")

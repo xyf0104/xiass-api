@@ -1660,6 +1660,76 @@ type openAIWSTurnPricing struct {
 	at time.Time
 }
 
+func openAIWSAccountMaxConcurrency(account *service.Account, waitPlan *service.AccountWaitPlan) int {
+	if waitPlan != nil && waitPlan.MaxConcurrency > 0 {
+		return waitPlan.MaxConcurrency
+	}
+	if account != nil && account.MultiProxyConfigured {
+		if total := account.MultiProxyConcurrency(); total > 0 {
+			return total
+		}
+	}
+	if account == nil {
+		return 0
+	}
+	return account.Concurrency
+}
+
+// bindOpenAIWSAccountProxyLease binds the first turn to one egress and, for
+// later turns, reacquires only that same egress. The account slot release is
+// folded into the returned release so every failure path releases both leases.
+func (h *OpenAIGatewayHandler) bindOpenAIWSAccountProxyLease(
+	ctx context.Context,
+	account *service.Account,
+	accountRelease func(),
+	fixed bool,
+) (*service.Account, func(), error) {
+	if account == nil {
+		if accountRelease != nil {
+			accountRelease()
+		}
+		return nil, nil, errors.New("account is required")
+	}
+	if !fixed && account.RequestProxy != nil {
+		return account, accountRelease, nil
+	}
+	if fixed && account.MultiProxyConfigured && account.RequestProxy == nil {
+		if accountRelease != nil {
+			accountRelease()
+		}
+		return nil, nil, errors.New("websocket account has no fixed request proxy")
+	}
+
+	candidate := account
+	fixedProxyID := int64(0)
+	if fixed && account.MultiProxyConfigured && account.RequestProxy != nil {
+		fixedProxyID = account.RequestProxy.ID
+		cloned := *account
+		cloned.RequestProxy = nil
+		cloned.RequestProxyMaxConcurrency = 0
+		cloned.ProxyBindings = nil
+		for _, binding := range account.ProxyBindings {
+			if binding.ProxyID == fixedProxyID {
+				cloned.ProxyBindings = []service.AccountProxyBinding{binding}
+				break
+			}
+		}
+		candidate = &cloned
+	}
+
+	bound, release, err := h.concurrencyHelper.BindAccountProxy(ctx, candidate, accountRelease)
+	if err != nil {
+		return nil, nil, err
+	}
+	if fixedProxyID != 0 && (bound == nil || bound.RequestProxy == nil || bound.RequestProxy.ID != fixedProxyID) {
+		if release != nil {
+			release()
+		}
+		return nil, nil, errors.New("websocket account proxy changed while reacquiring capacity")
+	}
+	return bound, release, nil
+}
+
 func (p *openAIWSTurnPricing) freeze(at time.Time) {
 	p.mu.Lock()
 	p.at = at
@@ -2206,10 +2276,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		account := selection.Account
-		accountMaxConcurrency := account.Concurrency
-		if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
-			accountMaxConcurrency = selection.WaitPlan.MaxConcurrency
-		}
+		accountMaxConcurrency := openAIWSAccountMaxConcurrency(account, selection.WaitPlan)
 		// 终检、准入后绑定与后续 turn 级复核都使用选号结果携带的门（composite
 		// 等跨分组调度的门只存在于调度栈局部 ctx）；准入成功后并入连接 ctx。
 		admissionCtx := service.ContextWithSelectionProfitGate(ctx, selection)
@@ -2270,6 +2337,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			selection.Account = latest
 			accountReleaseFunc = fastReleaseFunc
 		}
+		account, accountReleaseFunc, err = h.bindOpenAIWSAccountProxyLease(admissionCtx, account, accountReleaseFunc, false)
+		if err != nil {
+			reqLog.Warn("openai.websocket_account_proxy_slot_acquire_failed", zap.Int64("account_id", selection.Account.ID), zap.Error(err))
+			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account proxy is busy, please retry later")
+			return
+		}
+		selection.Account = account
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
 		ctx = admissionCtx
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
@@ -2423,8 +2497,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					}
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
 				}
+				boundAccount, boundRelease, err := h.bindOpenAIWSAccountProxyLease(ctx, account, accountReleaseFunc, true)
+				if err != nil {
+					if userReleaseFunc != nil {
+						userReleaseFunc()
+					}
+					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account proxy is busy, please retry later", err)
+				}
+				account = boundAccount
 				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
-				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+				currentAccountRelease = wrapReleaseOnDone(ctx, boundRelease)
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {

@@ -504,7 +504,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			SkipDefaultGroupBind: skipDefaultGroupBind,
 		}
 
-		created, err := h.adminService.CreateAccount(ctx, accountInput)
+		accountCtx := service.WithPreservedAccountProxyBindings(ctx, proxyBindings)
+		created, err := h.adminService.CreateAccount(accountCtx, accountInput)
 		if err != nil {
 			result.AccountFailed++
 			result.Errors = append(result.Errors, DataImportError{
