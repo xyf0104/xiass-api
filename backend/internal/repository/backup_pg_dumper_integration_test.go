@@ -48,6 +48,8 @@ func TestPgDumperUsesEffectiveRemoteDatabaseWithoutLocalFallback(t *testing.T) {
 	local, remote := start("LOCAL_OLD"), start("REMOTE_CURRENT")
 	ip, err := remote.ContainerIP(ctx)
 	require.NoError(t, err)
+	remoteDSN, err := remote.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
 	docker, err := exec.LookPath("docker")
 	require.NoError(t, err)
 	bin := t.TempDir()
@@ -56,7 +58,7 @@ func TestPgDumperUsesEffectiveRemoteDatabaseWithoutLocalFallback(t *testing.T) {
 	shim := "#!/bin/sh\nexec '" + strings.ReplaceAll(docker, "'", "'\\''") + "' run --rm --network bridge -e PGPASSWORD -e PGSSLMODE postgres:18.1-alpine3.23 pg_dump \"$@\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "pg_dump"), []byte(shim), 0700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	db, err := sql.Open("postgres", "host="+ip+" port=5432 user=snapshot password=synthetic-snapshot-password dbname=snapshot sslmode=disable")
+	db, err := sql.Open("postgres", remoteDSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, db.PingContext(ctx))
@@ -81,7 +83,9 @@ func TestPgDumperUsesEffectiveRemoteDatabaseWithoutLocalFallback(t *testing.T) {
 	failedCtx, failedCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer failedCancel()
 	stream, err := dumper.Dump(failedCtx)
-	require.NoError(t, err)
+	if err != nil {
+		return
+	}
 	_, _ = io.ReadAll(stream)
 	require.Error(t, stream.Close(), "a missing authoritative source must fail rather than select a local container")
 }

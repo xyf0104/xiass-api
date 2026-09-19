@@ -10,6 +10,8 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	"github.com/Wei-Shaw/sub2api/ent/userplatformquota"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +23,15 @@ func mustCreateUserForQuota(t *testing.T, client *dbent.Client) int64 {
 		Email: fmt.Sprintf("quota-test-%d@example.com", time.Now().UnixNano()),
 	})
 	return u.ID
+}
+
+// mustSeedQuotaRow creates the configured row required by usage accumulation.
+func mustSeedQuotaRow(t *testing.T, ctx context.Context, repo UserPlatformQuotaRepository, userID int64, platform string) {
+	t.Helper()
+	limit := 1000.0
+	require.NoError(t, repo.BulkInsertInitial(ctx, []UserPlatformQuotaRecord{
+		{UserID: userID, Platform: platform, DailyLimitUSD: &limit},
+	}))
 }
 
 func TestUserPlatformQuotaRepository_BulkInsertInitial_Idempotent(t *testing.T) {
@@ -36,17 +47,17 @@ func TestUserPlatformQuotaRepository_BulkInsertInitial_Idempotent(t *testing.T) 
 	daily := 5.0
 	records := []UserPlatformQuotaRecord{
 		{UserID: userID, Platform: "anthropic", DailyLimitUSD: &daily},
-		{UserID: userID, Platform: "openai"},
+		{UserID: userID, Platform: "openai"}, // no limits means no persisted row
 	}
 
 	// 第一次插入
 	require.NoError(t, repo.BulkInsertInitial(txCtx, records), "first insert")
-	// 第二次插入应为 no-op（ON CONFLICT DO NOTHING）
+	// 第二次插入应为 no-op（ON CONFLICT 只补 NULL 档位）
 	require.NoError(t, repo.BulkInsertInitial(txCtx, records), "second insert (idempotent)")
 
 	list, err := repo.ListByUser(txCtx, userID)
 	require.NoError(t, err, "list")
-	require.Len(t, list, 2, "expected 2 records after idempotent insert")
+	require.Len(t, list, 1, "only the configured platform gets a row, and only once")
 
 	// 校验 daily_limit_usd 保留
 	var anthropicRec *UserPlatformQuotaRecord
@@ -138,8 +149,9 @@ func TestUserPlatformQuotaRepository_IncrementUsageWithReset_SameWindow(t *testi
 
 	repo := NewUserPlatformQuotaRepository(client)
 	now := time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC) // 周五
+	mustSeedQuotaRow(t, ctx, repo, userID, "anthropic")
 
-	// 首次调用：应新建记录
+	// 首次累加：window_start 为 NULL 视为窗口过期，usage 重置为 cost
 	require.NoError(t, repo.IncrementUsageWithReset(ctx, userID, "anthropic", 1.5, now))
 
 	rec, err := repo.GetByUserPlatform(ctx, userID, "anthropic")
@@ -165,6 +177,7 @@ func TestUserPlatformQuotaRepository_IncrementUsageWithReset_DailyReset(t *testi
 	userID := mustCreateUserForQuota(t, client)
 
 	repo := NewUserPlatformQuotaRepository(client)
+	mustSeedQuotaRow(t, ctx, repo, userID, "anthropic")
 
 	day1 := time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC) // 周五（同一周、同一月）
 	day2 := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC) // 周六（同一周、同一月）
@@ -185,6 +198,7 @@ func TestUserPlatformQuotaRepository_IncrementUsageWithReset_WeeklyReset(t *test
 	userID := mustCreateUserForQuota(t, client)
 
 	repo := NewUserPlatformQuotaRepository(client)
+	mustSeedQuotaRow(t, ctx, repo, userID, "openai")
 
 	// 5月22日（周五）和 5月25日（下周一），不同周
 	fri := time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC)
@@ -306,13 +320,15 @@ func TestBatchSnapshotUsage_InsertOverwriteMultiKey(t *testing.T) {
 	userID2 := mustCreateUserForQuota(t, client)
 
 	repo := NewUserPlatformQuotaRepository(client)
+	mustSeedQuotaRow(t, ctx, repo, userID1, "anthropic")
+	mustSeedQuotaRow(t, ctx, repo, userID2, "openai")
 
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	dailyStart := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
 	weeklyStart := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC) // 当周一
 	monthlyStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
-	// ── 第一批：插入 2 行 ──────────────────────────────────────────────────────
+	// ── 第一批：覆盖 2 条既有行 ────────────────────────────────────────────────
 	firstBatch := []UserPlatformQuotaSnapshot{
 		{
 			UserID:             userID1,
@@ -390,4 +406,49 @@ func TestBatchSnapshotUsage_InsertOverwriteMultiKey(t *testing.T) {
 	require.InDelta(t, 8.8, rec2After.DailyUsageUSD, 1e-9, "user2 daily must be overwritten to 8.8 (not accumulated)")
 	require.InDelta(t, 18.8, rec2After.WeeklyUsageUSD, 1e-9, "user2 weekly must be overwritten to 18.8")
 	require.InDelta(t, 28.8, rec2After.MonthlyUsageUSD, 1e-9, "user2 monthly must be overwritten to 28.8")
+}
+
+func TestUserPlatformQuotaRepository_IncrementUsageWithReset_NoRowIsNoop(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	userID := mustCreateUserForQuota(t, client)
+	repo := NewUserPlatformQuotaRepository(client)
+
+	require.NoError(t, repo.IncrementUsageWithReset(ctx, userID, "anthropic", 1.5, time.Now().UTC()))
+	rec, err := repo.GetByUserPlatform(ctx, userID, "anthropic")
+	require.NoError(t, err)
+	require.Nil(t, rec)
+}
+
+func TestBatchSnapshotUsage_NoRowIsNoop(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	userID := mustCreateUserForQuota(t, client)
+	repo := NewUserPlatformQuotaRepository(client)
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	snapshot := UserPlatformQuotaSnapshot{
+		UserID: userID, Platform: "anthropic",
+		DailyUsageUSD: 1, WeeklyUsageUSD: 2, MonthlyUsageUSD: 3,
+		DailyWindowStart: now, WeeklyWindowStart: now, MonthlyWindowStart: now,
+	}
+
+	require.NoError(t, repo.BatchSnapshotUsage(ctx, []UserPlatformQuotaSnapshot{snapshot}, now))
+	rec, err := repo.GetByUserPlatform(ctx, userID, "anthropic")
+	require.NoError(t, err)
+	require.Nil(t, rec)
+
+	mustSeedQuotaRow(t, ctx, repo, userID, "openai")
+	require.NoError(t, repo.UpsertForUser(ctx, userID, nil))
+	snapshot.Platform = "openai"
+	require.NoError(t, repo.BatchSnapshotUsage(ctx, []UserPlatformQuotaSnapshot{snapshot}, now))
+	rec, err = repo.GetByUserPlatform(ctx, userID, "openai")
+	require.NoError(t, err)
+	require.Nil(t, rec)
+
+	all, err := client.UserPlatformQuota.Query().
+		Where(userplatformquota.UserIDEQ(userID)).
+		All(mixins.SkipSoftDelete(ctx))
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	require.NotNil(t, all[0].DeletedAt)
 }

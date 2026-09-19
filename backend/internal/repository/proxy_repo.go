@@ -913,14 +913,14 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	}
 	if target == nil {
 		query := fmt.Sprintf(`
-			UPDATE accounts SET proxy_id=NULL, proxy_fallback_origin_id=$1,
+			UPDATE accounts SET proxy_id=NULL, proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id,$1),
 				extra=CASE
 					WHEN type='apikey' AND extra ? 'upstream_billing_probe'
 					THEN extra - 'upstream_billing_probe'
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL%s
+			WHERE proxy_id=$1 AND deleted_at IS NULL%s
 			RETURNING id`, nodeFilter)
 		args := []any{proxyID}
 		if executionNodeID != "" {
@@ -929,14 +929,14 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 		rows, err = exec.QueryContext(ctx, query, args...)
 	} else {
 		query := fmt.Sprintf(`
-			UPDATE accounts SET proxy_id=$2, proxy_fallback_origin_id=$1,
+			UPDATE accounts SET proxy_id=$2, proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id,$1),
 				extra=CASE
 					WHEN type='apikey' AND extra ? 'upstream_billing_probe'
 					THEN extra - 'upstream_billing_probe'
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL%s
+			WHERE proxy_id=$1 AND deleted_at IS NULL%s
 			RETURNING id`, nodeFilter)
 		args := []any{proxyID, *target}
 		if executionNodeID != "" {
