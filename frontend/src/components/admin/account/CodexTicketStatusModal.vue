@@ -11,6 +11,23 @@
         <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">#{{ account.id }} · {{ t('admin.accounts.codexTicket.redactedNotice') }}</div>
       </div>
 
+      <div class="flex items-center justify-between gap-4 border-y border-gray-200 py-3 dark:border-dark-600">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-gray-900 dark:text-white">
+            {{ t('admin.accounts.codexTicket.accountEnabled') }}
+          </div>
+          <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+            {{ enabled ? t('admin.accounts.codexTicket.enabledHint') : t('admin.accounts.codexTicket.disabledHint') }}
+          </p>
+        </div>
+        <Toggle
+          :model-value="enabled"
+          :disabled="toggling"
+          :aria-label="t('admin.accounts.codexTicket.accountEnabled')"
+          @update:model-value="setEnabled"
+        />
+      </div>
+
       <div v-if="statuses.length" class="space-y-3">
         <div
           v-for="status in statuses"
@@ -54,7 +71,7 @@
             <button
               type="button"
               class="btn btn-secondary"
-              :disabled="refreshingModel === status.model"
+              :disabled="!enabled || toggling || refreshingModel === status.model"
               @click="refresh(status.model)"
             >
               {{ refreshingModel === status.model ? t('admin.accounts.codexTicket.refreshing') : t('admin.accounts.codexTicket.refresh') }}
@@ -96,6 +113,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import { formatDateTime } from '@/utils/format'
 import { accountsAPI } from '@/api/admin/accounts'
 import type { Account, CodexTurnTicketStatus } from '@/types'
@@ -105,21 +123,41 @@ const props = defineProps<{
   account: Account | null
 }>()
 
-const emit = defineEmits<{ close: []; updated: [statuses: CodexTurnTicketStatus[]] }>()
+const emit = defineEmits<{
+  close: []
+  updated: [payload: { enabled: boolean; statuses: CodexTurnTicketStatus[] }]
+}>()
 
 const { t } = useI18n()
 const statuses = ref<CodexTurnTicketStatus[]>([])
+const enabled = ref(false)
+const toggling = ref(false)
 const refreshingModel = ref('')
 const errorMessage = ref('')
 
 watch(
-  () => [props.show, props.account?.id, props.account?.codex_turn_tickets] as const,
+  () => [props.show, props.account?.id, props.account?.codex_ticket_enabled, props.account?.codex_turn_tickets] as const,
   () => {
+    enabled.value = props.account?.codex_ticket_enabled === true
     statuses.value = props.account?.codex_turn_tickets ? [...props.account.codex_turn_tickets] : []
     errorMessage.value = ''
   },
   { immediate: true }
 )
+
+async function setEnabled(next: boolean) {
+  if (!props.account || toggling.value) return
+  toggling.value = true
+  errorMessage.value = ''
+  try {
+    enabled.value = await accountsAPI.setCodexTicketEnabled(props.account.id, next)
+    emit('updated', { enabled: enabled.value, statuses: statuses.value })
+  } catch (error: any) {
+    errorMessage.value = error?.message || t('admin.accounts.codexTicket.toggleFailed')
+  } finally {
+    toggling.value = false
+  }
+}
 
 async function refresh(model: string) {
   if (!props.account || refreshingModel.value) return
@@ -128,7 +166,7 @@ async function refresh(model: string) {
   try {
     const next = await accountsAPI.refreshCodexTicket(props.account.id, model)
     statuses.value = next
-    emit('updated', next)
+    emit('updated', { enabled: enabled.value, statuses: next })
   } catch (error: any) {
     errorMessage.value = error?.message || t('admin.accounts.codexTicket.refreshFailed')
   } finally {

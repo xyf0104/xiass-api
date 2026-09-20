@@ -27,9 +27,11 @@ func TestAccountManagementPlanRankExpressionPrioritizesOpenAIOAuthPlans(t *testi
 	require.Contains(t, expression, "credentials ->> 'plan_type'")
 	pro := strings.Index(expression, "WHEN 'pro' THEN 0")
 	team := strings.Index(expression, "WHEN 'team' THEN 1")
+	businessPremium := strings.Index(expression, "WHEN 'self_serve_business_prolite' THEN 1")
 	plus := strings.Index(expression, "WHEN 'plus' THEN 2")
 	require.GreaterOrEqual(t, pro, 0)
 	require.Greater(t, team, pro)
+	require.Greater(t, businessPremium, team)
 	require.Greater(t, plus, team)
 }
 

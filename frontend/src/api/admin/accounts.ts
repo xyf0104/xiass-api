@@ -1040,6 +1040,13 @@ export async function refreshCodexTicket(id: number, model: string): Promise<Non
   return data.statuses
 }
 
+export async function setCodexTicketEnabled(id: number, enabled: boolean): Promise<boolean> {
+  const { data } = await apiClient.put<{ enabled: boolean }>(`/admin/accounts/${id}/codex-ticket`, {
+    enabled
+  })
+  return data.enabled
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1103,6 +1110,7 @@ export const accountsAPI = {
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
   refreshOllamaCloudUsage,
+  setCodexTicketEnabled,
   refreshCodexTicket
 }
 

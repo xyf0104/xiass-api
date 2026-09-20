@@ -159,6 +159,9 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	// Credential ownership is rebuilt from the canonical source below. Never
 	// copy a possibly chained or forged source marker verbatim.
 	OpenAIOAuthCredentialSourceIDExtraKey: {},
+	// Ticket probing is an explicit account-level opt-in and must never be
+	// inherited by a duplicate.
+	OpenAICodexTicketEnabledExtraKey: {},
 	// External sync identity belongs to one local account only.
 	"crs_account_id": {},
 	"crs_kind":       {},
@@ -224,6 +227,11 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	}
 	for key := range duplicateAccountDiscardedExtraKeys {
 		delete(cloned, key)
+	}
+	for key := range cloned {
+		if IsOpenAICodexTicketPrivateExtraKey(key) {
+			delete(cloned, key)
+		}
 	}
 	return stripOpenAIQuotaRuntimeExtra(cloned), nil
 }
@@ -431,6 +439,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, err
 	}
+	accountExtra = RedactOpenAICodexTicketExtra(accountExtra)
 	if len(normalizedBindings) > 0 {
 		input.ProxyBindings = normalizedBindings
 		input.Concurrency = totalProxyConcurrency
@@ -732,6 +741,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	// Ticket state and the account opt-in are server-managed. Every new,
+	// imported, or workflow-created account starts with ticket capture off.
+	accountExtra = RedactOpenAICodexTicketExtra(accountExtra)
 	// Multi-proxy configuration is a typed, server-managed field. Generic Extra
 	// input must never bypass proxy existence/status validation.
 	delete(accountExtra, AccountMultiProxyExtraKey)
@@ -1484,7 +1496,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
 	delete(input.Extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	for key := range input.Extra {
-		if IsOpenAICodexTicketExtraKey(key) {
+		if IsOpenAICodexTicketPrivateExtraKey(key) {
 			delete(input.Extra, key)
 		}
 	}

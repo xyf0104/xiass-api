@@ -8,7 +8,7 @@ import (
 )
 
 func TestAccountResponseCodexTicketsUsesConfiguredPolicy(t *testing.T) {
-	account := &service.Account{ID: 41, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	account := &service.Account{ID: 41, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: map[string]any{service.OpenAICodexTicketEnabledExtraKey: true}}
 	h := &AccountHandler{cfg: &config.Config{}}
 	require.Len(t, h.accountResponseFromService(account).CodexTurnTickets, 2)
 	require.Len(t, h.accountListResponseFromService(account).CodexTurnTickets, 2)

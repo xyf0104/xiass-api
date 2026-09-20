@@ -53,7 +53,7 @@ func OpenAISubscriptionPlanCategory(value string) string {
 		return AccountSubscriptionPlanPlus
 	case "pro", "chatgptpro":
 		return AccountSubscriptionPlanPro
-	case "team", "chatgptteam", "business", "chatgptbusiness", "selfservebusiness", "selfservebusinessusagebased":
+	case "team", "chatgptteam", "business", "chatgptbusiness", "selfservebusiness", "selfservebusinessusagebased", "selfservebusinessprolite":
 		return AccountSubscriptionPlanTeam
 	default:
 		return AccountSubscriptionPlanOther

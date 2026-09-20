@@ -1347,6 +1347,8 @@ export interface Account {
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
+  // Explicit account-level opt-in. Missing and false both disable ticket behavior.
+  codex_ticket_enabled?: boolean
   // The raw x-codex-turn-state value is never returned; only this safe status summary is exposed.
   codex_turn_tickets?: CodexTurnTicketStatus[]
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.

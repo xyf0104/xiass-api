@@ -515,7 +515,7 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 	return &AccountListItem{
 		ID: a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
 		Credentials: a.Credentials, CredentialsStatus: a.CredentialsStatus, Extra: a.Extra,
-		OllamaCloudUsage: a.OllamaCloudUsage, CodexTurnTickets: a.CodexTurnTickets,
+		OllamaCloudUsage: a.OllamaCloudUsage, CodexTicketEnabled: a.CodexTicketEnabled, CodexTurnTickets: a.CodexTurnTickets,
 		ProxyID: a.ProxyID, ProxyBindings: a.ProxyBindings, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
 		ExecutionNodeID: a.ExecutionNodeID,
 		Concurrency:     a.Concurrency, LoadFactor: a.LoadFactor, Priority: a.Priority, RateMultiplier: a.RateMultiplier,

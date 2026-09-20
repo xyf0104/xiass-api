@@ -28,7 +28,41 @@ func ticketTestAccount(id int64) *Account {
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"access_token": "tok", "chatgpt_account_id": "acc-1"},
+		Extra:       map[string]any{OpenAICodexTicketEnabledExtraKey: true},
 	}
+}
+
+func TestOpenAICodexTicketIsDisabledUntilAccountExplicitlyOptsIn(t *testing.T) {
+	account := ticketTestAccount(40)
+	delete(account.Extra, OpenAICodexTicketEnabledExtraKey)
+	require.False(t, OpenAICodexTicketEnabledForAccount(account))
+
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled: true, FailClosed: true, Models: []string{"gpt-6-astra"},
+	}, nil)
+	headers := http.Header{}
+	headers.Set(openAICodexTurnStateHeader, "client-state")
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", headers))
+	require.Equal(t, "client-state", headers.Get(openAICodexTurnStateHeader))
+	require.False(t, svc.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
+	require.False(t, OpenAICodexTicketStatuses(account, svc.openAICodexTicketConfig(), time.Now())[0].Blocked)
+
+	account.Extra[OpenAICodexTicketEnabledExtraKey] = "true"
+	require.False(t, OpenAICodexTicketEnabledForAccount(account), "only a dedicated boolean opt-in is accepted")
+	account.Extra[OpenAICodexTicketEnabledExtraKey] = true
+	require.True(t, OpenAICodexTicketEnabledForAccount(account))
+}
+
+func TestRefreshOpenAICodexTicketRejectsDisabledAccount(t *testing.T) {
+	account := ticketTestAccount(43)
+	delete(account.Extra, OpenAICodexTicketEnabledExtraKey)
+	upstream := &httpUpstreamRecorder{}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, upstream)
+	svc.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*account}}
+
+	_, err := svc.RefreshOpenAICodexTicket(context.Background(), account.ID, "gpt-6-astra")
+	require.ErrorIs(t, err, ErrOpenAICodexTicketAccountDisabled)
+	require.Empty(t, upstream.requests)
 }
 
 func ticketTestService(t *testing.T, cfg config.OpenAICodexTicketConfig, upstream HTTPUpstream) *OpenAIGatewayService {
@@ -423,6 +457,15 @@ type codexTicketRefreshRepo struct {
 func (r *codexTicketRefreshRepo) ListByPlatform(context.Context, string) ([]Account, error) {
 	return r.accounts, nil
 }
+func (r *codexTicketRefreshRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			account := r.accounts[i]
+			return &account, nil
+		}
+	}
+	return nil, ErrAccountNotFound
+}
 func (r *codexTicketRefreshRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -457,14 +500,14 @@ func (u *codexTicketConcurrentUpstream) Do(req *http.Request, _ string, _ int64,
 func TestRefreshOpenAICodexTickets_ConcurrentModelsPreserveAccountSnapshot(t *testing.T) {
 	account := ticketTestAccount(41)
 	account.Status = StatusActive
-	account.Extra = map[string]any{"existing": true}
+	account.Extra = map[string]any{"existing": true, OpenAICodexTicketEnabledExtraKey: true}
 	repo := &codexTicketRefreshRepo{accounts: []Account{*account}}
 	upstream := &codexTicketConcurrentUpstream{ready: make(chan struct{})}
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, HarvestProxyURL: "socks5h://proxy.example.com:1080"}, upstream)
 	svc.accountRepo = repo
 	svc.refreshOpenAICodexTickets(context.Background())
 	require.Equal(t, int64(2), upstream.started.Load())
-	require.Equal(t, map[string]any{"existing": true}, account.Extra)
+	require.Equal(t, map[string]any{"existing": true, OpenAICodexTicketEnabledExtraKey: true}, account.Extra)
 	require.Len(t, repo.updates, 2)
 	for _, model := range []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel} {
 		ticket := svc.lookupOpenAICodexTicket(account, model)

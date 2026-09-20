@@ -2409,7 +2409,7 @@ const normalizeOpenAISubscriptionPlanCategory = (value: unknown) => {
   if (['free', 'basic', 'chatgptfree'].includes(normalized)) return 'free'
   if (['plus', 'chatgptplus'].includes(normalized)) return 'plus'
   if (['pro', 'chatgptpro'].includes(normalized)) return 'pro'
-  if (['team', 'chatgptteam', 'business', 'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased'].includes(normalized)) return 'team'
+  if (['team', 'chatgptteam', 'business', 'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased', 'selfservebusinessprolite'].includes(normalized)) return 'team'
   return 'other'
 }
 const isDerivedOpenAIOAuthAccount = (account: Account) => {
@@ -2639,12 +2639,16 @@ const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = nul
 const handleTest = (a: Account) => { if (!allowAccountWrite(a)) return; testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const openCodexTicket = (a: Account) => { codexTicketAcc.value = a; showCodexTicket.value = true }
-const handleCodexTicketUpdated = (statuses: NonNullable<Account['codex_turn_tickets']>) => {
+const handleCodexTicketUpdated = (payload: { enabled: boolean; statuses: NonNullable<Account['codex_turn_tickets']> }) => {
   if (!codexTicketAcc.value) return
   const accountID = codexTicketAcc.value.id
-  codexTicketAcc.value = { ...codexTicketAcc.value, codex_turn_tickets: statuses }
+  codexTicketAcc.value = { ...codexTicketAcc.value, codex_ticket_enabled: payload.enabled, codex_turn_tickets: payload.statuses }
   const index = accounts.value.findIndex(account => account.id === accountID)
-  if (index >= 0) accounts.value[index] = { ...accounts.value[index], codex_turn_tickets: statuses }
+  if (index >= 0) accounts.value[index] = {
+    ...accounts.value[index],
+    codex_ticket_enabled: payload.enabled,
+    codex_turn_tickets: payload.statuses
+  }
 }
 const handleOpenBillingDetails = (payload: { account: Account; windowLabel: string; startTime: string; endTime: string }) => {
   oauthBillingAcc.value = payload.account

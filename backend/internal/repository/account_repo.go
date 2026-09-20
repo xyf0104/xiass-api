@@ -1445,12 +1445,13 @@ func (r *accountRepository) ListAccountIDsByClassification(ctx context.Context, 
 			OR ($4 = 'pro' AND plan_key IN ('pro', 'chatgptpro'))
 			OR ($4 = 'team' AND plan_key IN (
 				'team', 'chatgptteam', 'business', 'chatgptbusiness',
-				'selfservebusiness', 'selfservebusinessusagebased'
+				'selfservebusiness', 'selfservebusinessusagebased', 'selfservebusinessprolite'
 			))
 			OR ($4 = 'other' AND plan_key NOT IN (
 				'free', 'basic', 'chatgptfree', 'plus', 'chatgptplus',
 				'pro', 'chatgptpro', 'team', 'chatgptteam', 'business',
-				'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased'
+				'chatgptbusiness', 'selfservebusiness', 'selfservebusinessusagebased',
+				'selfservebusinessprolite'
 			))
 		)
 		AND (
@@ -1808,7 +1809,8 @@ func accountManagementPlanRankExpression(platform, accountType, credentials stri
 	planType := "LOWER(BTRIM(COALESCE(" + credentials + " ->> 'plan_type', " + credentials + " ->> 'chatgpt_plan_type', " + credentials + " ->> 'subscription_plan', '')))"
 	return "CASE WHEN " + openAIOAuth + " THEN CASE " + planType +
 		" WHEN 'pro' THEN 0 WHEN 'chatgptpro' THEN 0 WHEN 'chatgpt_pro' THEN 0" +
-		" WHEN 'team' THEN 1 WHEN 'plus' THEN 2 ELSE 3 END ELSE 4 END"
+		" WHEN 'team' THEN 1 WHEN 'business' THEN 1 WHEN 'self_serve_business_usage_based' THEN 1" +
+		" WHEN 'self_serve_business_prolite' THEN 1 WHEN 'plus' THEN 2 ELSE 3 END ELSE 4 END"
 }
 
 func upstreamBillingRateSortExpression(extra string) string {

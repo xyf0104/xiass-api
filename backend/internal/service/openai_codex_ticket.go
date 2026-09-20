@@ -28,6 +28,7 @@ import (
 const (
 	openAICodexTurnStateHeader       = openAIWSTurnStateHeader
 	openAICodexTicketExtraKeyPrefix  = "codex_turn_ticket:"
+	OpenAICodexTicketEnabledExtraKey = "xiass_openai_codex_ticket_enabled"
 	openAICodexAstraMinVersion       = "0.153.4"
 	openAICodexTicketStatePrefix     = "gAAAAA"
 	openAICodexTicketDefaultLength   = 292
@@ -40,6 +41,10 @@ const (
 // ErrOpenAICodexTicketUnavailable 表示该号该模型没有可用的 Codex Ticket，
 // 且 fail_closed 禁止裸打业务请求。
 var ErrOpenAICodexTicketUnavailable = errors.New("codex turn-state ticket unavailable")
+
+// ErrOpenAICodexTicketAccountDisabled requires an explicit per-account opt-in
+// before either automatic or manual ticket probes may run.
+var ErrOpenAICodexTicketAccountDisabled = errors.New("codex ticket is disabled for this account")
 
 type openAICodexTicket struct {
 	AccountID      int64                           `json:"account_id"`
@@ -234,7 +239,7 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 			status.RemainingSeconds = remaining
 			status.ExpiresAt = func() *time.Time { exp := ticket.ExpiresAt; return &exp }()
 		}
-		status.Blocked = cfg.Enabled && cfg.FailClosed && !status.Ready
+		status.Blocked = cfg.Enabled && OpenAICodexTicketEnabledForAccount(account) && cfg.FailClosed && !status.Ready
 		out = append(out, status)
 	}
 	return out
@@ -418,7 +423,7 @@ func (s *OpenAIGatewayService) storeOpenAICodexTicket(ctx context.Context, accou
 // 请求路径只注入已捕获的有效门票，不现场打票；无票则返回
 // ErrOpenAICodexTicketUnavailable。打票由后台 harvester 完成。
 func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, account *Account, model string, h http.Header) error {
-	if s == nil || h == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabledContext(ctx) {
+	if s == nil || h == nil || !OpenAICodexTicketEnabledForAccount(account) || !s.openAICodexTicketEnabledContext(ctx) {
 		return nil
 	}
 	model = normalizeOpenAICodexTicketModel(model)
@@ -470,7 +475,7 @@ func (s *OpenAIGatewayService) openAICodexTicketOutboundModel(account *Account, 
 // outboundModel 必须是真正会发给上游的模型名（openAICodexTicketOutboundModel），
 // 不是客户端原始模型：注入侧读的是出站 body.model，两侧口径必须一致。
 func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, outboundModel string) bool {
-	if s == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabled() {
+	if s == nil || !OpenAICodexTicketEnabledForAccount(account) || !s.openAICodexTicketEnabled() {
 		return false
 	}
 	cfg := s.openAICodexTicketConfig()
@@ -699,7 +704,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 	probed := 0
 	for i := range accounts {
 		account := accounts[i]
-		if account.Status != StatusActive || !isOpenAICodexTicketAccount(&account) {
+		if account.Status != StatusActive || !OpenAICodexTicketEnabledForAccount(&account) {
 			continue
 		}
 		models := cfg.Models
@@ -819,6 +824,9 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTicketForAccount(ctx context.Co
 	if s == nil || account == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil {
 		return nil, nil
 	}
+	if !OpenAICodexTicketEnabledForAccount(account) {
+		return nil, ErrOpenAICodexTicketAccountDisabled
+	}
 	if !force && !s.openAICodexTicketEnabledContext(ctx) {
 		return nil, nil
 	}
@@ -927,7 +935,7 @@ func (s *OpenAIGatewayService) RefreshOpenAICodexTicket(ctx context.Context, acc
 // gAAAAA 前缀）就落库；否则记 Info miss，交给下个周期重试。同一 key 并发去重，避免上一发还没
 // 回来又叠一发。
 func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, account *Account, model string) {
-	if s == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) {
+	if s == nil || !OpenAICodexTicketEnabledForAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) {
 		return
 	}
 	cfg := s.openAICodexTicketConfig()
@@ -993,12 +1001,12 @@ func IsOpenAICodexTicketExtraKey(key string) bool {
 func MergeOpenAICodexTicketExtra(extra, current map[string]any) map[string]any {
 	result := maps.Clone(extra)
 	for key := range result {
-		if IsOpenAICodexTicketExtraKey(key) {
+		if IsOpenAICodexTicketPrivateExtraKey(key) {
 			delete(result, key)
 		}
 	}
 	for key, value := range current {
-		if IsOpenAICodexTicketExtraKey(key) {
+		if IsOpenAICodexTicketExtraKey(key) || key == OpenAICodexTicketEnabledExtraKey {
 			if result == nil {
 				result = make(map[string]any)
 			}
@@ -1068,10 +1076,25 @@ func isOpenAICodexTicketAccount(account *Account) bool {
 	return account != nil && account.IsOpenAIOAuthLike() && !account.IsShadow()
 }
 
+// OpenAICodexTicketEnabledForAccount is deliberately strict: only a boolean
+// true written by the dedicated admin endpoint enables ticket behavior.
+// Missing, imported, string, or numeric values all remain disabled.
+func OpenAICodexTicketEnabledForAccount(account *Account) bool {
+	if !isOpenAICodexTicketAccount(account) || account.Extra == nil {
+		return false
+	}
+	enabled, ok := account.Extra[OpenAICodexTicketEnabledExtraKey].(bool)
+	return ok && enabled
+}
+
+func IsOpenAICodexTicketAccount(account *Account) bool {
+	return isOpenAICodexTicketAccount(account)
+}
+
 // IsOpenAICodexTicketPrivateExtraKey also covers the retired account-level proxy
 // override, whose credentials may remain in older account records.
 func IsOpenAICodexTicketPrivateExtraKey(key string) bool {
-	return IsOpenAICodexTicketExtraKey(key) || key == "codex_harvest_proxy_url"
+	return IsOpenAICodexTicketExtraKey(key) || key == "codex_harvest_proxy_url" || key == OpenAICodexTicketEnabledExtraKey
 }
 
 // RedactOpenAICodexTicketExtra strips ephemeral ticket material from exports

@@ -60,3 +60,15 @@ func TestAccountSubscriptionPlanClassificationSupportsSetupTokenAndLegacyFields(
 	require.Equal(t, "business", OpenAIAccountSubscriptionPlan(account))
 	require.True(t, AccountMatchesSubscriptionPlan(account, AccountSubscriptionPlanTeam))
 }
+
+func TestAccountSubscriptionPlanClassificationTreatsBusinessPremiumAsTeam(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"plan_type": "self_serve_business_prolite",
+		},
+	}
+	require.Equal(t, AccountSubscriptionPlanTeam, OpenAISubscriptionPlanCategory("self_serve_business_prolite"))
+	require.True(t, AccountMatchesSubscriptionPlan(account, AccountSubscriptionPlanTeam))
+}
