@@ -575,6 +575,7 @@
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
     <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="handleAccountPoolsUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
+    <CodexTicketStatusModal :show="showCodexTicket" :account="codexTicketAcc" @close="closeCodexTicket" @updated="handleCodexTicketUpdated" />
     <OAuthBillingBreakdownDialog
       :show="showOAuthBillingDetails"
       :account="oauthBillingAcc"
@@ -582,7 +583,7 @@
       @close="closeOAuthBillingDetails"
     />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" :can-manage="menu.acc ? !isAccountReadOnly(menu.acc) : true" :management-block-reason="menu.acc ? accountManagementBlockReason(menu.acc) : ''" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" :can-manage="menu.acc ? !isAccountReadOnly(menu.acc) : true" :management-block-reason="menu.acc ? accountManagementBlockReason(menu.acc) : ''" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @codex-ticket="openCodexTicket" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <BaseDialog
       :show="showAccountAllowlistGroupPicker"
       :title="t('admin.groups.userAccountAllowlist.title')"
@@ -675,6 +676,7 @@ import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vu
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import PelicanBenchmarkModal from '@/components/account/PelicanBenchmarkModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
+import CodexTicketStatusModal from '@/components/admin/account/CodexTicketStatusModal.vue'
 import OAuthBillingBreakdownDialog, { type OAuthBillingInitialRange } from '@/components/admin/account/OAuthBillingBreakdownDialog.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -884,6 +886,7 @@ const showTest = ref(false)
 const showPelicanBenchmark = ref(false)
 const showAccountPools = ref(false)
 const showStats = ref(false)
+const showCodexTicket = ref(false)
 const showOAuthBillingDetails = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -894,6 +897,7 @@ const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
 const testingAcc = ref<Account | null>(null)
 const statsAcc = ref<Account | null>(null)
+const codexTicketAcc = ref<Account | null>(null)
 const oauthBillingAcc = ref<Account | null>(null)
 const oauthBillingRange = ref<OAuthBillingInitialRange>({ windowLabel: '7d', startTime: '', endTime: '' })
 const showSchedulePanel = ref(false)
@@ -1216,7 +1220,7 @@ const activeConcurrencyGroupLabel = computed(() => {
 })
 
 const accountNeedsOpenAIReauthorization = (account: Account) => {
-  if (account.platform !== 'openai' || account.type !== 'oauth') return false
+  if (account.platform !== 'openai' || !['oauth', 'setup-token'].includes(account.type)) return false
   const extra = account.extra as Record<string, unknown> | undefined
   const errorText = [
     account.error_message || '',
@@ -1792,7 +1796,7 @@ function getAccountPlanType(row: any): string | undefined {
       undefined
     )
   }
-  return row.credentials?.plan_type || row.parent_plan_type || undefined
+  return row.credentials?.plan_type || row.credentials?.chatgpt_plan_type || row.credentials?.subscription_plan || row.parent_plan_type || undefined
 }
 
 function getOpenAIAuthMode(row: any): string | undefined {
@@ -2414,8 +2418,8 @@ const isDerivedOpenAIOAuthAccount = (account: Account) => {
 }
 const accountMatchesSubscriptionPlanFilter = (account: Account, filter: string) => {
   if (!filter) return true
-  if (account.platform !== 'openai' || account.type !== 'oauth') return false
-  const planType = account.parent_plan_type || account.credentials?.plan_type
+  if (account.platform !== 'openai' || !['oauth', 'setup-token'].includes(account.type)) return false
+  const planType = account.parent_plan_type || account.credentials?.plan_type || account.credentials?.chatgpt_plan_type || account.credentials?.subscription_plan
   if ((planType === undefined || planType === null || planType === '') && isDerivedOpenAIOAuthAccount(account)) {
     // The server classifies linked rows by their credential owner; keep an
     // already-returned row stable when a local patch lacks owner credentials.
@@ -2629,10 +2633,19 @@ const handleAccountTestStateChanged = async (accountID: number) => {
   if (refreshed && testingAcc.value?.id === accountID) testingAcc.value = refreshed
 }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
+const closeCodexTicket = () => { showCodexTicket.value = false; codexTicketAcc.value = null }
 const closeOAuthBillingDetails = () => { showOAuthBillingDetails.value = false; oauthBillingAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
 const handleTest = (a: Account) => { if (!allowAccountWrite(a)) return; testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
+const openCodexTicket = (a: Account) => { codexTicketAcc.value = a; showCodexTicket.value = true }
+const handleCodexTicketUpdated = (statuses: NonNullable<Account['codex_turn_tickets']>) => {
+  if (!codexTicketAcc.value) return
+  const accountID = codexTicketAcc.value.id
+  codexTicketAcc.value = { ...codexTicketAcc.value, codex_turn_tickets: statuses }
+  const index = accounts.value.findIndex(account => account.id === accountID)
+  if (index >= 0) accounts.value[index] = { ...accounts.value[index], codex_turn_tickets: statuses }
+}
 const handleOpenBillingDetails = (payload: { account: Account; windowLabel: string; startTime: string; endTime: string }) => {
   oauthBillingAcc.value = payload.account
   oauthBillingRange.value = {

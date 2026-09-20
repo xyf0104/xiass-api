@@ -23,7 +23,7 @@ func TestAccountManagementPlanRankExpressionPrioritizesOpenAIOAuthPlans(t *testi
 	expression := accountManagementPlanRankExpression("platform", "type", "credentials")
 
 	require.Contains(t, expression, "LOWER(BTRIM(platform)) = 'openai'")
-	require.Contains(t, expression, "LOWER(BTRIM(type)) = 'oauth'")
+	require.Contains(t, expression, "LOWER(BTRIM(type)) IN ('oauth', 'setup-token')")
 	require.Contains(t, expression, "credentials ->> 'plan_type'")
 	pro := strings.Index(expression, "WHEN 'pro' THEN 0")
 	team := strings.Index(expression, "WHEN 'team' THEN 1")

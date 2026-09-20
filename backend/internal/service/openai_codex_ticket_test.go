@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -325,6 +326,91 @@ func TestExtractOpenAICodexTicketModel(t *testing.T) {
 	require.Empty(t, extractOpenAICodexTicketModel([]byte(`{}`)))
 }
 
+func TestChooseOpenAICodexTicketCandidatePrefersExactModelThenLatency(t *testing.T) {
+	candidates := []openAICodexTicketCandidate{
+		{openAICodexTicketProbeResult: openAICodexTicketProbeResult{ObservedModel: "gpt-5.6-luna", LatencyMs: 40}, ProxyID: 1},
+		{openAICodexTicketProbeResult: openAICodexTicketProbeResult{ObservedModel: "gpt-6-astra", LatencyMs: 30}, ProxyID: 2},
+		{openAICodexTicketProbeResult: openAICodexTicketProbeResult{ObservedModel: "gpt-6-astra", LatencyMs: 20}, ProxyID: 3},
+	}
+	selected := chooseOpenAICodexTicketCandidate(candidates, "gpt-6-astra")
+	require.NotNil(t, selected)
+	require.Equal(t, int64(3), selected.ProxyID)
+	require.Equal(t, "gpt-6-astra", selected.ObservedModel)
+}
+
+func TestChooseOpenAICodexTicketCandidateFallsBackToFastestObservedModel(t *testing.T) {
+	candidates := []openAICodexTicketCandidate{
+		{openAICodexTicketProbeResult: openAICodexTicketProbeResult{ObservedModel: "gpt-5.6-luna", LatencyMs: 40}, ProxyID: 1},
+		{openAICodexTicketProbeResult: openAICodexTicketProbeResult{ObservedModel: "gpt-5.6-luna", LatencyMs: 18}, ProxyID: 2},
+	}
+	selected := chooseOpenAICodexTicketCandidate(candidates, "gpt-6-astra")
+	require.NotNil(t, selected)
+	require.Equal(t, int64(2), selected.ProxyID)
+	require.Equal(t, "gpt-5.6-luna", selected.ObservedModel)
+}
+
+type codexTicketMultiEgressUpstream struct {
+	HTTPUpstream
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (u *codexTicketMultiEgressUpstream) Do(_ *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+	delay := time.Millisecond
+	model := "gpt-5.6-luna"
+	switch {
+	case strings.Contains(proxyURL, ":1082"):
+		delay = 12 * time.Millisecond
+		model = "gpt-6-astra"
+	case strings.Contains(proxyURL, ":1083"):
+		delay = 5 * time.Millisecond
+		model = "gpt-6-astra"
+	}
+	time.Sleep(delay)
+	u.mu.Lock()
+	if u.calls == nil {
+		u.calls = make(map[string]int)
+	}
+	u.calls[proxyURL]++
+	u.mu.Unlock()
+	header := http.Header{}
+	header.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
+	body := "data: {\"model\":\"" + model + "\"}\n\n"
+	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func TestRefreshOpenAICodexTicketProbesEveryEgressAndSelectsFastestExactModel(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.MultiProxyConfigured = true
+	for i, port := range []int{1081, 1082, 1083} {
+		id := int64(i + 1)
+		account.ProxyBindings = append(account.ProxyBindings, AccountProxyBinding{
+			ProxyID:        id,
+			MaxConcurrency: 1,
+			Proxy:          &Proxy{ID: id, Name: fmt.Sprintf("exit-%d", id), Protocol: "socks5", Host: "127.0.0.1", Port: port, Status: StatusActive},
+		})
+	}
+	upstream := &codexTicketMultiEgressUpstream{}
+	repo := &codexTicketRefreshRepo{}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false, TTLSeconds: 3600}, upstream)
+	svc.accountRepo = repo
+
+	statuses, err := svc.refreshOpenAICodexTicketForAccount(context.Background(), account, []string{"gpt-6-astra"}, true)
+	require.NoError(t, err)
+	require.Len(t, statuses, 2)
+	require.True(t, statuses[0].Ready)
+	require.Equal(t, "gpt-6-astra", statuses[0].ObservedModel)
+	require.Equal(t, int64(3), statuses[0].ProxyID)
+	require.False(t, statuses[0].Fallback)
+	require.Len(t, statuses[0].Probes, 3)
+	upstream.mu.Lock()
+	require.Len(t, upstream.calls, 3)
+	for _, count := range upstream.calls {
+		require.Equal(t, 1, count)
+	}
+	upstream.mu.Unlock()
+}
+
 // These stubs exercise the real continuous refresh path with both default models
 // completing together. Run under -race to catch writes to the shared account maps.
 type codexTicketRefreshRepo struct {
@@ -366,7 +452,7 @@ func (u *codexTicketConcurrentUpstream) Do(req *http.Request, _ string, _ int64,
 	}
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
-	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {}\n\n"))}, nil
+	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"model\":\"gpt-6-astra\"}\n\n"))}, nil
 }
 func TestRefreshOpenAICodexTickets_ConcurrentModelsPreserveAccountSnapshot(t *testing.T) {
 	account := ticketTestAccount(41)
@@ -391,14 +477,35 @@ func TestRefreshOpenAICodexTickets_ConcurrentModelsPreserveAccountSnapshot(t *te
 }
 func TestOpenAICodexTicketStatuses_RespectRuntimeConfiguration(t *testing.T) {
 	account := ticketTestAccount(41)
-	require.Empty(t, OpenAICodexTicketStatuses(account, config.OpenAICodexTicketConfig{}, time.Now()))
+	status := OpenAICodexTicketStatuses(account, config.OpenAICodexTicketConfig{}, time.Now())
+	require.Len(t, status, 2)
+	require.False(t, status[0].Blocked)
 	cfg := config.OpenAICodexTicketConfig{Enabled: true, Models: []string{"custom-model"}}
-	status := OpenAICodexTicketStatuses(account, cfg, time.Now())
+	status = OpenAICodexTicketStatuses(account, cfg, time.Now())
 	require.Len(t, status, 1)
 	require.Equal(t, "custom-model", status[0].Model)
 	require.False(t, status[0].Blocked)
 	cfg.FailClosed = true
 	require.True(t, OpenAICodexTicketStatuses(account, cfg, time.Now())[0].Blocked)
+}
+
+func TestOpenAICodexTicketStatusesIncludesPersistedModelsWhenDisabled(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Extra = map[string]any{
+		openAICodexTicketExtraKey("gpt-5.6-sol"): map[string]any{
+			"state":       fakeCodexTicketState(356),
+			"length":      356,
+			"model":       "gpt-5.6-sol",
+			"captured_at": time.Now().Add(-time.Minute),
+			"expires_at":  time.Now().Add(time.Hour),
+		},
+	}
+	status := OpenAICodexTicketStatuses(account, config.OpenAICodexTicketConfig{}, time.Now())
+	require.Len(t, status, 2)
+	require.Equal(t, "gpt-5.6-sol", status[1].Model)
+	require.True(t, status[1].Ready)
+	require.Equal(t, 356, status[1].Length)
+	require.False(t, status[1].Blocked)
 }
 func TestProbeOpenAICodexTicket_AcceptsCurrentStateLengths(t *testing.T) {
 	for _, length := range []int{292, 312, 356} {

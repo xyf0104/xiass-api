@@ -67,7 +67,12 @@ type AccountHandler struct {
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	codexTicketSettings     *service.SettingService
+	codexTicketRefresher    codexTicketRefresher
 	cfg                     *config.Config
+}
+
+type codexTicketRefresher interface {
+	RefreshOpenAICodexTicket(ctx context.Context, accountID int64, model string) ([]service.OpenAICodexTicketStatus, error)
 }
 
 type antigravityAccountTokenRefresher interface {
@@ -126,6 +131,12 @@ func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUs
 // SetCodexTicketSettings supplies the live policy without mutating shared config.
 func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService) {
 	h.codexTicketSettings = settings
+}
+
+// SetCodexTicketRefresher attaches the gateway-side multi-egress harvester
+// without changing the constructor used by focused admin tests.
+func (h *AccountHandler) SetCodexTicketRefresher(refresher codexTicketRefresher) {
+	h.codexTicketRefresher = refresher
 }
 
 // NewAccountHandler creates a new admin account handler

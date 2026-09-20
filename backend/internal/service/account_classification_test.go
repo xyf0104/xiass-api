@@ -48,3 +48,15 @@ func TestAccountClassificationFilterValidation(t *testing.T) {
 	require.False(t, IsValidAccountSubscriptionPlanFilter("enterprise"))
 	require.False(t, IsValidAccountLoginMethodFilter("password"))
 }
+
+func TestAccountSubscriptionPlanClassificationSupportsSetupTokenAndLegacyFields(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeSetupToken,
+		Extra: map[string]any{
+			"chatgpt_plan_type": "business",
+		},
+	}
+	require.Equal(t, "business", OpenAIAccountSubscriptionPlan(account))
+	require.True(t, AccountMatchesSubscriptionPlan(account, AccountSubscriptionPlanTeam))
+}

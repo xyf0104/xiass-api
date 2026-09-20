@@ -19,6 +19,10 @@
               <Icon name="chart" size="sm" class="text-indigo-500" />
               {{ t('admin.accounts.viewStats') }}
             </button>
+            <button v-if="isOpenAICodexAccount" @click="$emit('codex-ticket', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
+              <Icon name="shield" size="sm" class="text-emerald-500" />
+              {{ t('admin.accounts.codexTicket.viewStatus') }}
+            </button>
             <button :disabled="!canManage" :title="!canManage ? managementBlockReason : undefined" @click="$emit('schedule', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700">
               <Icon name="clock" size="sm" class="text-orange-500" />
               {{ t('admin.scheduledTests.schedule') }}
@@ -86,7 +90,7 @@ const props = withDefaults(defineProps<{
   position: null,
   anchorRect: null
 })
-const emit = defineEmits(['close', 'test', 'stats', 'schedule', 'manage-user-allowlist', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
+const emit = defineEmits(['close', 'test', 'stats', 'codex-ticket', 'schedule', 'manage-user-allowlist', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
 const { t } = useI18n()
 const menuRef = ref<HTMLElement | null>(null)
 const { width: viewportWidth, height: viewportHeight } = useWindowSize()
@@ -159,6 +163,7 @@ const hasRecoverableState = computed(() => {
 })
 const isAntigravityOAuth = computed(() => props.account?.platform === 'antigravity' && props.account?.type === 'oauth')
 const isOpenAIOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth')
+const isOpenAICodexAccount = computed(() => props.account?.platform === 'openai' && ['oauth', 'setup-token'].includes(props.account.type))
 const isOpenAIAgentIdentity = computed(() => {
   const authMode = (props.account?.credentials as Record<string, unknown> | undefined)?.auth_mode
   return isOpenAIOAuth.value && typeof authMode === 'string' && authMode.trim().toLowerCase() === 'agentidentity'

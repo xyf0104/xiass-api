@@ -26,7 +26,7 @@ func (u *codexTicketFuncUpstream) Do(req *http.Request, _ string, _ int64, _ int
 func codexTicketResponse() *http.Response {
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
-	return &http.Response{StatusCode: http.StatusOK, Header: h, Body: io.NopCloser(strings.NewReader("data: {}\n\n"))}
+	return &http.Response{StatusCode: http.StatusOK, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"model\":\"gpt-6-astra\"}\n\n"))}
 }
 
 func TestCodexTicketProbeBypassesPluginDuringWiring(t *testing.T) {
@@ -177,7 +177,8 @@ func TestCodexTicketProbeClosesStreamWithoutDraining(t *testing.T) {
 	}})
 	_, _, err := svc.fireOpenAICodexTicketProbe(context.Background(), ticketTestAccount(41), "test-token", "gpt-6-astra", "", time.Second)
 	require.NoError(t, err)
-	require.Zero(t, body.reads)
+	// Detailed probes read a bounded response body to classify the upstream model.
+	require.Equal(t, 1, body.reads)
 	require.Equal(t, 1, body.closes)
 }
 

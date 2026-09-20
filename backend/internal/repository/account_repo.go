@@ -1417,15 +1417,15 @@ func (r *accountRepository) ListAccountIDsByClassification(ctx context.Context, 
 				END
 				AND owner.deleted_at IS NULL
 				AND owner.platform = $2
-				AND owner.type = $3
+				AND owner.type IN ($3, 'setup-token')
 			WHERE a.deleted_at IS NULL
 				AND a.platform = $2
-				AND a.type = $3
+				AND a.type IN ($3, 'setup-token')
 		), classified AS (
 			SELECT
 				id,
 				REGEXP_REPLACE(
-					LOWER(BTRIM(COALESCE(credentials ->> 'plan_type', ''))),
+					LOWER(BTRIM(COALESCE(credentials ->> 'plan_type', credentials ->> 'chatgpt_plan_type', credentials ->> 'subscription_plan', ''))),
 					'[[:space:]_-]+',
 					'',
 					'g'
@@ -1804,8 +1804,8 @@ func accountRecentActivitySortExpression(createdAt, updatedAt, lastUsedAt string
 }
 
 func accountManagementPlanRankExpression(platform, accountType, credentials string) string {
-	openAIOAuth := "LOWER(BTRIM(" + platform + ")) = 'openai' AND LOWER(BTRIM(" + accountType + ")) = 'oauth'"
-	planType := "LOWER(BTRIM(COALESCE(" + credentials + " ->> 'plan_type', '')))"
+	openAIOAuth := "LOWER(BTRIM(" + platform + ")) = 'openai' AND LOWER(BTRIM(" + accountType + ")) IN ('oauth', 'setup-token')"
+	planType := "LOWER(BTRIM(COALESCE(" + credentials + " ->> 'plan_type', " + credentials + " ->> 'chatgpt_plan_type', " + credentials + " ->> 'subscription_plan', '')))"
 	return "CASE WHEN " + openAIOAuth + " THEN CASE " + planType +
 		" WHEN 'pro' THEN 0 WHEN 'chatgptpro' THEN 0 WHEN 'chatgpt_pro' THEN 0" +
 		" WHEN 'team' THEN 1 WHEN 'plus' THEN 2 ELSE 3 END ELSE 4 END"

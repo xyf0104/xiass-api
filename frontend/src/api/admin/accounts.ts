@@ -1032,6 +1032,14 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export async function refreshCodexTicket(id: number, model: string): Promise<NonNullable<Account['codex_turn_tickets']>> {
+  const { data } = await apiClient.post<{ statuses: NonNullable<Account['codex_turn_tickets']> }>(
+    `/admin/accounts/${id}/codex-ticket/refresh`,
+    { model }
+  )
+  return data.statuses
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1094,7 +1102,8 @@ export const accountsAPI = {
   saveOllamaCloudUsageSession,
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
-  refreshOllamaCloudUsage
+  refreshOllamaCloudUsage,
+  refreshCodexTicket
 }
 
 export default accountsAPI

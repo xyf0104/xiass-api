@@ -60,19 +60,39 @@ func OpenAISubscriptionPlanCategory(value string) string {
 	}
 }
 
+// OpenAIAccountSubscriptionPlan returns the most useful persisted plan field
+// for account-management classification. Older imports used
+// chatgpt_plan_type/subscription_plan while current OAuth writes plan_type.
+func OpenAIAccountSubscriptionPlan(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	for _, key := range []string{"plan_type", "chatgpt_plan_type", "subscription_plan"} {
+		if value := strings.TrimSpace(account.GetCredential(key)); value != "" {
+			return value
+		}
+	}
+	for _, key := range []string{"plan_type", "chatgpt_plan_type", "subscription_plan"} {
+		if value := strings.TrimSpace(account.GetExtraString(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func AccountMatchesSubscriptionPlan(account *Account, filter string) bool {
 	filter = strings.TrimSpace(filter)
 	if filter == "" {
 		return true
 	}
-	if account == nil || !account.IsOpenAIOAuth() {
+	if account == nil || !account.IsOpenAIOAuthLike() {
 		return false
 	}
-	return OpenAISubscriptionPlanCategory(account.GetCredential("plan_type")) == filter
+	return OpenAISubscriptionPlanCategory(OpenAIAccountSubscriptionPlan(account)) == filter
 }
 
 func AccountLoginMethodCategory(account *Account) string {
-	if account == nil || !account.IsOpenAIOAuth() {
+	if account == nil || !account.IsOpenAIOAuthLike() {
 		return ""
 	}
 	hasEmail := accountHasNonEmptyCredential(account, OpenAIOAuthReauthorizationEmailCredentialKey)

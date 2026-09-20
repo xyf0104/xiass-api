@@ -1310,6 +1310,30 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface CodexTurnTicketStatus {
+  model: string
+  observed_model?: string
+  length?: number
+  ready: boolean
+  remaining_seconds: number
+  blocked: boolean
+  proxy_id?: number
+  proxy_name?: string
+  latency_ms?: number
+  fallback?: boolean
+  probes?: CodexTurnTicketProbeStatus[]
+  expires_at?: string | null
+}
+
+export interface CodexTurnTicketProbeStatus {
+  proxy_id?: number
+  proxy_name?: string
+  observed_model?: string
+  status?: number
+  valid: boolean
+  latency_ms?: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -1323,6 +1347,8 @@ export interface Account {
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
+  // The raw x-codex-turn-state value is never returned; only this safe status summary is exposed.
+  codex_turn_tickets?: CodexTurnTicketStatus[]
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
