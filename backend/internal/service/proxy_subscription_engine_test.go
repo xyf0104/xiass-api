@@ -158,7 +158,13 @@ func subscriptionTunnelFixture(t *testing.T, target string) (string, *atomic.Int
 			http.Error(w, "target unavailable", http.StatusBadGateway)
 			return
 		}
-		downstream, buffered, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			_ = upstream.Close()
+			http.Error(w, "connection hijacking unavailable", http.StatusInternalServerError)
+			return
+		}
+		downstream, buffered, err := hijacker.Hijack()
 		if err != nil {
 			_ = upstream.Close()
 			return
