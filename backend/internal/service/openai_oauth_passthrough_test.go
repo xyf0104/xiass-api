@@ -27,6 +27,8 @@ import (
 func f64p(v float64) *float64 { return &v }
 
 type httpUpstreamRecorder struct {
+	mu sync.Mutex
+
 	lastReq      *http.Request
 	lastBody     []byte
 	lastProxyURL string
@@ -64,6 +66,8 @@ func (r passthroughErrReadCloser) Close() error {
 }
 
 func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.lastReq = req
 	u.lastProxyURL = proxyURL
 	if req != nil && req.Body != nil {
@@ -87,6 +91,31 @@ func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID 
 
 func (u *httpUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func TestHTTPUpstreamRecorderSupportsConcurrentTicketFixtures(t *testing.T) {
+	upstream := &httpUpstreamRecorder{err: io.EOF}
+	const calls = 3
+	var wg sync.WaitGroup
+	errs := make(chan error, calls)
+	wg.Add(calls)
+	for i := 0; i < calls; i++ {
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "https://example.test", strings.NewReader(`{"model":"fixture"}`))
+			_, err := upstream.Do(req, "", 41, 1)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.ErrorIs(t, err, io.EOF)
+	}
+	upstream.mu.Lock()
+	defer upstream.mu.Unlock()
+	require.Len(t, upstream.requests, calls)
+	require.Len(t, upstream.bodies, calls)
 }
 
 func TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54(t *testing.T) {

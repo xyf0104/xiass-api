@@ -994,6 +994,39 @@ export interface Proxy {
   updated_at: string
 }
 
+export interface ProxySubscriptionSource {
+  allow_insecure_tls?: boolean
+  id: string
+  name?: string
+  url?: string
+  input?: string
+  source_kind?: 'url' | 'input'
+  configured?: boolean
+  user_agent?: string
+  include_protocols?: string[]
+  exclude_keywords?: string[]
+}
+
+export interface ProxySubscriptionNode {
+  id: string
+  source_id: string
+  source_name?: string
+  name: string
+  protocol: string
+  selected: boolean
+  proxy_id?: number
+  missing?: boolean
+}
+
+export interface ProxySubscriptionOverview {
+  agent_available: boolean
+  sources: ProxySubscriptionSource[]
+  nodes: ProxySubscriptionNode[]
+  updated_at?: string
+  preview_id?: string
+  last_error?: string
+}
+
 export interface AccountProxyBindingInput {
 	proxy_id: number
 	max_concurrency: number
@@ -1314,6 +1347,10 @@ export interface CodexTurnTicketStatus {
   model: string
   observed_model?: string
   length?: number
+  expected_length?: number
+  account_mode?: string
+  shape_valid?: boolean
+  issued_at?: string | null
   ready: boolean
   remaining_seconds: number
   blocked: boolean

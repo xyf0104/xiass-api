@@ -1222,8 +1222,8 @@ func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 }
 
 // OpenAICodexTicketConfig controls the optional ChatGPT OAuth turn-state
-// ticket harvester. TargetLength keeps the historical 292-byte default;
-// with that default, current bounded upstream formats are accepted as well.
+// ticket harvester. TargetLength is retained for configuration compatibility;
+// envelope acceptance is selected from the account plan (personal/team).
 // Business requests keep using the account's own proxy; HarvestProxyURL is
 // used only by the background ticket probe.
 type OpenAICodexTicketConfig struct {
@@ -2415,7 +2415,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_codex_ticket.harvest_probe_interval_seconds", 6)
 	viper.SetDefault("gateway.openai_codex_ticket.harvest_attempt_timeout_seconds", 25)
 	viper.SetDefault("gateway.openai_codex_ticket.fail_closed", true)
-	viper.SetDefault("gateway.openai_codex_ticket.models", []string{"gpt-6-astra", "gpt-5.6-sol"})
+	viper.SetDefault("gateway.openai_codex_ticket.models", []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"})
 	viper.SetDefault("gateway.grok.free_quota_soft_gate_enabled", true)
 	viper.SetDefault("gateway.grok.password_auth_enabled", false)
 	viper.SetDefault("gateway.grok.free_quota_token_limit", int64(500_000))

@@ -897,16 +897,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						zap.Int("switch_count", switchCount),
 						zap.Int("max_switches", maxAccountSwitches),
 					}
-					if account.Proxy != nil {
-						failoverSwitchFields = append(failoverSwitchFields,
-							zap.Int64("proxy_id", account.Proxy.ID),
-							zap.String("proxy_name", account.Proxy.Name),
-							zap.String("proxy_host", account.Proxy.Host),
-							zap.Int("proxy_port", account.Proxy.Port),
-						)
-					} else if account.ProxyID != nil {
-						failoverSwitchFields = append(failoverSwitchFields, zap.Int64p("proxy_id", account.ProxyID))
-					}
+					failoverSwitchFields = appendRequestProxyLogFields(failoverSwitchFields, account)
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 					continue
 				}
@@ -1454,11 +1445,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					reqLog.Warn("openai_messages.upstream_failover_switching",
+					failoverSwitchFields := []zap.Field{
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 						zap.Int("switch_count", switchCount),
 						zap.Int("max_switches", maxAccountSwitches),
+					}
+					failoverSwitchFields = appendRequestProxyLogFields(failoverSwitchFields, account)
+					reqLog.Warn("openai_messages.upstream_failover_switching",
+						failoverSwitchFields...,
 					)
 					continue
 				}
@@ -2204,12 +2199,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			closeOpenAIWSFailoverExhausted(wsConn, failoverErr)
 			return false
 		}
-		reqLog.Warn("openai.websocket_upstream_failover_switching",
+		failoverSwitchFields := []zap.Field{
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("switch_count", switchCount),
 			zap.Int("max_switches", maxAccountSwitches),
-		)
+		}
+		failoverSwitchFields = appendRequestProxyLogFields(failoverSwitchFields, account)
+		reqLog.Warn("openai.websocket_upstream_failover_switching", failoverSwitchFields...)
 		if ctx.Err() != nil {
 			return false
 		}
@@ -2705,16 +2702,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				zap.String("close_status", closeStatus),
 				zap.String("close_reason", closeReason),
 			}
-			if account.Proxy != nil {
-				proxyFailedFields = append(proxyFailedFields,
-					zap.Int64("proxy_id", account.Proxy.ID),
-					zap.String("proxy_name", account.Proxy.Name),
-					zap.String("proxy_host", account.Proxy.Host),
-					zap.Int("proxy_port", account.Proxy.Port),
-				)
-			} else if account.ProxyID != nil {
-				proxyFailedFields = append(proxyFailedFields, zap.Int64p("proxy_id", account.ProxyID))
-			}
+			proxyFailedFields = appendRequestProxyLogFields(proxyFailedFields, account)
 			reqLog.Warn("openai.websocket_proxy_failed", proxyFailedFields...)
 			if hasClientCloseErr {
 				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())

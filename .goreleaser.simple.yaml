@@ -28,9 +28,26 @@ builds:
       - -X main.Commit={{.Commit}}
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
+  - id: xiass-proxy-agent
+    dir: tools/xiass-proxy-agent
+    main: ./cmd/xiass-proxy-agent
+    binary: xiass-proxy-agent
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w
 
 archives:
   - id: default
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     formats:
       - tar.gz
     name_template: >-
@@ -39,6 +56,9 @@ archives:
       - LICENSE*
       - README*
       - install.sh
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
       # Ship runtime inputs only, never a developer's entire deploy directory.
       - deploy/.env.example
       - deploy/config.example.yaml
@@ -92,6 +112,9 @@ changelog:
 # 仅 GHCR x86_64 镜像
 dockers:
   - id: ghcr-amd64
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     goos: linux
     goarch: amd64
     image_templates:
@@ -103,6 +126,9 @@ dockers:
     extra_files:
       - deploy/docker-entrypoint.sh
       - backend/resources
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.version={{ .Version }}"

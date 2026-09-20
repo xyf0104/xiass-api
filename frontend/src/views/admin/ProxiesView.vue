@@ -11,7 +11,7 @@
             : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
         ]"
       >
-        代理列表
+        {{ t('admin.proxies.tabs.proxies') }}
       </button>
       <button
         type="button"
@@ -23,7 +23,19 @@
             : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
         ]"
       >
-        代理节点
+        {{ t('admin.proxies.tabs.softRouter') }}
+      </button>
+      <button
+        type="button"
+        @click="activeTab = 'subscriptions'"
+        :class="[
+          '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+          activeTab === 'subscriptions'
+            ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+        ]"
+      >
+        {{ t('admin.proxies.tabs.subscriptions') }}
       </button>
     </div>
 
@@ -382,7 +394,8 @@
       </template>
     </TablePageLayout>
 
-    <SoftRouterProxyPanel v-else @changed="loadProxies" />
+    <SoftRouterProxyPanel v-else-if="activeTab === 'soft-router'" @changed="loadProxies" />
+    <SubscriptionProxyPanel v-else @changed="loadProxies" />
 
     <Teleport to="body">
       <div
@@ -1019,6 +1032,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import SoftRouterProxyPanel from '@/components/admin/proxy/SoftRouterProxyPanel.vue'
+import SubscriptionProxyPanel from '@/components/admin/proxy/SubscriptionProxyPanel.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
@@ -1078,7 +1092,7 @@ const editStatusOptions = computed(() => [
 ])
 
 const proxies = ref<Proxy[]>([])
-const activeTab = ref<'proxies' | 'soft-router'>('proxies')
+const activeTab = ref<'proxies' | 'soft-router' | 'subscriptions'>('proxies')
 const visiblePasswordIds = reactive(new Set<number>())
 const copyMenuProxyId = ref<number | null>(null)
 const copyMenuTrigger = ref<HTMLElement | null>(null)

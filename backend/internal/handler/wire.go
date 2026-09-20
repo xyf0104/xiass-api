@@ -193,6 +193,12 @@ func ProvideAdminGroupHandler(
 	return h
 }
 
+func ProvideAdminProxyHandler(adminService service.AdminService, subscriptions *service.ProxySubscriptionService) *admin.ProxyHandler {
+	h := admin.NewProxyHandler(adminService)
+	h.SetProxySubscriptionService(subscriptions)
+	return h
+}
+
 // ProvideOpenAIOAuthHandler wires the Team child workflow's short-lived
 // browser/mailbox state to the application's shared Redis instance while
 // preserving the existing constructor used by focused handler tests.
@@ -307,7 +313,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewGeminiOAuthHandler,
 	admin.NewAntigravityOAuthHandler,
 	admin.NewGrokOAuthHandler,
-	admin.NewProxyHandler,
+	ProvideAdminProxyHandler,
 	admin.NewSoftRouterProxyHandler,
 	admin.NewRedeemHandler,
 	admin.NewPromoHandler,

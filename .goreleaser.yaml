@@ -33,9 +33,32 @@ builds:
       - -X main.Commit={{.Commit}}
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
+  - id: xiass-proxy-agent
+    dir: tools/xiass-proxy-agent
+    main: ./cmd/xiass-proxy-agent
+    binary: xiass-proxy-agent
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
 
 archives:
   - id: default
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     formats:
       - tar.gz
     name_template: >-
@@ -48,6 +71,9 @@ archives:
       - LICENSE*
       - README*
       - install.sh
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
       # Ship runtime inputs only, never a developer's entire deploy directory.
       - deploy/.env.example
       - deploy/config.example.yaml
@@ -103,6 +129,9 @@ changelog:
 dockers:
   # DockerHub images (skipped if DOCKERHUB_USERNAME is 'skip')
   - id: amd64
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     goos: linux
     goarch: amd64
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
@@ -113,12 +142,18 @@ dockers:
     extra_files:
       - deploy/docker-entrypoint.sh
       - backend/resources
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .Commit }}"
 
   - id: arm64
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     goos: linux
     goarch: arm64
     skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
@@ -129,6 +164,9 @@ dockers:
     extra_files:
       - deploy/docker-entrypoint.sh
       - backend/resources
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
@@ -136,6 +174,9 @@ dockers:
 
   # GHCR images (owner must be lowercase)
   - id: ghcr-amd64
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     goos: linux
     goarch: amd64
     image_templates:
@@ -145,6 +186,9 @@ dockers:
     extra_files:
       - deploy/docker-entrypoint.sh
       - backend/resources
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.version={{ .Version }}"
@@ -152,6 +196,9 @@ dockers:
       - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}"
 
   - id: ghcr-arm64
+    ids:
+      - xiass-api
+      - xiass-proxy-agent
     goos: linux
     goarch: arm64
     image_templates:
@@ -161,6 +208,9 @@ dockers:
     extra_files:
       - deploy/docker-entrypoint.sh
       - backend/resources
+      - tools/xiass-proxy-agent/LICENSE
+      - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+      - tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.version={{ .Version }}"

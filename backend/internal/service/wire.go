@@ -892,6 +892,12 @@ func ProvideAccountService(accountRepo AccountRepository, groupRepo GroupReposit
 	return svc
 }
 
+func ProvideProxySubscriptionService(store ProxySubscriptionPersistence, encryptor SecretEncryptor, cfg *config.Config) *ProxySubscriptionService {
+	svc := NewProxySubscriptionService(store, encryptor, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
 	// Core services
@@ -908,6 +914,7 @@ var ProviderSet = wire.NewSet(
 	ProvideAccountService,
 	NewPluginManager,
 	NewProxyService,
+	ProvideProxySubscriptionService,
 	NewRedeemService,
 	NewPromoService,
 	NewUsageService,

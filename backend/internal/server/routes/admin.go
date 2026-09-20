@@ -576,6 +576,14 @@ func registerGrokOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	proxies := admin.Group("/proxies")
 	{
+		subscriptions := proxies.Group("/subscriptions")
+		{
+			subscriptions.GET("", h.Admin.Proxy.GetSubscriptions)
+			subscriptions.POST("/preview", h.Admin.Proxy.PreviewSubscriptions)
+			subscriptions.PUT("", h.Admin.Proxy.ApplySubscriptions)
+			subscriptions.POST("/refresh", h.Admin.Proxy.RefreshSubscriptions)
+		}
+
 		softRouter := proxies.Group("/soft-router")
 		{
 			softRouter.GET("", h.Admin.SoftRouterProxy.Overview)

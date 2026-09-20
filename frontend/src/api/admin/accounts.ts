@@ -1032,10 +1032,21 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
-export async function refreshCodexTicket(id: number, model: string): Promise<NonNullable<Account['codex_turn_tickets']>> {
+export async function refreshCodexTicket(
+  id: number,
+  model: string,
+  proxyIds?: number[]
+): Promise<NonNullable<Account['codex_turn_tickets']>> {
+  const timeout = Math.max(
+    180_000,
+    Math.ceil((proxyIds?.length || 0) / 4) * 25_000 + 30_000
+  )
+  const payload: { model: string; proxy_ids?: number[] } = { model }
+  if (proxyIds !== undefined) payload.proxy_ids = proxyIds
   const { data } = await apiClient.post<{ statuses: NonNullable<Account['codex_turn_tickets']> }>(
     `/admin/accounts/${id}/codex-ticket/refresh`,
-    { model }
+    payload,
+    { timeout }
   )
   return data.statuses
 }

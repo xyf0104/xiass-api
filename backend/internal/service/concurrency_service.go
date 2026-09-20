@@ -470,6 +470,8 @@ func (s *ConcurrencyService) AcquireAccountProxySlot(ctx context.Context, accoun
 		byID[binding.ProxyID] = binding
 	}
 	requestID := generateRequestID()
+	// Codex turn state is scoped to account+model and is shared by every
+	// business egress. Probe observations must never narrow runtime capacity.
 	proxyID, acquired, err := cache.AcquireAccountProxySlot(ctx, account.ID, slots, requestID)
 	if err != nil || !acquired {
 		return nil, nil, acquired, err

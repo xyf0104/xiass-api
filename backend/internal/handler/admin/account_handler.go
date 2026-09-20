@@ -75,6 +75,10 @@ type codexTicketRefresher interface {
 	RefreshOpenAICodexTicket(ctx context.Context, accountID int64, model string) ([]service.OpenAICodexTicketStatus, error)
 }
 
+type codexTicketProxyRefresher interface {
+	RefreshOpenAICodexTicketWithProxies(ctx context.Context, accountID int64, model string, proxies []*service.Proxy) ([]service.OpenAICodexTicketStatus, error)
+}
+
 type antigravityAccountTokenRefresher interface {
 	RefreshAccountToken(ctx context.Context, account *service.Account) (*service.AntigravityTokenInfo, error)
 	BuildAccountCredentials(tokenInfo *service.AntigravityTokenInfo) map[string]any

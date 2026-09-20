@@ -75,6 +75,7 @@ func newTestApplicationCleanup(inactiveUserCleanup *service.InactiveUserCleanupS
 		nil, // cnProviderBalanceCheck
 		codexVersionSyncSvc,
 		proxyExpirySvc,
+		nil, // proxySubscriptions
 		subscriptionExpirySvc,
 		&service.UsageCleanupService{},
 		inactiveUserCleanup,

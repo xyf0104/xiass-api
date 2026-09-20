@@ -1,0 +1,56 @@
+{
+  "repository": "luweiming1/ccodex-sleep-state",
+  "commit": "89294a1c723c7f061fa60afa42710e17a40ec6a6",
+  "captured_at": "2026-09-20",
+  "license": "GPL-3.0-only",
+  "files": [
+    {
+      "source": "internal/proxyroute/parse.go",
+      "retained": "third_party/ccodex-sleep-state/upstream-original/internal/proxyroute/parse.go",
+      "retained_sha256": "71758e07057585af9f66e18e1152718a592638aa4e3acad99bea099cca8aca1f",
+      "build": "third_party/ccodex-sleep-state/internal/proxyroute/parse.go",
+      "build_sha256": "0d1e2b85fd8c7b5d75a5442174dcb28743ec121e69559cad1ef5949fee658a32",
+      "equivalence": "parser unchanged; node validation adds explicit per-source TLS opt-in while retaining default TLS refusal and all forbidden file/routing checks"
+    },
+    {
+      "source": "internal/proxyroute/route.go",
+      "retained": "third_party/ccodex-sleep-state/upstream-original/internal/proxyroute/route.go",
+      "retained_sha256": "855c52cebc0c400c95117de7352efa46a58d8e026cfa4e15677e735d87b831b8",
+      "build": "third_party/ccodex-sleep-state/internal/proxyroute/route.go",
+      "build_sha256": "5cb9ad8c57d11a84e04765d107e711e9bceb2864d1b7d9bd7b474cade3713398",
+      "equivalence": "retains canonical Node and source attribution metadata; Load and Build pass an explicit per-source TLS opt-in; downloads, parser, filtering, identity, limits, and default validation remain upstream"
+    },
+    {
+      "source": "internal/settings/settings.go",
+      "retained": "third_party/ccodex-sleep-state/upstream-original/internal/settings/settings.go",
+      "retained_sha256": "2fd4243d52c81b4dce28b64e95dd922a901ced318dba86de06751dfbf9ba4df3",
+      "build": "third_party/ccodex-sleep-state/internal/settings/settings.go",
+      "build_sha256": "e39f495b1b68824ded140832b6eafa9e4d2e53e2da168c4b65ccf2c73ad89a8e",
+      "equivalence": "adds an optional allow_insecure_tls source boolean, default false; existing settings and validation are unchanged"
+    },
+    {
+      "source": "go.mod",
+      "retained": "third_party/ccodex-sleep-state/go.mod",
+      "retained_sha256": "4907d82bed52acefee587146cf98bbe91f200c64b75d3ba12ee52d4e0c40bf69",
+      "build": "third_party/ccodex-sleep-state/go.mod",
+      "build_sha256": "4907d82bed52acefee587146cf98bbe91f200c64b75d3ba12ee52d4e0c40bf69",
+      "equivalence": "exact"
+    },
+    {
+      "source": "go.sum",
+      "retained": "third_party/ccodex-sleep-state/go.sum",
+      "retained_sha256": "bcf578429040d5a6996da01ce6e18040e7f15d5d134654be45fac2441684cb7b",
+      "build": "third_party/ccodex-sleep-state/go.sum",
+      "build_sha256": "bcf578429040d5a6996da01ce6e18040e7f15d5d134654be45fac2441684cb7b",
+      "equivalence": "exact"
+    },
+    {
+      "source": "LICENSE",
+      "retained": "third_party/ccodex-sleep-state/LICENSE",
+      "retained_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "build": "third_party/ccodex-sleep-state/LICENSE",
+      "build_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "equivalence": "exact"
+    }
+  ]
+}

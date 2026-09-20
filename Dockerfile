@@ -98,12 +98,35 @@ RUN --mount=type=cache,id=xiass-api-gomod,target=/go/pkg/mod \
     ./cmd/server
 
 # -----------------------------------------------------------------------------
-# Stage 3: PostgreSQL Client (version-matched with docker-compose)
+# Stage 3: Subscription proxy sidecar
+# -----------------------------------------------------------------------------
+FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} AS proxy-agent-builder
+ARG GOPROXY
+ARG GOSUMDB
+ARG TARGETOS
+ARG TARGETARCH
+
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=${GOSUMDB}
+
+WORKDIR /app/proxy-agent
+COPY tools/xiass-proxy-agent/go.mod tools/xiass-proxy-agent/go.sum ./
+COPY tools/xiass-proxy-agent/third_party/ccodex-sleep-state/go.mod tools/xiass-proxy-agent/third_party/ccodex-sleep-state/go.sum ./third_party/ccodex-sleep-state/
+RUN --mount=type=cache,id=xiass-proxy-agent-gomod,target=/go/pkg/mod \
+    go mod download
+COPY tools/xiass-proxy-agent/ ./
+RUN --mount=type=cache,id=xiass-proxy-agent-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=xiass-proxy-agent-gobuild,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build \
+    -ldflags="-s -w" -trimpath -o /app/xiass-proxy-agent ./cmd/xiass-proxy-agent
+
+# -----------------------------------------------------------------------------
+# Stage 4: PostgreSQL Client (version-matched with docker-compose)
 # -----------------------------------------------------------------------------
 FROM ${POSTGRES_IMAGE} AS pg-client
 
 # -----------------------------------------------------------------------------
-# Stage 4: Final Runtime Image
+# Stage 5: Final Runtime Image
 # -----------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
 
@@ -141,6 +164,52 @@ WORKDIR /app
 # Copy binary/resources with ownership to avoid extra full-layer chown copy
 COPY --from=backend-builder --chown=xiass:xiass /app/xiass-api /app/xiass-api
 COPY --from=backend-builder --chown=xiass:xiass /app/backend/resources /app/resources
+COPY --from=proxy-agent-builder --chown=xiass:xiass /app/xiass-proxy-agent /app/xiass-proxy-agent
+COPY --chown=xiass:xiass tools/xiass-proxy-agent/LICENSE /app/licenses/xiass-proxy-agent/LICENSE
+COPY --chown=xiass:xiass tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json /app/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
+# .dockerignore excludes Markdown globally. Keep this generated copy identical
+# to tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md for source-built images.
+COPY --chown=xiass:xiass <<'EOF' /app/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+# Third-Party Notices
+
+This component is distributed under GPL-3.0-only.
+
+## luweiming1/ccodex-sleep-state
+
+Vendored from commit `89294a1c723c7f061fa60afa42710e17a40ec6a6` under
+GPL-3.0-only. Exact original copies of `internal/proxyroute/parse.go`,
+`internal/proxyroute/route.go`, and `internal/settings/settings.go` are retained
+under `third_party/ccodex-sleep-state/upstream-original/`. The build copies add
+canonical node/source attribution metadata and an explicit per-subscription
+TLS opt-in. This optional setting defaults to false, permits only supplied
+node certificate-verification exceptions, and retains subscription-download
+TLS verification and forbidden local-file/routing validation. Original parsing,
+loading, filtering, stable identity and adapter construction remain in use.
+These XIASS adaptations were updated on 2026-09-20. See
+`UPSTREAM_SOURCE_MANIFEST.json` for the original and adapted source hashes.
+
+The upstream GPL text is retained at
+`third_party/ccodex-sleep-state/LICENSE`; the component-level GPL text is in
+`LICENSE`.
+
+## github.com/metacubex/mihomo v1.19.31
+
+Used by the upstream code for proxy URI conversion and outbound protocol
+adapters. License: GPL-3.0-only.
+
+## gopkg.in/yaml.v3 v3.0.1
+
+Used by the upstream parser for Clash/Mihomo YAML. License: MIT.
+
+The upstream module's complete dependency versions are preserved in
+`third_party/ccodex-sleep-state/go.mod` and `go.sum`. The root module resolves
+that local module through a Go `replace` directive.
+
+Distribution of a binary containing this code must satisfy GPL-3.0 source,
+license, notice, and modification-marking obligations. Deployment as a
+separate local process preserves a clear operational boundary, but does not
+remove those distribution obligations.
+EOF
 
 # Historical executable aliases keep custom commands from older deployments working.
 RUN ln -s /app/xiass-api /app/nowind-api && ln -s /app/xiass-api /app/sub2api

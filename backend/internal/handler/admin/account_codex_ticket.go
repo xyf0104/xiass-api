@@ -1,9 +1,12 @@
 package admin
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -11,8 +14,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxCodexTicketCaptureProxyIDs = 64
+
 type refreshCodexTicketRequest struct {
-	Model string `json:"model"`
+	Model    string   `json:"model"`
+	ProxyIDs *[]int64 `json:"proxy_ids,omitempty"`
 }
 
 type setCodexTicketEnabledRequest struct {
@@ -85,7 +91,26 @@ func (h *AccountHandler) RefreshCodexTicket(c *gin.Context) {
 		response.BadRequest(c, "Model is required")
 		return
 	}
-	statuses, err := h.codexTicketRefresher.RefreshOpenAICodexTicket(c.Request.Context(), accountID, model)
+	var statuses []service.OpenAICodexTicketStatus
+	if req.ProxyIDs == nil {
+		statuses, err = h.codexTicketRefresher.RefreshOpenAICodexTicket(c.Request.Context(), accountID, model)
+	} else {
+		if len(*req.ProxyIDs) == 0 {
+			response.BadRequest(c, "proxy_ids must contain at least one proxy")
+			return
+		}
+		refresher, ok := h.codexTicketRefresher.(codexTicketProxyRefresher)
+		if !ok {
+			response.ErrorFrom(c, infraerrors.ServiceUnavailable("CODEX_TICKET_PROXY_REFRESH_UNAVAILABLE", "Codex Ticket proxy selection is temporarily unavailable"))
+			return
+		}
+		proxies, validationErr := h.loadCodexTicketCaptureProxies(c.Request.Context(), *req.ProxyIDs)
+		if validationErr != nil {
+			response.ErrorFrom(c, validationErr)
+			return
+		}
+		statuses, err = refresher.RefreshOpenAICodexTicketWithProxies(c.Request.Context(), accountID, model, proxies)
+	}
 	if err != nil {
 		if errors.Is(err, service.ErrOpenAICodexTicketAccountDisabled) {
 			response.BadRequest(c, "Enable Codex Ticket for this account before refreshing")
@@ -95,4 +120,47 @@ func (h *AccountHandler) RefreshCodexTicket(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"statuses": statuses})
+}
+
+func (h *AccountHandler) loadCodexTicketCaptureProxies(ctx context.Context, ids []int64) ([]*service.Proxy, error) {
+	if len(ids) > maxCodexTicketCaptureProxyIDs {
+		return nil, infraerrors.BadRequest("CODEX_TICKET_PROXY_LIMIT_EXCEEDED", fmt.Sprintf("proxy_ids supports at most %d entries", maxCodexTicketCaptureProxyIDs))
+	}
+	unique := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, infraerrors.BadRequest("CODEX_TICKET_PROXY_INVALID", "proxy_ids must contain positive IDs")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	proxies, err := h.adminService.GetProxiesByIDs(ctx, unique)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]service.Proxy, len(proxies))
+	for _, proxy := range proxies {
+		byID[proxy.ID] = proxy
+	}
+	now := time.Now()
+	out := make([]*service.Proxy, 0, len(unique))
+	for _, id := range unique {
+		proxy, ok := byID[id]
+		if !ok {
+			return nil, infraerrors.BadRequest("CODEX_TICKET_PROXY_NOT_FOUND", fmt.Sprintf("Proxy %d was not found", id))
+		}
+		if !proxy.IsActive() {
+			return nil, infraerrors.BadRequest("CODEX_TICKET_PROXY_INACTIVE", fmt.Sprintf("Proxy %d is not active", id))
+		}
+		if proxy.IsExpired(now) {
+			return nil, infraerrors.BadRequest("CODEX_TICKET_PROXY_EXPIRED", fmt.Sprintf("Proxy %d is expired", id))
+		}
+		proxyCopy := proxy
+		out = append(out, &proxyCopy)
+	}
+	return out, nil
 }

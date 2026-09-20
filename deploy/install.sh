@@ -36,6 +36,7 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/xiass-api}"
 SERVICE_NAME="${SERVICE_NAME:-xiass-api}"
 SERVICE_USER="${SERVICE_USER:-xiass}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/xiass-api}"
+PROXY_AGENT_NAME="xiass-proxy-agent"
 
 # Existing pre-v1.0.66 systemd installs keep their original paths and unit
 # name during in-place updates. Fresh installs use the canonical XIASS names.
@@ -664,6 +665,85 @@ get_current_version() {
     fi
 }
 
+backup_runtime_bundle() {
+    local server_backup="$1"
+    local agent_backup="$2"
+
+    cp "$INSTALL_DIR/$SERVICE_NAME" "$server_backup"
+    rm -f "$agent_backup" "$agent_backup.absent"
+    if [ -f "$INSTALL_DIR/$PROXY_AGENT_NAME" ]; then
+        cp "$INSTALL_DIR/$PROXY_AGENT_NAME" "$agent_backup"
+    else
+        : > "$agent_backup.absent"
+    fi
+}
+
+restore_runtime_bundle() {
+    local server_backup="$1"
+    local agent_backup="$2"
+
+    cp "$server_backup" "$INSTALL_DIR/$SERVICE_NAME"
+    if [ -f "$agent_backup" ]; then
+        cp "$agent_backup" "$INSTALL_DIR/$PROXY_AGENT_NAME"
+        chmod +x "$INSTALL_DIR/$PROXY_AGENT_NAME"
+    elif [ -f "$agent_backup.absent" ]; then
+        rm -f "$INSTALL_DIR/$PROXY_AGENT_NAME"
+    fi
+}
+
+install_release_bundle() {
+    local server_source="$1"
+    local agent_source="${2:-}"
+    local server_target="$INSTALL_DIR/$SERVICE_NAME"
+    local agent_target="$INSTALL_DIR/$PROXY_AGENT_NAME"
+    local server_swap_backup="$server_target.swap-backup"
+    local agent_swap_backup="$agent_target.swap-backup"
+    local agent_absent_marker="$agent_swap_backup.absent"
+    local had_server=false
+    local had_agent=false
+
+    cp "$server_source" "$server_target.new"
+    chmod +x "$server_target.new"
+    if [ -n "$agent_source" ]; then
+        cp "$agent_source" "$agent_target.new"
+        chmod +x "$agent_target.new"
+    else
+        rm -f "$agent_target.new"
+    fi
+
+    rm -f "$server_swap_backup" "$agent_swap_backup" "$agent_absent_marker"
+    if [ -f "$agent_target" ]; then
+        mv "$agent_target" "$agent_swap_backup"
+        had_agent=true
+    else
+        : > "$agent_absent_marker"
+    fi
+    if [ -n "$agent_source" ] && ! mv "$agent_target.new" "$agent_target"; then
+        [ "$had_agent" = false ] || mv "$agent_swap_backup" "$agent_target"
+        rm -f "$agent_absent_marker" "$server_target.new"
+        return 1
+    fi
+
+    if [ -f "$server_target" ]; then
+        if ! mv "$server_target" "$server_swap_backup"; then
+            rm -f "$agent_target"
+            [ "$had_agent" = false ] || mv "$agent_swap_backup" "$agent_target"
+            rm -f "$agent_absent_marker" "$server_target.new"
+            return 1
+        fi
+        had_server=true
+    fi
+    if ! mv "$server_target.new" "$server_target"; then
+        [ "$had_server" = false ] || mv "$server_swap_backup" "$server_target"
+        rm -f "$agent_target"
+        [ "$had_agent" = false ] || mv "$agent_swap_backup" "$agent_target"
+        rm -f "$agent_absent_marker"
+        return 1
+    fi
+
+    rm -f "$server_swap_backup" "$agent_swap_backup" "$agent_absent_marker"
+}
+
 # Download and extract
 download_and_extract() {
     local version_num=${LATEST_VERSION#v}
@@ -728,11 +808,33 @@ download_and_extract() {
     fi
     [ -f "$extracted_binary" ] || { print_error "XIASS API binary not found in archive"; exit 1; }
 
-    # Install atomically so a running service keeps its old executable until
-    # the verified replacement is completely ready.
-    cp "$extracted_binary" "$INSTALL_DIR/$SERVICE_NAME.new"
-    chmod +x "$INSTALL_DIR/$SERVICE_NAME.new"
-    mv -f "$INSTALL_DIR/$SERVICE_NAME.new" "$INSTALL_DIR/$SERVICE_NAME"
+    local extracted_agent=""
+    if [ -f "$TEMP_DIR/$PROXY_AGENT_NAME" ]; then
+        extracted_agent="$TEMP_DIR/$PROXY_AGENT_NAME"
+        local agent_license_dir="$TEMP_DIR/tools/xiass-proxy-agent"
+        if [ ! -f "$agent_license_dir/LICENSE" ] || \
+            [ ! -f "$agent_license_dir/THIRD_PARTY_NOTICES.md" ] || \
+            [ ! -f "$agent_license_dir/UPSTREAM_SOURCE_MANIFEST.json" ]; then
+            print_error "Proxy agent legal notices are missing from the release archive"
+            exit 1
+        fi
+        mkdir -p "$INSTALL_DIR/licenses/xiass-proxy-agent"
+        cp "$agent_license_dir/LICENSE" "$INSTALL_DIR/licenses/xiass-proxy-agent/LICENSE.new"
+        cp "$agent_license_dir/THIRD_PARTY_NOTICES.md" "$INSTALL_DIR/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md.new"
+        cp "$agent_license_dir/UPSTREAM_SOURCE_MANIFEST.json" "$INSTALL_DIR/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json.new"
+    fi
+
+    # The verified server and optional sidecar are swapped as one rollback
+    # unit. Server-only historical packages intentionally leave no live agent.
+    if ! install_release_bundle "$extracted_binary" "$extracted_agent"; then
+        print_error "Failed to install the verified runtime bundle"
+        exit 1
+    fi
+    if [ -n "$extracted_agent" ]; then
+        mv "$INSTALL_DIR/licenses/xiass-proxy-agent/LICENSE.new" "$INSTALL_DIR/licenses/xiass-proxy-agent/LICENSE"
+        mv "$INSTALL_DIR/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md.new" "$INSTALL_DIR/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md"
+        mv "$INSTALL_DIR/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json.new" "$INSTALL_DIR/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json"
+    fi
 
     # Copy deploy files if they exist in the archive
     if [ -d "$TEMP_DIR/deploy" ]; then
@@ -940,8 +1042,10 @@ upgrade() {
     CURRENT_VERSION=$("$INSTALL_DIR/$SERVICE_NAME" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
     print_info "$(msg 'current_version'): $CURRENT_VERSION"
 
-    # Backup current binary
-    cp "$INSTALL_DIR/$SERVICE_NAME" "$INSTALL_DIR/$SERVICE_NAME.backup"
+    # Backup the complete runtime bundle for service-start rollback.
+    backup_runtime_bundle \
+        "$INSTALL_DIR/$SERVICE_NAME.backup" \
+        "$INSTALL_DIR/$PROXY_AGENT_NAME.backup"
     print_info "$(msg 'backup_created'): $INSTALL_DIR/$SERVICE_NAME.backup"
 
     # Download, verify, and atomically install while the old process remains available.
@@ -955,13 +1059,21 @@ upgrade() {
 
     # Set permissions
     chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$SERVICE_NAME"
+    if [ -f "$INSTALL_DIR/$PROXY_AGENT_NAME" ]; then
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$PROXY_AGENT_NAME"
+    fi
 
     # Start service
     print_info "$(msg 'starting_service')"
     if ! systemctl start "$SERVICE_NAME"; then
         print_error "$(msg 'service_start_failed')"
-        cp "$INSTALL_DIR/$SERVICE_NAME.backup" "$INSTALL_DIR/$SERVICE_NAME"
+        restore_runtime_bundle \
+            "$INSTALL_DIR/$SERVICE_NAME.backup" \
+            "$INSTALL_DIR/$PROXY_AGENT_NAME.backup"
         chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$SERVICE_NAME"
+        if [ -f "$INSTALL_DIR/$PROXY_AGENT_NAME" ]; then
+            chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$PROXY_AGENT_NAME"
+        fi
         chmod +x "$INSTALL_DIR/$SERVICE_NAME"
         systemctl start "$SERVICE_NAME" || true
         exit 1
@@ -1006,7 +1118,10 @@ install_version() {
         else
             backup_name="$SERVICE_NAME.backup.$(date +%Y%m%d%H%M%S)"
         fi
-        cp "$INSTALL_DIR/$SERVICE_NAME" "$INSTALL_DIR/$backup_name"
+        local agent_backup_name="$PROXY_AGENT_NAME.backup.${backup_name#*.backup.}"
+        backup_runtime_bundle \
+            "$INSTALL_DIR/$backup_name" \
+            "$INSTALL_DIR/$agent_backup_name"
         print_info "$(msg 'backup_created'): $INSTALL_DIR/$backup_name"
     fi
 
@@ -1023,6 +1138,9 @@ install_version() {
 
     # Set permissions
     chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$SERVICE_NAME"
+    if [ -f "$INSTALL_DIR/$PROXY_AGENT_NAME" ]; then
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$PROXY_AGENT_NAME"
+    fi
 
     # Start service
     print_info "$(msg 'starting_service')"
@@ -1032,8 +1150,13 @@ install_version() {
         print_error "$(msg 'service_start_failed')"
         if [ -n "${backup_name:-}" ] && [ -f "$INSTALL_DIR/$backup_name" ]; then
             print_warning "Restoring previous binary: $backup_name"
-            cp "$INSTALL_DIR/$backup_name" "$INSTALL_DIR/$SERVICE_NAME"
+            restore_runtime_bundle \
+                "$INSTALL_DIR/$backup_name" \
+                "$INSTALL_DIR/$agent_backup_name"
             chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$SERVICE_NAME"
+            if [ -f "$INSTALL_DIR/$PROXY_AGENT_NAME" ]; then
+                chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$PROXY_AGENT_NAME"
+            fi
             chmod +x "$INSTALL_DIR/$SERVICE_NAME"
             systemctl start "$SERVICE_NAME" || true
         fi

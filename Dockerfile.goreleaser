@@ -45,7 +45,11 @@ WORKDIR /app
 # GoReleaser keeps the source payload name `sub2api` for old archive updaters,
 # while the image always runs the canonical executable path.
 COPY --chown=xiass:xiass sub2api /app/xiass-api
+COPY --chown=xiass:xiass xiass-proxy-agent /app/xiass-proxy-agent
 COPY --chown=xiass:xiass backend/resources /app/resources
+COPY --chown=xiass:xiass tools/xiass-proxy-agent/LICENSE /app/licenses/xiass-proxy-agent/LICENSE
+COPY --chown=xiass:xiass tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md /app/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md
+COPY --chown=xiass:xiass tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json /app/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json
 RUN ln -s /app/xiass-api /app/nowind-api && ln -s /app/xiass-api /app/sub2api
 
 # Create data directory

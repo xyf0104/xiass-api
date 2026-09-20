@@ -19,13 +19,23 @@ hash_file() {
     fi
 }
 
-mkdir -p "$TEST_DIR/fake-bin" "$TEST_DIR/payload"
+mkdir -p "$TEST_DIR/fake-bin" "$TEST_DIR/payload/tools/xiass-proxy-agent" "$TEST_DIR/server-only"
 printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/payload/xiass-api"
+printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/payload/xiass-proxy-agent"
+printf 'GPL test fixture\n' > "$TEST_DIR/payload/tools/xiass-proxy-agent/LICENSE"
+printf 'notice test fixture\n' > "$TEST_DIR/payload/tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md"
+printf '{"fixture":true}\n' > "$TEST_DIR/payload/tools/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json"
 chmod +x "$TEST_DIR/payload/xiass-api"
-tar -czf "$TEST_DIR/archive.tar.gz" -C "$TEST_DIR/payload" xiass-api
+chmod +x "$TEST_DIR/payload/xiass-proxy-agent"
+cp "$TEST_DIR/payload/xiass-api" "$TEST_DIR/server-only/xiass-api"
+tar -czf "$TEST_DIR/archive.tar.gz" -C "$TEST_DIR/payload" xiass-api xiass-proxy-agent tools
+tar -czf "$TEST_DIR/server-only.tar.gz" -C "$TEST_DIR/server-only" xiass-api
 
 sed -n \
     -e '/^calculate_sha256()/,/^}/p' \
+    -e '/^backup_runtime_bundle()/,/^}/p' \
+    -e '/^restore_runtime_bundle()/,/^}/p' \
+    -e '/^install_release_bundle()/,/^}/p' \
     -e '/^download_and_extract()/,/^}/p' \
     "$ROOT_DIR/deploy/install.sh" > "$TEST_DIR/install-download-lib.sh"
 
@@ -79,11 +89,12 @@ chmod +x "$TEST_DIR/fake-bin/curl"
 run_download() {
     local scenario=$1
     local checksum_fixture=$2
+    local archive_fixture=${3:-$TEST_DIR/archive.tar.gz}
     local install_dir="$TEST_DIR/install-$scenario"
 
     DOWNLOAD_SCENARIO="$scenario" \
     CHECKSUM_FIXTURE="$checksum_fixture" \
-    ARCHIVE_FIXTURE="$TEST_DIR/archive.tar.gz" \
+    ARCHIVE_FIXTURE="$archive_fixture" \
     PATH="$TEST_DIR/fake-bin:$PATH" \
     INSTALL_DIR="$install_dir" \
     bash -c '
@@ -98,6 +109,7 @@ run_download() {
         OS="linux"
         ARCH="amd64"
         SERVICE_NAME="xiass-api"
+        PROXY_AGENT_NAME="xiass-proxy-agent"
         download_and_extract
     ' bash "$TEST_DIR/install-download-lib.sh"
 }
@@ -121,5 +133,17 @@ done
 
 run_download success "$TEST_DIR/checksums-valid.txt" >/dev/null
 test -x "$TEST_DIR/install-success/xiass-api" || fail 'verified archive was not installed'
+test -x "$TEST_DIR/install-success/xiass-proxy-agent" || fail 'verified proxy agent was not installed'
+test -f "$TEST_DIR/install-success/licenses/xiass-proxy-agent/LICENSE" || fail 'proxy agent license was not installed'
+test -f "$TEST_DIR/install-success/licenses/xiass-proxy-agent/THIRD_PARTY_NOTICES.md" || fail 'proxy agent notices were not installed'
+test -f "$TEST_DIR/install-success/licenses/xiass-proxy-agent/UPSTREAM_SOURCE_MANIFEST.json" || fail 'proxy agent source manifest was not installed'
+
+server_only_checksum=$(hash_file "$TEST_DIR/server-only.tar.gz")
+printf '%s  %s\n' "$server_only_checksum" "$archive_name" > "$TEST_DIR/checksums-server-only.txt"
+mkdir -p "$TEST_DIR/install-server-only"
+printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/install-server-only/xiass-proxy-agent"
+chmod +x "$TEST_DIR/install-server-only/xiass-proxy-agent"
+run_download server-only "$TEST_DIR/checksums-server-only.txt" "$TEST_DIR/server-only.tar.gz" >/dev/null
+test ! -e "$TEST_DIR/install-server-only/xiass-proxy-agent" || fail 'server-only archive left a stale proxy agent active'
 
 printf 'install download integrity test passed\n'

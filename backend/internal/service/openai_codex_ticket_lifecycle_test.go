@@ -33,7 +33,7 @@ func (u *codexTicketFuncUpstream) DoWithTLS(req *http.Request, _ string, _ int64
 func codexTicketResponse() *http.Response {
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
-	return &http.Response{StatusCode: http.StatusOK, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"model\":\"gpt-6-astra\"}\n\n"))}
+	return &http.Response{StatusCode: http.StatusOK, Header: h, Body: io.NopCloser(strings.NewReader(completedCodexTicketStream("gpt-6-astra")))}
 }
 
 func TestCodexTicketProbeBypassesPluginDuringWiring(t *testing.T) {
@@ -175,7 +175,7 @@ type codexTicketHeaderOnlyBody struct{ reads, closes int }
 
 func (b *codexTicketHeaderOnlyBody) Read([]byte) (int, error) { b.reads++; return 0, io.EOF }
 func (b *codexTicketHeaderOnlyBody) Close() error             { b.closes++; return nil }
-func TestCodexTicketProbeClosesStreamWithoutDraining(t *testing.T) {
+func TestCodexTicketProbeRejectsHeaderWithoutCompletedStreamAndClosesBody(t *testing.T) {
 	body := &codexTicketHeaderOnlyBody{}
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{}, &codexTicketFuncUpstream{do: func(*http.Request) (*http.Response, error) {
 		response := codexTicketResponse()
@@ -183,10 +183,78 @@ func TestCodexTicketProbeClosesStreamWithoutDraining(t *testing.T) {
 		return response, nil
 	}})
 	_, _, err := svc.fireOpenAICodexTicketProbe(context.Background(), ticketTestAccount(41), "test-token", "gpt-6-astra", "", time.Second)
-	require.NoError(t, err)
-	// Detailed probes read a bounded response body to classify the upstream model.
+	require.ErrorContains(t, err, "response.completed")
 	require.Equal(t, 1, body.reads)
 	require.Equal(t, 1, body.closes)
+}
+
+func TestReadOpenAICodexProbeResponseRequiresCompletionAndUsesFirstDeltaLatency(t *testing.T) {
+	startedAt := time.Now().Add(-25 * time.Millisecond)
+	summary, err := readOpenAICodexProbeResponse(strings.NewReader(completedCodexTicketStream("gpt-6-astra")), startedAt)
+	require.NoError(t, err)
+	require.True(t, summary.Completed)
+	require.Equal(t, "gpt-6-astra", summary.ObservedModel)
+	require.GreaterOrEqual(t, summary.LatencyMs, int64(1))
+
+	summary, err = readOpenAICodexProbeResponse(strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-6-astra\"}}\n\n"), time.Now())
+	require.ErrorContains(t, err, "response.completed")
+	require.False(t, summary.Completed)
+
+	completedOnly := "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-6-astra\"}}\n\n"
+	summary, err = readOpenAICodexProbeResponse(strings.NewReader(completedOnly), time.Now().Add(-10*time.Millisecond))
+	require.NoError(t, err)
+	require.True(t, summary.Completed)
+	require.GreaterOrEqual(t, summary.LatencyMs, int64(1), "completed latency is the safe fallback when no output delta exists")
+
+	finalModel := "data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-6-astra\"}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.6-luna\",\"status\":\"completed\"}}\n\n"
+	summary, err = readOpenAICodexProbeResponse(strings.NewReader(finalModel), time.Now().Add(-10*time.Millisecond))
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.6-luna", summary.ObservedModel, "the complete final response model wins over response.created")
+	require.False(t, summary.TerminalFailure)
+
+	failedThenCompleted := "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"synthetic_failure\"}}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-6-astra\"}}\n\n"
+	summary, err = readOpenAICodexProbeResponse(strings.NewReader(failedThenCompleted), time.Now().Add(-10*time.Millisecond))
+	require.NoError(t, err)
+	require.True(t, summary.Completed)
+	require.True(t, summary.TerminalFailure)
+	require.Equal(t, "synthetic_failure", summary.ErrorCode)
+}
+
+func TestCodexTicketProbeTimeoutAndLatencyStartAfterSemaphoreAdmission(t *testing.T) {
+	require.Zero(t, len(openAICodexTicketProbeSemaphore))
+	for i := 0; i < cap(openAICodexTicketProbeSemaphore); i++ {
+		openAICodexTicketProbeSemaphore <- struct{}{}
+	}
+	defer func() {
+		for len(openAICodexTicketProbeSemaphore) > 0 {
+			<-openAICodexTicketProbeSemaphore
+		}
+	}()
+
+	var calls atomic.Int64
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{}, &codexTicketFuncUpstream{do: func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return codexTicketResponse(), nil
+	}})
+	type probeOutcome struct {
+		result openAICodexTicketProbeResult
+		err    error
+	}
+	done := make(chan probeOutcome, 1)
+	go func() {
+		result, err := svc.fireOpenAICodexTicketProbeDetailed(context.Background(), ticketTestAccount(41), "test-token", "gpt-6-astra", "", 30*time.Millisecond)
+		done <- probeOutcome{result: result, err: err}
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	require.Zero(t, calls.Load(), "queued time must not start an upstream attempt")
+	<-openAICodexTicketProbeSemaphore
+	outcome := <-done
+	require.NoError(t, outcome.err)
+	require.Equal(t, int64(1), calls.Load())
+	require.Less(t, outcome.result.LatencyMs, int64(30), "semaphore queue time must not pollute latency")
 }
 
 func TestCodexTicketPolicyExemptsCredentialShadows(t *testing.T) {

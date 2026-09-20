@@ -154,6 +154,25 @@ jobs:
         run: go test ./...
         working-directory: tools/xiass-codex-helper
 
+  test-proxy-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/xiass-proxy-agent/go.mod
+          check-latest: false
+          cache-dependency-path: tools/xiass-proxy-agent/go.sum
+
+      - name: Test XIASS Proxy Agent
+        run: go test ./...
+        working-directory: tools/xiass-proxy-agent
+
   test-deploy-scripts:
     runs-on: ubuntu-latest
     steps:
@@ -219,7 +238,7 @@ jobs:
           bash tools/test_xiass_update_pipeline.sh
 
   build-runtime-support-images:
-    needs: [update-version, build-frontend, test-backend, test-helper, test-deploy-scripts]
+    needs: [update-version, build-frontend, test-backend, test-helper, test-proxy-agent, test-deploy-scripts]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -262,7 +281,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/xiass-updater:latest
 
   release:
-    needs: [update-version, build-frontend, test-backend, test-helper, test-deploy-scripts, build-runtime-support-images]
+    needs: [update-version, build-frontend, test-backend, test-helper, test-proxy-agent, test-deploy-scripts, build-runtime-support-images]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

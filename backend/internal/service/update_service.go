@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"compress/gzip"
 	"context"
@@ -28,12 +29,13 @@ var (
 )
 
 const (
-	updateCacheKey      = "update_check_cache"
-	updateCacheTTL      = 1200 // 20 minutes
-	githubRepo          = "xyf0104/xiass-api"
-	canonicalBinaryName = "xiass-api"
-	previousBinaryName  = "nowind-api"
-	legacyBinaryName    = "sub2api"
+	updateCacheKey       = "update_check_cache"
+	updateCacheTTL       = 1200 // 20 minutes
+	githubRepo           = "xyf0104/xiass-api"
+	canonicalBinaryName  = "xiass-api"
+	previousBinaryName   = "nowind-api"
+	legacyBinaryName     = "sub2api"
+	proxyAgentBinaryName = "xiass-proxy-agent"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -257,9 +259,13 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 		}
 	}
 
-	// Extract binary from archive
+	// Extract the release payload. Older archives can legitimately contain only
+	// the server binary; in that case the installed agent is moved to rollback
+	// state instead of being left behind as an unversioned capability.
 	newBinaryPath := filepath.Join(tempDir, canonicalBinaryName)
-	if err := s.extractBinary(archivePath, newBinaryPath); err != nil {
+	newAgentPath := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	hasAgent, err := s.extractReleaseBinaries(archivePath, newBinaryPath, newAgentPath)
+	if err != nil {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
 
@@ -267,33 +273,13 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 	if err := os.Chmod(newBinaryPath, 0755); err != nil {
 		return fmt.Errorf("chmod failed: %w", err)
 	}
-
-	// Atomic replacement using rename pattern:
-	// 1. Rename current -> backup (atomic on Unix)
-	// 2. Rename new -> current (atomic on Unix, same filesystem)
-	// If step 2 fails, restore backup
-	backupPath := exePath + ".backup"
-
-	// Remove old backup if exists
-	_ = os.Remove(backupPath)
-
-	// Step 1: Move current binary to backup
-	if err := os.Rename(exePath, backupPath); err != nil {
-		return fmt.Errorf("backup failed: %w", err)
-	}
-
-	// Step 2: Move new binary to target location (atomic, same filesystem)
-	if err := os.Rename(newBinaryPath, exePath); err != nil {
-		// Restore backup on failure
-		if restoreErr := os.Rename(backupPath, exePath); restoreErr != nil {
-			return fmt.Errorf("replace failed and restore failed: %w (restore error: %v)", err, restoreErr)
+	if hasAgent {
+		if err := os.Chmod(newAgentPath, 0755); err != nil {
+			return fmt.Errorf("agent chmod failed: %w", err)
 		}
-		return fmt.Errorf("replace failed (restored backup): %w", err)
 	}
 
-	// Success - backup file is kept for rollback capability
-	// It will be cleaned up on next successful update
-	return nil
+	return replaceReleaseBinaries(exePath, newBinaryPath, newAgentPath, hasAgent)
 }
 
 // Rollback restores the previous version
@@ -307,17 +293,7 @@ func (s *UpdateService) Rollback() error {
 		return fmt.Errorf("failed to resolve symlinks: %w", err)
 	}
 
-	backupFile := exePath + ".backup"
-	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
-		return fmt.Errorf("no backup found")
-	}
-
-	// Replace current with backup
-	if err := os.Rename(backupFile, exePath); err != nil {
-		return fmt.Errorf("rollback failed: %w", err)
-	}
-
-	return nil
+	return rollbackReleaseBinaries(exePath)
 }
 
 // ListRollbackVersions returns up to maxRollbackVersions release versions that are
@@ -522,12 +498,16 @@ func (s *UpdateService) verifyChecksum(ctx context.Context, filePath, checksumUR
 	return fmt.Errorf("checksum not found for %s", fileName)
 }
 
-func (s *UpdateService) extractBinary(archivePath, destPath string) error {
+func (s *UpdateService) extractReleaseBinaries(archivePath, serverDest, agentDest string) (bool, error) {
 	f, err := os.Open(archivePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = f.Close() }()
+
+	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+		return extractReleaseZip(archivePath, serverDest, agentDest)
+	}
 
 	var reader io.Reader = f
 
@@ -535,7 +515,7 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 	if strings.HasSuffix(archivePath, ".gz") || strings.HasSuffix(archivePath, ".tar.gz") || strings.HasSuffix(archivePath, ".tgz") {
 		gzr, err := gzip.NewReader(f)
 		if err != nil {
-			return err
+			return false, err
 		}
 		defer func() { _ = gzr.Close() }()
 		reader = gzr
@@ -544,13 +524,15 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 	// Handle tar archive
 	if strings.Contains(archivePath, ".tar") {
 		tr := tar.NewReader(reader)
+		serverFound := false
+		agentFound := false
 		for {
 			hdr, err := tr.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				return err
+				return false, err
 			}
 
 			// SECURITY: Prevent Zip Slip / Path Traversal attack
@@ -559,7 +541,7 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 
 			// Check for path traversal attempts
 			if strings.Contains(hdr.Name, "..") {
-				return fmt.Errorf("path traversal attempt detected: %s", hdr.Name)
+				return false, fmt.Errorf("path traversal attempt detected: %s", hdr.Name)
 			}
 
 			// Validate the entry is a regular file
@@ -567,49 +549,265 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 				continue // Skip directories and special files
 			}
 
-			// Only extract the specific binary we need
-			if baseName == canonicalBinaryName || baseName == canonicalBinaryName+".exe" ||
-				baseName == previousBinaryName || baseName == previousBinaryName+".exe" ||
-				baseName == legacyBinaryName || baseName == legacyBinaryName+".exe" {
-				// Additional security: limit file size (max 500MB)
-				const maxBinarySize = 500 * 1024 * 1024
-				if hdr.Size > maxBinarySize {
-					return fmt.Errorf("binary too large: %d bytes (max %d)", hdr.Size, maxBinarySize)
+			if isServerReleaseBinary(baseName) && !serverFound {
+				if err := extractReleaseEntry(tr, hdr.Size, serverDest); err != nil {
+					return false, err
 				}
-
-				out, err := os.Create(destPath)
-				if err != nil {
-					return err
+				serverFound = true
+			} else if isProxyAgentReleaseBinary(baseName) && !agentFound {
+				if err := extractReleaseEntry(tr, hdr.Size, agentDest); err != nil {
+					return false, err
 				}
-
-				// Use LimitReader to prevent decompression bombs
-				limited := io.LimitReader(tr, maxBinarySize)
-				if _, err := io.Copy(out, limited); err != nil {
-					_ = out.Close()
-					return err
-				}
-				if err := out.Close(); err != nil {
-					return err
-				}
-				return nil
+				agentFound = true
 			}
 		}
-		return fmt.Errorf("binary not found in archive")
+		if !serverFound {
+			return false, fmt.Errorf("binary not found in archive")
+		}
+		return agentFound, nil
 	}
 
-	// Direct copy for non-tar files (with size limit)
-	const maxBinarySize = 500 * 1024 * 1024
-	out, err := os.Create(destPath)
+	info, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if err := extractReleaseEntry(reader, info.Size(), serverDest); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func extractReleaseZip(archivePath, serverDest, agentDest string) (bool, error) {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = zr.Close() }()
+
+	serverFound := false
+	agentFound := false
+	for _, entry := range zr.File {
+		if strings.Contains(entry.Name, "..") {
+			return false, fmt.Errorf("path traversal attempt detected: %s", entry.Name)
+		}
+		if !entry.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		baseName := filepath.Base(strings.ReplaceAll(entry.Name, "\\", "/"))
+		var dest string
+		switch {
+		case isServerReleaseBinary(baseName) && !serverFound:
+			dest = serverDest
+			serverFound = true
+		case isProxyAgentReleaseBinary(baseName) && !agentFound:
+			dest = agentDest
+			agentFound = true
+		default:
+			continue
+		}
+
+		r, err := entry.Open()
+		if err != nil {
+			return false, err
+		}
+		err = extractReleaseEntry(r, int64(entry.UncompressedSize64), dest)
+		closeErr := r.Close()
+		if err != nil {
+			return false, err
+		}
+		if closeErr != nil {
+			return false, closeErr
+		}
+	}
+	if !serverFound {
+		return false, fmt.Errorf("binary not found in archive")
+	}
+	return agentFound, nil
+}
+
+func extractReleaseEntry(reader io.Reader, size int64, dest string) error {
+	const maxBinarySize = int64(500 * 1024 * 1024)
+	if size < 0 || size > maxBinarySize {
+		return fmt.Errorf("binary too large: %d bytes (max %d)", size, maxBinarySize)
+	}
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
+	written, copyErr := io.Copy(out, io.LimitReader(reader, size+1))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if written != size {
+		return fmt.Errorf("unexpected binary size: expected %d bytes, extracted %d", size, written)
+	}
+	return nil
+}
 
-	limited := io.LimitReader(reader, maxBinarySize)
-	if _, err := io.Copy(out, limited); err != nil {
-		_ = out.Close()
+func isServerReleaseBinary(name string) bool {
+	for _, candidate := range []string{canonicalBinaryName, previousBinaryName, legacyBinaryName} {
+		if name == candidate || name == candidate+".exe" {
+			return true
+		}
+	}
+	return false
+}
+
+func isProxyAgentReleaseBinary(name string) bool {
+	return name == proxyAgentBinaryName || name == proxyAgentBinaryName+".exe"
+}
+
+func executableFileName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+func replaceReleaseBinaries(serverPath, newServerPath, newAgentPath string, hasAgent bool) error {
+	serverBackup := serverPath + ".backup"
+	agentPath := filepath.Join(filepath.Dir(serverPath), executableFileName(proxyAgentBinaryName))
+	agentBackup := agentPath + ".backup"
+	agentAbsentMarker := agentBackup + ".absent"
+
+	_ = os.Remove(serverBackup)
+	_ = os.Remove(agentBackup)
+	_ = os.Remove(agentAbsentMarker)
+
+	hadAgent, err := pathExists(agentPath)
+	if err != nil {
+		return fmt.Errorf("inspect agent failed: %w", err)
+	}
+	if hadAgent {
+		if err := os.Rename(agentPath, agentBackup); err != nil {
+			return fmt.Errorf("agent backup failed: %w", err)
+		}
+	} else if err := os.WriteFile(agentAbsentMarker, nil, 0o600); err != nil {
+		return fmt.Errorf("record absent agent failed: %w", err)
+	}
+
+	restoreAgent := func() error {
+		_ = os.Remove(agentPath)
+		if hadAgent {
+			return os.Rename(agentBackup, agentPath)
+		}
+		return os.Remove(agentAbsentMarker)
+	}
+	if hasAgent {
+		if err := os.Rename(newAgentPath, agentPath); err != nil {
+			if restoreErr := restoreAgent(); restoreErr != nil {
+				return fmt.Errorf("agent replace failed and restore failed: %w (restore error: %v)", err, restoreErr)
+			}
+			return fmt.Errorf("agent replace failed (restored backup): %w", err)
+		}
+	}
+
+	if err := os.Rename(serverPath, serverBackup); err != nil {
+		if restoreErr := restoreAgent(); restoreErr != nil {
+			return fmt.Errorf("server backup failed and agent restore failed: %w (restore error: %v)", err, restoreErr)
+		}
+		return fmt.Errorf("server backup failed: %w", err)
+	}
+	if err := os.Rename(newServerPath, serverPath); err != nil {
+		serverRestoreErr := os.Rename(serverBackup, serverPath)
+		agentRestoreErr := restoreAgent()
+		if serverRestoreErr != nil || agentRestoreErr != nil {
+			return fmt.Errorf("server replace failed and restore was incomplete: %w (server restore: %v, agent restore: %v)", err, serverRestoreErr, agentRestoreErr)
+		}
+		return fmt.Errorf("server replace failed (restored backup): %w", err)
+	}
+	return nil
+}
+
+func rollbackReleaseBinaries(serverPath string) error {
+	serverBackup := serverPath + ".backup"
+	exists, err := pathExists(serverBackup)
+	if err != nil {
+		return fmt.Errorf("inspect backup failed: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("no backup found")
+	}
+
+	currentServer := serverPath + ".rollback-current"
+	_ = os.Remove(currentServer)
+	if err := os.Rename(serverPath, currentServer); err != nil {
+		return fmt.Errorf("stage current server failed: %w", err)
+	}
+	if err := os.Rename(serverBackup, serverPath); err != nil {
+		_ = os.Rename(currentServer, serverPath)
+		return fmt.Errorf("rollback failed: %w", err)
+	}
+
+	agentPath := filepath.Join(filepath.Dir(serverPath), executableFileName(proxyAgentBinaryName))
+	if err := rollbackProxyAgent(agentPath); err != nil {
+		serverBackupRestoreErr := os.Rename(serverPath, serverBackup)
+		serverRestoreErr := os.Rename(currentServer, serverPath)
+		return fmt.Errorf("agent rollback failed: %w (server backup restore: %v, server restore: %v)", err, serverBackupRestoreErr, serverRestoreErr)
+	}
+	_ = os.Remove(currentServer)
+	return nil
+}
+
+func rollbackProxyAgent(agentPath string) error {
+	agentBackup := agentPath + ".backup"
+	agentAbsentMarker := agentBackup + ".absent"
+	backupExists, err := pathExists(agentBackup)
+	if err != nil {
 		return err
 	}
-	return out.Close()
+	markerExists, err := pathExists(agentAbsentMarker)
+	if err != nil {
+		return err
+	}
+	if !backupExists && !markerExists {
+		return nil
+	}
+
+	currentAgent := agentPath + ".rollback-current"
+	_ = os.Remove(currentAgent)
+	currentExists, err := pathExists(agentPath)
+	if err != nil {
+		return err
+	}
+	if currentExists {
+		if err := os.Rename(agentPath, currentAgent); err != nil {
+			return err
+		}
+	}
+	restoreCurrent := func() {
+		if currentExists {
+			_ = os.Rename(currentAgent, agentPath)
+		}
+	}
+
+	if backupExists {
+		if err := os.Rename(agentBackup, agentPath); err != nil {
+			restoreCurrent()
+			return err
+		}
+	} else if err := os.Remove(agentAbsentMarker); err != nil {
+		restoreCurrent()
+		return err
+	}
+	_ = os.Remove(agentAbsentMarker)
+	_ = os.Remove(currentAgent)
+	return nil
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {

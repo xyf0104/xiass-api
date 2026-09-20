@@ -4,6 +4,7 @@ package service
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"context"
 	"errors"
 	"os"
@@ -211,11 +212,141 @@ func TestUpdateServiceExtractBinaryAcceptsCanonicalAndLegacyNames(t *testing.T) 
 
 			destination := filepath.Join(tempDir, canonicalBinaryName)
 			svc := &UpdateService{}
-			require.NoError(t, svc.extractBinary(archivePath, destination))
+			_, err = svc.extractReleaseBinaries(archivePath, destination, filepath.Join(filepath.Dir(destination), executableFileName(proxyAgentBinaryName)))
+			require.NoError(t, err)
 
 			extracted, err := os.ReadFile(destination)
 			require.NoError(t, err)
 			require.Equal(t, payload, extracted)
 		})
 	}
+}
+
+func TestUpdateServiceExtractReleaseBinariesIncludesProxyAgent(t *testing.T) {
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "release.tar")
+	writeTarArchive(t, archivePath, map[string][]byte{
+		legacyBinaryName:     []byte("server"),
+		proxyAgentBinaryName: []byte("agent"),
+	})
+
+	serverDest := filepath.Join(tempDir, canonicalBinaryName)
+	agentDest := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	svc := &UpdateService{}
+	hasAgent, err := svc.extractReleaseBinaries(archivePath, serverDest, agentDest)
+
+	require.NoError(t, err)
+	require.True(t, hasAgent)
+	requireFileContent(t, serverDest, "server")
+	requireFileContent(t, agentDest, "agent")
+}
+
+func TestUpdateServiceExtractReleaseBinariesAcceptsServerOnlyZip(t *testing.T) {
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "release.zip")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	writer := zip.NewWriter(archiveFile)
+	entry, err := writer.Create(previousBinaryName + ".exe")
+	require.NoError(t, err)
+	_, err = entry.Write([]byte("server"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.NoError(t, archiveFile.Close())
+
+	serverDest := filepath.Join(tempDir, canonicalBinaryName)
+	agentDest := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	svc := &UpdateService{}
+	hasAgent, err := svc.extractReleaseBinaries(archivePath, serverDest, agentDest)
+
+	require.NoError(t, err)
+	require.False(t, hasAgent)
+	requireFileContent(t, serverDest, "server")
+	require.NoFileExists(t, agentDest)
+}
+
+func TestReplaceAndRollbackReleaseBinariesKeepsServerAndAgentTogether(t *testing.T) {
+	tempDir := t.TempDir()
+	serverPath := filepath.Join(tempDir, canonicalBinaryName)
+	agentPath := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	newServerPath := filepath.Join(tempDir, "new-server")
+	newAgentPath := filepath.Join(tempDir, "new-agent")
+	writeTestFile(t, serverPath, "old-server")
+	writeTestFile(t, agentPath, "old-agent")
+	writeTestFile(t, newServerPath, "new-server")
+	writeTestFile(t, newAgentPath, "new-agent")
+
+	require.NoError(t, replaceReleaseBinaries(serverPath, newServerPath, newAgentPath, true))
+	requireFileContent(t, serverPath, "new-server")
+	requireFileContent(t, agentPath, "new-agent")
+	requireFileContent(t, serverPath+".backup", "old-server")
+	requireFileContent(t, agentPath+".backup", "old-agent")
+
+	require.NoError(t, rollbackReleaseBinaries(serverPath))
+	requireFileContent(t, serverPath, "old-server")
+	requireFileContent(t, agentPath, "old-agent")
+}
+
+func TestServerOnlyUpdateDisablesAgentAndRollbackRestoresIt(t *testing.T) {
+	tempDir := t.TempDir()
+	serverPath := filepath.Join(tempDir, canonicalBinaryName)
+	agentPath := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	newServerPath := filepath.Join(tempDir, "new-server")
+	writeTestFile(t, serverPath, "old-server")
+	writeTestFile(t, agentPath, "old-agent")
+	writeTestFile(t, newServerPath, "server-only")
+
+	require.NoError(t, replaceReleaseBinaries(serverPath, newServerPath, "", false))
+	requireFileContent(t, serverPath, "server-only")
+	require.NoFileExists(t, agentPath)
+	requireFileContent(t, agentPath+".backup", "old-agent")
+
+	require.NoError(t, rollbackReleaseBinaries(serverPath))
+	requireFileContent(t, serverPath, "old-server")
+	requireFileContent(t, agentPath, "old-agent")
+}
+
+func TestRollbackRemovesAgentIntroducedByUpdate(t *testing.T) {
+	tempDir := t.TempDir()
+	serverPath := filepath.Join(tempDir, canonicalBinaryName)
+	agentPath := filepath.Join(tempDir, executableFileName(proxyAgentBinaryName))
+	newServerPath := filepath.Join(tempDir, "new-server")
+	newAgentPath := filepath.Join(tempDir, "new-agent")
+	writeTestFile(t, serverPath, "old-server")
+	writeTestFile(t, newServerPath, "new-server")
+	writeTestFile(t, newAgentPath, "new-agent")
+
+	require.NoError(t, replaceReleaseBinaries(serverPath, newServerPath, newAgentPath, true))
+	requireFileContent(t, agentPath, "new-agent")
+	require.FileExists(t, agentPath+".backup.absent")
+
+	require.NoError(t, rollbackReleaseBinaries(serverPath))
+	requireFileContent(t, serverPath, "old-server")
+	require.NoFileExists(t, agentPath)
+}
+
+func writeTarArchive(t *testing.T, archivePath string, files map[string][]byte) {
+	t.Helper()
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	writer := tar.NewWriter(archiveFile)
+	for name, payload := range files {
+		require.NoError(t, writer.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(payload))}))
+		_, err = writer.Write(payload)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	require.NoError(t, archiveFile.Close())
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))
+}
+
+func requireFileContent(t *testing.T, path, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, expected, string(content))
 }

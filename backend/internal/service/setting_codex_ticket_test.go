@@ -62,16 +62,17 @@ func TestCodexTicketAccountOptInOverridesLegacyRuntimeSetting(t *testing.T) {
 }
 
 func TestRefreshOpenAICodexTickets_LegacyGlobalOffStillHarvestsOptedInAccount(t *testing.T) {
-	upstream := &httpUpstreamRecorder{}
+	upstream := &httpUpstreamRecorder{resp: codexTicketResponse()}
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
 		Enabled:         false,
 		HarvestProxyURL: "socks5h://proxy.example.com:1080",
+		Models:          []string{"gpt-6-astra"},
 	}, upstream)
 	account := ticketTestAccount(41)
 	account.Status = StatusActive
 	svc.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*account}}
 	svc.refreshOpenAICodexTickets(context.Background())
-	require.NotEmpty(t, upstream.requests)
+	require.Len(t, upstream.requests, 1)
 }
 
 func TestCodexTicketProxyRuntimeSettingAndFallback(t *testing.T) {

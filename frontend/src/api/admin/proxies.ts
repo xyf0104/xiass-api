@@ -8,6 +8,8 @@ import type {
   Proxy,
   ProxyAccountSummary,
   ProxyQualityCheckResult,
+  ProxySubscriptionOverview,
+  ProxySubscriptionSource,
   SoftRouterAgent,
   SoftRouterFRPInstallResult,
   SoftRouterFRPStatus,
@@ -21,6 +23,8 @@ import type {
   AdminDataPayload,
   AdminDataImportResult
 } from '@/types'
+
+const SUBSCRIPTION_REQUEST_TIMEOUT_MS = 180_000
 
 function assertProxyArray(value: unknown): asserts value is Proxy[] {
   if (!Array.isArray(value)) {
@@ -346,6 +350,44 @@ export async function reconcileSoftRouter(): Promise<{ message: string }> {
   return data
 }
 
+export async function getSubscriptions(): Promise<ProxySubscriptionOverview> {
+  const { data } = await apiClient.get<ProxySubscriptionOverview>('/admin/proxies/subscriptions')
+  return data
+}
+
+export async function previewSubscriptions(
+  sources: ProxySubscriptionSource[]
+): Promise<ProxySubscriptionOverview> {
+  const { data } = await apiClient.post<ProxySubscriptionOverview>(
+    '/admin/proxies/subscriptions/preview',
+    { sources },
+    { timeout: SUBSCRIPTION_REQUEST_TIMEOUT_MS }
+  )
+  return data
+}
+
+export async function applySubscriptions(
+  sources: ProxySubscriptionSource[],
+  selectedNodeIds: string[],
+  previewId: string
+): Promise<ProxySubscriptionOverview> {
+  const { data } = await apiClient.put<ProxySubscriptionOverview>('/admin/proxies/subscriptions', {
+    sources,
+    selected_node_ids: selectedNodeIds,
+    preview_id: previewId
+  }, { timeout: SUBSCRIPTION_REQUEST_TIMEOUT_MS })
+  return data
+}
+
+export async function refreshSubscriptions(): Promise<ProxySubscriptionOverview> {
+  const { data } = await apiClient.post<ProxySubscriptionOverview>(
+    '/admin/proxies/subscriptions/refresh',
+    undefined,
+    { timeout: SUBSCRIPTION_REQUEST_TIMEOUT_MS }
+  )
+  return data
+}
+
 export const proxiesAPI = {
   list,
   getAll,
@@ -374,7 +416,11 @@ export const proxiesAPI = {
   createSoftRouterMapping,
   updateSoftRouterMapping,
   deleteSoftRouterMapping,
-  reconcileSoftRouter
+  reconcileSoftRouter,
+  getSubscriptions,
+  previewSubscriptions,
+  applySubscriptions,
+  refreshSubscriptions
 }
 
 export default proxiesAPI

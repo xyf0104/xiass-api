@@ -15,7 +15,14 @@ import (
 
 // ProxyHandler handles admin proxy management
 type ProxyHandler struct {
-	adminService service.AdminService
+	adminService  service.AdminService
+	subscriptions *service.ProxySubscriptionService
+}
+
+func (h *ProxyHandler) SetProxySubscriptionService(subscriptions *service.ProxySubscriptionService) {
+	if h != nil {
+		h.subscriptions = subscriptions
+	}
 }
 
 // NewProxyHandler creates a new admin proxy handler
