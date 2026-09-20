@@ -608,8 +608,12 @@ func TestOpenAICodexTicketStatusesIncludesPersistedModelsWhenDisabled(t *testing
 	require.False(t, status[1].Blocked)
 }
 func TestProbeOpenAICodexTicket_AcceptsCurrentStateLengths(t *testing.T) {
-	for _, length := range []int{292, 312, 356} {
-		state := fakeCodexTicketState(length)
+	states := []string{
+		fakeCodexTicketState(292),
+		fakeCodexTicketState(310) + "==",
+		fakeCodexTicketState(355) + "=",
+	}
+	for _, state := range states {
 		h := http.Header{}
 		h.Set(openAICodexTurnStateHeader, state)
 		upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(""))}}}
@@ -618,7 +622,7 @@ func TestProbeOpenAICodexTicket_AcceptsCurrentStateLengths(t *testing.T) {
 		svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 		got := svc.lookupOpenAICodexTicket(account, "gpt-6-astra")
 		require.NotNil(t, got)
-		require.Equal(t, length, got.Length)
+		require.Equal(t, len(state), got.Length)
 	}
 }
 
@@ -628,6 +632,8 @@ func TestProbeOpenAICodexTicket_RejectsInvalidState(t *testing.T) {
 		strings.Repeat("X", 292),
 		fakeCodexTicketState(513),
 		openAICodexTicketStatePrefix + strings.Repeat("B", 291) + "!",
+		fakeCodexTicketState(289) + "===",
+		fakeCodexTicketState(310) + "=B",
 		"",
 	} {
 		h := http.Header{}

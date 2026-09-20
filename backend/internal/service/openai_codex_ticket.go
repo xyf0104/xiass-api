@@ -331,7 +331,15 @@ func validOpenAICodexTicketState(state string, targetLen int) bool {
 	} else if length < openAICodexTicketMinLength || length > openAICodexTicketMaxLength {
 		return false
 	}
-	for i := 0; i < len(state); i++ {
+	payloadEnd := len(state)
+	for payloadEnd > 0 && state[payloadEnd-1] == '=' {
+		payloadEnd--
+	}
+	paddingLen := len(state) - payloadEnd
+	if paddingLen > 2 || paddingLen > 0 && length%4 != 0 {
+		return false
+	}
+	for i := 0; i < payloadEnd; i++ {
 		c := state[i]
 		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
 			continue
