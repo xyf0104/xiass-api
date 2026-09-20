@@ -23,7 +23,7 @@ func (r *codexTicketSettingRepo) GetValue(ctx context.Context, key string) (stri
 	return r.codexPolicyMigrationRepoStub.GetValue(ctx, key)
 }
 
-func TestCodexTicketEnabledRuntimeSettingOverridesYaml(t *testing.T) {
+func TestCodexTicketAccountOptInOverridesLegacyRuntimeSetting(t *testing.T) {
 	repo := &codexTicketSettingRepo{codexPolicyMigrationRepoStub: &codexPolicyMigrationRepoStub{values: map[string]string{}}}
 	settings := NewSettingService(repo, &config.Config{})
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false, FailClosed: true}, nil)
@@ -42,7 +42,7 @@ func TestCodexTicketEnabledRuntimeSettingOverridesYaml(t *testing.T) {
 	h.Set(openAICodexTurnStateHeader, "client-state")
 	require.False(t, svc.openAICodexTicketEnabled())
 	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h))
-	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, fakeCodexTicketState(292), h.Get(openAICodexTurnStateHeader))
 
 	repo.values[SettingKeyOpenAICodexTicketEnabled] = "true"
 	settings.InvalidateOpenAICodexTicketEnabledCache()
@@ -58,18 +58,20 @@ func TestCodexTicketEnabledRuntimeSettingOverridesYaml(t *testing.T) {
 	h = http.Header{}
 	h.Set(openAICodexTurnStateHeader, "client-state")
 	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h))
-	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, fakeCodexTicketState(292), h.Get(openAICodexTurnStateHeader))
 }
 
-func TestRefreshOpenAICodexTickets_DisabledSkipsHarvest(t *testing.T) {
+func TestRefreshOpenAICodexTickets_LegacyGlobalOffStillHarvestsOptedInAccount(t *testing.T) {
 	upstream := &httpUpstreamRecorder{}
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
 		Enabled:         false,
 		HarvestProxyURL: "socks5h://proxy.example.com:1080",
 	}, upstream)
-	svc.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*ticketTestAccount(41)}}
+	account := ticketTestAccount(41)
+	account.Status = StatusActive
+	svc.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*account}}
 	svc.refreshOpenAICodexTickets(context.Background())
-	require.Empty(t, upstream.requests)
+	require.NotEmpty(t, upstream.requests)
 }
 
 func TestCodexTicketProxyRuntimeSettingAndFallback(t *testing.T) {

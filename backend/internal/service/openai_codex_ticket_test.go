@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +65,33 @@ func TestRefreshOpenAICodexTicketRejectsDisabledAccount(t *testing.T) {
 	_, err := svc.RefreshOpenAICodexTicket(context.Background(), account.ID, "gpt-6-astra")
 	require.ErrorIs(t, err, ErrOpenAICodexTicketAccountDisabled)
 	require.Empty(t, upstream.requests)
+}
+
+func TestOpenAICodexTicketRefreshIgnoresTypedNilRepository(t *testing.T) {
+	var repo *codexTicketRefreshRepo
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	svc.accountRepo = repo
+
+	require.NotPanics(t, func() {
+		svc.refreshOpenAICodexTickets(context.Background())
+	})
+	_, err := svc.RefreshOpenAICodexTicket(context.Background(), 43, "gpt-6-astra")
+	require.EqualError(t, err, "codex ticket refresh is unavailable")
+}
+
+type embeddedNilCodexTicketRepo struct {
+	AccountRepository
+}
+
+func TestOpenAICodexTicketRefreshIgnoresNilEmbeddedRepository(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	svc.accountRepo = &embeddedNilCodexTicketRepo{}
+
+	require.NotPanics(t, func() {
+		svc.refreshOpenAICodexTickets(context.Background())
+	})
+	_, err := svc.RefreshOpenAICodexTicket(context.Background(), 43, "gpt-6-astra")
+	require.ErrorContains(t, err, "codex ticket account repository is unavailable")
 }
 
 func ticketTestService(t *testing.T, cfg config.OpenAICodexTicketConfig, upstream HTTPUpstream) *OpenAIGatewayService {
@@ -221,12 +250,12 @@ func TestApplyOpenAICodexTicket_FailOpenSkipsInject(t *testing.T) {
 	require.False(t, svc.openAICodexTicketBlocksAccount(ticketTestAccount(41), "gpt-6-astra"))
 }
 
-func TestApplyOpenAICodexTicket_DisabledNoop(t *testing.T) {
+func TestApplyOpenAICodexTicket_LegacyGlobalDisabledDoesNotOverrideAccountOptIn(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false, FailClosed: true}, nil)
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, "client-state")
 	err := svc.applyOpenAICodexTicket(context.Background(), ticketTestAccount(41), "gpt-6-astra", h)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
 	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
 }
 
@@ -413,6 +442,26 @@ func (u *codexTicketMultiEgressUpstream) Do(_ *http.Request, proxyURL string, _ 
 	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
+func (u *codexTicketMultiEgressUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	if profile == nil {
+		return nil, errors.New("missing ticket TLS fingerprint")
+	}
+	return u.Do(req, proxyURL, accountID, concurrency)
+}
+
+func TestOpenAICodexTicketAccountOptInWorksWhenLegacyGlobalSwitchIsOff(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false, TargetLength: 292, FailClosed: true, Models: []string{"gpt-6-astra"}}, nil)
+	account := ticketTestAccount(41)
+	state := fakeCodexTicketState(292)
+	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		AccountID: account.ID, Model: "gpt-6-astra", State: state, Length: len(state), CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+	headers := http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", headers))
+	require.Equal(t, state, headers.Get(openAICodexTurnStateHeader))
+	require.False(t, svc.openAICodexTicketBlocksAccount(account, "gpt-6-astra"))
+}
+
 func TestRefreshOpenAICodexTicketProbesEveryEgressAndSelectsFastestExactModel(t *testing.T) {
 	account := ticketTestAccount(41)
 	account.MultiProxyConfigured = true
@@ -497,6 +546,14 @@ func (u *codexTicketConcurrentUpstream) Do(req *http.Request, _ string, _ int64,
 	h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
 	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"model\":\"gpt-6-astra\"}\n\n"))}, nil
 }
+
+func (u *codexTicketConcurrentUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	if profile == nil {
+		return nil, errors.New("missing ticket TLS fingerprint")
+	}
+	return u.Do(req, proxyURL, accountID, concurrency)
+}
+
 func TestRefreshOpenAICodexTickets_ConcurrentModelsPreserveAccountSnapshot(t *testing.T) {
 	account := ticketTestAccount(41)
 	account.Status = StatusActive

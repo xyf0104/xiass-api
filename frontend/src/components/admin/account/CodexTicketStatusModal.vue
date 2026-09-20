@@ -64,6 +64,9 @@
           <p v-if="status.fallback" class="mt-3 text-xs text-amber-700 dark:text-amber-300">
             {{ t('admin.accounts.codexTicket.fallbackHint', { model: status.observed_model || '-' }) }}
           </p>
+          <p class="mt-3 text-xs leading-5 text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.codexTicket.egressHint') }}
+          </p>
           <p v-if="status.blocked" class="mt-3 text-xs text-amber-700 dark:text-amber-300">
             {{ t('admin.accounts.codexTicket.blockedHint') }}
           </p>
