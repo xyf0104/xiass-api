@@ -221,11 +221,7 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 			if len(ticket.Probes) > 0 {
 				status.Probes = make([]OpenAICodexTicketProbeStatus, 0, len(ticket.Probes))
 				for _, probe := range ticket.Probes {
-					status.Probes = append(status.Probes, OpenAICodexTicketProbeStatus{
-						ProxyID: probe.ProxyID, ProxyName: probe.ProxyName,
-						ObservedModel: probe.ObservedModel, Status: probe.Status,
-						Valid: probe.Valid, LatencyMs: probe.LatencyMs,
-					})
+					status.Probes = append(status.Probes, OpenAICodexTicketProbeStatus(probe))
 				}
 			}
 		}
@@ -915,7 +911,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTicketForAccount(ctx context.Co
 // ticket is still valid, so a faster or newly-correct exit can replace it.
 func (s *OpenAIGatewayService) RefreshOpenAICodexTicket(ctx context.Context, accountID int64, model string) ([]OpenAICodexTicketStatus, error) {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
-		return nil, errors.New("Codex Ticket refresh is unavailable")
+		return nil, errors.New("codex ticket refresh is unavailable")
 	}
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
