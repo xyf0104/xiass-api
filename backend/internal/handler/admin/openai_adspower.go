@@ -137,6 +137,7 @@ type openAIAdsPowerBindingReport struct {
 	WebRTCDisabled        bool   `json:"webrtc_disabled"`
 	FingerprintRandomized bool   `json:"fingerprint_randomized"`
 	FingerprintSlot       int    `json:"fingerprint_slot,omitempty"`
+	SharedProfile         bool   `json:"shared_profile,omitempty"`
 }
 
 type openAIAdsPowerCallbackReport struct {
@@ -436,6 +437,25 @@ func (s *openAIAdsPowerLaunchStore) pruneLocked(now time.Time) {
 }
 
 func (h *OpenAIOAuthHandler) issueOpenAIAdsPowerLaunch(ctx context.Context, c *gin.Context, record openAIAdsPowerLaunchRecord) (*openAIAdsPowerLaunchResponse, error) {
+	if record.Existing != nil {
+		unlock, err := h.lockOpenAIAdsPowerProfileLifecycle(ctx, record.Existing.DeviceID, record.Existing.EnvironmentKey, record.Existing.ProfileID)
+		if err != nil {
+			return nil, errors.New("AdsPower profile lifecycle is busy")
+		}
+		defer unlock()
+		operationCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		ctx = operationCtx
+		if record.AccountID > 0 {
+			account, err := h.adminService.GetAccount(ctx, record.AccountID)
+			current := service.OpenAIAdsPowerBindingFromAccount(account)
+			if err != nil || current == nil || current.DeviceID != record.Existing.DeviceID ||
+				current.EnvironmentKey != record.Existing.EnvironmentKey || current.ProfileID != record.Existing.ProfileID {
+				return nil, errors.New("AdsPower profile binding changed before launch")
+			}
+			record.Existing = current
+		}
+	}
 	ticket, err := newTeamChildBrowserToken()
 	if err != nil {
 		return nil, errors.New("AdsPower launch ticket could not be created")
@@ -898,6 +918,22 @@ func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerBinding(c *gin.Context) {
 		response.BadRequest(c, "Invalid AdsPower binding report")
 		return
 	}
+	req.DeviceID = strings.TrimSpace(req.DeviceID)
+	req.EnvironmentKey = strings.TrimSpace(req.EnvironmentKey)
+	req.ProfileID = strings.TrimSpace(req.ProfileID)
+	if !validOpenAIAdsPowerOpaqueID(req.DeviceID, 128) || !validOpenAIAdsPowerOpaqueID(req.EnvironmentKey, 128) || !validOpenAIAdsPowerOpaqueID(req.ProfileID, 128) {
+		response.BadRequest(c, "Invalid AdsPower binding report")
+		return
+	}
+	unlock, err := h.lockOpenAIAdsPowerProfileLifecycle(c.Request.Context(), req.DeviceID, req.EnvironmentKey, req.ProfileID)
+	if err != nil {
+		response.Error(c, http.StatusConflict, "AdsPower profile lifecycle is busy")
+		return
+	}
+	defer unlock()
+	operationCtx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+	defer cancel()
+	c.Request = c.Request.WithContext(operationCtx)
 	record, ok, err := h.adsPowerLaunchStore.consumeBinding(c.Request.Context(), strings.TrimSpace(req.BindingToken))
 	if err != nil {
 		response.InternalError(c, "AdsPower binding ticket could not be read")
@@ -1045,6 +1081,7 @@ func normalizeOpenAIAdsPowerBindingReport(req openAIAdsPowerBindingReport, recor
 		ProfileName: req.ProfileName, EnvironmentKey: req.EnvironmentKey, ProxyType: req.ProxyType,
 		ProxyHost: req.ProxyHost, ProxyPort: req.ProxyPort, ProxyExitIP: req.ProxyExitIP,
 		WebRTCDisabled: true, FingerprintRandomized: true, FingerprintSlot: req.FingerprintSlot, BoundAt: &boundAt,
+		SharedProfile:  req.SharedProfile || (record.Existing != nil && record.Existing.SharedProfile),
 		LastVerifiedAt: &now, LastLaunchedAt: &now,
 	}, nil
 }

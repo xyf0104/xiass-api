@@ -330,6 +330,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					}
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, scheduleModel, false, nil)
+						h.gatewayService.ReportOpenAIAccountProxyRouteOutcome(c.Request.Context(), account, scheduleModel, false, true, result)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
@@ -377,6 +378,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, scheduleModel, false, nil)
+				h.gatewayService.ReportOpenAIAccountProxyRouteOutcome(c.Request.Context(), account, scheduleModel, false, true, result)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -397,6 +399,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		if result != nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, scheduleModel, true, result.FirstTokenMs)
+			h.gatewayService.ReportOpenAIAccountProxyRouteOutcome(c.Request.Context(), account, scheduleModel, openAIForwardSucceededForScheduling(result), false, result)
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, scheduleModel, true, nil)
 		}

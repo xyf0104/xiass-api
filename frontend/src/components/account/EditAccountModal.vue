@@ -1532,7 +1532,13 @@
           {{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}
         </p>
         <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
-        <MultiProxySelector v-else v-model="proxyBindings" :proxies="proxies" />
+        <MultiProxySelector
+          v-else
+          v-model="proxyBindings"
+          v-model:adaptive-enabled="multiProxyAdaptiveEnabled"
+          :adaptive-available="props.account?.platform === 'openai'"
+          :proxies="proxies"
+        />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -3590,10 +3596,12 @@ const form = reactive({
 
 const proxyMode = ref<'single' | 'multi'>('single')
 const proxyBindings = ref<AccountProxyBindingInput[]>([])
+const multiProxyAdaptiveEnabled = ref(false)
 const normalizedProxyBindings = () => proxyBindings.value
   .map((binding) => ({
     proxy_id: binding.proxy_id,
-    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1))
+    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1)),
+    route_priority: Math.max(0, Math.trunc(Number(binding.route_priority) || 0))
   }))
   .sort((a, b) => a.proxy_id - b.proxy_id)
 
@@ -3712,9 +3720,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.proxy_id = newAccount.proxy_id
 	proxyBindings.value = (newAccount.proxy_bindings || []).map((binding) => ({
 		proxy_id: binding.proxy_id,
-		max_concurrency: binding.max_concurrency
+		max_concurrency: binding.max_concurrency,
+		route_priority: Math.max(0, Math.trunc(Number(binding.route_priority) || 0))
 	}))
 	proxyMode.value = proxyBindings.value.length > 0 ? 'multi' : 'single'
+  multiProxyAdaptiveEnabled.value =
+    newAccount.platform === 'openai' &&
+    (newAccount.extra as Record<string, unknown> | undefined)?.xiass_multi_proxy_adaptive_enabled === true
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
@@ -5332,6 +5344,20 @@ const handleSubmit = async () => {
       }
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
+      updatePayload.extra = newExtra
+    }
+
+    // Merge this after the existing extra builders so unrelated account
+    // settings remain untouched while the OpenAI multi-proxy mode is explicit.
+    if (props.account.platform === 'openai') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (proxyMode.value === 'multi') {
+        newExtra.xiass_multi_proxy_adaptive_enabled = multiProxyAdaptiveEnabled.value
+      } else {
+        delete newExtra.xiass_multi_proxy_adaptive_enabled
+      }
       updatePayload.extra = newExtra
     }
 

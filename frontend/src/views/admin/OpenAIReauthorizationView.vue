@@ -112,7 +112,7 @@
 
     <div v-if="adsPowerHelperMissing" class="rounded-md border border-red-200 bg-red-50/95 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/80 dark:text-red-200" role="alert" data-testid="reauthorization-adspower-helper-missing">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <p>本次 Ads 授权已停止：未检测到可用的 XIASS AdsPower 助手或 AdsPower。安装后请在“Ads 设置”填写 API Key，并使用与账号所属 XIASS 服务器出口 IP 一致的代理节点。</p>
+        <p>本次 Ads 授权已停止：{{ adsPowerHelperUnavailableMessage }}</p>
         <div class="flex flex-wrap gap-2">
           <a class="btn btn-secondary btn-sm" :href="adsPowerHelperMacDownloadURL"><Icon name="download" size="sm" />macOS 安装包</a>
           <a class="btn btn-secondary btn-sm" :href="adsPowerHelperWindowsDownloadURL"><Icon name="download" size="sm" />Windows 安装包</a>
@@ -790,6 +790,9 @@ const stageDetails: Record<string, { step: number; label: string }> = {
 }
 
 const reasonLabels: Record<string, string> = {
+  adspower_profile_busy: '可复用的 AdsPower 环境正在使用，请等当前授权完成或关闭手动打开的环境后重试。',
+  adspower_profile_limit: 'AdsPower 浏览器环境名额已满，尚未进入登录。请清理不再使用的环境或扩容后重试；不要删除其他账号的固定环境。',
+  automation_start_failed: '授权浏览器未能启动，尚未完成 OAuth 授权。请检查助手中的具体错误。',
   invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。',
   invalid_totp: '2FA 验证码未通过验证。',
   authenticator_required: 'OpenAI 要求 2FA，但该账号没有可用的已保存密钥。',
@@ -835,6 +838,7 @@ function statusLabel(account: Account): string {
 function stepLabel(account: Account): string {
   const task = taskFor(account)
   if (!task) return '尚未启动'
+  if (task.status === 'failed' && ['adspower_profile_limit', 'adspower_profile_busy', 'automation_start_failed'].includes(task.reason || '')) return '启动阶段失败 · 尚未进入登录'
   const detail = stageDetails[task.stage] || stageDetails[task.status]
   return detail ? `第 ${Math.min(detail.step, 8)}/8 步 · ${detail.label}` : '正在读取实际授权状态'
 }
@@ -851,6 +855,7 @@ function progressPercent(account: Account): number {
   const task = taskFor(account)
   if (!task) return 0
   if (task.status === 'completed') return 100
+  if (task.status === 'failed' && ['adspower_profile_limit', 'adspower_profile_busy', 'automation_start_failed'].includes(task.reason || '')) return 0
   const detail = stageDetails[task.stage] || stageDetails[task.status]
   return detail ? Math.max(8, Math.min(100, Math.round(detail.step / 8 * 100))) : 8
 }

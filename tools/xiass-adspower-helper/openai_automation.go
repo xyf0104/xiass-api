@@ -131,7 +131,7 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 		launch.emailSession = emailSession
 	}
 	launch.oauthStartedAt = time.Now()
-	browser, closeBrowser, err := openAdsPowerOAuthTarget(ctx, endpoint, launch.AuthURL)
+	browser, closeBrowser, err := openAdsPowerOAuthTargetWithIsolation(ctx, endpoint, launch.AuthURL, launch.isolatedContext)
 	if err != nil {
 		log.Printf("AdsPower OAuth automation failed at opening: %s", automationErrorReason(err, "opening"))
 		s.finishAutomation(origin, launch, profileID, "failed", "failed", automationErrorReason(err, "opening"))
@@ -150,6 +150,10 @@ func (s *helperServer) runOpenAIAutomation(origin string, launch *launchPayload,
 }
 
 func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (context.Context, func(), error) {
+	return openAdsPowerOAuthTargetWithIsolation(parent, endpoint, authURL, false)
+}
+
+func openAdsPowerOAuthTargetWithIsolation(parent context.Context, endpoint, authURL string, isolated bool) (context.Context, func(), error) {
 	allocator, cancelAllocator := chromedp.NewRemoteAllocator(parent, endpoint)
 	root, cancelRoot := chromedp.NewContext(allocator)
 
@@ -183,9 +187,32 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 		return nil, func() {}, parent.Err()
 	}
 
-	browser, cancelBrowser := chromedp.NewContext(root)
+	var options []chromedp.ContextOption
+	disposeContext := func() {}
+	if isolated {
+		// A recycled fingerprint must never inherit another account's cookies,
+		// local storage or service workers. Dispose this context after OAuth.
+		executor := cdp.WithExecutor(root, chromedp.FromContext(root).Browser)
+		contextID, err := target.CreateBrowserContext().WithDisposeOnDetach(true).Do(executor)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+		disposeContext = func() { _ = target.DisposeBrowserContext(contextID).Do(executor) }
+		// Some headed Chromium builds require a window when creating the first
+		// target in a new context, even if the default context already has tabs.
+		targetID, err := target.CreateTarget("about:blank").WithBrowserContextID(contextID).WithNewWindow(true).Do(executor)
+		if err != nil {
+			disposeContext()
+			cleanup()
+			return nil, func() {}, err
+		}
+		options = append(options, chromedp.WithTargetID(targetID))
+	}
+	browser, cancelBrowser := chromedp.NewContext(root, options...)
 	if err := chromedp.Run(browser); err != nil {
 		cancelBrowser()
+		disposeContext()
 		cleanup()
 		return nil, func() {}, err
 	}
@@ -200,6 +227,7 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 		currentURL := browserTargetURL(browser, targets)
 		if targetsErr != nil || currentURL == "" || currentURL == "about:blank" {
 			cancelBrowser()
+			disposeContext()
 			cleanup()
 			return nil, func() {}, err
 		}
@@ -210,6 +238,7 @@ func openAdsPowerOAuthTarget(parent context.Context, endpoint, authURL string) (
 	}
 	return browser, func() {
 		cancelBrowser()
+		disposeContext()
 		cleanup()
 	}, nil
 }
@@ -1188,10 +1217,13 @@ func (s *helperServer) finishAutomation(origin string, launch *launchPayload, pr
 	if parsed, err := url.Parse(launch.AuthURL); err == nil {
 		s.removeCallback(strings.TrimSpace(parsed.Query().Get("state")))
 	}
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, adsPower := s.runtimeSnapshot()
-	_ = adsPower.stopProfile(ctx, profileID)
+	if err := s.stopOwnedProfile(ctx, profileID, launch.SessionID); err != nil {
+		log.Printf("stop AdsPower profile after failed OAuth: %v", err)
+	}
 }
 
 func validCallback(raw, expectedState string) bool {

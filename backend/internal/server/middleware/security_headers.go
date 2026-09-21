@@ -41,6 +41,9 @@ var requiredCSPDirectiveValues = []struct {
 	// XIASS embeds a same-origin, authenticated Team browser workspace. Keep
 	// same-origin frames available even when operators provide a custom policy.
 	{"frame-src", "'self'"},
+	// Only the helper health probe needs cross-origin fetch; pairing and launch
+	// use top-level navigation. Do not permit arbitrary loopback ports or paths.
+	{"connect-src", "http://127.0.0.1:34987/healthz"},
 	{"script-src", CloudflareInsightsDomain},
 	{"script-src", TencentCaptchaDomain},
 	{"frame-src", TencentCaptchaDomain},

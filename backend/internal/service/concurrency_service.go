@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +63,7 @@ type ConcurrencyCache interface {
 type AccountProxySlotSpec struct {
 	ProxyID        int64
 	MaxConcurrency int
+	RoutePriority  int
 }
 
 type AccountProxyConcurrencyCache interface {
@@ -69,6 +71,15 @@ type AccountProxyConcurrencyCache interface {
 	ReleaseAccountProxySlot(ctx context.Context, accountID, proxyID int64, requestID string) error
 	GetAccountProxyConcurrency(ctx context.Context, accountID int64, proxyIDs []int64) (map[int64]int, error)
 	GetAccountsProxyConcurrency(ctx context.Context, accounts map[int64][]int64) (map[int64]map[int64]int, error)
+}
+
+// AccountProxyAdaptiveRouteCache is an optional distributed observation store.
+// Implementations must isolate records by execution node, account, requested
+// model, and proxy identity, and must not persist proxy credentials.
+type AccountProxyAdaptiveRouteCache interface {
+	GetAccountProxyAdaptiveRouteStats(ctx context.Context, routes []AccountProxyAdaptiveRouteKey) (map[string]AccountProxyAdaptiveRouteStats, error)
+	RecordAccountProxyAdaptiveRouteOutcome(ctx context.Context, outcome AccountProxyAdaptiveRouteOutcome) error
+	ClaimAccountProxyAdaptiveRouteProbe(ctx context.Context, route AccountProxyAdaptiveRouteKey, ttl time.Duration) (bool, error)
 }
 
 type APIKeyConcurrencyCache interface {
@@ -298,12 +309,19 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache ConcurrencyCache
+	cache           ConcurrencyCache
+	executionNodeID string
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
 	accountLoadCache    map[string]cachedAccountLoadBatch
 	accountLoadGroup    singleflight.Group
+}
+
+func (s *ConcurrencyService) SetExecutionNodeID(nodeID string) {
+	if s != nil {
+		s.executionNodeID = strings.TrimSpace(nodeID)
+	}
 }
 
 type cachedAccountLoadBatch struct {
@@ -466,8 +484,11 @@ func (s *ConcurrencyService) AcquireAccountProxySlot(ctx context.Context, accoun
 	slots := make([]AccountProxySlotSpec, 0, len(bindings))
 	byID := make(map[int64]AccountProxyBinding, len(bindings))
 	for _, binding := range bindings {
-		slots = append(slots, AccountProxySlotSpec{ProxyID: binding.ProxyID, MaxConcurrency: binding.MaxConcurrency})
+		slots = append(slots, AccountProxySlotSpec{ProxyID: binding.ProxyID, MaxConcurrency: binding.MaxConcurrency, RoutePriority: binding.RoutePriority})
 		byID[binding.ProxyID] = binding
+	}
+	if AccountMultiProxyAdaptiveEnabled(account.Extra) {
+		slots = s.rankAccountProxySlots(ctx, account, bindings, slots)
 	}
 	requestID := generateRequestID()
 	// Codex turn state is scoped to account+model and is shared by every

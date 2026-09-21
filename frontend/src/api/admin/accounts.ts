@@ -1058,6 +1058,14 @@ export async function setCodexTicketEnabled(id: number, enabled: boolean): Promi
   return data.enabled
 }
 
+export async function setCodexTicketCaptureProxies(id: number, proxyIds: number[]): Promise<number[]> {
+  const { data } = await apiClient.put<{ proxy_ids: number[] }>(
+    '/admin/accounts/' + id + '/codex-ticket/capture-proxies',
+    { proxy_ids: proxyIds }
+  )
+  return data.proxy_ids
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1122,6 +1130,7 @@ export const accountsAPI = {
   setOllamaCloudUsageAutoRefresh,
   refreshOllamaCloudUsage,
   setCodexTicketEnabled,
+  setCodexTicketCaptureProxies,
   refreshCodexTicket
 }
 

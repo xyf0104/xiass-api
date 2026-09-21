@@ -9,13 +9,13 @@ import (
 
 func TestAccountProxyBindingsExtraRoundTripWithoutJSONMarshal(t *testing.T) {
 	extra := setAccountProxyBindingsExtra(nil, []AccountProxyBindingInput{
-		{ProxyID: 9, MaxConcurrency: 3},
+		{ProxyID: 9, MaxConcurrency: 3, RoutePriority: 2},
 		{ProxyID: 4, MaxConcurrency: 2},
 	})
 
 	require.Equal(t, []AccountProxyBinding{
 		{ProxyID: 4, MaxConcurrency: 2},
-		{ProxyID: 9, MaxConcurrency: 3},
+		{ProxyID: 9, MaxConcurrency: 3, RoutePriority: 2},
 	}, AccountProxyBindingsFromExtra(extra))
 }
 
@@ -28,6 +28,9 @@ func TestNormalizeAccountProxyBindingInputsRejectsInvalidConfiguration(t *testin
 
 	_, _, err = normalizeAccountProxyBindingInputs([]AccountProxyBindingInput{{ProxyID: 5, MaxConcurrency: 0}})
 	require.ErrorContains(t, err, "max_concurrency")
+
+	_, _, err = normalizeAccountProxyBindingInputs([]AccountProxyBindingInput{{ProxyID: 5, MaxConcurrency: 1, RoutePriority: -1}})
+	require.ErrorContains(t, err, "route_priority")
 }
 
 func TestHydrateAccountProxyBindingsUsesOnlyAvailableCapacity(t *testing.T) {

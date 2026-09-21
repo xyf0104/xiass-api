@@ -521,6 +521,16 @@ func parseOpenAICodexTicketFromAny(accountID int64, model string, raw any) *open
 }
 
 func (s *OpenAIGatewayService) storeOpenAICodexTicket(ctx context.Context, account *Account, ticket *openAICodexTicket) {
+	s.storeOpenAICodexTicketWithOptions(ctx, account, ticket, false)
+}
+
+// storeOpenAICodexTicketWithOptions persists the best ticket for an account/model.
+// Normal background harvesting keeps a still-valid exact ticket when a transient
+// probe round only sees Luna. An explicit manual refresh is different: its result
+// is the administrator's requested source of truth, so a complete fallback round
+// is allowed to replace a stale exact ticket that the upstream has already stopped
+// honoring.
+func (s *OpenAIGatewayService) storeOpenAICodexTicketWithOptions(ctx context.Context, account *Account, ticket *openAICodexTicket, replaceExactWithFallback bool) {
 	if s == nil || account == nil || ticket == nil || account.ID <= 0 {
 		return
 	}
@@ -530,7 +540,7 @@ func (s *OpenAIGatewayService) storeOpenAICodexTicket(ctx context.Context, accou
 	ticket.Fallback = ticket.Fallback || normalizeTicketModel(ticket.ObservedModel) != normalizeTicketModel(model)
 	if existing := s.lookupOpenAICodexTicket(account, model); existing != nil && existing.valid(time.Now(), openAICodexTicketPolicy(account, s.openAICodexTicketConfig())) {
 		existingFallback := existing.Fallback || normalizeTicketModel(existing.ObservedModel) != normalizeTicketModel(model)
-		if !existingFallback && ticket.Fallback {
+		if !replaceExactWithFallback && !existingFallback && ticket.Fallback {
 			logger.L().Info("openai_codex_ticket kept exact ticket over fallback",
 				zap.Int64("account_id", account.ID), zap.String("model", model),
 				zap.Int64("existing_proxy_id", existing.ProxyID), zap.Int64("candidate_proxy_id", ticket.ProxyID))
@@ -597,6 +607,15 @@ func (s *OpenAIGatewayService) openAICodexTicketOutboundModel(account *Account, 
 	}
 	if !account.IsOpenAI() {
 		return canonicalOpenAIAccountSchedulingModel(account, model)
+	}
+	// Passthrough only replaces authentication. Normal Responses keeps the
+	// requested model in the final body; compact applies its dedicated mapping
+	// directly to that requested model.
+	if account.IsOpenAIPassthroughEnabled() {
+		if requireCompact {
+			return resolveOpenAICompactForwardModel(account, model)
+		}
+		return model
 	}
 	_, upstreamModel := resolveOpenAIForwardMappedModels(account, model, requireCompact)
 	if requireCompact {
@@ -1079,6 +1098,13 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTicketForAccountWithProxies(ctx
 	if len(models) == 0 {
 		models = []string{openAICodexTicketDefaultSolModel, openAICodexTicketDefaultTerraModel, openAICodexTicketDefaultModel}
 	}
+	if proxies == nil {
+		var err error
+		proxies, err = s.defaultCodexTicketCaptureProxies(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+	}
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil || strings.TrimSpace(token) == "" {
 		return nil, err
@@ -1092,7 +1118,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTicketForAccountWithProxies(ctx
 		if model == "" {
 			continue
 		}
-		_, err, _ := s.openaiCodexTicketFlight.Do(openAICodexTicketKey(account.ID, model), func() (any, error) {
+		_, err, _ := s.openaiCodexTicketFlight.Do(codexTicketCaptureFlightKey(account.ID, model, targets), func() (any, error) {
 			return nil, s.refreshOpenAICodexTicketModel(ctx, account, token, model, force, cfg, targets)
 		})
 		if err != nil && force {
@@ -1181,12 +1207,21 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTicketModel(ctx context.Context
 		ProxyID: selected.ProxyID, ProxyName: selected.ProxyName, LatencyMs: selected.LatencyMs,
 		Probes: probeSummaries,
 	}
-	s.storeOpenAICodexTicket(ctx, account, ticket)
+	s.storeOpenAICodexTicketWithOptions(ctx, account, ticket, force)
+	stored := s.lookupOpenAICodexTicket(account, model)
+	storedModel := ""
+	storedProxyID := int64(0)
+	if stored != nil {
+		storedModel = stored.ObservedModel
+		storedProxyID = stored.ProxyID
+	}
 	logger.L().Info("openai_codex_ticket harvested across account exits",
 		zap.Int64("account_id", account.ID), zap.String("requested_model", model),
-		zap.String("observed_model", selected.ObservedModel), zap.Int("attempts", len(probeSummaries)),
+		zap.String("observed_model", selected.ObservedModel), zap.String("stored_model", storedModel),
+		zap.Int("attempts", len(probeSummaries)),
 		zap.Int("valid_candidates", len(candidates)), zap.Int("ticket_blocks", parsed.Blocks),
-		zap.Int64("latency_ms", selected.LatencyMs), zap.Int64("proxy_id", selected.ProxyID))
+		zap.Int64("latency_ms", selected.LatencyMs), zap.Int64("proxy_id", selected.ProxyID),
+		zap.Int64("stored_proxy_id", storedProxyID), zap.Bool("forced", force))
 	return nil
 }
 
@@ -1328,7 +1363,7 @@ func MergeOpenAICodexTicketExtra(extra, current map[string]any) map[string]any {
 		}
 	}
 	for key, value := range current {
-		if IsOpenAICodexTicketExtraKey(key) || key == OpenAICodexTicketEnabledExtraKey {
+		if IsOpenAICodexTicketExtraKey(key) || key == OpenAICodexTicketEnabledExtraKey || key == OpenAICodexTicketCaptureProxyIDsExtraKey {
 			if result == nil {
 				result = make(map[string]any)
 			}
@@ -1416,7 +1451,7 @@ func IsOpenAICodexTicketAccount(account *Account) bool {
 // IsOpenAICodexTicketPrivateExtraKey also covers the retired account-level proxy
 // override, whose credentials may remain in older account records.
 func IsOpenAICodexTicketPrivateExtraKey(key string) bool {
-	return IsOpenAICodexTicketExtraKey(key) || key == "codex_harvest_proxy_url" || key == OpenAICodexTicketEnabledExtraKey
+	return IsOpenAICodexTicketExtraKey(key) || key == "codex_harvest_proxy_url" || key == OpenAICodexTicketEnabledExtraKey || key == OpenAICodexTicketCaptureProxyIDsExtraKey
 }
 
 // RedactOpenAICodexTicketExtra strips ephemeral ticket material from exports

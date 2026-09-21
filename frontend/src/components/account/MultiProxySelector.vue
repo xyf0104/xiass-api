@@ -1,5 +1,32 @@
 <template>
   <div class="multi-proxy-selector">
+    <div v-if="adaptiveAvailable" class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <span class="text-xs font-medium text-gray-600 dark:text-dark-300">
+        {{ t('admin.accounts.multiProxy.distributionMode') }}
+      </span>
+      <div class="inline-flex max-w-full rounded-md bg-gray-100 p-0.5 dark:bg-dark-700">
+        <button
+          type="button"
+          class="min-w-0 rounded px-2.5 py-1.5 text-xs font-medium"
+          :class="!adaptiveEnabled ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+          :disabled="disabled"
+          data-testid="multi-proxy-balanced-mode"
+          @click="emit('update:adaptiveEnabled', false)"
+        >
+          {{ t('admin.accounts.multiProxy.balancedMode') }}
+        </button>
+        <button
+          type="button"
+          class="min-w-0 rounded px-2.5 py-1.5 text-xs font-medium"
+          :class="adaptiveEnabled ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-dark-100' : 'text-gray-500 dark:text-dark-300'"
+          :disabled="disabled"
+          data-testid="multi-proxy-adaptive-mode"
+          @click="emit('update:adaptiveEnabled', true)"
+        >
+          {{ t('admin.accounts.multiProxy.adaptiveMode') }}
+        </button>
+      </div>
+    </div>
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-2 text-sm">
         <span class="font-medium text-gray-800 dark:text-dark-100">
@@ -26,7 +53,7 @@
       <label
         v-for="proxy in filteredProxies"
         :key="proxy.id"
-        class="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)_84px] items-center gap-2 border-b border-gray-100 px-3 py-2.5 last:border-b-0 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/70"
+        class="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] items-center gap-2 border-b border-gray-100 px-3 py-2.5 last:border-b-0 hover:bg-gray-50 sm:grid-cols-[20px_minmax(0,1fr)_220px] dark:border-dark-700 dark:hover:bg-dark-800/70"
         :class="disabled && 'cursor-not-allowed opacity-60'"
       >
         <input
@@ -45,19 +72,35 @@
             {{ proxyAddress(proxy) }}
           </span>
         </span>
-        <span v-if="isSelected(proxy.id)" class="flex items-center gap-1">
-          <input
-            :value="capacityFor(proxy.id)"
-            type="number"
-            min="1"
-            max="10000"
-            class="input h-8 w-16 px-2 text-center font-mono text-xs"
-            :disabled="disabled"
-            :aria-label="t('admin.accounts.multiProxy.proxyCapacity', { name: proxy.name })"
-            @click.stop
-            @input="updateCapacity(proxy.id, $event)"
-          />
-          <span class="text-xs text-gray-400">{{ t('admin.accounts.multiProxy.slots') }}</span>
+        <span v-if="isSelected(proxy.id)" class="col-start-2 flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:col-start-3 sm:flex-nowrap">
+          <span class="flex items-center gap-1">
+            <input
+              :value="priorityFor(proxy.id)"
+              type="number"
+              min="0"
+              max="10000"
+              class="input h-8 w-14 px-1.5 text-center font-mono text-xs"
+              :disabled="disabled"
+              :aria-label="t('admin.accounts.multiProxy.routePriorityFor', { name: proxy.name })"
+              @click.stop
+              @input="updatePriority(proxy.id, $event)"
+            />
+            <span class="whitespace-nowrap text-xs text-gray-400">{{ t('admin.accounts.multiProxy.routePriorityShort') }}</span>
+          </span>
+          <span class="flex items-center gap-1">
+            <input
+              :value="capacityFor(proxy.id)"
+              type="number"
+              min="1"
+              max="10000"
+              class="input h-8 w-16 px-2 text-center font-mono text-xs"
+              :disabled="disabled"
+              :aria-label="t('admin.accounts.multiProxy.proxyCapacity', { name: proxy.name })"
+              @click.stop
+              @input="updateCapacity(proxy.id, $event)"
+            />
+            <span class="text-xs text-gray-400">{{ t('admin.accounts.multiProxy.slots') }}</span>
+          </span>
         </span>
         <span v-else class="text-right text-xs text-gray-400">{{ proxy.status }}</span>
       </label>
@@ -103,12 +146,17 @@ const props = withDefaults(defineProps<{
   modelValue: AccountProxyBindingInput[]
   proxies: Proxy[]
   disabled?: boolean
+  adaptiveAvailable?: boolean
+  adaptiveEnabled?: boolean
 }>(), {
-  disabled: false
+  disabled: false,
+  adaptiveAvailable: false,
+  adaptiveEnabled: false
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: AccountProxyBindingInput[]]
+  'update:adaptiveEnabled': [value: boolean]
 }>()
 
 const { t } = useI18n()
@@ -136,11 +184,13 @@ const proxyAddress = (proxy: Proxy) => {
 
 const isSelected = (proxyID: number) => selectedByID.value.has(proxyID)
 const capacityFor = (proxyID: number) => selectedByID.value.get(proxyID)?.max_concurrency ?? 1
+const priorityFor = (proxyID: number) => selectedByID.value.get(proxyID)?.route_priority ?? 0
 
 const normalize = (bindings: AccountProxyBindingInput[]) => bindings
   .map((binding) => ({
     proxy_id: binding.proxy_id,
-    max_concurrency: Math.max(1, Math.min(10000, Math.trunc(Number(binding.max_concurrency) || 1)))
+    max_concurrency: Math.max(1, Math.min(10000, Math.trunc(Number(binding.max_concurrency) || 1))),
+    route_priority: Math.max(0, Math.min(10000, Math.trunc(Number(binding.route_priority) || 0)))
   }))
   .sort((a, b) => a.proxy_id - b.proxy_id)
 
@@ -150,7 +200,7 @@ const toggleProxy = (proxyID: number) => {
     removeProxy(proxyID)
     return
   }
-  emit('update:modelValue', normalize([...props.modelValue, { proxy_id: proxyID, max_concurrency: 1 }]))
+  emit('update:modelValue', normalize([...props.modelValue, { proxy_id: proxyID, max_concurrency: 1, route_priority: 0 }]))
 }
 
 const removeProxy = (proxyID: number) => {
@@ -163,6 +213,15 @@ const updateCapacity = (proxyID: number, event: Event) => {
   emit('update:modelValue', normalize(props.modelValue.map((binding) =>
     binding.proxy_id === proxyID
       ? { ...binding, max_concurrency: value }
+      : binding
+  )))
+}
+
+const updatePriority = (proxyID: number, event: Event) => {
+  const value = Number((event.target as HTMLInputElement).value)
+  emit('update:modelValue', normalize(props.modelValue.map((binding) =>
+    binding.proxy_id === proxyID
+      ? { ...binding, route_priority: value }
       : binding
   )))
 }

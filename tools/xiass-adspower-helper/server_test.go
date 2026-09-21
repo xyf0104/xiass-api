@@ -46,6 +46,8 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{"profile_id": "created-profile"}})
 		case "/api/v2/browser-profile/update":
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
+		case "/api/v1/browser/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"status": "Inactive"}})
 		case "/api/v2/browser-profile/start":
 			_ = json.NewDecoder(r.Body).Decode(&startedBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "Success", "data": map[string]any{}})
@@ -119,7 +121,9 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return stoppedBody != nil && stoppedBody["profile_id"] == "created-profile"
+		current, _ := helper.runtimeSnapshot()
+		_, leased := current.ProfileLeases["created-profile"]
+		return stoppedBody != nil && stoppedBody["profile_id"] == "created-profile" && !leased
 	}, time.Second, 10*time.Millisecond)
 
 	// Receipt is not account creation: keep the identity cache through token
@@ -156,10 +160,11 @@ func TestCallbackReceiverAndObserverShareOneDelivery(t *testing.T) {
 		_, _ = io.WriteString(w, `{"code":0,"data":{}}`)
 	}))
 	defer ads.Close()
-	helper := newHelperServer(&config{AdsPowerBaseURL: ads.URL})
+	helper := newHelperServer(&config{AdsPowerBaseURL: ads.URL, path: filepath.Join(t.TempDir(), "config.json")})
 	helper.closeDelay = 0
 	helper.adsPower.minInterval = 0
 	launch := &launchPayload{AuthURL: "https://auth.openai.com/oauth/authorize?state=one-state", CallbackToken: "one-token", CallbackExpiresAt: time.Now().Add(time.Minute)}
+	require.NoError(t, helper.reserveManagedProfile(xiass.URL, launch, &adsPowerProfile{UserID: "one-profile"}, 1))
 	_, _, err := helper.registerCallback(xiass.URL, launch, "one-profile")
 	require.NoError(t, err)
 	var wg sync.WaitGroup
@@ -183,7 +188,11 @@ func TestCallbackReceiverAndObserverShareOneDelivery(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, int32(1), reports.Load())
-	require.Eventually(t, func() bool { return stops.Load() == 1 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		current, _ := helper.runtimeSnapshot()
+		_, leased := current.ProfileLeases["one-profile"]
+		return stops.Load() == 1 && !leased
+	}, time.Second, 5*time.Millisecond)
 	receipt, ok := helper.callbackRegistration("one-state")
 	require.True(t, ok)
 	require.True(t, receipt.Delivered)

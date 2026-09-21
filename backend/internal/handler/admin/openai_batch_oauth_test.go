@@ -34,7 +34,7 @@ type batchOAuthClientStub struct {
 type batchOAuthTestEncryptor struct{}
 
 func TestBatchOAuthPublicReasonPreservesRetryableOpenAIErrors(t *testing.T) {
-	for _, reason := range []string{"openai_route_error", "oauth_session_expired", "reauthorization_phone_required"} {
+	for _, reason := range []string{"openai_route_error", "oauth_session_expired", "reauthorization_phone_required", "adspower_profile_limit", "adspower_profile_busy"} {
 		require.Equal(t, reason, batchOAuthPublicReason(reason))
 	}
 }

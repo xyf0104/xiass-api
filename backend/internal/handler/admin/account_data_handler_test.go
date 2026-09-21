@@ -51,6 +51,7 @@ type dataAccount struct {
 type dataAccountProxyBinding struct {
 	ProxyKey       string `json:"proxy_key"`
 	MaxConcurrency int    `json:"max_concurrency"`
+	RoutePriority  int    `json:"route_priority,omitempty"`
 }
 
 func setupAccountDataRouter() (*gin.Engine, *stubAdminService) {
@@ -377,8 +378,8 @@ func TestExportAndImportDataPreserveMultiProxyBindings(t *testing.T) {
 		},
 		ProxyID: defaultProxyIDPtr(defaultProxyID),
 		ProxyBindings: []service.AccountProxyBinding{
-			{ProxyID: defaultProxyID, MaxConcurrency: 3},
-			{ProxyID: secondaryProxyID, MaxConcurrency: 2},
+			{ProxyID: defaultProxyID, MaxConcurrency: 3, RoutePriority: 2},
+			{ProxyID: secondaryProxyID, MaxConcurrency: 2, RoutePriority: 1},
 		},
 		Concurrency: 5,
 		Priority:    50,
@@ -394,6 +395,7 @@ func TestExportAndImportDataPreserveMultiProxyBindings(t *testing.T) {
 	require.Len(t, exported.Data.Accounts, 1)
 	require.Len(t, exported.Data.Accounts[0].ProxyBindings, 2)
 	require.Equal(t, 2, exported.Data.Accounts[0].ProxyBindings[1].MaxConcurrency)
+	require.Equal(t, 1, exported.Data.Accounts[0].ProxyBindings[1].RoutePriority)
 
 	importBody := map[string]any{
 		"data":                    exported.Data,
@@ -408,8 +410,8 @@ func TestExportAndImportDataPreserveMultiProxyBindings(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.Equal(t, []service.AccountProxyBindingInput{
-		{ProxyID: defaultProxyID, MaxConcurrency: 3},
-		{ProxyID: secondaryProxyID, MaxConcurrency: 2},
+		{ProxyID: defaultProxyID, MaxConcurrency: 3, RoutePriority: 2},
+		{ProxyID: secondaryProxyID, MaxConcurrency: 2, RoutePriority: 1},
 	}, adminSvc.createdAccounts[0].ProxyBindings)
 }
 

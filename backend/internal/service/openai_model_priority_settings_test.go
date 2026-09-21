@@ -120,3 +120,28 @@ func BenchmarkResolveOpenAIModelPriorityAccountIDs(b *testing.B) {
 		_ = service.ResolveOpenAIModelPriorityAccountIDs(context.Background(), "gpt-5.6-luna")
 	}
 }
+
+func TestOpenAIModelPriorityOrderRoundTripAndValidation(t *testing.T) {
+	repo := &openAIModelPriorityRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	settings := &OpenAIModelPrioritySettings{Enabled: true, Rules: []OpenAIModelPriorityRule{
+		{ModelPattern: "gpt-*", AccountIDs: []int64{9, 3, 7}, AccountOrder: []int64{9, 7, 3}},
+		{ModelPattern: "gpt-6-astra", AccountIDs: []int64{9, 3, 7}, AccountOrder: []int64{7, 3, 9}},
+	}}
+	require.NoError(t, svc.SetOpenAIModelPrioritySettings(context.Background(), settings))
+	// Reload from persistence, not the publishing instance's cache.
+	fresh := NewSettingService(repo, &config.Config{})
+	loaded, err := fresh.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []int64{7, 3, 9}, loaded.Rules[1].AccountOrder)
+	require.Equal(t, 0, fresh.resolveOpenAIModelPriorityPreference(context.Background(), "gpt-6-astra").tier(&Account{ID: 7}))
+	require.Equal(t, 0, fresh.resolveOpenAIModelPriorityPreference(context.Background(), "gpt-5.6-sol").tier(&Account{ID: 9}))
+	loaded.Rules[1].AccountOrder[0] = 999
+	again, err := fresh.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []int64{7, 3, 9}, again.Rules[1].AccountOrder, "callers cannot mutate the cached order")
+	for _, invalid := range [][]int64{{9}, {9, 9, 3}, {9, 7, 99}, {9, 7, 3, 9}} {
+		settings.Rules[0].AccountOrder = invalid
+		require.Error(t, svc.SetOpenAIModelPrioritySettings(context.Background(), settings))
+	}
+}

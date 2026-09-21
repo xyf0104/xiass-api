@@ -6,6 +6,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -77,6 +78,26 @@ func Logger() gin.HandlerFunc {
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
 		}
+		if proxyID, proxyName, ok := service.OpsUpstreamProxyAttribution(c); ok {
+			fields = append(fields, zap.String("proxy_name", proxyName))
+			if proxyID != nil {
+				fields = append(fields, zap.Int64("proxy_id", *proxyID))
+			}
+		}
+		for _, latencyField := range []struct {
+			key  string
+			name string
+		}{
+			{service.OpsAuthLatencyMsKey, "auth_latency_ms"},
+			{service.OpsRoutingLatencyMsKey, "routing_latency_ms"},
+			{service.OpsUpstreamLatencyMsKey, "upstream_latency_ms"},
+			{service.OpsResponseLatencyMsKey, "response_latency_ms"},
+			{service.OpsTimeToFirstTokenMsKey, "time_to_first_token_ms"},
+		} {
+			if value, ok := contextLatencyMs(c, latencyField.key); ok {
+				fields = append(fields, zap.Int64(latencyField.name, value))
+			}
+		}
 
 		l := logger.FromContext(c.Request.Context()).With(fields...)
 		l.Info("http request completed", zap.Time("completed_at", endTime))
@@ -84,5 +105,27 @@ func Logger() gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
 		}
+	}
+}
+
+func contextLatencyMs(c *gin.Context, key string) (int64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	value, ok := c.Get(key)
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), typed >= 0
+	case int64:
+		return typed, typed >= 0
+	case int32:
+		return int64(typed), typed >= 0
+	case uint64:
+		return int64(typed), typed <= uint64(^uint64(0)>>1)
+	default:
+		return 0, false
 	}
 }

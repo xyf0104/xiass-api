@@ -72,6 +72,13 @@ type adsPowerEnvelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
+var errAdsPowerProfileLimit = errors.New("AdsPower profile capacity exhausted")
+
+func adsPowerProfileLimitMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(message, "number of imported accounts exceeds the limit")
+}
+
 func newAdsPowerClient(cfg *config) *adsPowerClient {
 	return &adsPowerClient{
 		baseURL: cfg.AdsPowerBaseURL,
@@ -137,6 +144,9 @@ func (c *adsPowerClient) doOnce(ctx context.Context, method, path string, body a
 		return fmt.Errorf("decode AdsPower response: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Code != 0 {
+		if method == http.MethodPost && path == "/api/v2/browser-profile/create" && adsPowerProfileLimitMessage(envelope.Msg) {
+			return fmt.Errorf("%w: %s", errAdsPowerProfileLimit, strings.TrimSpace(envelope.Msg))
+		}
 		return fmt.Errorf("AdsPower API rejected the request: %s", strings.TrimSpace(envelope.Msg))
 	}
 	if target != nil && len(envelope.Data) > 0 && string(envelope.Data) != "null" {
@@ -291,6 +301,10 @@ func randomizedFingerprintConfig(slot int, forCreate bool) map[string]any {
 }
 
 func (c *adsPowerClient) createProfile(ctx context.Context, name string, template *adsPowerProfile, fingerprintSlot int) (*adsPowerProfile, error) {
+	return c.createProfileWithReceipt(ctx, name, template, fingerprintSlot, nil)
+}
+
+func (c *adsPowerClient) createProfileWithReceipt(ctx context.Context, name string, template *adsPowerProfile, fingerprintSlot int, receipt func(string) error) (*adsPowerProfile, error) {
 	if template == nil {
 		return nil, errors.New("AdsPower template profile is unavailable")
 	}
@@ -323,6 +337,11 @@ func (c *adsPowerClient) createProfile(ctx context.Context, name string, templat
 	}
 	if !validOpaqueID(profileID) {
 		return nil, errors.New("AdsPower did not return a valid profile ID")
+	}
+	if receipt != nil {
+		if err := receipt(profileID); err != nil {
+			return nil, fmt.Errorf("保存新建环境所有权失败: %w", err)
+		}
 	}
 	return c.profile(ctx, profileID)
 }
@@ -386,7 +405,14 @@ func (c *adsPowerClient) profileActive(ctx context.Context, profileID string) (b
 	if err != nil {
 		return false, err
 	}
-	return strings.EqualFold(strings.TrimSpace(data.Status), "active"), nil
+	switch strings.ToLower(strings.TrimSpace(data.Status)) {
+	case "active":
+		return true, nil
+	case "inactive":
+		return false, nil
+	default:
+		return false, errors.New("AdsPower did not confirm browser activity status")
+	}
 }
 
 func (c *adsPowerClient) activeProfile(ctx context.Context, profileID string) (*adsPowerBrowserSession, error) {

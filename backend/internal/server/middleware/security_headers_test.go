@@ -289,6 +289,17 @@ func TestNonceTemplate(t *testing.T) {
 }
 
 func TestEnhanceCSPPolicy(t *testing.T) {
+	t.Run("permits_only_adspower_health_probe_for_existing_policies", func(t *testing.T) {
+		for _, policy := range []string{config.DefaultCSPPolicy, "default-src 'self'", "default-src 'self'; connect-src 'self' https:"} {
+			enhanced := enhanceCSPPolicy(policy)
+			assert.Equal(t, 1, countDirectiveValue(enhanced, "connect-src", "http://127.0.0.1:34987/healthz"))
+			assert.Equal(t, enhanced, enhanceCSPPolicy(enhanced))
+			assert.False(t, directiveHasValue(enhanced, "connect-src", "http:"))
+			assert.False(t, directiveHasValue(enhanced, "connect-src", "*"))
+			assert.False(t, directiveHasValue(enhanced, "connect-src", "http://127.0.0.1:34987"))
+		}
+	})
+
 	t.Run("adds_nonce_placeholder_if_missing", func(t *testing.T) {
 		policy := "default-src 'self'; script-src 'self'"
 		enhanced := enhanceCSPPolicy(policy)

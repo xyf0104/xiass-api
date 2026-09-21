@@ -706,7 +706,7 @@ func batchOAuthPublicReason(reason string) string {
 		return reason
 	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "sms_channel_selection_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
 		return reason
-	case "oauth_exchange_failed", "oauth_identity_mismatch", "account_update_failed", "account_configuration_changed", "account_state_recovery_failed", "invalid_configuration", "automation_start_failed", "oauth_session_failed":
+	case "oauth_exchange_failed", "oauth_identity_mismatch", "account_update_failed", "account_configuration_changed", "account_state_recovery_failed", "invalid_configuration", "automation_start_failed", "adspower_profile_limit", "adspower_profile_busy", "oauth_session_failed":
 		return reason
 	case batchOAuthAlreadyExistsReason:
 		return reason

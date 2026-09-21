@@ -438,6 +438,7 @@ func accountProxyBindingsFromService(bindings []service.AccountProxyBinding) []A
 		out = append(out, AccountProxyBinding{
 			ProxyID:        binding.ProxyID,
 			MaxConcurrency: binding.MaxConcurrency,
+			RoutePriority:  binding.RoutePriority,
 			Available:      available,
 			Proxy:          ProxyFromService(binding.Proxy),
 		})
@@ -516,7 +517,8 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		ID: a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
 		Credentials: a.Credentials, CredentialsStatus: a.CredentialsStatus, Extra: a.Extra,
 		OllamaCloudUsage: a.OllamaCloudUsage, CodexTicketEnabled: a.CodexTicketEnabled, CodexTurnTickets: a.CodexTurnTickets,
-		ProxyID: a.ProxyID, ProxyBindings: a.ProxyBindings, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
+		CodexTicketCaptureProxyIDs: a.CodexTicketCaptureProxyIDs,
+		ProxyID:                    a.ProxyID, ProxyBindings: a.ProxyBindings, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
 		ExecutionNodeID: a.ExecutionNodeID,
 		Concurrency:     a.Concurrency, LoadFactor: a.LoadFactor, Priority: a.Priority, RateMultiplier: a.RateMultiplier,
 		Status: a.Status, ErrorMessage: a.ErrorMessage, LastUsedAt: a.LastUsedAt, ExpiresAt: a.ExpiresAt,

@@ -1599,10 +1599,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// subscription preference and sticky weights are evaluated only inside one
 	// tier; lower tiers are attempted only after no account in a higher tier can
 	// acquire a slot for this request.
-	preferred, fallback := partitionOpenAIAccountsByModelPreference(filtered, req.modelRoutingPreference)
 	priorityTiers := make([][]*Account, 0)
-	priorityTiers = append(priorityTiers, partitionOpenAIAccountsByPriority(preferred)...)
-	priorityTiers = append(priorityTiers, partitionOpenAIAccountsByPriority(fallback)...)
+	for _, tier := range partitionOpenAIModelPreferenceTiers(filtered, func(account *Account) *Account { return account }, req.modelRoutingPreference) {
+		priorityTiers = append(priorityTiers, partitionOpenAIAccountsByPriority(tier)...)
+	}
 
 	var firstWaitable []openAIAccountLoadSelectionAttempt
 	var firstWaitableBudget *openAISelectionProbeBudget
@@ -1810,6 +1810,19 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 	}
 
 	var allowedPriority *int
+	stickyReq := req
+	allowedStickyIDs := make(map[int64]bool, len(attempt.selectionOrder))
+	for _, candidate := range attempt.selectionOrder {
+		if candidate.account != nil {
+			allowedStickyIDs[candidate.account.ID] = true
+		}
+	}
+	if !allowedStickyIDs[stickyReq.StickyAccountID] {
+		stickyReq.StickyAccountID = 0
+	}
+	if !allowedStickyIDs[stickyReq.StickyPreviousAccountID] {
+		stickyReq.StickyPreviousAccountID = 0
+	}
 	for _, candidate := range attempt.selectionOrder {
 		if candidate.account != nil {
 			priority := candidate.account.Priority
@@ -1817,7 +1830,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 			break
 		}
 	}
-	if stickyFallback, stickyErr := s.tryFallbackToWeightedSticky(ctx, req, allowedPriority); stickyErr != nil {
+	if stickyFallback, stickyErr := s.tryFallbackToWeightedSticky(ctx, stickyReq, allowedPriority); stickyErr != nil {
 		return nil, candidateCount, topK, loadSkew, stickyErr
 	} else if stickyFallback != nil {
 		return stickyFallback, candidateCount, topK, loadSkew, nil

@@ -89,11 +89,48 @@
               <Icon name="x" size="sm" />
               <span>{{ t('admin.executionNodes.deselectFilteredAccounts') }}</span>
             </button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="!pickerSelected.size" data-testid="model-priority-clear-selection" @click="pickerSelected = new Set()">
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="!pickerSelected.size" data-testid="model-priority-clear-selection" @click="clearPickerSelection">
               <Icon name="trash" size="sm" />
               <span>{{ t('admin.executionNodes.clearSelectedAccounts') }}</span>
             </button>
           </div>
+        </div>
+
+        <div v-if="pickerOrder.length" class="space-y-2" data-testid="model-priority-selected-order">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.selectedAccountOrder') }}</h3>
+          <VueDraggable v-model="pickerOrder" :animation="180" handle=".priority-drag-handle" class="space-y-2">
+            <div
+              v-for="(accountID, orderIndex) in pickerOrder"
+              :key="accountID"
+              class="flex min-h-12 items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-2 dark:border-dark-600 dark:bg-dark-900"
+              :data-testid="`model-priority-selected-${accountID}`"
+            >
+              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-gray-100 text-xs font-semibold text-gray-700 dark:bg-dark-700 dark:text-gray-200">{{ orderIndex + 1 }}</span>
+              <button
+                type="button"
+                class="priority-drag-handle flex h-9 w-9 shrink-0 cursor-grab items-center justify-center text-gray-400 hover:text-gray-700 active:cursor-grabbing dark:hover:text-gray-200"
+                :aria-label="t('admin.executionNodes.dragPriorityAccount', { account: selectedAccountName(accountID) })"
+                :title="t('admin.executionNodes.dragPriorityAccount', { account: selectedAccountName(accountID) })"
+                :data-testid="`model-priority-drag-${accountID}`"
+                @keydown.up.prevent="movePickerAccount(orderIndex, -1)"
+                @keydown.down.prevent="movePickerAccount(orderIndex, 1)"
+              >
+                <Icon name="sort" size="sm" />
+              </button>
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm font-medium text-gray-900 dark:text-white" :title="selectedAccountName(accountID)">{{ selectedAccountName(accountID) }}</div>
+                <div v-if="accountByID.get(accountID) && accountEmail(accountByID.get(accountID)!)" class="truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(accountByID.get(accountID)!) }}</div>
+              </div>
+              <div class="flex shrink-0 items-center gap-1">
+                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === 0" :aria-label="t('admin.executionNodes.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :title="t('admin.executionNodes.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-up-${accountID}`" @click="movePickerAccount(orderIndex, -1)">
+                  <Icon name="chevronUp" size="sm" />
+                </button>
+                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === pickerOrder.length - 1" :aria-label="t('admin.executionNodes.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :title="t('admin.executionNodes.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-down-${accountID}`" @click="movePickerAccount(orderIndex, 1)">
+                  <Icon name="chevronDown" size="sm" />
+                </button>
+              </div>
+            </div>
+          </VueDraggable>
         </div>
 
         <div v-if="catalogLoading" class="flex justify-center py-16">
@@ -138,8 +175,8 @@
         </div>
       </div>
       <template #footer>
-        <button type="button" class="btn btn-secondary" @click="closeAccountPicker">{{ t('common.cancel') }}</button>
-        <button type="button" class="btn btn-primary" :disabled="pickerRuleIndex === null || pickerSelected.size === 0" data-testid="model-priority-apply-accounts" @click="applyAccountPicker">
+        <button type="button" class="btn btn-secondary" data-testid="model-priority-cancel-accounts" @click="closeAccountPicker">{{ t('common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" :disabled="catalogLoading || pickerRuleIndex === null || pickerSelected.size === 0" data-testid="model-priority-apply-accounts" @click="applyAccountPicker">
           <Icon name="check" size="sm" />
           <span>{{ t('admin.executionNodes.applySelectedAccounts') }}</span>
         </button>
@@ -151,6 +188,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { VueDraggable } from 'vue-draggable-plus'
 import { adminAPI } from '@/api/admin'
 import type { OpenAIModelPriorityRule, OpenAIModelPrioritySettings } from '@/api/admin/settings'
 import type { Account, AdminGroup } from '@/types'
@@ -181,13 +219,16 @@ const pools = ref<AccountPool[]>([])
 const draft = reactive<DraftSettings>({ enabled: false, rules: [] })
 const pickerRuleIndex = ref<number | null>(null)
 const pickerSelected = ref<Set<number>>(new Set())
+const pickerOrder = ref<number[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 let ruleSequence = 0
+let pickerRequestSequence = 0
 
 const filters = reactive({ search: '', group: '', pool: '', plan: '', type: '', status: '', node: '' })
 const modelOptions = getModelsByPlatform('openai')
 const groupByID = computed(() => new Map(groups.value.map(group => [group.id, group.name])))
+const accountByID = computed(() => new Map(accounts.value.map(account => [account.id, account])))
 const poolByAccountID = computed(() => {
   const result = new Map<number, AccountPool>()
   for (const pool of pools.value) for (const accountID of pool.account_ids || []) result.set(accountID, pool)
@@ -291,18 +332,64 @@ function addRule(): void { draft.rules.push({ key: ++ruleSequence, model_pattern
 function removeRule(index: number): void { draft.rules.splice(index, 1) }
 function toggleAccount(accountID: number): void {
   const next = new Set(pickerSelected.value)
-  if (next.has(accountID)) next.delete(accountID); else next.add(accountID)
+  if (next.has(accountID)) {
+    next.delete(accountID)
+    pickerOrder.value = pickerOrder.value.filter(id => id !== accountID)
+  } else {
+    next.add(accountID)
+    pickerOrder.value = [...pickerOrder.value, accountID]
+  }
   pickerSelected.value = next
 }
-function selectFiltered(): void { const next = new Set(pickerSelected.value); filteredAccounts.value.forEach(account => next.add(account.id)); pickerSelected.value = next }
-function deselectFiltered(): void { const next = new Set(pickerSelected.value); filteredAccounts.value.forEach(account => next.delete(account.id)); pickerSelected.value = next }
+function selectFiltered(): void {
+  const next = new Set(pickerSelected.value)
+  const appended: number[] = []
+  filteredAccounts.value.forEach(account => { if (!next.has(account.id)) appended.push(account.id); next.add(account.id) })
+  pickerSelected.value = next
+  pickerOrder.value = [...pickerOrder.value, ...appended]
+}
+function deselectFiltered(): void {
+  const removed = new Set(filteredAccounts.value.map(account => account.id))
+  pickerSelected.value = new Set([...pickerSelected.value].filter(id => !removed.has(id)))
+  pickerOrder.value = pickerOrder.value.filter(id => !removed.has(id))
+}
+function clearPickerSelection(): void { pickerSelected.value = new Set(); pickerOrder.value = [] }
 function toggleCurrentPage(event: Event): void {
   const checked = (event.target as HTMLInputElement).checked
   const next = new Set(pickerSelected.value)
-  pageAccounts.value.forEach(account => checked ? next.add(account.id) : next.delete(account.id))
+  if (checked) {
+    const appended: number[] = []
+    pageAccounts.value.forEach(account => { if (!next.has(account.id)) appended.push(account.id); next.add(account.id) })
+    pickerOrder.value = [...pickerOrder.value, ...appended]
+  } else {
+    const removed = new Set(pageAccounts.value.map(account => account.id))
+    pageAccounts.value.forEach(account => next.delete(account.id))
+    pickerOrder.value = pickerOrder.value.filter(id => !removed.has(id))
+  }
   pickerSelected.value = next
 }
 function changePageSize(value: number): void { pageSize.value = value; page.value = 1 }
+function selectedAccountName(accountID: number): string { return accountByID.value.get(accountID)?.name ?? t('admin.executionNodes.missingPriorityAccount', { id: accountID }) }
+function movePickerAccount(index: number, offset: -1 | 1): void {
+  const target = index + offset
+  if (target < 0 || target >= pickerOrder.value.length) return
+  const next = [...pickerOrder.value]
+  ;[next[index], next[target]] = [next[target], next[index]]
+  pickerOrder.value = next
+}
+function initialAccountOrder(rule: OpenAIModelPriorityRule): number[] {
+  const selected = new Set(rule.account_ids)
+  if (rule.account_order) {
+    const ordered = rule.account_order.filter((id, index, values) => selected.has(id) && values.indexOf(id) === index)
+    const included = new Set(ordered)
+    return [...ordered, ...rule.account_ids.filter(id => !included.has(id))]
+  }
+  return [...rule.account_ids].sort((left, right) => {
+    const leftPriority = accountByID.value.get(left)?.priority ?? Number.POSITIVE_INFINITY
+    const rightPriority = accountByID.value.get(right)?.priority ?? Number.POSITIVE_INFINITY
+    return leftPriority - rightPriority || left - right
+  })
+}
 
 async function loadAccountCatalog(): Promise<void> {
   if (catalogLoaded.value || catalogLoading.value) return
@@ -329,15 +416,22 @@ async function loadAccountCatalog(): Promise<void> {
 }
 
 async function openAccountPicker(index: number): Promise<void> {
+  const ruleKey = draft.rules[index]?.key
+  if (ruleKey === undefined) return
+  const requestSequence = ++pickerRequestSequence
   pickerRuleIndex.value = index
-  pickerSelected.value = new Set(draft.rules[index].account_ids)
   resetFilters()
   await loadAccountCatalog()
+  const rule = draft.rules[index]
+  if (requestSequence !== pickerRequestSequence || pickerRuleIndex.value !== index || rule?.key !== ruleKey) return
+  pickerOrder.value = initialAccountOrder(rule)
+  pickerSelected.value = new Set(pickerOrder.value)
 }
-function closeAccountPicker(): void { pickerRuleIndex.value = null; pickerSelected.value = new Set() }
+function closeAccountPicker(): void { pickerRequestSequence++; pickerRuleIndex.value = null; pickerSelected.value = new Set(); pickerOrder.value = [] }
 function applyAccountPicker(): void {
   if (pickerRuleIndex.value === null || pickerSelected.value.size === 0) return
-  draft.rules[pickerRuleIndex.value].account_ids = Array.from(pickerSelected.value).sort((left, right) => left - right)
+  draft.rules[pickerRuleIndex.value].account_ids = [...pickerOrder.value]
+  draft.rules[pickerRuleIndex.value].account_order = [...pickerOrder.value]
   closeAccountPicker()
 }
 
@@ -346,7 +440,7 @@ async function load(): Promise<void> {
   try {
     const settings = await adminAPI.settings.getOpenAIModelPrioritySettings()
     draft.enabled = settings.enabled
-    draft.rules = (settings.rules ?? []).map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids] }))
+    draft.rules = (settings.rules ?? []).map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPriorityLoadFailed')))
   } finally {
@@ -360,11 +454,11 @@ async function save(): Promise<void> {
   try {
     const payload: OpenAIModelPrioritySettings = {
       enabled: draft.enabled,
-      rules: draft.rules.map(rule => ({ model_pattern: rule.model_pattern.trim(), account_ids: [...rule.account_ids] }))
+      rules: draft.rules.map(rule => ({ model_pattern: rule.model_pattern.trim(), account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
     }
     const updated = await adminAPI.settings.updateOpenAIModelPrioritySettings(payload)
     draft.enabled = updated.enabled
-    draft.rules = updated.rules.map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids] }))
+    draft.rules = updated.rules.map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
     appStore.showSuccess(t('admin.executionNodes.modelPrioritySaveSuccess'))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPrioritySaveFailed')))

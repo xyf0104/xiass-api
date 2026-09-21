@@ -379,6 +379,39 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it('round-trips multi-proxy adaptive mode and route ranks without clearing extra', async () => {
+    const account = {
+      ...buildAccount(),
+      proxy_id: 84,
+      proxy_bindings: [
+        { proxy_id: 84, max_concurrency: 2, route_priority: 4 }
+      ],
+      concurrency: 2,
+      extra: {
+        xiass_multi_proxy_adaptive_enabled: true,
+        codex_ticket_enabled: true
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="multi-proxy-adaptive-mode"]').classes()).toContain('bg-white')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.proxy_bindings).toEqual([
+      { proxy_id: 84, max_concurrency: 2, route_priority: 4 }
+    ])
+    expect(payload?.extra).toMatchObject({
+      xiass_multi_proxy_adaptive_enabled: true,
+      codex_ticket_enabled: true
+    })
+    wrapper.unmount()
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

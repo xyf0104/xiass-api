@@ -25,6 +25,9 @@ type config struct {
 	DeviceID        string                           `json:"device_id"`
 	Servers         map[string]serverConfig          `json:"servers"`
 	PendingProfiles map[string]pendingProfileBinding `json:"pending_profiles,omitempty"`
+	ManagedProfiles map[string]managedProfile        `json:"managed_profiles,omitempty"`
+	ProfileLeases   map[string]profileLease          `json:"profile_leases,omitempty"`
+	ReuseCursors    map[string]string                `json:"reuse_cursors,omitempty"`
 	path            string
 }
 
@@ -287,14 +290,25 @@ func saveConfig(c *config) error {
 	if err != nil {
 		return err
 	}
-	temporary := c.path + ".tmp"
-	if err := os.WriteFile(temporary, append(payload, '\n'), 0o600); err != nil {
+	temporary, err := os.CreateTemp(filepath.Dir(c.path), ".config-*.tmp")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, 0o600); err != nil && runtime.GOOS != "windows" {
+	defer os.Remove(temporary.Name())
+	defer temporary.Close()
+	if err := temporary.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
 		return err
 	}
-	return os.Rename(temporary, c.path)
+	if _, err := temporary.Write(append(payload, '\n')); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), c.path)
 }
 
 func normalizeServerOrigin(raw string) (string, error) {

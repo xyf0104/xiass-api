@@ -1421,6 +1421,7 @@ export interface OpenAIFastPolicySettings {
 export interface OpenAIModelPriorityRule {
   model_pattern: string;
   account_ids: number[];
+  account_order?: number[];
 }
 
 export interface OpenAIModelPrioritySettings {

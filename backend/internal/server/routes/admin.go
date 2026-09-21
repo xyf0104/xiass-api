@@ -411,6 +411,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/:id/ollama-cloud-usage/auto-refresh", h.Admin.Account.SetOllamaCloudUsageAutoRefresh)
 		accounts.POST("/:id/ollama-cloud-usage/refresh", h.Admin.Account.RefreshOllamaCloudUsage)
 		accounts.PUT("/:id/codex-ticket", h.Admin.Account.SetCodexTicketEnabled)
+		accounts.PUT("/:id/codex-ticket/capture-proxies", h.Admin.Account.SetCodexTicketCaptureProxies)
 		accounts.POST("/:id/codex-ticket/refresh", h.Admin.Account.RefreshCodexTicket)
 		accounts.DELETE("/:id", h.Admin.Account.Delete)
 		accounts.POST("/:id/test", h.Admin.Account.Test)

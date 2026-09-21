@@ -716,6 +716,28 @@ func TestStoreOpenAICodexTicketPreservesExactTicketOverFallback(t *testing.T) {
 	require.False(t, got.Fallback)
 }
 
+func TestStoreOpenAICodexTicketForcedRefreshReplacesStaleExactWithFallback(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 292, TTLSeconds: 3600}, nil)
+	account := ticketTestAccount(779)
+	now := time.Now()
+	exactState := fakeCodexTicketState(292)
+	fallbackState := syntheticCodexTicketState(10, now, 'R')
+	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		AccountID: 779, Model: "gpt-6-astra", RequestedModel: "gpt-6-astra", ObservedModel: "gpt-6-astra",
+		State: exactState, Length: len(exactState), CapturedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), ProxyID: 1,
+	})
+	svc.storeOpenAICodexTicketWithOptions(context.Background(), account, &openAICodexTicket{
+		AccountID: 779, Model: "gpt-6-astra", RequestedModel: "gpt-6-astra", ObservedModel: "gpt-5.6-luna",
+		State: fallbackState, Length: len(fallbackState), CapturedAt: now, ExpiresAt: now.Add(time.Hour), ProxyID: 2,
+	}, true)
+
+	got := svc.lookupOpenAICodexTicket(account, "gpt-6-astra")
+	require.NotNil(t, got)
+	require.Equal(t, fallbackState, got.State)
+	require.EqualValues(t, 2, got.ProxyID)
+	require.True(t, got.Fallback)
+}
+
 func TestLookupOpenAICodexTicketPreservesValidMemoryExactOverNewerPersistedFallback(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TTLSeconds: 3600}, nil)
 	account := ticketTestAccount(780)

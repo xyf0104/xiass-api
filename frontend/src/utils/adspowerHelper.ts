@@ -3,9 +3,10 @@ export const adsPowerHelperMacDownloadURL = `${adsPowerHelperReleaseBase}/xiass-
 export const adsPowerHelperWindowsDownloadURL = `${adsPowerHelperReleaseBase}/xiass-adspower-helper-windows-x64.exe`
 export const adsPowerHelperHealthURL = 'http://127.0.0.1:34987/healthz'
 
-export const adsPowerHelperUnavailableMessage = '未检测到可用的 XIASS AdsPower 助手。请先安装并启动助手与 AdsPower，在“Ads 设置”中填写本机 API Key 和与 XIASS 服务器出口 IP 一致的 SOCKS5/HTTP 节点。'
+export const adsPowerHelperUnavailableMessage = '未能连接本机 XIASS AdsPower 助手，或 AdsPower API 未就绪，不代表未安装。已启动时，请检查浏览器的本地网络访问权限，并在“Ads 设置”完成当前站点的常驻助手配对；手机或其他电脑需使用已配对的助手。'
 
-export async function isAdsPowerHelperAvailable(timeoutMs = 2500): Promise<boolean> {
+// The helper waits up to five seconds for AdsPower; allow it to finish first.
+export async function isAdsPowerHelperAvailable(timeoutMs = 8000): Promise<boolean> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
   try {

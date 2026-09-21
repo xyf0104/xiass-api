@@ -45,9 +45,12 @@ func (s *helperServer) pair(w http.ResponseWriter, r *http.Request) {
 		s.renderPair(w, http.StatusBadRequest, helperPairView{Title: "配对票据无效", Message: "请从 XIASS 工作台重新发起助手配对。"})
 		return
 	}
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+
 	cfg, _ := s.runtimeSnapshot()
 	server, ok := cfg.Servers[serverOrigin]
-	if !ok || server.EnvironmentKey != environmentKey {
+	if !ok || canonicalEnvironmentKey(server.EnvironmentKey) != canonicalEnvironmentKey(environmentKey) {
 		s.renderPair(w, http.StatusConflict, helperPairView{Title: "节点尚未配置", Message: "请先在本机设置页保存这个 XIASS 节点和 AdsPower 代理。", ServerOrigin: serverOrigin, EnvironmentKey: environmentKey})
 		return
 	}
@@ -64,14 +67,27 @@ func (s *helperServer) pair(w http.ResponseWriter, r *http.Request) {
 		s.renderPair(w, http.StatusBadGateway, helperPairView{Title: "常驻助手配对失败", Message: "XIASS 没有返回有效的设备凭据。", ServerOrigin: serverOrigin, EnvironmentKey: environmentKey})
 		return
 	}
-	next := cloneConfig(cfg)
+	s.runtimeMu.Lock()
+	next := cloneConfig(s.cfg)
+	server, ok = next.Servers[serverOrigin]
+	if !ok || canonicalEnvironmentKey(server.EnvironmentKey) != canonicalEnvironmentKey(environmentKey) {
+		s.runtimeMu.Unlock()
+		s.renderPair(w, http.StatusConflict, helperPairView{Title: "节点尚未配置", Message: "配对期间本机节点配置已变化，请重新发起配对。", ServerOrigin: serverOrigin, EnvironmentKey: environmentKey})
+		return
+	}
+	// Keep the server's exact identity for subsequent authenticated polls, while
+	// accepting the same legacy aliases as fixed-profile lookup during pairing.
+	server.EnvironmentKey = result.Data.EnvironmentKey
 	server.DeviceSecret = result.Data.DeviceSecret
 	next.Servers[serverOrigin] = server
 	if err := saveConfig(next); err != nil {
+		s.runtimeMu.Unlock()
 		s.renderPair(w, http.StatusInternalServerError, helperPairView{Title: "设备凭据保存失败", Message: err.Error(), ServerOrigin: serverOrigin, EnvironmentKey: environmentKey})
 		return
 	}
-	s.replaceRuntime(next)
+	s.cfg = next
+	s.adsPower = newAdsPowerClient(next)
+	s.runtimeMu.Unlock()
 	s.renderPair(w, http.StatusOK, helperPairView{
 		Success: true, Title: "XIASS 常驻助手已配对", Message: "以后可在手机或其他电脑打开 XIASS 工作台，一键把 Ads 授权任务发送到本机。",
 		ServerOrigin: serverOrigin, EnvironmentKey: environmentKey,
@@ -131,14 +147,16 @@ func (s *helperServer) pollRemoteCommand(parent context.Context, cfg *config, or
 		log.Printf("AdsPower helper command %s has an invalid local address: %v", server.EnvironmentKey, err)
 		return
 	}
-	launchCtx, cancelLaunch := context.WithTimeout(parent, 20*time.Minute)
+	launchCtx, cancelLaunch := context.WithTimeout(parent, 4*time.Minute)
 	defer cancelLaunch()
 	request, err := http.NewRequestWithContext(launchCtx, http.MethodGet, localURL, nil)
 	if err != nil {
 		log.Printf("AdsPower helper command %s could not start: %v", server.EnvironmentKey, err)
 		return
 	}
-	response, err := s.client.Do(request)
+	launchClient := *s.client
+	launchClient.Timeout = 4 * time.Minute
+	response, err := launchClient.Do(request)
 	if err != nil {
 		log.Printf("AdsPower helper command %s failed: %v", server.EnvironmentKey, err)
 		return

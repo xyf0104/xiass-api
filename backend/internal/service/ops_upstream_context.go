@@ -501,6 +501,31 @@ func currentOpsUpstreamProxySnapshot(c *gin.Context) opsUpstreamProxySnapshot {
 	return opsUpstreamProxySnapshot{mode: opsUpstreamProxyUnknown, proxyName: opsProxyNameUnknown}
 }
 
+// OpsUpstreamProxyAttribution returns the immutable proxy snapshot captured
+// immediately before the current OpenAI upstream attempt. Successful access
+// logs use this instead of reading the mutable Account after failover.
+func OpsUpstreamProxyAttribution(c *gin.Context) (*int64, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	if _, exists := c.Get(opsOpenAIProxySnapshotKey); !exists {
+		return nil, "", false
+	}
+	snapshot := currentOpsUpstreamProxySnapshot(c)
+	switch snapshot.mode {
+	case opsUpstreamProxyDirect:
+		return nil, opsProxyNameDirect, true
+	case opsUpstreamProxyManaged:
+		if snapshot.proxyID <= 0 {
+			return nil, opsProxyNameUnknown, true
+		}
+		proxyID := snapshot.proxyID
+		return &proxyID, sanitizeManagedOpsProxyName(snapshot.proxyName), true
+	default:
+		return nil, opsProxyNameUnknown, true
+	}
+}
+
 func applyOpsUpstreamProxySnapshot(ev *OpsUpstreamErrorEvent, snapshot opsUpstreamProxySnapshot) {
 	if ev == nil {
 		return

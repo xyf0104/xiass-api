@@ -144,6 +144,11 @@ func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 		ctx = context.WithValue(ctx, ctxkey.Platform, "openai")
 		ctx = context.WithValue(ctx, ctxkey.Model, "gpt-5")
 		c.Request = c.Request.WithContext(ctx)
+		c.Set("ops_auth_latency_ms", int64(4))
+		c.Set("ops_routing_latency_ms", int64(7))
+		c.Set("ops_upstream_latency_ms", int64(1234))
+		c.Set("ops_response_latency_ms", int64(56))
+		c.Set("ops_time_to_first_token_ms", int64(789))
 		c.Next()
 	})
 	r.GET("/api/test", func(c *gin.Context) {
@@ -193,6 +198,12 @@ func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 		}
 		if event.Fields["platform"] != "openai" || event.Fields["model"] != "gpt-5" {
 			t.Fatalf("platform/model mismatch: %+v", event.Fields)
+		}
+		if _, ok := event.Fields["upstream_latency_ms"]; !ok {
+			t.Fatalf("upstream latency missing: %+v", event.Fields)
+		}
+		if event.Fields["time_to_first_token_ms"] != int64(789) {
+			t.Fatalf("ttft mismatch: %+v", event.Fields)
 		}
 	}
 	if !found {

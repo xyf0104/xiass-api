@@ -2931,7 +2931,13 @@
           </button>
         </div>
         <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
-        <MultiProxySelector v-else v-model="proxyBindings" :proxies="proxies" />
+        <MultiProxySelector
+          v-else
+          v-model="proxyBindings"
+          v-model:adaptive-enabled="multiProxyAdaptiveEnabled"
+          :adaptive-available="form.platform === 'openai'"
+          :proxies="proxies"
+        />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -4718,10 +4724,12 @@ const form = reactive({
 
 const proxyMode = ref<'single' | 'multi'>('single')
 const proxyBindings = ref<AccountProxyBindingInput[]>([])
+const multiProxyAdaptiveEnabled = ref(false)
 const normalizedProxyBindings = () => proxyBindings.value
   .map((binding) => ({
     proxy_id: binding.proxy_id,
-    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1))
+    max_concurrency: Math.max(1, Math.trunc(Number(binding.max_concurrency) || 1)),
+    route_priority: Math.max(0, Math.trunc(Number(binding.route_priority) || 0))
   }))
   .sort((a, b) => a.proxy_id - b.proxy_id)
 
@@ -5388,6 +5396,7 @@ const resetForm = () => {
   customBaseUrlEnabled.value = false
   customBaseUrl.value = ''
   allowOverages.value = false
+  multiProxyAdaptiveEnabled.value = false
   antigravityAccountType.value = 'oauth'
   antigravityProjectId.value = ''
   upstreamBaseUrl.value = ''
@@ -5486,6 +5495,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
+  }
+  if (proxyMode.value === 'multi') {
+    extra.xiass_multi_proxy_adaptive_enabled = multiProxyAdaptiveEnabled.value
+  } else {
+    delete extra.xiass_multi_proxy_adaptive_enabled
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value

@@ -512,6 +512,18 @@ describe('OpenAIReauthorizationView', () => {
     wrapper.unmount()
   })
 
+  it('shows AdsPower capacity failures as startup failures rather than step eight', async () => {
+    mocks.route.query = { account_ids: '9' }
+    openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(9, { has_history: true, has_attempted: true, attempt_count: 1, risk_level: 'failed' })], cooldown_seconds: 604800 })
+    openAIReauthorizationAPI.list.mockResolvedValue({ items: [task(9, 'failed', 'failed', 'adspower_profile_limit')], max_concurrency: 3, max_restarts: 2 })
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('AdsPower 浏览器环境名额已满')
+    expect(wrapper.text()).toContain('启动阶段失败 · 尚未进入登录')
+    expect(wrapper.text()).not.toContain('第 8/8 步')
+    expect(openAIReauthorizationAPI.restart).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('keeps a failed account visible with its reason and retries only that row', async () => {
     mocks.route.query = { account_ids: '9' }
     openAIReauthorizationAPI.accounts.mockResolvedValue({ items: [reauthorizationStatus(9, { has_history: true, has_attempted: true, attempt_count: 1, risk_level: 'failed' })], cooldown_seconds: 604800 })

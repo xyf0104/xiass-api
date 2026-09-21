@@ -72,6 +72,18 @@ func cloneConfig(source *config) *config {
 	for key, binding := range source.PendingProfiles {
 		cloned.PendingProfiles[key] = binding
 	}
+	cloned.ManagedProfiles = make(map[string]managedProfile, len(source.ManagedProfiles))
+	for key, profile := range source.ManagedProfiles {
+		cloned.ManagedProfiles[key] = profile
+	}
+	cloned.ProfileLeases = make(map[string]profileLease, len(source.ProfileLeases))
+	for key, lease := range source.ProfileLeases {
+		cloned.ProfileLeases[key] = lease
+	}
+	cloned.ReuseCursors = make(map[string]string, len(source.ReuseCursors))
+	for key, cursor := range source.ReuseCursors {
+		cloned.ReuseCursors[key] = cursor
+	}
 	return &cloned
 }
 
@@ -124,35 +136,19 @@ func (s *helperServer) saveSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+
 	current, _ := s.runtimeSnapshot()
-	next := cloneConfig(current)
-	if value := strings.TrimSpace(request.AdsPowerBaseURL); value != "" {
-		next.AdsPowerBaseURL = value
-	}
-	if value := strings.TrimSpace(request.APIKey); value != "" {
-		next.APIKey = value
-	}
-	existing := next.Servers[serverOrigin]
-	proxyPassword := strings.TrimSpace(request.ProxyPassword)
-	if proxyPassword == "" {
-		proxyPassword = existing.ProxyPassword
-	}
-	server := serverConfig{
-		EnvironmentKey:      request.EnvironmentKey,
-		DeviceSecret:        existing.DeviceSecret,
-		NextFingerprintSlot: existing.NextFingerprintSlot,
-		ProxyID:             request.ProxyID,
-		ProxyHost:           request.ProxyHost,
-		ProxyPort:           request.ProxyPort,
-		ProxyUser:           request.ProxyUser,
-		ProxyPassword:       proxyPassword,
-	}
-	next.Servers[serverOrigin] = server
-	if _, err := next.normalize(); err != nil {
+	next, server, err := setupConfigForRequest(current, serverOrigin, request)
+	if err != nil {
 		writeSetupError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	server = next.Servers[serverOrigin]
+	if adsPowerConnectionChanged(current, next) && hasUnexpiredProfileLease(current, time.Now()) {
+		writeSetupError(w, http.StatusConflict, "存在进行中的 AdsPower 授权任务，暂时不能修改 Local API 地址或 API Key")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
@@ -184,12 +180,72 @@ func (s *helperServer) saveSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := saveConfig(next); err != nil {
+	// Rebase the requested settings on the latest lifecycle state. Runtime-only
+	// mutations may have completed while the external validation was in flight.
+	s.runtimeMu.Lock()
+	latest := cloneConfig(s.cfg)
+	committed, _, err := setupConfigForRequest(latest, serverOrigin, request)
+	if err != nil {
+		s.runtimeMu.Unlock()
+		writeSetupError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if adsPowerConnectionChanged(latest, committed) && hasUnexpiredProfileLease(latest, time.Now()) {
+		s.runtimeMu.Unlock()
+		writeSetupError(w, http.StatusConflict, "存在进行中的 AdsPower 授权任务，暂时不能修改 Local API 地址或 API Key")
+		return
+	}
+	if err := saveConfig(committed); err != nil {
+		s.runtimeMu.Unlock()
 		writeSetupError(w, http.StatusInternalServerError, "本机配置保存失败")
 		return
 	}
-	s.replaceRuntime(next)
-	writeSetupJSON(w, http.StatusOK, setupSaveResponse{Saved: true, ExitIP: exitIP, ConfigPath: next.path})
+	s.cfg = committed
+	s.adsPower = newAdsPowerClient(committed)
+	s.runtimeMu.Unlock()
+	writeSetupJSON(w, http.StatusOK, setupSaveResponse{Saved: true, ExitIP: exitIP, ConfigPath: committed.path})
+}
+
+func setupConfigForRequest(current *config, serverOrigin string, request setupSaveRequest) (*config, serverConfig, error) {
+	next := cloneConfig(current)
+	if value := strings.TrimSpace(request.AdsPowerBaseURL); value != "" {
+		next.AdsPowerBaseURL = value
+	}
+	if value := strings.TrimSpace(request.APIKey); value != "" {
+		next.APIKey = value
+	}
+	existing := next.Servers[serverOrigin]
+	proxyPassword := strings.TrimSpace(request.ProxyPassword)
+	if proxyPassword == "" {
+		proxyPassword = existing.ProxyPassword
+	}
+	next.Servers[serverOrigin] = serverConfig{
+		EnvironmentKey:      request.EnvironmentKey,
+		DeviceSecret:        existing.DeviceSecret,
+		NextFingerprintSlot: existing.NextFingerprintSlot,
+		ProxyID:             request.ProxyID,
+		ProxyHost:           request.ProxyHost,
+		ProxyPort:           request.ProxyPort,
+		ProxyUser:           request.ProxyUser,
+		ProxyPassword:       proxyPassword,
+	}
+	if _, err := next.normalize(); err != nil {
+		return nil, serverConfig{}, err
+	}
+	return next, next.Servers[serverOrigin], nil
+}
+
+func adsPowerConnectionChanged(current, next *config) bool {
+	return current.AdsPowerBaseURL != next.AdsPowerBaseURL || current.APIKey != next.APIKey
+}
+
+func hasUnexpiredProfileLease(cfg *config, now time.Time) bool {
+	for _, lease := range cfg.ProfileLeases {
+		if lease.Until.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeSetupError(w http.ResponseWriter, status int, message string) {

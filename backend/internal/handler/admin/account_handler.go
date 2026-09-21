@@ -439,7 +439,11 @@ func (h *AccountHandler) accountListResponseFromService(account *service.Account
 }
 
 func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *dto.Account) {
-	if h == nil || h.cfg == nil || out == nil {
+	if out == nil {
+		return
+	}
+	out.CodexTicketCaptureProxyIDs, _ = service.OpenAICodexTicketCaptureProxyIDs(account)
+	if h == nil || h.cfg == nil {
 		return
 	}
 	cfg := h.cfg.Gateway.OpenAICodexTicket

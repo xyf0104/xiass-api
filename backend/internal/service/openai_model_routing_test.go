@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -318,4 +319,72 @@ func TestOpenAIModelRoutingPreservesActiveStickySession(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenAIModelPriorityExplicitOrderAcrossSchedulers(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		for _, busyCount := range []int{0, 1, 2, 3} {
+			t.Run(fmt.Sprintf("%s/busy_%d", mode, busyCount), func(t *testing.T) {
+				groupID := int64(12008)
+				accounts := []Account{
+					openAIModelRoutingTestAccount(101, groupID, 1, ""),
+					openAIModelRoutingTestAccount(102, groupID, 2, ""),
+					openAIModelRoutingTestAccount(103, groupID, 9, ""),
+					openAIModelRoutingTestAccount(104, groupID, 0, "7"),
+				}
+				order := []int64{103, 101, 102}
+				settings := openAIModelPriorityTestService(t, order...)
+				require.NoError(t, settings.SetOpenAIModelPrioritySettings(context.Background(), &OpenAIModelPrioritySettings{
+					Enabled: true, Rules: []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: order, AccountOrder: order}},
+				}))
+				cache := schedulerTestConcurrencyCache{acquireResults: map[int64]bool{}, loadMap: map[int64]*AccountLoadInfo{}}
+				for _, account := range accounts {
+					cache.acquireResults[account.ID] = true
+					cache.loadMap[account.ID] = &AccountLoadInfo{AccountID: account.ID}
+				}
+				for _, id := range order[:busyCount] {
+					cache.acquireResults[id] = false
+					cache.loadMap[id] = &AccountLoadInfo{AccountID: id, CurrentConcurrency: 1, LoadRate: 100}
+				}
+				// Group pool preferences must not erase the explicit model order.
+				selection := selectOpenAIModelRoutingTestAccount(t, mode,
+					openAIModelRoutingTestContext(groupID, nil, map[string][]int64{"gpt-*": {7}}),
+					groupID, accounts, cache, "", settings)
+				want := append(append([]int64(nil), order...), 104)[busyCount]
+				require.Equal(t, want, selection.Account.ID)
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				require.Equal(t, 9, accounts[2].Priority, "model ordering must not mutate global priority")
+			})
+		}
+	}
+}
+
+func TestOpenAIModelPriorityWaitDoesNotEscapeToLowerRankStickyHint(t *testing.T) {
+	groupID := int64(12009)
+	first := openAIModelRoutingTestAccount(201, groupID, 1, "")
+	second := openAIModelRoutingTestAccount(202, groupID, 1, "")
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: []Account{first, second}}},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		cfg:                &config.Config{},
+	}
+	scheduler, ok := newDefaultOpenAIAccountScheduler(svc, nil).(*defaultOpenAIAccountScheduler)
+	require.True(t, ok)
+	req := OpenAIAccountScheduleRequest{
+		GroupID: &groupID, Platform: PlatformOpenAI, RequestedModel: "gpt-5.6-luna",
+		RequiredTransport: OpenAIUpstreamTransportAny, StickyWeighted: true,
+		StickyPreviousAccountID: second.ID, PreviousResponseCanMove: true,
+		modelRoutingPreference: openAIModelRoutingPreference{accountIDs: map[int64]struct{}{201: {}, 202: {}}, accountRanks: map[int64]int{201: 0, 202: 1}},
+	}
+	selection, _, _, _, err := scheduler.finishLoadBalanceSelectionFallback(
+		openAIModelRoutingTestContext(groupID, nil, nil), req,
+		openAIAccountLoadSelectionAttempt{selectionOrder: []openAIAccountCandidateScore{{account: &first}}},
+		newOpenAISelectionProbeBudget(), openAISelectionFilterStats{},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, first.ID, selection.Account.ID)
+	require.NotNil(t, selection.WaitPlan)
 }

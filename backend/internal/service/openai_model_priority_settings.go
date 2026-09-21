@@ -29,6 +29,7 @@ var openAIModelPriorityPattern = regexp.MustCompile(`^[A-Za-z0-9._:@/-]+\*?$`)
 type OpenAIModelPriorityRule struct {
 	ModelPattern string  `json:"model_pattern"`
 	AccountIDs   []int64 `json:"account_ids"`
+	AccountOrder []int64 `json:"account_order,omitempty"`
 }
 
 type OpenAIModelPrioritySettings struct {
@@ -39,6 +40,7 @@ type OpenAIModelPrioritySettings struct {
 type compiledOpenAIModelPriorityRule struct {
 	modelPattern string
 	accountIDs   map[int64]struct{}
+	accountRanks map[int64]int
 }
 
 type compiledOpenAIModelPrioritySettings struct {
@@ -62,6 +64,7 @@ func cloneOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) *Ope
 		cloned.Rules[i] = OpenAIModelPriorityRule{
 			ModelPattern: rule.ModelPattern,
 			AccountIDs:   append([]int64(nil), rule.AccountIDs...),
+			AccountOrder: append([]int64(nil), rule.AccountOrder...),
 		}
 	}
 	return &cloned
@@ -110,7 +113,21 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 			ids = append(ids, accountID)
 		}
 		sort.Slice(ids, func(left, right int) bool { return ids[left] < ids[right] })
-		normalized.Rules = append(normalized.Rules, OpenAIModelPriorityRule{ModelPattern: pattern, AccountIDs: ids})
+		if len(rule.AccountOrder) > 0 {
+			if len(rule.AccountOrder) != len(ids) {
+				return nil, fmt.Errorf("rule[%d]: account_order must contain every selected account exactly once", i)
+			}
+			ordered := make(map[int64]bool, len(ids))
+			for _, id := range rule.AccountOrder {
+				if _, exists := seenIDs[id]; !exists || ordered[id] {
+					return nil, fmt.Errorf("rule[%d]: account_order contains an unselected or duplicate account", i)
+				}
+				ordered[id] = true
+			}
+		}
+		normalized.Rules = append(normalized.Rules, OpenAIModelPriorityRule{
+			ModelPattern: pattern, AccountIDs: ids, AccountOrder: append([]int64(nil), rule.AccountOrder...),
+		})
 	}
 	return normalized, nil
 }
@@ -122,15 +139,27 @@ func compileOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) co
 		for _, accountID := range rule.AccountIDs {
 			accountIDs[accountID] = struct{}{}
 		}
+		ranks := make(map[int64]int, len(rule.AccountOrder))
+		for rank, accountID := range rule.AccountOrder {
+			ranks[accountID] = rank
+		}
 		compiled.rules = append(compiled.rules, compiledOpenAIModelPriorityRule{
 			modelPattern: strings.ToLower(rule.ModelPattern),
 			accountIDs:   accountIDs,
+			accountRanks: ranks,
 		})
 	}
 	return compiled
 }
 
 func (settings compiledOpenAIModelPrioritySettings) accountIDsForModel(model string) map[int64]struct{} {
+	if rule := settings.ruleForModel(model); rule != nil {
+		return rule.accountIDs
+	}
+	return nil
+}
+
+func (settings compiledOpenAIModelPrioritySettings) ruleForModel(model string) *compiledOpenAIModelPriorityRule {
 	if !settings.enabled || len(settings.rules) == 0 {
 		return nil
 	}
@@ -138,9 +167,9 @@ func (settings compiledOpenAIModelPrioritySettings) accountIDsForModel(model str
 	if model == "" {
 		return nil
 	}
-	for _, rule := range settings.rules {
+	for index, rule := range settings.rules {
 		if rule.modelPattern == model {
-			return rule.accountIDs
+			return &settings.rules[index]
 		}
 	}
 	bestIndex := -1
@@ -156,7 +185,7 @@ func (settings compiledOpenAIModelPrioritySettings) accountIDsForModel(model str
 		}
 	}
 	if bestIndex >= 0 {
-		return settings.rules[bestIndex].accountIDs
+		return &settings.rules[bestIndex]
 	}
 	return nil
 }
@@ -252,8 +281,12 @@ func (s *SettingService) SetOpenAIModelPrioritySettings(ctx context.Context, set
 // waits for the database: a stale immutable snapshot is served while one
 // singleflight refresh runs in the background.
 func (s *SettingService) ResolveOpenAIModelPriorityAccountIDs(ctx context.Context, model string) map[int64]struct{} {
+	return s.resolveOpenAIModelPriorityPreference(ctx, model).accountIDs
+}
+
+func (s *SettingService) resolveOpenAIModelPriorityPreference(ctx context.Context, model string) openAIModelRoutingPreference {
 	if s == nil || strings.TrimSpace(model) == "" {
-		return nil
+		return openAIModelRoutingPreference{}
 	}
 	cached, _ := s.openAIModelPriorityCache.Load().(*cachedOpenAIModelPrioritySettings)
 	if (cached == nil || time.Now().UnixNano() >= cached.expiresAt) && s.openAIModelPriorityRefreshing.CompareAndSwap(false, true) {
@@ -275,7 +308,10 @@ func (s *SettingService) ResolveOpenAIModelPriorityAccountIDs(ctx context.Contex
 		}()
 	}
 	if cached == nil {
-		return nil
+		return openAIModelRoutingPreference{}
 	}
-	return cached.compiled.accountIDsForModel(model)
+	if rule := cached.compiled.ruleForModel(model); rule != nil {
+		return openAIModelRoutingPreference{accountIDs: rule.accountIDs, accountRanks: rule.accountRanks}
+	}
+	return openAIModelRoutingPreference{}
 }

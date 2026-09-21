@@ -30,7 +30,8 @@ const (
 	accountSlotKeyPrefix = "concurrency:account:"
 	// Child slots use an account hash tag so every proxy key and the tie cursor
 	// share one Redis Cluster slot.
-	accountProxySlotKeyPrefix = "concurrency:account-proxy:"
+	accountProxySlotKeyPrefix     = "concurrency:account-proxy:"
+	accountProxyAdaptiveKeyPrefix = "concurrency:account-proxy-adaptive:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
@@ -138,18 +139,25 @@ var (
 		local bestMax = nil
 		local tied = {}
 
+		local bestPriority = nil
 		for i = 1, proxyCount do
-			local argIndex = 3 + (i - 1) * 2
+			local argIndex = 3 + (i - 1) * 3
 			local maxConcurrency = tonumber(ARGV[argIndex])
-			local proxyID = tonumber(ARGV[argIndex + 1])
+			local routePriority = tonumber(ARGV[argIndex + 1]) or 0
+			local proxyID = tonumber(ARGV[argIndex + 2])
 			redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', expireBefore)
 			local current = redis.call('ZCARD', KEYS[i])
 			if maxConcurrency ~= nil and maxConcurrency > 0 and current < maxConcurrency then
-				if bestCurrent == nil or current * bestMax < bestCurrent * maxConcurrency then
+				if bestPriority == nil or (routePriority > 0 and (bestPriority == 0 or routePriority < bestPriority)) then
+					bestPriority = routePriority
 					bestCurrent = current
 					bestMax = maxConcurrency
 					tied = {{keyIndex = i, proxyID = proxyID}}
-				elseif current * bestMax == bestCurrent * maxConcurrency then
+				elseif routePriority == bestPriority and current * bestMax < bestCurrent * maxConcurrency then
+					bestCurrent = current
+					bestMax = maxConcurrency
+					tied = {{keyIndex = i, proxyID = proxyID}}
+				elseif routePriority == bestPriority and current * bestMax == bestCurrent * maxConcurrency then
 					table.insert(tied, {keyIndex = i, proxyID = proxyID})
 				end
 			end
@@ -164,6 +172,50 @@ var (
 		redis.call('ZADD', KEYS[selected.keyIndex], now, requestID)
 		redis.call('EXPIRE', KEYS[selected.keyIndex], ttl)
 		return {selected.proxyID, now}
+	`)
+
+	recordAccountProxyAdaptiveOutcomeScript = redis.NewScript(`
+		local key = KEYS[1]
+		local success = tonumber(ARGV[1])
+		local transientFailure = tonumber(ARGV[2])
+		local modelKnown = tonumber(ARGV[3])
+		local modelExact = tonumber(ARGV[4])
+		local ttft = tonumber(ARGV[5])
+		local ttl = tonumber(ARGV[6])
+		local now = tonumber(redis.call('TIME')[1])
+		local alpha = 0.25
+		local oldErrorRate = tonumber(redis.call('HGET', key, 'recent_error_rate')) or 0
+		local errorSample = 0
+		if transientFailure == 1 then errorSample = 1 end
+		redis.call('HSET', key, 'recent_error_rate', oldErrorRate + alpha * (errorSample - oldErrorRate))
+		if success == 1 then redis.call('HINCRBY', key, 'successes', 1) end
+		if transientFailure == 1 then redis.call('HINCRBY', key, 'transient_errors', 1) end
+		if modelKnown == 1 then
+			local oldModelScore = tonumber(redis.call('HGET', key, 'recent_model_score')) or 0
+			local modelSample = -1
+			if modelExact == 1 then
+				modelSample = 1
+				redis.call('HINCRBY', key, 'exact_models', 1)
+			else
+				redis.call('HINCRBY', key, 'mismatched_models', 1)
+			end
+			redis.call('HSET', key, 'recent_model_score', oldModelScore + alpha * (modelSample - oldModelScore), 'last_model_known', 1)
+		end
+		if ttft ~= nil and ttft >= 0 then
+			local oldMean = tonumber(redis.call('HGET', key, 'ewma_ttft_ms'))
+			local oldVariance = tonumber(redis.call('HGET', key, 'ewma_ttft_variance')) or 0
+			if oldMean == nil then
+				redis.call('HSET', key, 'ewma_ttft_ms', ttft, 'ewma_ttft_variance', 0)
+			else
+				local delta = ttft - oldMean
+				local newMean = oldMean + alpha * delta
+				local newVariance = (1 - alpha) * (oldVariance + alpha * delta * delta)
+				redis.call('HSET', key, 'ewma_ttft_ms', newMean, 'ewma_ttft_variance', newVariance)
+			end
+		end
+		redis.call('HSET', key, 'last_observed_at', now)
+		redis.call('EXPIRE', key, ttl)
+		return 1
 	`)
 
 	// getCountScript 统计有序集合中的槽位数量并清理过期条目
@@ -808,14 +860,14 @@ func (c *concurrencyCache) AcquireAccountProxySlot(ctx context.Context, accountI
 		return 0, false, nil
 	}
 	keys := make([]string, 0, len(slots)+1)
-	args := make([]any, 0, len(slots)*2+2)
+	args := make([]any, 0, len(slots)*3+2)
 	args = append(args, c.slotTTLSeconds, requestID)
 	for _, slot := range slots {
 		if slot.ProxyID <= 0 || slot.MaxConcurrency <= 0 {
 			return 0, false, fmt.Errorf("invalid account proxy slot: proxy=%d max=%d", slot.ProxyID, slot.MaxConcurrency)
 		}
 		keys = append(keys, accountProxySlotKey(accountID, slot.ProxyID))
-		args = append(args, slot.MaxConcurrency, slot.ProxyID)
+		args = append(args, slot.MaxConcurrency, slot.RoutePriority, slot.ProxyID)
 	}
 	keys = append(keys, accountProxyCursorKey(accountID))
 	proxyID, _, err := runScriptInt64Pair(ctx, c.rdb, acquireAccountProxyScript, keys, args...)
@@ -830,6 +882,89 @@ func (c *concurrencyCache) ReleaseAccountProxySlot(ctx context.Context, accountI
 		return nil
 	}
 	return c.rdb.ZRem(ctx, accountProxySlotKey(accountID, proxyID), requestID).Err()
+}
+
+func (c *concurrencyCache) GetAccountProxyAdaptiveRouteStats(ctx context.Context, routes []service.AccountProxyAdaptiveRouteKey) (map[string]service.AccountProxyAdaptiveRouteStats, error) {
+	result := make(map[string]service.AccountProxyAdaptiveRouteStats, len(routes))
+	if len(routes) == 0 {
+		return result, nil
+	}
+	pipe := c.rdb.Pipeline()
+	commands := make([]*redis.MapStringStringCmd, len(routes))
+	for i, route := range routes {
+		commands[i] = pipe.HGetAll(ctx, accountProxyAdaptiveRouteKey(route))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	for i, command := range commands {
+		values := command.Val()
+		if len(values) == 0 {
+			continue
+		}
+		stats := service.AccountProxyAdaptiveRouteStats{
+			Successes:        parseAdaptiveInt64(values["successes"]),
+			TransientErrors:  parseAdaptiveInt64(values["transient_errors"]),
+			ExactModels:      parseAdaptiveInt64(values["exact_models"]),
+			MismatchedModels: parseAdaptiveInt64(values["mismatched_models"]),
+			RecentErrorRate:  parseAdaptiveFloat64(values["recent_error_rate"]),
+			RecentModelScore: parseAdaptiveFloat64(values["recent_model_score"]),
+			LastModelKnown:   values["last_model_known"] == "1",
+			EWMATTFTMs:       parseAdaptiveFloat64(values["ewma_ttft_ms"]),
+			EWMATTFTVariance: parseAdaptiveFloat64(values["ewma_ttft_variance"]),
+		}
+		if observed := parseAdaptiveInt64(values["last_observed_at"]); observed > 0 {
+			stats.LastObservedAt = time.Unix(observed, 0)
+		}
+		result[routes[i].CacheID()] = stats
+	}
+	return result, nil
+}
+
+func (c *concurrencyCache) RecordAccountProxyAdaptiveRouteOutcome(ctx context.Context, outcome service.AccountProxyAdaptiveRouteOutcome) error {
+	ttl := outcome.TTL
+	if ttl <= 0 || ttl > 30*time.Minute {
+		ttl = 30 * time.Minute
+	}
+	ttft := -1
+	if outcome.FirstTokenMs != nil && *outcome.FirstTokenMs >= 0 {
+		ttft = *outcome.FirstTokenMs
+	}
+	_, err := recordAccountProxyAdaptiveOutcomeScript.Run(ctx, c.rdb, []string{accountProxyAdaptiveRouteKey(outcome.Route)},
+		boolInt(outcome.Success), boolInt(outcome.TransientFailure), boolInt(outcome.ModelKnown), boolInt(outcome.ModelExact), ttft, int(ttl.Seconds())).Result()
+	return err
+}
+
+func (c *concurrencyCache) ClaimAccountProxyAdaptiveRouteProbe(ctx context.Context, route service.AccountProxyAdaptiveRouteKey, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	return c.rdb.SetNX(ctx, accountProxyAdaptiveProbeKey(route), route.ProxyHash, ttl).Result()
+}
+
+func accountProxyAdaptiveRouteKey(route service.AccountProxyAdaptiveRouteKey) string {
+	return accountProxyAdaptiveKeyPrefix + route.ExecutionNode + ":" + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":" + route.ProxyHash
+}
+
+func accountProxyAdaptiveProbeKey(route service.AccountProxyAdaptiveRouteKey) string {
+	return accountProxyAdaptiveKeyPrefix + route.ExecutionNode + ":" + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":probe"
+}
+
+func parseAdaptiveInt64(value string) int64 {
+	parsed, _ := strconv.ParseInt(value, 10, 64)
+	return parsed
+}
+
+func parseAdaptiveFloat64(value string) float64 {
+	parsed, _ := strconv.ParseFloat(value, 64)
+	return parsed
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (c *concurrencyCache) GetAccountProxyConcurrency(ctx context.Context, accountID int64, proxyIDs []int64) (map[int64]int, error) {

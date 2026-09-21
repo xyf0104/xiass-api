@@ -54,11 +54,16 @@ const BaseDialogStub = {
   emits: ['close'],
   template: '<div v-if="show" data-testid="priority-dialog"><slot /><div><slot name="footer" /></div></div>'
 }
+const VueDraggableStub = {
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template: '<div><slot /><button type="button" data-testid="draggable-model-update" @click="$emit(\'update:modelValue\', [...modelValue].reverse())" /></div>'
+}
 
-function account(id: number, name: string, plan: string, groupIDs: number[], status = 'active') {
+function account(id: number, name: string, plan: string, groupIDs: number[], status = 'active', priority = id) {
   return {
     id, name, platform: 'openai', type: 'oauth', credentials: { email: `${name}@example.com`, plan_type: plan },
-    extra: {}, group_ids: groupIDs, execution_node_id: 'api', concurrency: 3, priority: id,
+    extra: {}, group_ids: groupIDs, execution_node_id: 'api', concurrency: 3, priority,
     status, schedulable: true, error_message: null, last_used_at: null, expires_at: null,
     auto_pause_on_expired: false, created_at: '', updated_at: '', proxy_id: null,
     rate_limited_at: null, rate_limit_reset_at: null, overload_until: null,
@@ -90,10 +95,17 @@ describe('OpenAIModelPrioritySettings', () => {
           PlatformTypeBadge: true,
           SearchInput: SearchInputStub,
           Select: SelectStub,
-          Toggle: ToggleStub
+          Toggle: ToggleStub,
+          VueDraggable: VueDraggableStub
         }
       }
     })
+  }
+
+  function selectedIDs(wrapper: ReturnType<typeof mountComponent>): number[] {
+    return wrapper.findAll('[data-testid^="model-priority-selected-"]')
+      .filter(node => node.attributes('data-testid') !== 'model-priority-selected-order')
+      .map(node => Number(node.attributes('data-testid').split('-').at(-1)))
   }
 
   it('loads the account catalog in batches and saves all filtered Plus accounts without per-account reads', async () => {
@@ -114,9 +126,125 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
-      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2] }]
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2], account_order: [1, 2] }]
     })
     expect(showSuccess).toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('shows legacy selections by global priority then ID while retaining missing account placeholders', async () => {
+    getSettings.mockResolvedValue({ enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 99, 2, 1] }] })
+    listAccounts.mockResolvedValue({
+      items: [account(1, 'one', 'plus', [14], 'active', 20), account(2, 'two', 'plus', [14], 'active', 10), account(3, 'three', 'pro', [14], 'active', 20)],
+      total: 3, pages: 1, page: 1, page_size: 200
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    await flushPromises()
+
+    expect(selectedIDs(wrapper)).toEqual([2, 1, 3, 99])
+    expect(wrapper.get('[data-testid="model-priority-selected-99"]').text()).toContain('missingPriorityAccount')
+
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith({
+      enabled: true,
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 99, 2, 1] }]
+    })
+  })
+
+  it('preserves explicit order across reopen and save', async () => {
+    getSettings.mockResolvedValue({ enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2, 3], account_order: [3, 1, 2] }] })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    await flushPromises()
+    expect(selectedIDs(wrapper)).toEqual([3, 1, 2])
+    await wrapper.get('[data-testid="model-priority-apply-accounts"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    expect(selectedIDs(wrapper)).toEqual([3, 1, 2])
+    await wrapper.get('[data-testid="model-priority-apply-accounts"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      enabled: true,
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 1, 2], account_order: [3, 1, 2] }]
+    })
+  })
+
+  it('reorders through draggable model updates, keyboard arrows, and move buttons', async () => {
+    getSettings.mockResolvedValue({ enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2, 3], account_order: [1, 2, 3] }] })
+    const wrapper = mountComponent()
+    await flushPromises()
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="model-priority-drag-1"]').attributes('title')).toContain('dragPriorityAccount')
+    expect(wrapper.get('[data-testid="model-priority-up-1"]').attributes('title')).toContain('movePriorityAccountUp')
+    expect(wrapper.get('[data-testid="model-priority-down-1"]').attributes('title')).toContain('movePriorityAccountDown')
+    await wrapper.get('[data-testid="draggable-model-update"]').trigger('click')
+    expect(selectedIDs(wrapper)).toEqual([3, 2, 1])
+    await wrapper.get('[data-testid="model-priority-drag-2"]').trigger('keydown', { key: 'ArrowUp' })
+    expect(selectedIDs(wrapper)).toEqual([2, 3, 1])
+    await wrapper.get('[data-testid="model-priority-down-2"]').trigger('click')
+    expect(selectedIDs(wrapper)).toEqual([3, 2, 1])
+    await wrapper.get('[data-testid="model-priority-up-1"]').trigger('click')
+    expect(selectedIDs(wrapper)).toEqual([3, 1, 2])
+  })
+
+  it('appends and removes filtered selections without disturbing the remaining order', async () => {
+    getSettings.mockResolvedValue({ enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3], account_order: [3] }] })
+    const wrapper = mountComponent()
+    await flushPromises()
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-plan-filter"]').setValue('plus')
+    await wrapper.get('[data-testid="model-priority-select-filtered"]').trigger('click')
+    expect(selectedIDs(wrapper)).toEqual([3, 1, 2])
+
+    await wrapper.get('[data-testid="model-priority-account-1"] input').setValue(false)
+    expect(selectedIDs(wrapper)).toEqual([3, 2])
+  })
+
+  it('cancels picker edits without changing the saved rule', async () => {
+    getSettings.mockResolvedValue({ enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2] }] })
+    const wrapper = mountComponent()
+    await flushPromises()
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    await wrapper.get('[data-testid="draggable-model-update"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-cancel-accounts"]').trigger('click')
+    expect(wrapper.find('[data-testid="priority-dialog"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      enabled: true,
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2] }]
+    })
+  })
+
+  it('keeps a closed picker closed when a pending catalog load resolves', async () => {
+    let resolveAccounts: (value: unknown) => void = () => {}
+    listAccounts.mockImplementation(() => new Promise(resolve => { resolveAccounts = resolve }))
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-priority-configure-0"]').trigger('click')
+    expect(wrapper.get('[data-testid="model-priority-apply-accounts"]').attributes()).toHaveProperty('disabled')
+    await wrapper.get('[data-testid="model-priority-cancel-accounts"]').trigger('click')
+    expect(wrapper.find('[data-testid="priority-dialog"]').exists()).toBe(false)
+
+    resolveAccounts({
+      items: [account(3, 'pro-one', 'pro', [14])],
+      total: 1, pages: 1, page: 1, page_size: 200
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="priority-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="model-priority-selected-order"]').exists()).toBe(false)
     expect(showError).not.toHaveBeenCalled()
   })
 })

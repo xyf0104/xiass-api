@@ -128,7 +128,7 @@ describe('batch OAuth orchestration', () => {
     await c.refresh()
     expect(batchOAuthAPI.cancel).toHaveBeenCalledOnce()
     expect(c.adsPowerHelperMissing.value).toBe(true)
-    expect(c.rows.value[0].error).toContain('未检测到可用的 XIASS AdsPower 助手')
+    expect(c.rows.value[0].error).toContain('未能连接本机 XIASS AdsPower 助手')
     expect(popup.close).toHaveBeenCalled()
   })
 

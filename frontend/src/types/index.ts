@@ -1030,6 +1030,7 @@ export interface ProxySubscriptionOverview {
 export interface AccountProxyBindingInput {
 	proxy_id: number
 	max_concurrency: number
+	route_priority?: number
 }
 
 export interface AccountProxyBinding extends AccountProxyBindingInput {
@@ -1386,6 +1387,8 @@ export interface Account {
   ollama_cloud_usage?: OllamaCloudUsageState
   // Explicit account-level opt-in. Missing and false both disable ticket behavior.
   codex_ticket_enabled?: boolean
+  // Persistent automatic Codex ticket capture exits. Empty or missing follows business defaults.
+  codex_ticket_capture_proxy_ids?: number[]
   // The raw x-codex-turn-state value is never returned; only this safe status summary is exposed.
   codex_turn_tickets?: CodexTurnTicketStatus[]
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.

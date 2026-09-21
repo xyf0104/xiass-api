@@ -127,6 +127,22 @@ func TestOpenAIProxySnapshotNormalizesHTTPDirectAndWSUnknown(t *testing.T) {
 	require.Equal(t, opsProxyNameUnknown, wsEvents[0].ProxyName)
 }
 
+func TestOpsUpstreamProxyAttributionRequiresASnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	proxyID, proxyName, ok := OpsUpstreamProxyAttribution(c)
+	require.False(t, ok)
+	require.Nil(t, proxyID)
+	require.Empty(t, proxyName)
+
+	freezeOpenAIHTTPUpstreamProxy(c, &Account{Platform: PlatformOpenAI}, "")
+	proxyID, proxyName, ok = OpsUpstreamProxyAttribution(c)
+	require.True(t, ok)
+	require.Nil(t, proxyID)
+	require.Equal(t, opsProxyNameDirect, proxyName)
+}
+
 func TestOpenAIProxySnapshotKeepsFixedProxyIDButRedactsSensitiveName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

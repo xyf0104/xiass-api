@@ -884,6 +884,7 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		proxyBindings = append(proxyBindings, service.AccountProxyBinding{
 			ProxyID:        binding.ProxyID,
 			MaxConcurrency: binding.MaxConcurrency,
+			RoutePriority:  binding.RoutePriority,
 			Proxy:          bindingProxy,
 		})
 	}

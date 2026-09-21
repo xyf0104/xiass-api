@@ -18,6 +18,7 @@ func TestAccountFromServiceRedactsMultiProxyCredentials(t *testing.T) {
 		ProxyBindings: []service.AccountProxyBinding{{
 			ProxyID:        8,
 			MaxConcurrency: 4,
+			RoutePriority:  2,
 			Proxy: &service.Proxy{
 				ID:       8,
 				Name:     "IPv6 exit",
@@ -33,6 +34,7 @@ func TestAccountFromServiceRedactsMultiProxyCredentials(t *testing.T) {
 
 	out := AccountFromService(account)
 	require.Len(t, out.ProxyBindings, 1)
+	require.Equal(t, 2, out.ProxyBindings[0].RoutePriority)
 	require.Equal(t, "2001:db8::8", out.ProxyBindings[0].Proxy.Host)
 	payload, err := json.Marshal(out)
 	require.NoError(t, err)

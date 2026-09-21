@@ -22,6 +22,7 @@ XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包�
 
 - 统一管理 Anthropic、OpenAI/Codex、Gemini、Antigravity、Grok/xAI 等账号与 API Key。
 - 账号池调度、并发控制、限流恢复、健康检测、代理绑定和模型映射。
+- 模型指定账号拖动排序、单账号多出口线路优先级与可选首字优先，详见[多出口与模型账号顺序](docs/multi-proxy-routing.md)。
 - 用户、分组、渠道、订阅、兑换码、邀请返利和支付订单管理。
 - 模型价格、用户倍率、成本倍率、冻结余额和完整用量统计。
 - OpenAI、Anthropic 等兼容接口，以及流式请求、图片和视频相关能力。

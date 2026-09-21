@@ -27,7 +27,10 @@
         </div>
 
         <div v-if="captureMode === 'account'" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-700/50 dark:text-gray-300">
-          {{ t('admin.accounts.codexTicket.accountDefaultSummary', { count: boundProxyIDs.length }) }}
+          {{ accountDefaultSummary }}
+          <div v-if="savedUnknownCount" class="mt-1 text-amber-700 dark:text-amber-300">
+            {{ t('admin.accounts.codexTicket.savedUnknownWarning', { count: savedUnknownCount }) }}
+          </div>
         </div>
         <div v-else class="space-y-3">
           <div class="flex flex-wrap items-center gap-2">
@@ -60,9 +63,19 @@
                 <span class="mt-1 block text-xs text-gray-400">{{ option.sourceNames.length ? option.sourceNames.join(' · ') : t('admin.accounts.codexTicket.manualSource') }}</span>
               </span>
             </label>
+            <label v-for="id in (captureMode === 'custom' ? missingSavedProxyIDs : [])" :key="'missing-' + id" class="flex items-start gap-3 border-b border-gray-100 px-3 py-2.5 last:border-b-0 dark:border-dark-700" :class="captureMode === 'custom' && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-800/70'">
+              <input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600" :checked="isCaptureProxySelected(id)" :disabled="busy || captureMode === 'all'" @change="toggleCaptureProxy(id)" />
+              <span class="min-w-0 flex-1 text-sm text-amber-700 dark:text-amber-300">
+                {{ t('admin.accounts.codexTicket.missingProxy', { id }) }}
+              </span>
+            </label>
             <div v-if="filteredCaptureProxies.length === 0" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.noOptionsFound') }}</div>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.proxySelectionSummary', { count: effectiveProxyIDs?.length || 0 }) }}</p>
+          <div class="flex flex-wrap justify-end gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || savingCaptureDefaults" @click="resetCaptureDefaults">{{ t('admin.accounts.codexTicket.followBusiness') }}</button>
+            <button type="button" class="btn btn-primary btn-sm" :disabled="busy || savingCaptureDefaults || effectiveProxyIDs === undefined || effectiveProxyIDs.length === 0" @click="saveCaptureDefaults">{{ savingCaptureDefaults ? t('admin.accounts.codexTicket.savingCaptureDefaults') : t('admin.accounts.codexTicket.saveCaptureDefaults') }}</button>
+          </div>
         </div>
       </section>
 
@@ -124,11 +137,12 @@ type CaptureMode = 'account' | 'all' | 'custom'
 type CaptureProxyOption = { proxy: Proxy; sourceIDs: string[]; sourceNames: string[] }
 
 const props = defineProps<{ show: boolean; account: Account | null }>()
-const emit = defineEmits<{ close: []; updated: [payload: { enabled: boolean; statuses: CodexTurnTicketStatus[] }] }>()
+const emit = defineEmits<{ close: []; updated: [payload: { enabled: boolean; statuses: CodexTurnTicketStatus[]; codex_ticket_capture_proxy_ids?: number[] }] }>()
 const { t } = useI18n()
 const statuses = ref<CodexTurnTicketStatus[]>([])
 const enabled = ref(false)
 const toggling = ref(false)
+const savingCaptureDefaults = ref(false)
 const refreshingModel = ref('')
 const loadingProxies = ref(false)
 const errorMessage = ref('')
@@ -136,11 +150,12 @@ const captureMode = ref<CaptureMode>('account')
 const captureProxies = ref<CaptureProxyOption[]>([])
 const captureSources = ref<Array<{ id: string; name: string }>>([])
 const selectedProxyIDs = ref<Set<number>>(new Set())
+const savedCaptureProxyIDs = ref<number[]>([])
 const proxySearch = ref('')
 const proxySourceFilter = ref('')
 let viewVersion = 0
 
-const busy = computed(() => toggling.value || Boolean(refreshingModel.value) || loadingProxies.value)
+const busy = computed(() => toggling.value || savingCaptureDefaults.value || Boolean(refreshingModel.value) || loadingProxies.value)
 const boundProxyIDs = computed(() => {
   const ids = new Set<number>()
   if (props.account?.proxy_id) ids.add(props.account.proxy_id)
@@ -148,11 +163,17 @@ const boundProxyIDs = computed(() => {
   return [...ids]
 })
 const allProxyIDs = computed(() => captureProxies.value.map(option => option.proxy.id))
+const missingSavedProxyIDs = computed(() => savedCaptureProxyIDs.value.filter(id => !captureProxies.value.some(option => option.proxy.id === id)))
 const effectiveProxyIDs = computed<number[] | undefined>(() => {
   if (captureMode.value === 'account') return undefined
   if (captureMode.value === 'all') return allProxyIDs.value
   return [...selectedProxyIDs.value]
 })
+const savedUnknownCount = computed(() => missingSavedProxyIDs.value.length)
+const savedConfigured = computed(() => savedCaptureProxyIDs.value.length > 0)
+const accountDefaultSummary = computed(() => savedConfigured.value
+  ? t('admin.accounts.codexTicket.savedDefaultSummary', { count: savedCaptureProxyIDs.value.length })
+  : t('admin.accounts.codexTicket.accountDefaultSummary', { count: boundProxyIDs.value.length }))
 const refreshDisabled = computed(() => !enabled.value || busy.value || (effectiveProxyIDs.value !== undefined && effectiveProxyIDs.value.length === 0))
 const captureModes = computed(() => [
   { value: 'account' as const, label: t('admin.accounts.codexTicket.accountDefault'), hint: t('admin.accounts.codexTicket.accountDefaultHint') },
@@ -183,10 +204,12 @@ function initializeAccount(account: Account) {
   statuses.value = account.codex_turn_tickets ? [...account.codex_turn_tickets] : []
   captureMode.value = 'account'
   selectedProxyIDs.value = new Set(boundProxyIDs.value)
+  savedCaptureProxyIDs.value = [...(account.codex_ticket_capture_proxy_ids || [])]
   proxySearch.value = ''
   proxySourceFilter.value = ''
   errorMessage.value = ''
   toggling.value = false
+  savingCaptureDefaults.value = false
   refreshingModel.value = ''
 }
 
@@ -211,7 +234,8 @@ async function loadCaptureProxies(accountID: number, version: number) {
       return { proxy, sourceIDs: entry ? [...entry.ids] : [], sourceNames: entry ? [...entry.names] : [] }
     })
     captureSources.value = (subscriptions?.sources || []).map(source => ({ id: source.id, name: source.name || source.id }))
-    selectedProxyIDs.value = new Set(boundProxyIDs.value.filter(id => proxies.some(proxy => proxy.id === id)))
+    const saved = savedCaptureProxyIDs.value
+    selectedProxyIDs.value = new Set(saved.length ? saved : boundProxyIDs.value)
   } catch (error: any) {
     if (props.show && props.account?.id === accountID && version === viewVersion) errorMessage.value = error?.message || t('admin.accounts.codexTicket.proxyLoadFailed')
   } finally {
@@ -246,12 +270,46 @@ async function setEnabled(next: boolean) {
     const result = await accountsAPI.setCodexTicketEnabled(accountID, next)
     if (!props.show || props.account?.id !== accountID || version !== viewVersion) return
     enabled.value = result
-    emit('updated', { enabled: result, statuses: statuses.value })
+    emit('updated', { enabled: result, statuses: statuses.value, codex_ticket_capture_proxy_ids: savedCaptureProxyIDs.value })
   } catch (error: any) {
     if (props.show && props.account?.id === accountID && version === viewVersion) errorMessage.value = error?.message || t('admin.accounts.codexTicket.toggleFailed')
   } finally {
     if (version === viewVersion) toggling.value = false
   }
+}
+
+async function persistCaptureDefaults(proxyIDs: number[], switchToAccount = true): Promise<boolean> {
+  if (!props.account || savingCaptureDefaults.value) return false
+  const accountID = props.account.id
+  const version = viewVersion
+  savingCaptureDefaults.value = true
+  errorMessage.value = ''
+  try {
+    const saved = await accountsAPI.setCodexTicketCaptureProxies(accountID, proxyIDs)
+    if (!props.show || props.account?.id !== accountID || version !== viewVersion) return false
+    savedCaptureProxyIDs.value = [...saved]
+    if (switchToAccount) {
+      captureMode.value = 'account'
+      selectedProxyIDs.value = new Set(saved.length ? saved : boundProxyIDs.value)
+    }
+    emit('updated', { enabled: enabled.value, statuses: statuses.value, codex_ticket_capture_proxy_ids: saved })
+    return true
+  } catch (error: any) {
+    if (props.show && props.account?.id === accountID && version === viewVersion) errorMessage.value = error?.message || t('admin.accounts.codexTicket.captureDefaultsSaveFailed')
+    return false
+  } finally {
+    if (version === viewVersion) savingCaptureDefaults.value = false
+  }
+}
+
+function saveCaptureDefaults() {
+  if (busy.value || effectiveProxyIDs.value === undefined) return
+  void persistCaptureDefaults([...effectiveProxyIDs.value])
+}
+
+function resetCaptureDefaults() {
+  if (busy.value) return
+  void persistCaptureDefaults([])
 }
 
 async function refresh(model: string) {
@@ -262,6 +320,10 @@ async function refresh(model: string) {
   refreshingModel.value = model
   errorMessage.value = ''
   try {
+    if (proxyIDs !== undefined) {
+      const saved = await persistCaptureDefaults([...proxyIDs], false)
+      if (!saved) return
+    }
     const next = proxyIDs === undefined ? await accountsAPI.refreshCodexTicket(accountID, model) : await accountsAPI.refreshCodexTicket(accountID, model, proxyIDs)
     if (!props.show || props.account?.id !== accountID || version !== viewVersion) return
     statuses.value = next

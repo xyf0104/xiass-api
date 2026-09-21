@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxCodexTicketCaptureProxyIDs = 64
+const maxCodexTicketCaptureProxyIDs = service.MaxOpenAICodexTicketCaptureProxyIDs
 
 type refreshCodexTicketRequest struct {
 	Model    string   `json:"model"`
@@ -23,6 +23,54 @@ type refreshCodexTicketRequest struct {
 
 type setCodexTicketEnabledRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
+}
+
+// SetCodexTicketCaptureProxies saves only the automatic capture defaults. It
+// neither enables tickets nor changes the account's business proxy bindings.
+func (h *AccountHandler) SetCodexTicketCaptureProxies(c *gin.Context) {
+	accountID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || accountID <= 0 {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	var req struct {
+		ProxyIDs *[]int64 `json:"proxy_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ProxyIDs == nil {
+		response.BadRequest(c, "proxy_ids is required; use an empty array to follow the business exits")
+		return
+	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if !service.IsOpenAICodexTicketAccount(account) {
+		response.BadRequest(c, "Account is not an eligible OpenAI OAuth account")
+		return
+	}
+	ids := []int64{}
+	if len(*req.ProxyIDs) > 0 {
+		proxies, err := h.loadCodexTicketCaptureProxies(c.Request.Context(), *req.ProxyIDs)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		for _, proxy := range proxies {
+			ids = append(ids, proxy.ID)
+		}
+	}
+	if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{
+		service.OpenAICodexTicketCaptureProxyIDsExtraKey: ids,
+	}); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"proxy_ids": ids})
 }
 
 // SetCodexTicketEnabled changes the explicit per-account opt-in. Missing keys

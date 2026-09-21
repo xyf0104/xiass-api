@@ -76,6 +76,7 @@ type DataAccount struct {
 type DataAccountProxyBinding struct {
 	ProxyKey       string `json:"proxy_key"`
 	MaxConcurrency int    `json:"max_concurrency"`
+	RoutePriority  int    `json:"route_priority,omitempty"`
 }
 
 type DataImportRequest struct {
@@ -213,6 +214,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 				proxyBindings = append(proxyBindings, DataAccountProxyBinding{
 					ProxyKey:       key,
 					MaxConcurrency: binding.MaxConcurrency,
+					RoutePriority:  binding.RoutePriority,
 				})
 			}
 		}
@@ -478,6 +480,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			proxyBindings = append(proxyBindings, service.AccountProxyBindingInput{
 				ProxyID:        id,
 				MaxConcurrency: binding.MaxConcurrency,
+				RoutePriority:  binding.RoutePriority,
 			})
 		}
 		if bindingError {

@@ -94,6 +94,8 @@ type openAIWSHandshakeCompatibilityKey struct {
 	threadID            string
 	clientRequestID     string
 	codexWindowID       string
+	managedTicket       bool
+	ticketDigest        string
 }
 
 type openAIWSConnLease struct {
@@ -2098,6 +2100,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
+	logCodexTicketDispatch(ctx, req.Account, headers, req.ProxyURL, "websocket_handshake")
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
@@ -2332,6 +2335,11 @@ func (c *openAIWSConn) matchesAcquireCompatibility(wanted openAIWSHandshakeCompa
 	actual := c.handshakeCompatibility
 	if continuation && actual.owner.client != "" && actual.owner.client == wanted.owner.client && actual.owner.upstream == wanted.owner.upstream {
 		actual.owner.conversation = wanted.owner.conversation
+		// An owner-verified response-ID chain belongs to its original handshake.
+		// Refreshing a ticket must rotate new sessions, not break an active chain.
+		if actual.managedTicket && wanted.managedTicket {
+			actual.ticketDigest = wanted.ticketDigest
+		}
 	}
 	return actual == wanted
 }
@@ -2364,6 +2372,12 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
+	}
+	if OpenAICodexTicketEnabledForAccount(account) {
+		key.managedTicket = true
+		if state := extractOpenAICodexTurnState(headers); state != "" {
+			key.ticketDigest = openAIOwnershipDigest("managed-ticket-v1", state)
+		}
 	}
 	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {

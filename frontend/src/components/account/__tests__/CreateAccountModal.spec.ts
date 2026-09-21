@@ -219,6 +219,24 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(helpDialog?.props('width')).toBe('wide')
   })
 
+  it('persists explicit adaptive mode for OpenAI multi-proxy creation', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await selectButtonByText(wrapper, 'admin.accounts.multiProxy.multiMode')
+    await wrapper.get('[data-testid="multi-proxy-adaptive-mode"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Adaptive OpenAI')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.extra?.xiass_multi_proxy_adaptive_enabled).toBe(true)
+    expect(payload?.proxy_bindings).toEqual([])
+  })
+
   it('hides only the redundant account toggle when every selected group enables tier pricing', async () => {
     authIsSimpleMode.value = false
     const wrapper = mountModal([

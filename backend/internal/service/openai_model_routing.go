@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,8 +13,9 @@ import (
 // priority. It combines the existing group-scoped routing with the global
 // model priority panel. An empty preference leaves scheduling unchanged.
 type openAIModelRoutingPreference struct {
-	accountIDs map[int64]struct{}
-	poolIDs    map[string]struct{}
+	accountIDs   map[int64]struct{}
+	poolIDs      map[string]struct{}
+	accountRanks map[int64]int
 }
 
 func newOpenAIModelRoutingPreference(accountIDs, poolIDs []int64) openAIModelRoutingPreference {
@@ -37,25 +39,6 @@ func newOpenAIModelRoutingPreference(accountIDs, poolIDs []int64) openAIModelRou
 		preference.poolIDs[strconv.FormatInt(poolID, 10)] = struct{}{}
 	}
 	return preference
-}
-
-func (p openAIModelRoutingPreference) withAccountIDSet(accountIDs map[int64]struct{}) openAIModelRoutingPreference {
-	if len(accountIDs) == 0 {
-		return p
-	}
-	if len(p.accountIDs) == 0 {
-		p.accountIDs = accountIDs
-		return p
-	}
-	merged := make(map[int64]struct{}, len(p.accountIDs)+len(accountIDs))
-	for accountID := range p.accountIDs {
-		merged[accountID] = struct{}{}
-	}
-	for accountID := range accountIDs {
-		merged[accountID] = struct{}{}
-	}
-	p.accountIDs = merged
-	return p
 }
 
 func (p openAIModelRoutingPreference) configured() bool {
@@ -89,7 +72,7 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	}
 	preference := openAIModelRoutingPreference{}
 	if s.settingService != nil {
-		preference = preference.withAccountIDSet(s.settingService.ResolveOpenAIModelPriorityAccountIDs(ctx, requestedModel))
+		preference = s.settingService.resolveOpenAIModelPriorityPreference(ctx, requestedModel)
 	}
 	if groupID == nil {
 		return preference
@@ -120,26 +103,40 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 		}
 		groupPreference.accountIDs[accountID] = struct{}{}
 	}
+	groupPreference.accountRanks = preference.accountRanks
 	return groupPreference
 }
 
-func partitionOpenAIAccountsByModelPreference(
-	accounts []*Account,
-	preference openAIModelRoutingPreference,
-) ([]*Account, []*Account) {
-	if !preference.configured() {
-		return nil, accounts
-	}
-	preferred := make([]*Account, 0, len(accounts))
-	fallback := make([]*Account, 0, len(accounts))
-	for _, account := range accounts {
-		if preference.matches(account) {
-			preferred = append(preferred, account)
-		} else {
-			fallback = append(fallback, account)
+// Explicit model order precedes account-global priority. Legacy preferences
+// remain one tier; group/pool additions follow explicitly ordered accounts.
+func (p openAIModelRoutingPreference) tier(account *Account) int {
+	if account != nil {
+		if rank, ok := p.accountRanks[account.ID]; ok {
+			return rank
 		}
 	}
-	return preferred, fallback
+	if p.matches(account) {
+		return len(p.accountRanks)
+	}
+	return len(p.accountRanks) + 1
+}
+
+func partitionOpenAIModelPreferenceTiers[T any](items []T, accountOf func(T) *Account, preference openAIModelRoutingPreference) [][]T {
+	buckets := make(map[int][]T)
+	for _, item := range items {
+		tier := preference.tier(accountOf(item))
+		buckets[tier] = append(buckets[tier], item)
+	}
+	keys := make([]int, 0, len(buckets))
+	for tier := range buckets {
+		keys = append(keys, tier)
+	}
+	sort.Ints(keys)
+	result := make([][]T, 0, len(keys))
+	for _, tier := range keys {
+		result = append(result, buckets[tier])
+	}
+	return result
 }
 
 func modelRoutingPreferenceFirst(
@@ -150,26 +147,19 @@ func modelRoutingPreferenceFirst(
 	if !preference.configured() {
 		return false, false
 	}
-	leftPreferred := preference.matches(left)
-	rightPreferred := preference.matches(right)
-	if leftPreferred == rightPreferred {
+	leftTier, rightTier := preference.tier(left), preference.tier(right)
+	if leftTier == rightTier {
 		return false, false
 	}
-	return leftPreferred, true
+	return leftTier < rightTier, true
 }
 
 func sortOpenAIAccountsByModelPreference(
 	accounts []*Account,
 	preference openAIModelRoutingPreference,
 ) {
-	preferred, fallback := partitionOpenAIAccountsByModelPreference(accounts, preference)
-	if len(preferred) == 0 {
-		sortAccountsByPriorityAndLastUsed(accounts, false)
-		return
-	}
-	sortAccountsByPriorityAndLastUsed(preferred, false)
-	sortAccountsByPriorityAndLastUsed(fallback, false)
-	copy(accounts, append(preferred, fallback...))
+	sortAccountsByPriorityAndLastUsed(accounts, false)
+	sort.SliceStable(accounts, func(i, j int) bool { return preference.tier(accounts[i]) < preference.tier(accounts[j]) })
 }
 
 func orderOpenAIExecutionNodeCandidatesByModelPreference[T any](
@@ -188,27 +178,11 @@ func orderOpenAIExecutionNodeCandidatesByModelPreference[T any](
 			anchor,
 		)
 	}
-	preferred := make([]T, 0, len(items))
-	fallback := make([]T, 0, len(items))
-	for _, item := range items {
-		if preference.matches(accountOf(item)) {
-			preferred = append(preferred, item)
-		} else {
-			fallback = append(fallback, item)
-		}
+	ordered := make([]T, 0, len(items))
+	for _, tier := range partitionOpenAIModelPreferenceTiers(items, accountOf, preference) {
+		ordered = append(ordered, orderExecutionNodeCandidatesWithinPriorities(
+			tier, accountOf, func(item T) int { return openAIAccountSchedulingPriority(accountOf(item)) }, policy, anchor,
+		)...)
 	}
-	ordered := orderExecutionNodeCandidatesWithinPriorities(
-		preferred,
-		accountOf,
-		func(item T) int { return openAIAccountSchedulingPriority(accountOf(item)) },
-		policy,
-		anchor,
-	)
-	return append(ordered, orderExecutionNodeCandidatesWithinPriorities(
-		fallback,
-		accountOf,
-		func(item T) int { return openAIAccountSchedulingPriority(accountOf(item)) },
-		policy,
-		anchor,
-	)...)
+	return ordered
 }

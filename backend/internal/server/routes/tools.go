@@ -63,6 +63,16 @@ func RegisterToolRoutes(
 			h.Admin.OpenAIOAuth.PollOpenAIAdsPowerHelperCommand,
 		)
 		adsPower.POST(
+			"/helpers/profiles/inventory",
+			rateLimiter.LimitWithOptions("public-adspower-helper-inventory", 60, time.Minute, strict),
+			h.Admin.OpenAIOAuth.InventoryOpenAIAdsPowerProfiles,
+		)
+		adsPower.POST(
+			"/helpers/profiles/release",
+			rateLimiter.LimitWithOptions("public-adspower-helper-release", 120, time.Minute, strict),
+			h.Admin.OpenAIOAuth.ReleaseOpenAIAdsPowerProfile,
+		)
+		adsPower.POST(
 			"/launch-tickets/redeem",
 			rateLimiter.LimitWithOptions("public-adspower-ticket-redeem", 30, time.Minute, strict),
 			h.Admin.OpenAIOAuth.RedeemOpenAIAdsPowerLaunchTicket,

@@ -95,6 +95,34 @@ When AdsPower API security verification is enabled, place the key in
 `api_key` and keep the file mode at `0600`, or provide `ADSPOWER_API_KEY` to
 the process environment. Never add the real config to the repository.
 
+## Profile Lifecycle
+
+The resident helper checks paired servers once per minute before reclaiming
+profiles it can prove are XIASS-managed. Unbound profiles are reclaimed after
+the pending authorization window. Soft-deleted accounts and accounts explicitly
+reported as banned, deleted or disabled can release their profiles. Ordinary
+401 responses, unknown errors, active tasks, running browsers and manual AdsPower
+profiles are not deletion candidates. Incomplete or unavailable server inventory
+stops reclamation instead of treating the inventory as empty.
+
+When AdsPower refuses creation because its profile quota is full, the helper
+first attempts safe reclamation. If the quota remains full, automated OAuth
+uses the oldest eligible managed profile in that server's pool and advances a
+persisted round-robin cursor. The existing fingerprint is retained and the
+server's configured proxy and disabled WebRTC policy are applied. Active profile
+leases and pending tasks are skipped; if every eligible profile is busy, the
+request reports that it must wait rather than closing another account's browser.
+
+Shared profiles use a fresh, disposable browser context for each authorization,
+including subsequent authorizations of the original account. Cookies and web
+storage are not shared between accounts. Server-side binding metadata and the
+local ownership ledger both preserve this isolation requirement. The same
+physical profile is never used concurrently by two helper tasks.
+
+Upgrade both the XIASS server and the resident helper for lifecycle support.
+An older server without inventory/release endpoints remains usable for normal
+authorization, but automatic reclamation and capacity fallback fail closed.
+
 ## Commands
 
 ```bash

@@ -9,10 +9,12 @@ import (
 )
 
 const (
-	AccountMultiProxyExtraKey = "xiass_multi_proxy"
-	accountMultiProxyVersion  = 1
-	maxAccountProxyBindings   = 128
-	maxAccountProxyCapacity   = 10000
+	AccountMultiProxyExtraKey                = "xiass_multi_proxy"
+	AccountMultiProxyAdaptiveEnabledExtraKey = "xiass_multi_proxy_adaptive_enabled"
+	accountMultiProxyVersion                 = 1
+	maxAccountProxyBindings                  = 128
+	maxAccountProxyCapacity                  = 10000
+	maxAccountProxyRoutePriority             = 1000000
 )
 
 // AccountProxyBindingInput is the administrator-owned configuration for one
@@ -20,6 +22,7 @@ const (
 type AccountProxyBindingInput struct {
 	ProxyID        int64 `json:"proxy_id"`
 	MaxConcurrency int   `json:"max_concurrency"`
+	RoutePriority  int   `json:"route_priority,omitempty"`
 }
 
 // AccountProxyBinding is the hydrated runtime form. Proxy is internal and the
@@ -27,6 +30,7 @@ type AccountProxyBindingInput struct {
 type AccountProxyBinding struct {
 	ProxyID        int64  `json:"proxy_id"`
 	MaxConcurrency int    `json:"max_concurrency"`
+	RoutePriority  int    `json:"route_priority,omitempty"`
 	Proxy          *Proxy `json:"proxy,omitempty"`
 }
 
@@ -77,6 +81,9 @@ func normalizeAccountProxyBindingInputs(bindings []AccountProxyBindingInput) ([]
 		}
 		if binding.MaxConcurrency <= 0 {
 			return nil, 0, fmt.Errorf("max_concurrency must be greater than 0 for proxy %d", binding.ProxyID)
+		}
+		if binding.RoutePriority < 0 || binding.RoutePriority > maxAccountProxyRoutePriority {
+			return nil, 0, fmt.Errorf("route_priority must be between 0 and %d for proxy %d", maxAccountProxyRoutePriority, binding.ProxyID)
 		}
 		if _, exists := seen[binding.ProxyID]; exists {
 			return nil, 0, fmt.Errorf("proxy %d is selected more than once", binding.ProxyID)
@@ -148,6 +155,7 @@ func setAccountProxyBindingsExtra(extra map[string]any, bindings []AccountProxyB
 		items = append(items, map[string]any{
 			"proxy_id":        binding.ProxyID,
 			"max_concurrency": binding.MaxConcurrency,
+			"route_priority":  binding.RoutePriority,
 		})
 	}
 	extra[AccountMultiProxyExtraKey] = map[string]any{
@@ -174,10 +182,14 @@ func AccountProxyBindingsFromExtra(extra map[string]any) []AccountProxyBinding {
 		}
 		proxyID, okID := accountProxyBindingNumber(item["proxy_id"])
 		maxConcurrency, okConcurrency := accountProxyBindingNumber(item["max_concurrency"])
-		if !okID || !okConcurrency {
+		routePriority, okPriority := accountProxyBindingNonNegativeNumber(item["route_priority"])
+		if item["route_priority"] == nil {
+			okPriority = true
+		}
+		if !okID || !okConcurrency || !okPriority || routePriority > maxAccountProxyRoutePriority {
 			continue
 		}
-		inputs = append(inputs, AccountProxyBindingInput{ProxyID: proxyID, MaxConcurrency: int(maxConcurrency)})
+		inputs = append(inputs, AccountProxyBindingInput{ProxyID: proxyID, MaxConcurrency: int(maxConcurrency), RoutePriority: int(routePriority)})
 	}
 	normalized, _, err := normalizeAccountProxyBindingInputs(inputs)
 	if err != nil {
@@ -188,9 +200,27 @@ func AccountProxyBindingsFromExtra(extra map[string]any) []AccountProxyBinding {
 		bindings = append(bindings, AccountProxyBinding{
 			ProxyID:        binding.ProxyID,
 			MaxConcurrency: binding.MaxConcurrency,
+			RoutePriority:  binding.RoutePriority,
 		})
 	}
 	return bindings
+}
+
+func accountProxyBindingNonNegativeNumber(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), typed >= 0
+	case int64:
+		return typed, typed >= 0
+	case float64:
+		integer := int64(typed)
+		return integer, typed == float64(integer) && integer >= 0
+	case json.Number:
+		integer, err := typed.Int64()
+		return integer, err == nil && integer >= 0
+	default:
+		return 0, false
+	}
 }
 
 func accountProxyBindingItems(value any) []any {
@@ -266,6 +296,7 @@ func AccountProxyBindingInputsFromExtra(extra map[string]any) []AccountProxyBind
 		inputs = append(inputs, AccountProxyBindingInput{
 			ProxyID:        binding.ProxyID,
 			MaxConcurrency: binding.MaxConcurrency,
+			RoutePriority:  binding.RoutePriority,
 		})
 	}
 	return inputs
@@ -278,6 +309,14 @@ func AccountProxyBindingIDsFromExtra(extra map[string]any) []int64 {
 		ids = append(ids, binding.ProxyID)
 	}
 	return ids
+}
+
+func AccountMultiProxyAdaptiveEnabled(extra map[string]any) bool {
+	if extra == nil {
+		return false
+	}
+	enabled, _ := extra[AccountMultiProxyAdaptiveEnabledExtraKey].(bool)
+	return enabled
 }
 
 func (a *Account) MultiProxyConcurrency() int {

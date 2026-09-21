@@ -55,6 +55,7 @@ archives:
     files:
       - LICENSE*
       - README*
+      - docs/multi-proxy-routing.md
       - install.sh
       - tools/xiass-proxy-agent/LICENSE
       - tools/xiass-proxy-agent/THIRD_PARTY_NOTICES.md

@@ -865,12 +865,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		return nil, compactBlocked
 	}
 	preference := s.resolveOpenAIModelRoutingPreference(ctx, groupID, platform, requestedModel)
-	preferred, fallback := partitionOpenAIAccountsByModelPreference(eligible, preference)
-	if len(preferred) > 0 {
-		eligible = preferred
-	} else {
-		eligible = fallback
-	}
+	eligible = partitionOpenAIModelPreferenceTiers(eligible, func(account *Account) *Account { return account }, preference)[0]
 	eligible = partitionOpenAIAccountsByPriority(eligible)[0]
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {

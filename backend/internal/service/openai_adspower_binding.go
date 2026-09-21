@@ -27,6 +27,7 @@ type OpenAIAdsPowerBinding struct {
 	WebRTCDisabled        bool       `json:"webrtc_disabled"`
 	FingerprintRandomized bool       `json:"fingerprint_randomized"`
 	FingerprintSlot       int        `json:"fingerprint_slot,omitempty"`
+	SharedProfile         bool       `json:"shared_profile,omitempty"`
 	BoundAt               *time.Time `json:"bound_at,omitempty"`
 	LastVerifiedAt        *time.Time `json:"last_verified_at,omitempty"`
 	LastLaunchedAt        *time.Time `json:"last_launched_at,omitempty"`

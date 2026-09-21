@@ -2639,15 +2639,16 @@ const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = nul
 const handleTest = (a: Account) => { if (!allowAccountWrite(a)) return; testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const openCodexTicket = (a: Account) => { codexTicketAcc.value = a; showCodexTicket.value = true }
-const handleCodexTicketUpdated = (payload: { enabled: boolean; statuses: NonNullable<Account['codex_turn_tickets']> }) => {
+const handleCodexTicketUpdated = (payload: { enabled: boolean; statuses: NonNullable<Account['codex_turn_tickets']>; codex_ticket_capture_proxy_ids?: number[] }) => {
   if (!codexTicketAcc.value) return
   const accountID = codexTicketAcc.value.id
-  codexTicketAcc.value = { ...codexTicketAcc.value, codex_ticket_enabled: payload.enabled, codex_turn_tickets: payload.statuses }
+  codexTicketAcc.value = { ...codexTicketAcc.value, codex_ticket_enabled: payload.enabled, codex_turn_tickets: payload.statuses, ...(payload.codex_ticket_capture_proxy_ids !== undefined ? { codex_ticket_capture_proxy_ids: payload.codex_ticket_capture_proxy_ids } : {}) }
   const index = accounts.value.findIndex(account => account.id === accountID)
   if (index >= 0) accounts.value[index] = {
     ...accounts.value[index],
     codex_ticket_enabled: payload.enabled,
-    codex_turn_tickets: payload.statuses
+    codex_turn_tickets: payload.statuses,
+    ...(payload.codex_ticket_capture_proxy_ids !== undefined ? { codex_ticket_capture_proxy_ids: payload.codex_ticket_capture_proxy_ids } : {})
   }
 }
 const handleOpenBillingDetails = (payload: { account: Account; windowLabel: string; startTime: string; endTime: string }) => {
