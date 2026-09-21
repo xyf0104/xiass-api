@@ -64,7 +64,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	serviceBuildInfo := provideServiceBuildInfo(buildInfo)
 	updateService := service.ProvideUpdateService(updateCache, gitHubReleaseClient, serviceBuildInfo)
 	dockerUpdateService := service.ProvideDockerUpdateService(updateService)
-	settingService := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, accountRepository, executionNodeHeartbeatService, dockerUpdateService, configConfig)
+	settingService, err := service.ProvideSettingService(settingRepository, groupRepository, proxyRepository, accountRepository, executionNodeHeartbeatService, dockerUpdateService, configConfig)
+	if err != nil {
+		return nil, err
+	}
 	emailCache := repository.NewEmailCache(redisClient)
 	emailService := service.NewEmailService(settingRepository, emailCache)
 	turnstileVerifier := repository.NewTurnstileVerifier()

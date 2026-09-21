@@ -299,7 +299,7 @@ func (s *SettingService) resolveOpenAIModelPriorityPreference(ctx context.Contex
 				current, _ := s.openAIModelPriorityCache.Load().(*cachedOpenAIModelPrioritySettings)
 				now := time.Now()
 				if current != nil && current.expiresAt <= now.UnixNano() {
-					s.openAIModelPriorityCache.Store(&cachedOpenAIModelPrioritySettings{
+					s.openAIModelPriorityCache.CompareAndSwap(current, &cachedOpenAIModelPrioritySettings{
 						settings: current.settings, compiled: current.compiled,
 						expiresAt: now.Add(openAIModelPriorityErrorCacheTTL).UnixNano(),
 					})

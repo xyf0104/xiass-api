@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"time"
 
@@ -811,8 +812,14 @@ func ProvideDockerUpdateService(updateService *UpdateService) *DockerUpdateServi
 	return NewDockerUpdateService(updateService)
 }
 
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, accountRepo AccountRepository, heartbeat *ExecutionNodeHeartbeatService, dockerUpdateService *DockerUpdateService, cfg *config.Config) *SettingService {
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, accountRepo AccountRepository, heartbeat *ExecutionNodeHeartbeatService, dockerUpdateService *DockerUpdateService, cfg *config.Config) (*SettingService, error) {
 	svc := NewSettingService(settingRepo, cfg)
+	// Load hard model routing preferences before accepting the first request.
+	// A missing setting is a valid default; an unreadable rule is not permission
+	// to silently send traffic to unselected accounts.
+	if _, err := svc.GetOpenAIModelPrioritySettings(context.Background()); err != nil {
+		return nil, fmt.Errorf("initialize OpenAI model priority settings: %w", err)
+	}
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
 	if preparer, ok := accountRepo.(ExecutionNodeAccountPreparer); ok {
@@ -852,7 +859,7 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 	SetCodexCanonicalUserAgentResolver(func() string {
 		return svc.GetOpenAICodexCanonicalUserAgent(context.Background())
 	})
-	return svc
+	return svc, nil
 }
 
 // ProvideBillingCacheService wires BillingCacheService with its RPM dependencies.
