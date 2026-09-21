@@ -12,7 +12,7 @@ import (
 )
 
 func TestPairResidentHelperAcceptsLegacyEnvironmentAndPreservesProfiles(t *testing.T) {
-	for _, environment := range []string{"api.xiass.com", "api2"} {
+	for _, environment := range []string{"api.example.test", "api2"} {
 		t.Run(environment, func(t *testing.T) {
 			called := false
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
