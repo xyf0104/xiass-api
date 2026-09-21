@@ -12,12 +12,14 @@ import (
 )
 
 const (
-	openAIModelPriorityCacheTTL      = 5 * time.Second
-	openAIModelPriorityErrorCacheTTL = time.Second
-	openAIModelPriorityDBTimeout     = 2 * time.Second
-	openAIModelPriorityRefreshKey    = "openai_model_priority_settings"
-	openAIModelPriorityMaxRules      = 100
-	openAIModelPriorityMaxAccounts   = 10000
+	openAIModelPriorityCacheTTL                            = 5 * time.Second
+	openAIModelPriorityErrorCacheTTL                       = time.Second
+	openAIModelPriorityDBTimeout                           = 2 * time.Second
+	openAIModelPriorityRefreshKey                          = "openai_model_priority_settings"
+	openAIModelPriorityMaxRules                            = 100
+	openAIModelPriorityMaxAccounts                         = 10000
+	openAIModelPriorityDefaultSmartRotationCooldownMinutes = 30
+	openAIModelPriorityMaxSmartRotationCooldownMinutes     = 1440
 )
 
 var openAIModelPriorityPattern = regexp.MustCompile(`^[A-Za-z0-9._:@/-]+\*?$`)
@@ -33,8 +35,10 @@ type OpenAIModelPriorityRule struct {
 }
 
 type OpenAIModelPrioritySettings struct {
-	Enabled bool                      `json:"enabled"`
-	Rules   []OpenAIModelPriorityRule `json:"rules"`
+	Enabled                      bool                      `json:"enabled"`
+	Rules                        []OpenAIModelPriorityRule `json:"rules"`
+	SmartRotationEnabled         bool                      `json:"smart_rotation_enabled"`
+	SmartRotationCooldownMinutes int                       `json:"smart_rotation_cooldown_minutes"`
 }
 
 type compiledOpenAIModelPriorityRule struct {
@@ -44,8 +48,10 @@ type compiledOpenAIModelPriorityRule struct {
 }
 
 type compiledOpenAIModelPrioritySettings struct {
-	enabled bool
-	rules   []compiledOpenAIModelPriorityRule
+	enabled                      bool
+	rules                        []compiledOpenAIModelPriorityRule
+	smartRotationEnabled         bool
+	smartRotationCooldownMinutes int
 }
 
 type cachedOpenAIModelPrioritySettings struct {
@@ -55,11 +61,21 @@ type cachedOpenAIModelPrioritySettings struct {
 }
 
 func DefaultOpenAIModelPrioritySettings() *OpenAIModelPrioritySettings {
-	return &OpenAIModelPrioritySettings{Enabled: false, Rules: []OpenAIModelPriorityRule{}}
+	return &OpenAIModelPrioritySettings{
+		Enabled:                      false,
+		Rules:                        []OpenAIModelPriorityRule{},
+		SmartRotationEnabled:         false,
+		SmartRotationCooldownMinutes: openAIModelPriorityDefaultSmartRotationCooldownMinutes,
+	}
 }
 
 func cloneOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) *OpenAIModelPrioritySettings {
-	cloned := OpenAIModelPrioritySettings{Enabled: settings.Enabled, Rules: make([]OpenAIModelPriorityRule, len(settings.Rules))}
+	cloned := OpenAIModelPrioritySettings{
+		Enabled:                      settings.Enabled,
+		Rules:                        make([]OpenAIModelPriorityRule, len(settings.Rules)),
+		SmartRotationEnabled:         settings.SmartRotationEnabled,
+		SmartRotationCooldownMinutes: settings.SmartRotationCooldownMinutes,
+	}
 	for i, rule := range settings.Rules {
 		cloned.Rules[i] = OpenAIModelPriorityRule{
 			ModelPattern: rule.ModelPattern,
@@ -77,8 +93,20 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 	if len(settings.Rules) > openAIModelPriorityMaxRules {
 		return nil, fmt.Errorf("rules cannot exceed %d", openAIModelPriorityMaxRules)
 	}
+	cooldownMinutes := settings.SmartRotationCooldownMinutes
+	if cooldownMinutes == 0 {
+		cooldownMinutes = openAIModelPriorityDefaultSmartRotationCooldownMinutes
+	}
+	if cooldownMinutes < 0 || cooldownMinutes > openAIModelPriorityMaxSmartRotationCooldownMinutes {
+		return nil, fmt.Errorf("smart_rotation_cooldown_minutes must be between 1 and %d", openAIModelPriorityMaxSmartRotationCooldownMinutes)
+	}
 
-	normalized := &OpenAIModelPrioritySettings{Enabled: settings.Enabled, Rules: make([]OpenAIModelPriorityRule, 0, len(settings.Rules))}
+	normalized := &OpenAIModelPrioritySettings{
+		Enabled:                      settings.Enabled,
+		Rules:                        make([]OpenAIModelPriorityRule, 0, len(settings.Rules)),
+		SmartRotationEnabled:         settings.SmartRotationEnabled,
+		SmartRotationCooldownMinutes: cooldownMinutes,
+	}
 	seenPatterns := make(map[string]struct{}, len(settings.Rules))
 	for i, rule := range settings.Rules {
 		pattern := strings.TrimSpace(rule.ModelPattern)
@@ -133,7 +161,12 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 }
 
 func compileOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) compiledOpenAIModelPrioritySettings {
-	compiled := compiledOpenAIModelPrioritySettings{enabled: settings.Enabled, rules: make([]compiledOpenAIModelPriorityRule, 0, len(settings.Rules))}
+	compiled := compiledOpenAIModelPrioritySettings{
+		enabled:                      settings.Enabled,
+		rules:                        make([]compiledOpenAIModelPriorityRule, 0, len(settings.Rules)),
+		smartRotationEnabled:         settings.SmartRotationEnabled,
+		smartRotationCooldownMinutes: settings.SmartRotationCooldownMinutes,
+	}
 	for _, rule := range settings.Rules {
 		accountIDs := make(map[int64]struct{}, len(rule.AccountIDs))
 		for _, accountID := range rule.AccountIDs {

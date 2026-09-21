@@ -17,6 +17,52 @@
       <span class="h-7 w-7 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
     </div>
     <div v-else>
+      <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)_auto] lg:items-center">
+          <div class="min-w-0">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.smartRotationTitle') }}</h3>
+            <p id="model-priority-smart-rotation-help" class="mt-1 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">
+              {{ t('admin.executionNodes.smartRotationDescription') }}
+            </p>
+            <p v-if="!draft.enabled" class="mt-1 text-sm text-amber-700 dark:text-amber-300">
+              {{ t('admin.executionNodes.smartRotationRequiresPriority') }}
+            </p>
+          </div>
+
+          <label class="block min-w-0" for="model-priority-smart-rotation-cooldown">
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.executionNodes.smartRotationCooldown') }}</span>
+            <Select
+              id="model-priority-smart-rotation-cooldown"
+              class="mt-1 w-full"
+              :model-value="draft.smart_rotation_cooldown_minutes"
+              :options="smartRotationCooldownOptions"
+              :disabled="smartRotationCooldownDisabled"
+              :aria-label="t('admin.executionNodes.smartRotationCooldown')"
+              aria-describedby="model-priority-smart-rotation-help"
+              data-testid="model-priority-smart-rotation-cooldown"
+              @update:model-value="setSmartRotationCooldown"
+            />
+          </label>
+
+          <div class="flex min-h-10 items-center justify-between gap-3 lg:justify-end">
+            <span
+              class="text-sm font-medium"
+              :class="draft.enabled && draft.smart_rotation_enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'"
+              data-testid="model-priority-smart-rotation-state"
+            >
+              {{ smartRotationState }}
+            </span>
+            <Toggle
+              v-model="draft.smart_rotation_enabled"
+              :disabled="smartRotationToggleDisabled"
+              :aria-label="t('admin.executionNodes.smartRotationTitle')"
+              aria-describedby="model-priority-smart-rotation-help"
+              data-testid="model-priority-smart-rotation-toggle"
+            />
+          </div>
+        </div>
+      </div>
+
       <div v-if="draft.rules.length" class="divide-y divide-gray-100 dark:divide-dark-700">
         <div v-for="(rule, index) in draft.rules" :key="rule.key" class="grid gap-3 px-5 py-4 sm:px-6 lg:grid-cols-[minmax(14rem,1fr)_11rem_auto_auto] lg:items-end">
           <label class="block min-w-0" :for="`model-priority-pattern-${rule.key}`">
@@ -205,7 +251,15 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores/app'
 
 interface DraftRule extends OpenAIModelPriorityRule { key: number }
-interface DraftSettings { enabled: boolean; rules: DraftRule[] }
+interface DraftSettings {
+  enabled: boolean
+  smart_rotation_enabled: boolean
+  smart_rotation_cooldown_minutes: number
+  rules: DraftRule[]
+}
+
+const SMART_ROTATION_DEFAULT_COOLDOWN_MINUTES = 30
+const SMART_ROTATION_COOLDOWN_OPTIONS = [1, 5, 15, 30, 60, 120, 1440]
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -216,7 +270,12 @@ const catalogLoaded = ref(false)
 const accounts = ref<Account[]>([])
 const groups = ref<AdminGroup[]>([])
 const pools = ref<AccountPool[]>([])
-const draft = reactive<DraftSettings>({ enabled: false, rules: [] })
+const draft = reactive<DraftSettings>({
+  enabled: false,
+  smart_rotation_enabled: false,
+  smart_rotation_cooldown_minutes: SMART_ROTATION_DEFAULT_COOLDOWN_MINUTES,
+  rules: []
+})
 const pickerRuleIndex = ref<number | null>(null)
 const pickerSelected = ref<Set<number>>(new Set())
 const pickerOrder = ref<number[]>([])
@@ -258,6 +317,37 @@ const nodeOptions = computed(() => {
   const values = Array.from(new Set(accounts.value.map(account => account.execution_node_id?.trim()).filter((value): value is string => Boolean(value)))).sort()
   return [{ value: '', label: t('admin.executionNodes.allExecutionNodes') }, ...values.map(value => ({ value, label: value }))]
 })
+const smartRotationState = computed(() => {
+  if (!draft.enabled) return t('admin.executionNodes.smartRotationInactive')
+  return draft.smart_rotation_enabled ? t('admin.executionNodes.on') : t('admin.executionNodes.off')
+})
+const smartRotationToggleDisabled = computed(() => loading.value || saving.value || !draft.enabled)
+const smartRotationCooldownDisabled = computed(() => smartRotationToggleDisabled.value || !draft.smart_rotation_enabled)
+const smartRotationCooldownOptions = computed(() => {
+  const values = new Set(SMART_ROTATION_COOLDOWN_OPTIONS)
+  if (isValidSmartRotationCooldown(draft.smart_rotation_cooldown_minutes)) values.add(draft.smart_rotation_cooldown_minutes)
+  return Array.from(values)
+    .sort((left, right) => left - right)
+    .map(value => ({
+      value,
+      label: value === 1440
+        ? t('admin.executionNodes.smartRotationCooldownDay')
+        : t('admin.executionNodes.smartRotationCooldownMinutes', { count: value })
+    }))
+})
+
+function isValidSmartRotationCooldown(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 1440
+}
+
+function normalizeSmartRotationCooldown(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return isValidSmartRotationCooldown(parsed) ? parsed : SMART_ROTATION_DEFAULT_COOLDOWN_MINUTES
+}
+
+function setSmartRotationCooldown(value: string | number | boolean | null): void {
+  draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(value)
+}
 
 function accountPlan(account: Account): string {
   const value = account.credentials?.plan_type ?? account.parent_plan_type ?? ''
@@ -440,6 +530,8 @@ async function load(): Promise<void> {
   try {
     const settings = await adminAPI.settings.getOpenAIModelPrioritySettings()
     draft.enabled = settings.enabled
+    draft.smart_rotation_enabled = settings.smart_rotation_enabled === true
+    draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(settings.smart_rotation_cooldown_minutes)
     draft.rules = (settings.rules ?? []).map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPriorityLoadFailed')))
@@ -454,10 +546,14 @@ async function save(): Promise<void> {
   try {
     const payload: OpenAIModelPrioritySettings = {
       enabled: draft.enabled,
+      smart_rotation_enabled: draft.smart_rotation_enabled,
+      smart_rotation_cooldown_minutes: draft.smart_rotation_cooldown_minutes,
       rules: draft.rules.map(rule => ({ model_pattern: rule.model_pattern.trim(), account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
     }
     const updated = await adminAPI.settings.updateOpenAIModelPrioritySettings(payload)
     draft.enabled = updated.enabled
+    draft.smart_rotation_enabled = updated.smart_rotation_enabled ?? payload.smart_rotation_enabled ?? false
+    draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(updated.smart_rotation_cooldown_minutes ?? payload.smart_rotation_cooldown_minutes)
     draft.rules = updated.rules.map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
     appStore.showSuccess(t('admin.executionNodes.modelPrioritySaveSuccess'))
   } catch (error) {

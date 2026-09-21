@@ -89,15 +89,16 @@ type OpenAIAccountScheduleRequest struct {
 }
 
 type OpenAIAccountScheduleDecision struct {
-	Layer               string
-	StickyPreviousHit   bool
-	StickySessionHit    bool
-	CandidateCount      int
-	TopK                int
-	LatencyMs           int64
-	LoadSkew            float64
-	SelectedAccountID   int64
-	SelectedAccountType string
+	Layer                 string
+	StickyPreviousHit     bool
+	StickySessionHit      bool
+	CandidateCount        int
+	TopK                  int
+	LatencyMs             int64
+	LoadSkew              float64
+	SelectedAccountID     int64
+	SelectedAccountType   string
+	ModelRotationFallback bool
 }
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {
@@ -2314,14 +2315,62 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	return selection, decision, err
 }
 
-// selectAccountWithScheduler wraps selectAccountWithSchedulerOnce with a
+// Model rotation is caller-scoped and precedes ordinary session affinity.
+// Nonmigratable response chains remain bound to their original account.
+func (s *OpenAIGatewayService) selectAccountWithScheduler(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+	platform string,
+	previousResponseCanMove bool,
+	useUpstreamTokenCost bool,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var rotationFailures []int64
+	if normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && requiredImageCapability == "" &&
+		(strings.TrimSpace(previousResponseID) == "" || previousResponseCanMove) {
+		rotationFailures = s.openAIModelRotationExclusions(ctx, groupID, requestedModel)
+	}
+	effectiveExcluded := excludedIDs
+	if len(rotationFailures) > 0 {
+		effectiveExcluded = cloneExcludedAccountIDs(excludedIDs)
+		if effectiveExcluded == nil {
+			effectiveExcluded = make(map[int64]struct{}, len(rotationFailures))
+		}
+		for _, id := range rotationFailures {
+			effectiveExcluded[id] = struct{}{}
+		}
+	}
+	selection, decision, err := s.selectAccountWithSchedulerWithProxyFallback(ctx, groupID, previousResponseID, sessionHash, requestedModel, effectiveExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if len(rotationFailures) == 0 || ctx.Err() != nil ||
+		(!errors.Is(err, ErrNoAvailableAccounts) && !errors.Is(err, ErrNoAvailableCompactAccounts)) {
+		return selection, decision, err
+	}
+	// Exhausting observed candidates must not create a new outage. Keep all
+	// request-local transport failures excluded, and fall back to normal policy.
+	fallbackCtx := context.WithValue(ctx, openAIModelRotationFallbackKey{}, true)
+	selection, decision, err = s.selectAccountWithSchedulerWithProxyFallback(fallbackCtx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	decision.ModelRotationFallback = true
+	return selection, decision, err
+}
+
+// selectAccountWithSchedulerWithProxyFallback wraps selectAccountWithSchedulerOnce with a
 // fail-open second pass for the proxy stream circuit (#5056): when the only
 // reason no account is available is that every candidate sits behind a
 // quarantined proxy, the quarantine must degrade to a preference instead of
 // zeroing out capacity. The retry re-runs the exact same selection with the
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
-func (s *OpenAIGatewayService) selectAccountWithScheduler(
+func (s *OpenAIGatewayService) selectAccountWithSchedulerWithProxyFallback(
 	ctx context.Context,
 	groupID *int64,
 	previousResponseID string,

@@ -322,6 +322,11 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
 			return
 		}
+		keyIDFromCtx, ok := c.Request.Context().Value(ctxkey.APIKeyID).(int64)
+		if !ok || keyIDFromCtx != apiKey.ID {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 

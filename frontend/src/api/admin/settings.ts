@@ -1427,6 +1427,8 @@ export interface OpenAIModelPriorityRule {
 export interface OpenAIModelPrioritySettings {
   enabled: boolean;
   rules: OpenAIModelPriorityRule[];
+  smart_rotation_enabled?: boolean;
+  smart_rotation_cooldown_minutes?: number;
 }
 
 export async function getOpenAIModelPrioritySettings(): Promise<OpenAIModelPrioritySettings> {

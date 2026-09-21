@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type openAIModelPriorityRepoStub struct {
+	mu      sync.RWMutex
 	values  map[string]string
 	getGate <-chan struct{}
 }
@@ -30,6 +32,8 @@ func (r *openAIModelPriorityRepoStub) GetValue(ctx context.Context, key string) 
 			return "", ctx.Err()
 		}
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	value, ok := r.values[key]
 	if !ok {
 		return "", ErrSettingNotFound
@@ -37,6 +41,8 @@ func (r *openAIModelPriorityRepoStub) GetValue(ctx context.Context, key string) 
 	return value, nil
 }
 func (r *openAIModelPriorityRepoStub) Set(_ context.Context, key, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.values == nil {
 		r.values = map[string]string{}
 	}
@@ -58,7 +64,9 @@ func (r *openAIModelPriorityRepoStub) Delete(context.Context, string) error {
 
 func TestOpenAIModelPrioritySettingsNormalizeAndResolve(t *testing.T) {
 	settings, err := normalizeOpenAIModelPrioritySettings(&OpenAIModelPrioritySettings{
-		Enabled: true,
+		Enabled:                      true,
+		SmartRotationEnabled:         true,
+		SmartRotationCooldownMinutes: 45,
 		Rules: []OpenAIModelPriorityRule{
 			{ModelPattern: "gpt-5.6-*", AccountIDs: []int64{9, 3, 9}},
 			{ModelPattern: "gpt-5.6-luna", AccountIDs: []int64{8}},
@@ -68,10 +76,72 @@ func TestOpenAIModelPrioritySettingsNormalizeAndResolve(t *testing.T) {
 	require.Equal(t, []int64{3, 9}, settings.Rules[0].AccountIDs)
 
 	compiled := compileOpenAIModelPrioritySettings(*settings)
+	require.True(t, compiled.smartRotationEnabled)
+	require.Equal(t, 45, compiled.smartRotationCooldownMinutes)
 	require.Contains(t, compiled.accountIDsForModel("gpt-5.6-luna"), int64(8), "exact rules must win")
 	require.NotContains(t, compiled.accountIDsForModel("gpt-5.6-luna"), int64(9))
 	require.Contains(t, compiled.accountIDsForModel("gpt-5.6-sol"), int64(3))
 	require.Nil(t, compiled.accountIDsForModel("gpt-6-astra"))
+}
+
+func TestOpenAIModelPrioritySettingsDefaultsAndBackwardCompatibility(t *testing.T) {
+	defaults := DefaultOpenAIModelPrioritySettings()
+	require.False(t, defaults.SmartRotationEnabled)
+	require.Equal(t, 30, defaults.SmartRotationCooldownMinutes)
+
+	for name, raw := range map[string]string{
+		"missing fields": `{"enabled":true,"rules":[{"model_pattern":"gpt-5.6-luna","account_ids":[42]}]}`,
+		"explicit zero":  `{"enabled":true,"rules":[{"model_pattern":"gpt-5.6-luna","account_ids":[42]}],"smart_rotation_cooldown_minutes":0}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &openAIModelPriorityRepoStub{values: map[string]string{SettingKeyOpenAIModelPrioritySettings: raw}}
+			service := NewSettingService(repo, &config.Config{})
+
+			loaded, err := service.GetOpenAIModelPrioritySettings(context.Background())
+			require.NoError(t, err)
+			require.False(t, loaded.SmartRotationEnabled)
+			require.Equal(t, 30, loaded.SmartRotationCooldownMinutes)
+
+			cached, ok := service.openAIModelPriorityCache.Load().(*cachedOpenAIModelPrioritySettings)
+			require.True(t, ok)
+			require.False(t, cached.compiled.smartRotationEnabled)
+			require.Equal(t, 30, cached.compiled.smartRotationCooldownMinutes)
+		})
+	}
+}
+
+func TestOpenAIModelPrioritySettingsValidateSmartRotationCooldown(t *testing.T) {
+	for _, cooldownMinutes := range []int{-1, 1441} {
+		_, err := normalizeOpenAIModelPrioritySettings(&OpenAIModelPrioritySettings{
+			SmartRotationCooldownMinutes: cooldownMinutes,
+		})
+		require.ErrorContains(t, err, "smart_rotation_cooldown_minutes must be between 1 and 1440")
+	}
+
+	for _, cooldownMinutes := range []int{1, 1440} {
+		normalized, err := normalizeOpenAIModelPrioritySettings(&OpenAIModelPrioritySettings{
+			SmartRotationCooldownMinutes: cooldownMinutes,
+		})
+		require.NoError(t, err)
+		require.Equal(t, cooldownMinutes, normalized.SmartRotationCooldownMinutes)
+	}
+}
+
+func TestCloneOpenAIModelPrioritySettingsPreservesSmartRotation(t *testing.T) {
+	original := OpenAIModelPrioritySettings{
+		Enabled:                      true,
+		Rules:                        []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: []int64{42}}},
+		SmartRotationEnabled:         true,
+		SmartRotationCooldownMinutes: 90,
+	}
+
+	cloned := cloneOpenAIModelPrioritySettings(original)
+	require.True(t, cloned.SmartRotationEnabled)
+	require.Equal(t, 90, cloned.SmartRotationCooldownMinutes)
+	cloned.SmartRotationCooldownMinutes = 15
+	cloned.Rules[0].AccountIDs[0] = 99
+	require.Equal(t, 90, original.SmartRotationCooldownMinutes)
+	require.Equal(t, int64(42), original.Rules[0].AccountIDs[0])
 }
 
 func TestOpenAIModelPrioritySettingsRejectInvalidRules(t *testing.T) {
@@ -97,8 +167,10 @@ func TestSetOpenAIModelPrioritySettingsPublishesCompiledSnapshot(t *testing.T) {
 	repo := &openAIModelPriorityRepoStub{values: map[string]string{}}
 	service := NewSettingService(repo, &config.Config{})
 	err := service.SetOpenAIModelPrioritySettings(context.Background(), &OpenAIModelPrioritySettings{
-		Enabled: true,
-		Rules:   []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: []int64{42}}},
+		Enabled:                      true,
+		Rules:                        []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: []int64{42}}},
+		SmartRotationEnabled:         true,
+		SmartRotationCooldownMinutes: 120,
 	})
 	require.NoError(t, err)
 	require.Contains(t, service.ResolveOpenAIModelPriorityAccountIDs(context.Background(), "gpt-5.6-luna"), int64(42))
@@ -106,6 +178,18 @@ func TestSetOpenAIModelPrioritySettingsPublishesCompiledSnapshot(t *testing.T) {
 	var persisted OpenAIModelPrioritySettings
 	require.NoError(t, json.Unmarshal([]byte(repo.values[SettingKeyOpenAIModelPrioritySettings]), &persisted))
 	require.True(t, persisted.Enabled)
+	require.True(t, persisted.SmartRotationEnabled)
+	require.Equal(t, 120, persisted.SmartRotationCooldownMinutes)
+
+	cached, ok := service.openAIModelPriorityCache.Load().(*cachedOpenAIModelPrioritySettings)
+	require.True(t, ok)
+	require.True(t, cached.compiled.smartRotationEnabled)
+	require.Equal(t, 120, cached.compiled.smartRotationCooldownMinutes)
+
+	loaded, err := service.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, loaded.SmartRotationEnabled)
+	require.Equal(t, 120, loaded.SmartRotationCooldownMinutes)
 }
 
 func BenchmarkResolveOpenAIModelPriorityAccountIDs(b *testing.B) {

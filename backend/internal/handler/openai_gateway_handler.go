@@ -768,6 +768,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			h.gatewayService.ObserveOpenAIModelRotation(c.Request.Context(), apiKey, account, forwardModel, res)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -1357,6 +1358,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			h.gatewayService.ObserveOpenAIModelRotation(c.Request.Context(), apiKey, account, currentRoutingModel, res)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -2425,6 +2427,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				if !scheduleDecision.ModelRotationFallback && strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String()) == "" {
+					mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model)
+					if h.gatewayService.ShouldRotateOpenAIModelAccount(ctx, apiKey.GroupID, openAIChannelForwardModel(mapping, model), account.ID) {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "model rotation requires a new connection; please retry this request", nil)
+					}
+				}
 				return nil
 			},
 			BeforeFrame: func(turn int, payload []byte, originalModel string) error {
@@ -2597,6 +2605,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				sessionID := service.ExtractClientSessionID(c)
 				turnRecordPricingAt := turnPricing.current()
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+				rotationModel := turnRequestedModel
+				if turnMapping.Mapped {
+					rotationModel = turnMapping.MappedModel
+				}
+				h.gatewayService.ObserveOpenAIModelRotation(ctx, apiKey, account, rotationModel, result)
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,

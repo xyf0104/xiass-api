@@ -66,6 +66,11 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	platform string,
 	requestedModel string,
 ) openAIModelRoutingPreference {
+	if ctx != nil {
+		if bypass, _ := ctx.Value(openAIModelRotationFallbackKey{}).(bool); bypass {
+			return openAIModelRoutingPreference{}
+		}
+	}
 	if s == nil || strings.TrimSpace(requestedModel) == "" ||
 		normalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
 		return openAIModelRoutingPreference{}

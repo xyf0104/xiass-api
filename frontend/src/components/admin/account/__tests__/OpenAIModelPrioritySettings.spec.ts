@@ -35,9 +35,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 const SelectStub = {
-  props: ['modelValue', 'options'],
+  props: ['modelValue', 'options', 'disabled'],
   emits: ['update:modelValue'],
-  template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>'
+  template: '<select :value="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>'
 }
 const SearchInputStub = {
   props: ['modelValue'],
@@ -47,7 +47,7 @@ const SearchInputStub = {
 const ToggleStub = {
   props: ['modelValue', 'disabled'],
   emits: ['update:modelValue'],
-  template: '<button type="button" :disabled="disabled" @click="$emit(\'update:modelValue\', !modelValue)" />'
+  template: '<button type="button" role="switch" :aria-checked="modelValue" :disabled="disabled" @click="$emit(\'update:modelValue\', !modelValue)" />'
 }
 const BaseDialogStub = {
   props: ['show', 'title'],
@@ -126,6 +126,8 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2], account_order: [1, 2] }]
     })
     expect(showSuccess).toHaveBeenCalled()
@@ -151,6 +153,8 @@ describe('OpenAIModelPrioritySettings', () => {
     await flushPromises()
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 99, 2, 1] }]
     })
   })
@@ -172,6 +176,8 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 1, 2], account_order: [3, 1, 2] }]
     })
   })
@@ -222,8 +228,80 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2] }]
     })
+  })
+
+  it('defaults old payloads to smart rotation off with a 30 minute cooldown', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="model-priority-smart-rotation-toggle"]').attributes('aria-checked')).toBe('false')
+    expect((wrapper.get('[data-testid="model-priority-smart-rotation-cooldown"]').element as HTMLSelectElement).value).toBe('30')
+    expect((wrapper.get('[data-testid="model-priority-smart-rotation-cooldown"]').element as HTMLSelectElement).disabled).toBe(true)
+
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 30
+    }))
+  })
+
+  it('keeps smart rotation inactive while overall model priority is disabled', async () => {
+    getSettings.mockResolvedValue({
+      enabled: false,
+      smart_rotation_enabled: true,
+      smart_rotation_cooldown_minutes: 30,
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3] }]
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="model-priority-smart-rotation-toggle"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('[data-testid="model-priority-smart-rotation-cooldown"]').element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.get('[data-testid="model-priority-smart-rotation-state"]').text()).toContain('smartRotationInactive')
+  })
+
+  it('saves smart rotation and a selected cooldown', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="model-priority-smart-rotation-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-smart-rotation-cooldown"]').setValue('60')
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      smart_rotation_enabled: true,
+      smart_rotation_cooldown_minutes: 60
+    }))
+  })
+
+  it('persists an explicit smart rotation off without losing a custom valid cooldown', async () => {
+    getSettings.mockResolvedValue({
+      enabled: true,
+      smart_rotation_enabled: true,
+      smart_rotation_cooldown_minutes: 45,
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3] }]
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const cooldown = wrapper.get('[data-testid="model-priority-smart-rotation-cooldown"]')
+    expect((cooldown.element as HTMLSelectElement).value).toBe('45')
+    expect(cooldown.findAll('option').map(option => Number(option.attributes('value')))).toEqual([1, 5, 15, 30, 45, 60, 120, 1440])
+
+    await wrapper.get('[data-testid="model-priority-smart-rotation-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      smart_rotation_enabled: false,
+      smart_rotation_cooldown_minutes: 45
+    }))
   })
 
   it('keeps a closed picker closed when a pending catalog load resolves', async () => {
