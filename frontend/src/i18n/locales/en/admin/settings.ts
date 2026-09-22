@@ -5,7 +5,7 @@ export default {
       modelPriorityTitle: 'Model priority scheduling',
       modelPriorityDescription: 'Choose first-priority accounts for a model. Ordinary scheduling is used immediately when those accounts have no available slots.',
       smartRotationTitle: 'Smart Full-Model Rotation',
-      smartRotationDescription: 'Evaluate each user and API key independently. A mismatched upstream-declared model rotates subsequent requests in account order. Missing models do not count as matches. Exhausted accounts fall back to ordinary scheduling; fixed continuation chains keep their account.',
+      smartRotationDescription: 'Evaluate each user and API key independently. A model mismatch detected before content is sent is blocked with a retry notice; subsequent requests rotate in account order. Missing models do not count as matches. Exhausted accounts fall back to ordinary scheduling; fixed continuation chains keep their account.',
       smartRotationRequiresPriority: 'Turn on model priority scheduling first. Smart rotation applies to every configured rule that matches the requested model.',
       smartRotationInactive: 'Currently inactive',
       smartRotationCooldown: 'Skip duration',

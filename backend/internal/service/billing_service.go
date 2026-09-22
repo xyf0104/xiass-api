@@ -231,7 +231,10 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.OutputCost *= multiplier
 	cost.ImageOutputCost *= multiplier
 	cost.CacheCreationCost *= multiplier
+	cost.cacheCreation5mCost *= multiplier
+	cost.cacheCreation1hCost *= multiplier
 	cost.CacheReadCost *= multiplier
+	cost.textCacheReadCost *= multiplier
 	cost.TotalCost *= multiplier
 	cost.ActualCost *= multiplier
 }
@@ -297,6 +300,9 @@ type CostBreakdown struct {
 	ActualCost                float64 // 应用倍率后的实际费用
 	BillingMode               string  // 计费模式（"token"/"per_request"/"image"），由 CalculateCostUnified 填充
 	LongContextBillingApplied bool
+	textCacheReadCost         float64
+	cacheCreation5mCost       float64
+	cacheCreation1hCost       float64
 }
 
 // ErrModelPricingUnavailable indicates that none of the configured pricing
@@ -1385,8 +1391,12 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	if pricingAt.IsZero() {
 		pricingAt = timezone.Now()
 	}
-	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM, pricingAt)
-	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
+	pricingPolicySource := resolved.Source
+	if resolved.pricingPolicySource != "" {
+		pricingPolicySource = resolved.pricingPolicySource
+	}
+	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, pricingPolicySource == PricingSourceLiteLLM, pricingAt)
+	if pricingPolicySource == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
 		if multiplier := deepseekPeakMultiplierAt(pricingAt); multiplier > 1 {
 			cloned := *pricing
 			cloned.InputPricePerToken *= multiplier
@@ -1401,7 +1411,54 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
 	applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.Model, input.ReasoningEffort, pricing))
+	applyFinalTokenPricing(breakdown, resolved.FinalTokenPricing, input.Tokens, input.RateMultiplier)
 	return breakdown, nil
+}
+
+// Final group prices directly control user billing; raw TotalCost remains the
+// upstream/account-cost snapshot. Nil inherits legacy billing, while zero is
+// an explicit free price.
+func applyFinalTokenPricing(breakdown *CostBreakdown, p *ChannelModelPricing, tokens UsageTokens, rate float64) {
+	if breakdown == nil || p == nil || rate < 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return
+	}
+	actual := breakdown.ActualCost
+	if p.InputPrice != nil {
+		actual -= breakdown.InputCost * rate
+		imageInputTokens := min(max(tokens.ImageInputTokens, 0), max(tokens.InputTokens, 0))
+		actual += float64(max(tokens.InputTokens-imageInputTokens, 0)) * *p.InputPrice
+	}
+	if p.OutputPrice != nil {
+		actual -= breakdown.OutputCost * rate
+		textOutputTokens := tokens.OutputTokens - tokens.ImageOutputTokens
+		if textOutputTokens < 0 {
+			textOutputTokens = 0
+		}
+		actual += float64(textOutputTokens) * *p.OutputPrice
+	}
+	if p.CacheReadPrice != nil {
+		actual -= breakdown.textCacheReadCost * rate
+		imageCacheReadTokens := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0))
+		actual += float64(max(tokens.CacheReadTokens-imageCacheReadTokens, 0)) * *p.CacheReadPrice
+	}
+	if p.CacheWritePrice != nil {
+		actual -= breakdown.cacheCreation5mCost * rate
+		actual -= breakdown.cacheCreation1hCost * rate
+		cache5mTokens, cache1hTokens := normalizeCacheCreationBreakdown(tokens)
+		actual += float64(cache5mTokens) * *p.CacheWritePrice
+		cacheWrite1hPrice := p.CacheWritePrice
+		if p.CacheWrite1hPrice != nil {
+			cacheWrite1hPrice = p.CacheWrite1hPrice
+		}
+		actual += float64(cache1hTokens) * *cacheWrite1hPrice
+		if cache5mTokens == 0 && cache1hTokens == 0 && tokens.CacheCreationTokens > 0 {
+			actual += float64(tokens.CacheCreationTokens) * *p.CacheWritePrice
+		}
+	}
+	if actual < 0 && actual > -1e-12 {
+		actual = 0
+	}
+	breakdown.ActualCost = actual
 }
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
@@ -1494,11 +1551,14 @@ func (s *BillingService) computeTokenBreakdown(
 	}
 
 	// 缓存创建费用
-	bd.CacheCreationCost = s.computeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
+	bd.CacheCreationCost, bd.cacheCreation5mCost, bd.cacheCreation1hCost = s.computeCacheCreationCosts(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
 
-	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
-	if imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0)); imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
-		bd.CacheReadCost = float64(tokens.CacheReadTokens-imageCached)*cacheReadPrice + float64(imageCached)*pricing.ImageCacheReadPricePerToken
+	imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0))
+	textCached := max(tokens.CacheReadTokens-imageCached, 0)
+	bd.textCacheReadCost = float64(textCached) * cacheReadPrice
+	bd.CacheReadCost = bd.textCacheReadCost + float64(imageCached)*cacheReadPrice
+	if imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
+		bd.CacheReadCost = bd.textCacheReadCost + float64(imageCached)*pricing.ImageCacheReadPricePerToken
 	}
 
 	if tierMultiplier != 1.0 {
@@ -1507,7 +1567,10 @@ func (s *BillingService) computeTokenBreakdown(
 		bd.OutputCost *= tierMultiplier
 		bd.ImageOutputCost *= tierMultiplier
 		bd.CacheCreationCost *= tierMultiplier
+		bd.cacheCreation5mCost *= tierMultiplier
+		bd.cacheCreation1hCost *= tierMultiplier
 		bd.CacheReadCost *= tierMultiplier
+		bd.textCacheReadCost *= tierMultiplier
 	}
 
 	bd.TotalCost = bd.InputCost + bd.ImageInputCost + bd.OutputCost + bd.ImageOutputCost +
@@ -1521,16 +1584,24 @@ func (s *BillingService) computeTokenBreakdown(
 // computeCacheCreationCost 计算缓存创建费用（支持 5m/1h 分类或标准计费）。
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
 func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
+	total, _, _ := s.computeCacheCreationCosts(pricing, tokens, price, multiplier)
+	return total
+}
+
+func (s *BillingService) computeCacheCreationCosts(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) (total, cost5m, cost1h float64) {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
 		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
 		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
 			// API 未返回 ephemeral 明细，回退到全部按 5m 单价计费
-			return float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
+			cost5m = float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
+			return cost5m, cost5m, 0
 		}
-		return float64(cacheCreation5mTokens)*pricing.CacheCreation5mPrice*multiplier +
-			float64(cacheCreation1hTokens)*pricing.CacheCreation1hPrice*multiplier
+		cost5m = float64(cacheCreation5mTokens) * pricing.CacheCreation5mPrice * multiplier
+		cost1h = float64(cacheCreation1hTokens) * pricing.CacheCreation1hPrice * multiplier
+		return cost5m + cost1h, cost5m, cost1h
 	}
-	return float64(tokens.CacheCreationTokens) * price * multiplier
+	total = float64(tokens.CacheCreationTokens) * price * multiplier
+	return total, total, 0
 }
 
 // normalizeCacheCreationBreakdown caps contradictory 5m/1h details at an explicitly

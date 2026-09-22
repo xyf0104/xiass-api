@@ -49,6 +49,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
+	modelResponseGuard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		modelResponseGuard = s.newOpenAIModelResponseGuard(ctx, originalModel, mappedModel)
+	}
 	firstOutputTimeout := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
@@ -234,6 +238,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
+	modelMismatchSuppressed := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamEarlyErr error
 	pendingSSEEventType := ""
@@ -477,6 +482,26 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			eventTypeRaw := gjson.GetBytes(dataBytes, "type").String()
 			eventType := strings.TrimSpace(eventTypeRaw)
 			observer.ObserveOpenAI(dataBytes, eventTypeRaw)
+			if !clientOutputStarted && !modelMismatchSuppressed {
+				if message, mismatch := modelResponseGuard.mismatch(observer.Model(), observer.Conflict()); mismatch {
+					notifyOpenAIModelResponseMismatch(ctx, originalModel, mappedModel, observer.Model(), startTime)
+					if firstOutputStage != nil && !firstOutputStage.closed {
+						_ = firstOutputStage.Close()
+					}
+					if err := writeOpenAIModelResponseMismatchSSE(bufferedWriter, nil, message); err != nil {
+						streamEarlyErr = err
+						return
+					}
+					if err := bufferedWriter.Flush(); err != nil {
+						streamEarlyErr = err
+						return
+					}
+					flusher.Flush()
+					firstOutputScanGuard.Store(false)
+					modelMismatchSuppressed = true
+					clientOutputStarted = true
+				}
+			}
 			// 初始上游 data 的 type 只解析一次：原始值保持终止事件的精确匹配，规范化值供后续分支复用。
 			if openAIStreamEventIsTerminalWithType(data, eventTypeRaw) {
 				sawTerminalEvent = true
@@ -644,7 +669,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 
 			// 写入客户端（客户端断开后继续 drain 上游）
-			if !clientDisconnected {
+			if !clientDisconnected && !modelMismatchSuppressed {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
 				if firstTokenMs == nil && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
@@ -667,6 +692,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				stopFirstOutputTimer()
 			}
 			s.parseSSEUsageBytes(dataBytes, usage)
+			return
+		}
+		if modelMismatchSuppressed {
+			if line == "" {
+				pendingSSEEventType = ""
+			}
 			return
 		}
 
@@ -1380,6 +1411,20 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		return nil, fmt.Errorf("parse response: invalid json response")
 	}
 	usage := &usageValue
+	guard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		guard = s.newOpenAIModelResponseGuard(ctx, originalModel, mappedModel)
+	}
+	if message, mismatch := guard.mismatch(observedUpstreamResponseModel(c), observedUpstreamResponseModelConflict(c)); mismatch {
+		notifyOpenAIModelResponseMismatch(ctx, originalModel, mappedModel, observedUpstreamResponseModel(c), time.Time{})
+		writeOpenAIModelResponseMismatchHTTP(c, message)
+		return &openaiNonStreamingResult{
+			OpenAIUsage:      usage,
+			usage:            usage,
+			imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+			imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		}, nil
+	}
 
 	// Replace model in response if needed
 	if originalModel != mappedModel {
@@ -1480,6 +1525,20 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			return nil, fmt.Errorf("restore OpenAI namespace response: %w", restoreErr)
 		}
 		body = restoredBody
+		guard := openAIModelResponseGuard{}
+		if account != nil && account.Platform == PlatformOpenAI {
+			guard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, mappedModel)
+		}
+		if message, mismatch := guard.mismatch(observedUpstreamResponseModel(c), observedUpstreamResponseModelConflict(c)); mismatch {
+			notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, mappedModel, observedUpstreamResponseModel(c), time.Time{})
+			writeOpenAIModelResponseMismatchHTTP(c, message)
+			return &openaiNonStreamingResult{
+				OpenAIUsage:      usage,
+				usage:            usage,
+				imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
+				imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+			}, nil
+		}
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && (terminalType == "response.failed" || terminalType == "error") {

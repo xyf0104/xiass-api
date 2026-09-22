@@ -37,6 +37,141 @@ func TestCalculateCostUnified_NilResolver_FallsBackToOldPath(t *testing.T) {
 	require.Empty(t, cost.BillingMode)
 }
 
+func TestCalculateCostUnified_FinalGroupPricingUsesRMBDirectlyAndKeepsAccountCost(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	inputPrice := 2e-6
+	outputPrice := 0.0
+	group := &Group{ID: 991, Platform: PlatformOpenAI, RateMultiplier: 7, ModelPricing: []ChannelModelPricing{{
+		Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+		InputPrice: &inputPrice, OutputPrice: &outputPrice,
+	}}}
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", Group: group,
+		Tokens:         UsageTokens{InputTokens: 1_000_000, OutputTokens: 100_000},
+		RateMultiplier: 7, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	base, err := bs.CalculateCost("claude-sonnet-4", UsageTokens{InputTokens: 1_000_000, OutputTokens: 100_000}, 1)
+	require.NoError(t, err)
+	// Account/upstream cost stays on the catalog price; user billing is direct
+	// RMB/token and does not receive group or user multiplier again.
+	require.InDelta(t, base.TotalCost, cost.TotalCost, 1e-9)
+	require.InDelta(t, 2.0, cost.ActualCost, 1e-9)
+}
+
+func TestCalculateCostUnified_FinalGroupPricingNilInheritsZeroIsFreeAndKeepsImageCacheLegacy(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	inputPrice := 0.0
+	group := &Group{ID: 992, Platform: PlatformOpenAI, RateMultiplier: 5, ModelPricing: []ChannelModelPricing{{
+		Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+		InputPrice: &inputPrice,
+	}}}
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", Group: group,
+		Tokens: UsageTokens{InputTokens: 100, ImageInputTokens: 40, CacheReadTokens: 100, ImageCacheReadTokens: 20,
+			CacheCreationTokens: 100, CacheCreation5mTokens: 40, CacheCreation1hTokens: 60},
+		RateMultiplier: 5, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	// Text input is explicitly free; nil output/cache fields inherit legacy
+	// user billing, while image input/cache-read and both cache-write TTLs keep
+	// their existing account/user path.
+	require.NotEqual(t, 0.0, cost.TotalCost)
+	require.Greater(t, cost.ActualCost, 0.0)
+	require.NotEqual(t, cost.TotalCost*5, cost.ActualCost)
+}
+
+func TestCalculateCostUnified_FinalGroupPricingCoversAllTokenDimensions(t *testing.T) {
+	groupID := int64(993)
+	fastMultiplier := 2.0
+	maxEffortMultiplier := 3.0
+	channelPricing := &ChannelModelPricing{
+		Platform:                     PlatformAnthropic,
+		BillingMode:                  BillingModeToken,
+		InputPrice:                   testPtrFloat64(10e-6),
+		OutputPrice:                  testPtrFloat64(20e-6),
+		CacheWritePrice:              testPtrFloat64(30e-6),
+		CacheWrite1hPrice:            testPtrFloat64(60e-6),
+		CacheReadPrice:               testPtrFloat64(4e-6),
+		FastMultiplier:               &fastMultiplier,
+		MaxReasoningEffortMultiplier: &maxEffortMultiplier,
+	}
+	cs := newTestChannelServiceWithCache(t, &channelCache{
+		pricingByGroupModel: map[channelModelKey]*ChannelModelPricing{
+			{groupID: groupID, platform: PlatformAnthropic, model: "claude-fable-5-1"}: channelPricing,
+		},
+		channelByGroupID:        map[int64]*Channel{groupID: {ID: groupID, Status: StatusActive}},
+		groupPlatform:           map[int64]string{groupID: PlatformAnthropic},
+		wildcardByGroupPlatform: map[channelGroupPlatformKey][]*wildcardPricingEntry{},
+		mappingByGroupModel:     map[channelModelKey]string{},
+		wildcardMappingByGP:     map[channelGroupPlatformKey][]*wildcardMappingEntry{},
+		byID:                    map[int64]*Channel{},
+	})
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(cs, bs)
+	tokens := UsageTokens{
+		InputTokens: 100, OutputTokens: 200, CacheReadTokens: 300,
+		CacheCreationTokens: 900, CacheCreation5mTokens: 400, CacheCreation1hTokens: 500,
+	}
+	finalInput := 1e-6
+	finalOutput := 2e-6
+	finalRead := 4e-6
+	finalWrite := 3e-6
+	finalWrite1h := 6e-6
+
+	t.Run("explicit 1h price ignores user tier and effort multipliers", func(t *testing.T) {
+		group := &Group{ID: groupID, Platform: PlatformAnthropic, ModelPricing: []ChannelModelPricing{{
+			Models: []string{"claude-fable-5-1"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+			InputPrice: &finalInput, OutputPrice: &finalOutput, CacheReadPrice: &finalRead,
+			CacheWritePrice: &finalWrite, CacheWrite1hPrice: &finalWrite1h,
+		}}}
+		cost, err := bs.CalculateCostUnified(CostInput{
+			Ctx: context.Background(), Model: "claude-fable-5-1", GroupID: &groupID, Group: group,
+			Tokens: tokens, RateMultiplier: 7, ServiceTier: "priority", ReasoningEffort: "max", Resolver: resolver,
+		})
+		require.NoError(t, err)
+
+		rawAccountCost := 100*10e-6 + 200*20e-6 + 300*4e-6 + 400*30e-6 + 500*60e-6
+		expectedFinalRMB := 100*finalInput + 200*finalOutput + 300*finalRead + 400*finalWrite + 500*finalWrite1h
+		require.InDelta(t, rawAccountCost*fastMultiplier*maxEffortMultiplier, cost.TotalCost, 1e-12)
+		require.InDelta(t, expectedFinalRMB, cost.ActualCost, 1e-12)
+	})
+
+	t.Run("missing final 1h price falls back to final cache write", func(t *testing.T) {
+		group := &Group{ID: groupID, Platform: PlatformAnthropic, ModelPricing: []ChannelModelPricing{{
+			Models: []string{"claude-fable-5-1"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+			InputPrice: &finalInput, OutputPrice: &finalOutput, CacheReadPrice: &finalRead,
+			CacheWritePrice: &finalWrite,
+		}}}
+		cost, err := bs.CalculateCostUnified(CostInput{
+			Ctx: context.Background(), Model: "claude-fable-5-1", GroupID: &groupID, Group: group,
+			Tokens: tokens, RateMultiplier: 7, ServiceTier: "priority", ReasoningEffort: "max", Resolver: resolver,
+		})
+		require.NoError(t, err)
+
+		expectedFinalRMB := 100*finalInput + 200*finalOutput + 300*finalRead + 900*finalWrite
+		require.InDelta(t, expectedFinalRMB, cost.ActualCost, 1e-12)
+	})
+
+	t.Run("nil final output inherits channel policy", func(t *testing.T) {
+		group := &Group{ID: groupID, Platform: PlatformAnthropic, ModelPricing: []ChannelModelPricing{{
+			Models: []string{"claude-fable-5-1"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+			InputPrice: &finalInput, CacheReadPrice: &finalRead, CacheWritePrice: &finalWrite,
+		}}}
+		cost, err := bs.CalculateCostUnified(CostInput{
+			Ctx: context.Background(), Model: "claude-fable-5-1", GroupID: &groupID, Group: group,
+			Tokens: tokens, RateMultiplier: 7, ServiceTier: "priority", ReasoningEffort: "max", Resolver: resolver,
+		})
+		require.NoError(t, err)
+
+		inheritedOutput := 200 * 20e-6 * fastMultiplier * maxEffortMultiplier * 7
+		expectedFinalRMB := 100*finalInput + inheritedOutput + 300*finalRead + 900*finalWrite
+		require.InDelta(t, expectedFinalRMB, cost.ActualCost, 1e-12)
+	})
+}
+
 func TestCalculateCostUnified_Fable51MaxEffortUsesDefaultMultiplier(t *testing.T) {
 	bs := newTestBillingService()
 	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 10}

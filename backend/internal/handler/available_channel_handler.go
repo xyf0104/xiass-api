@@ -61,33 +61,48 @@ func (h *AvailableChannelHandler) modelPricingEnabled(c *gin.Context) bool {
 // 订阅视觉加深），并展示默认倍率与高峰倍率规则；用户专属倍率前端走
 // /groups/rates，和 API 密钥页面保持一致。
 type userAvailableGroup struct {
-	ID                   int64    `json:"id"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description"`
-	Platform             string   `json:"platform"`
-	SubscriptionType     string   `json:"subscription_type"`
-	RateMultiplier       float64  `json:"rate_multiplier"`
-	PeakRateEnabled      bool     `json:"peak_rate_enabled"`
-	PeakStart            string   `json:"peak_start"`
-	PeakEnd              string   `json:"peak_end"`
-	PeakRateMultiplier   float64  `json:"peak_rate_multiplier"`
-	IsExclusive          bool     `json:"is_exclusive"`
-	CostRatio            *float64 `json:"cost_ratio"`
-	ImageRateIndependent bool     `json:"image_rate_independent"`
-	ImageRateMultiplier  float64  `json:"image_rate_multiplier"`
-	ImagePrice1K         *float64 `json:"image_price_1k"`
-	ImagePrice2K         *float64 `json:"image_price_2k"`
-	ImagePrice4K         *float64 `json:"image_price_4k"`
-	VideoRateIndependent bool     `json:"video_rate_independent"`
-	VideoRateMultiplier  float64  `json:"video_rate_multiplier"`
-	VideoPrice480P       *float64 `json:"video_price_480p"`
-	VideoPrice720P       *float64 `json:"video_price_720p"`
-	VideoPrice1080P      *float64 `json:"video_price_1080p"`
+	ID                   int64                   `json:"id"`
+	Name                 string                  `json:"name"`
+	Description          string                  `json:"description"`
+	Platform             string                  `json:"platform"`
+	SubscriptionType     string                  `json:"subscription_type"`
+	RateMultiplier       float64                 `json:"rate_multiplier"`
+	PeakRateEnabled      bool                    `json:"peak_rate_enabled"`
+	PeakStart            string                  `json:"peak_start"`
+	PeakEnd              string                  `json:"peak_end"`
+	PeakRateMultiplier   float64                 `json:"peak_rate_multiplier"`
+	IsExclusive          bool                    `json:"is_exclusive"`
+	CostRatio            *float64                `json:"cost_ratio"`
+	ImageRateIndependent bool                    `json:"image_rate_independent"`
+	ImageRateMultiplier  float64                 `json:"image_rate_multiplier"`
+	ImagePrice1K         *float64                `json:"image_price_1k"`
+	ImagePrice2K         *float64                `json:"image_price_2k"`
+	ImagePrice4K         *float64                `json:"image_price_4k"`
+	VideoRateIndependent bool                    `json:"video_rate_independent"`
+	VideoRateMultiplier  float64                 `json:"video_rate_multiplier"`
+	VideoPrice480P       *float64                `json:"video_price_480p"`
+	VideoPrice720P       *float64                `json:"video_price_720p"`
+	VideoPrice1080P      *float64                `json:"video_price_1080p"`
+	ModelPricing         []userGroupModelPricing `json:"model_pricing,omitempty"`
+}
+
+// userGroupModelPricing exposes only the final user-price fields needed by
+// the public pricing page. Internal IDs, intervals and account-cost controls
+// remain administrator-only.
+type userGroupModelPricing struct {
+	Models          []string `json:"models"`
+	BillingMode     string   `json:"billing_mode"`
+	PriceMode       string   `json:"price_mode"`
+	InputPrice      *float64 `json:"input_price"`
+	OutputPrice     *float64 `json:"output_price"`
+	CacheWritePrice *float64 `json:"cache_write_price"`
+	CacheReadPrice  *float64 `json:"cache_read_price"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
 type userSupportedModelPricing struct {
 	BillingMode                  string                   `json:"billing_mode"`
+	PriceMode                    string                   `json:"price_mode,omitempty"`
 	InputPrice                   *float64                 `json:"input_price"`
 	OutputPrice                  *float64                 `json:"output_price"`
 	CacheWritePrice              *float64                 `json:"cache_write_price"`
@@ -307,9 +322,38 @@ func filterUserVisibleGroups(
 			VideoPrice480P:       g.VideoPrice480P,
 			VideoPrice720P:       g.VideoPrice720P,
 			VideoPrice1080P:      g.VideoPrice1080P,
+			ModelPricing:         toUserGroupModelPricing(g.ModelPricing),
 		})
 	}
 	return visible
+}
+
+func toUserGroupModelPricing(pricing []service.ChannelModelPricing) []userGroupModelPricing {
+	out := make([]userGroupModelPricing, 0, len(pricing))
+	for _, p := range pricing {
+		if p.BillingMode != "" && p.BillingMode != service.BillingModeToken {
+			continue
+		}
+		priceMode := p.PriceMode
+		if priceMode == "" {
+			priceMode = service.PriceModeBase
+		}
+		entry := userGroupModelPricing{
+			Models:      append([]string(nil), p.Models...),
+			BillingMode: string(p.BillingMode),
+			PriceMode:   priceMode,
+		}
+		// Base entries are emitted only as match-order markers so an exact base
+		// rule can correctly shadow a final wildcard without exposing admin prices.
+		if priceMode == service.PriceModeFinal {
+			entry.InputPrice = p.InputPrice
+			entry.OutputPrice = p.OutputPrice
+			entry.CacheWritePrice = p.CacheWritePrice
+			entry.CacheReadPrice = p.CacheReadPrice
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // toUserSupportedModels 将 service 层支持模型转换为用户 DTO（字段白名单）。
@@ -365,6 +409,7 @@ func toUserPricing(p *service.ChannelModelPricing) *userSupportedModelPricing {
 	}
 	return &userSupportedModelPricing{
 		BillingMode:                  billingMode,
+		PriceMode:                    p.PriceMode,
 		InputPrice:                   p.InputPrice,
 		OutputPrice:                  p.OutputPrice,
 		CacheWritePrice:              p.CacheWritePrice,

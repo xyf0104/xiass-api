@@ -93,8 +93,11 @@
                 <span class="text-base font-bold text-gray-900 dark:text-white truncate">
                   {{ group.name }}
                 </span>
-                <span class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                <span v-if="!groupHasFinalPricing(group)" class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
                   {{ formatDisplayDiscount(group) }}折
+                </span>
+                <span v-else class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                  逐模型最终价
                 </span>
                 <span
                   v-if="isGroupPeakActive(group)"
@@ -114,7 +117,9 @@
               </div>
               <!-- 倍率描述 -->
               <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap truncate w-full text-left">
-                {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
+                {{ groupHasFinalPricing(group)
+                  ? `已配置逐模型最终价 · 其他模型 ${formatDisplayMultiplier(group)}x`
+                  : `${formatDisplayMultiplier(group)}x 倍率 · 相当于约 ${formatDisplayDiscount(group)}折` }}
               </span>
               <span
                 v-if="hasPeakRate(group)"
@@ -167,28 +172,32 @@
                       <td :data-test="`price-${model.name}-input`" class="px-6 py-5">
                         <PriceCell
                           :base-price="model.pricing?.input_price"
-                          :multiplier="multiplierFor(model)"
+                          :group-base-price="finalTokenPriceFor(model, 'input_price')"
+                          :multiplier="priceMultiplierFor(model, 'input_price')"
                           :mode="priceMode"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-output`" class="px-6 py-5">
                         <PriceCell
                           :base-price="model.pricing?.output_price"
-                          :multiplier="multiplierFor(model)"
+                          :group-base-price="finalTokenPriceFor(model, 'output_price')"
+                          :multiplier="priceMultiplierFor(model, 'output_price')"
                           :mode="priceMode"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-cache-write`" class="px-6 py-5">
                         <PriceCell
                           :base-price="model.pricing?.cache_write_price"
-                          :multiplier="multiplierFor(model)"
+                          :group-base-price="finalTokenPriceFor(model, 'cache_write_price')"
+                          :multiplier="priceMultiplierFor(model, 'cache_write_price')"
                           :mode="priceMode"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-cache-read`" class="px-6 py-5">
                         <PriceCell
                           :base-price="model.pricing?.cache_read_price"
-                          :multiplier="multiplierFor(model)"
+                          :group-base-price="finalTokenPriceFor(model, 'cache_read_price')"
+                          :multiplier="priceMultiplierFor(model, 'cache_read_price')"
                           :mode="priceMode"
                         />
                       </td>
@@ -227,10 +236,10 @@
                     <!-- 节省幅度 -->
                     <td class="px-6 py-5 text-right">
                       <span
-                        v-if="savingsPercent(multiplierFor(model)) > 0"
+                        v-if="modelSavingsPercent(model) != null && modelSavingsPercent(model)! > 0"
                         class="inline-flex items-center gap-1 whitespace-nowrap text-base font-bold text-primary-500"
                       >
-                        省 {{ savingsPercent(multiplierFor(model)) }}%
+                        省 {{ modelSavingsPercent(model) }}%
                       </span>
                       <span v-else class="text-sm text-gray-400">-</span>
                     </td>
@@ -300,6 +309,7 @@ import PriceCell from '@/components/pricing/PriceCell.vue'
 import userChannelsAPI, {
   type UserAvailableChannel,
   type UserAvailableGroup,
+  type UserGroupModelPricing,
   type UserPricingInterval,
   type UserSupportedModel
 } from '@/api/channels'
@@ -345,6 +355,8 @@ type PricingGroup = UserAvailableGroup & {
   video_price_720p?: number | null
   video_price_1080p?: number | null
 }
+
+type FinalTokenPriceField = 'input_price' | 'output_price' | 'cache_write_price' | 'cache_read_price'
 
 interface DisplayPriceItem {
   key: string
@@ -455,6 +467,48 @@ function savingsPercent(multiplier?: number): number {
   const ratio = multiplier / 7
   if (ratio >= 1) return 0
   return Math.round((1 - ratio) * 100)
+}
+
+function normalizePricingModelName(model: string): string {
+  const normalized = model.trim().toLowerCase()
+  return normalized.startsWith('claude-') ? normalized.replace(/\./g, '-') : normalized
+}
+
+function finalTokenPricingFor(model: UserSupportedModel): UserGroupModelPricing | null {
+  const entries = activeGroup.value?.model_pricing ?? []
+  const modelName = normalizePricingModelName(model.name)
+  let wildcard: UserGroupModelPricing | null = null
+  for (const entry of entries) {
+    for (const pattern of entry.models) {
+      const normalized = normalizePricingModelName(pattern)
+      if (normalized === modelName) return entry.price_mode === 'final' ? entry : null
+      if (normalized.endsWith('*') && modelName.startsWith(normalized.slice(0, -1)) && !wildcard) {
+        wildcard = entry
+      }
+    }
+  }
+  return wildcard?.price_mode === 'final' ? wildcard : null
+}
+
+function finalTokenPriceFor(model: UserSupportedModel, field: FinalTokenPriceField): number | null {
+  return normalizedPrice(finalTokenPricingFor(model)?.[field])
+}
+
+function priceMultiplierFor(model: UserSupportedModel, field: FinalTokenPriceField): number {
+  return finalTokenPriceFor(model, field) == null ? multiplierFor(model) : 1
+}
+
+function groupHasFinalPricing(group: PricingGroup): boolean {
+  return (group.model_pricing ?? []).some(entry => entry.price_mode === 'final')
+}
+
+function modelSavingsPercent(model: UserSupportedModel): number | null {
+  const final = finalTokenPricingFor(model)
+  if (final && [final.input_price, final.output_price, final.cache_write_price, final.cache_read_price]
+    .some(value => normalizedPrice(value) != null)) {
+    return null
+  }
+  return savingsPercent(multiplierFor(model))
 }
 
 function normalizedPrice(value: number | null | undefined): number | null {

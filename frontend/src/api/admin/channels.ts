@@ -30,7 +30,8 @@ export interface ChannelModelPricing {
   id?: number
   platform: string
   models: string[]
-  billing_mode: BillingMode
+	billing_mode: BillingMode
+	price_mode?: 'base' | 'final'
   input_price: number | null
   output_price: number | null
   cache_write_price: number | null

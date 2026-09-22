@@ -25,6 +25,8 @@ import (
 const (
 	openAIModelRotationHandlerRequestedModel = "gpt-6-astra"
 	openAIModelRotationHandlerFallbackModel  = "gpt-5.6-luna"
+	openAIModelRotationHandlerOutput         = "raw-upstream-content-must-not-leak"
+	openAIModelRotationHandlerMismatchNotice = "检测到该条回复已降智（luna模型），将不予采纳。请重新发起请求。下一次请求将轮询健康账号。"
 )
 
 type openAIModelRotationHandlerCall struct {
@@ -55,9 +57,10 @@ func (u *openAIModelRotationHandlerUpstream) Do(req *http.Request, _ string, acc
 	responseID := fmt.Sprintf("resp_model_rotation_%d", requestNumber)
 	usage := `"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}`
 	response := fmt.Sprintf(
-		`{"id":%q,"object":"response","model":%q,"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],%s}`,
+		`{"id":%q,"object":"response","model":%q,"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],%s}`,
 		responseID,
 		declaredModel,
+		openAIModelRotationHandlerOutput,
 		usage,
 	)
 	header := http.Header{"X-Request-Id": []string{fmt.Sprintf("rid-model-rotation-%d", requestNumber)}}
@@ -69,7 +72,9 @@ func (u *openAIModelRotationHandlerUpstream) Do(req *http.Request, _ string, acc
 			declaredModel,
 		)
 		completed := fmt.Sprintf(`{"type":"response.completed","response":%s}`, response)
+		delta := fmt.Sprintf(`{"type":"response.output_text.delta","item_id":"msg_rotation","output_index":0,"content_index":0,"delta":%q}`, openAIModelRotationHandlerOutput)
 		response = "event: response.created\ndata: " + created + "\n\n" +
+			"event: response.output_text.delta\ndata: " + delta + "\n\n" +
 			"event: response.completed\ndata: " + completed + "\n\n"
 	} else {
 		header.Set("Content-Type", "application/json")
@@ -91,7 +96,7 @@ func (u *openAIModelRotationHandlerUpstream) snapshot() []openAIModelRotationHan
 	return out
 }
 
-func newOpenAIModelRotationHandler(t *testing.T) (*OpenAIGatewayHandler, *openAIModelRotationHandlerUpstream, <-chan *service.UsageLog) {
+func newOpenAIModelRotationHandler(t *testing.T, rotationEnabled bool) (*OpenAIGatewayHandler, *openAIModelRotationHandlerUpstream, <-chan *service.UsageLog) {
 	t.Helper()
 	accounts := []service.Account{
 		{
@@ -114,7 +119,7 @@ func newOpenAIModelRotationHandler(t *testing.T) (*OpenAIGatewayHandler, *openAI
 	settingService := service.NewSettingService(settingRepo, cfg)
 	require.NoError(t, settingService.SetOpenAIModelPrioritySettings(context.Background(), &service.OpenAIModelPrioritySettings{
 		Enabled:                      true,
-		SmartRotationEnabled:         true,
+		SmartRotationEnabled:         rotationEnabled,
 		SmartRotationCooldownMinutes: 30,
 		Rules: []service.OpenAIModelPriorityRule{{
 			ModelPattern: openAIModelRotationHandlerRequestedModel,
@@ -211,7 +216,7 @@ func TestOpenAIGatewayHandlerResponses_SmartRotationUsesRawResponseModelPerCalle
 			name = "sse"
 		}
 		t.Run(name, func(t *testing.T) {
-			handler, upstream, usageLogs := newOpenAIModelRotationHandler(t)
+			handler, upstream, usageLogs := newOpenAIModelRotationHandler(t, true)
 			callers := []struct {
 				userID   int64
 				apiKeyID int64
@@ -231,11 +236,27 @@ func TestOpenAIGatewayHandlerResponses_SmartRotationUsesRawResponseModelPerCalle
 			for i, caller := range callers {
 				c, recorder := newOpenAIModelRotationHandlerContext(t, caller.userID, caller.apiKeyID, stream)
 				handler.Responses(c)
-				require.Equal(t, http.StatusOK, recorder.Code)
-				if stream {
+				if wantDeclared[i] != openAIModelRotationHandlerRequestedModel {
+					require.NotContains(t, recorder.Body.String(), openAIModelRotationHandlerOutput)
+					require.Contains(t, recorder.Body.String(), openAIModelRotationHandlerMismatchNotice)
+					if stream {
+						require.Equal(t, http.StatusOK, recorder.Code)
+						require.Contains(t, recorder.Body.String(), `"code":"model_mismatch"`)
+						require.Equal(t, 1, bytes.Count(recorder.Body.Bytes(), []byte("data: [DONE]")))
+						require.NotContains(t, recorder.Body.String(), `"type":"response.completed"`)
+					} else {
+						require.Equal(t, http.StatusBadGateway, recorder.Code)
+						require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+						require.Equal(t, "model_mismatch", gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+					}
+				} else if stream {
+					require.Equal(t, http.StatusOK, recorder.Code)
 					require.Contains(t, recorder.Body.String(), `"type":"response.completed"`)
+					require.Contains(t, recorder.Body.String(), openAIModelRotationHandlerOutput)
 				} else {
+					require.Equal(t, http.StatusOK, recorder.Code)
 					require.Equal(t, "completed", gjson.GetBytes(recorder.Body.Bytes(), "status").String())
+					require.Equal(t, openAIModelRotationHandlerOutput, gjson.GetBytes(recorder.Body.Bytes(), "output.0.content.0.text").String())
 				}
 				calls := upstream.snapshot()
 				require.Len(t, calls, i+1, "each HTTP request must produce exactly one upstream send")
@@ -266,11 +287,35 @@ func TestOpenAIGatewayHandlerResponses_SmartRotationUsesRawResponseModelPerCalle
 				require.NotNil(t, usageLog.UpstreamResponseModel)
 				require.Equal(t, wantDeclared[i], *usageLog.UpstreamResponseModel)
 				require.Equal(t, stream, usageLog.Stream)
+				require.Equal(t, 2, usageLog.InputTokens)
+				require.Equal(t, 1, usageLog.OutputTokens)
 			}
 			select {
 			case duplicate := <-usageLogs:
 				t.Fatalf("handler recorded duplicate usage: %#v", duplicate)
 			case <-time.After(150 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func TestOpenAIGatewayHandlerResponses_SmartRotationDisabledPreservesResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			handler, upstream, usageLogs := newOpenAIModelRotationHandler(t, false)
+			for i := 0; i < 2; i++ {
+				c, recorder := newOpenAIModelRotationHandlerContext(t, 1001, 2001, stream)
+				handler.Responses(c)
+				require.Equal(t, http.StatusOK, recorder.Code)
+				require.Contains(t, recorder.Body.String(), openAIModelRotationHandlerOutput)
+				require.NotContains(t, recorder.Body.String(), openAIModelRotationHandlerMismatchNotice)
+				calls := upstream.snapshot()
+				require.Len(t, calls, i+1)
+				require.Equal(t, int64(1), calls[i].accountID)
+				usage := receiveOpenAIModelRotationUsageLog(t, usageLogs)
+				require.Equal(t, int64(1), usage.AccountID)
+				require.Equal(t, 1, usage.OutputTokens)
 			}
 		})
 	}

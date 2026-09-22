@@ -96,6 +96,17 @@
               class="mt-1"
             />
           </div>
+          <div v-if="props.allowFinalPriceMode && entry.billing_mode === 'token'" class="w-40">
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('admin.groups.modelPricing.priceMode', '价格模式') }}
+            </label>
+            <Select
+              :modelValue="entry.price_mode || 'base'"
+              @update:modelValue="emit('update', { ...entry, price_mode: $event as 'base' | 'final' })"
+              :options="priceModeOptions"
+              class="mt-1"
+            />
+          </div>
         </div>
 
         <!-- Token mode -->
@@ -281,8 +292,10 @@ const props = withDefaults(defineProps<{
   platform?: string
   hideTokenIntervals?: boolean
   enableTierMultipliers?: boolean
+  allowFinalPriceMode?: boolean
 }>(), {
   hideTokenIntervals: false,
+  allowFinalPriceMode: false,
   enableTierMultipliers: false,
 })
 
@@ -299,6 +312,11 @@ const billingModeOptions = computed(() => [
   { value: 'per_request', label: t('admin.channels.billingMode.perRequest') },
   { value: 'image', label: t('admin.channels.billingMode.image') },
   { value: 'video', label: t('admin.channels.billingMode.video') }
+])
+
+const priceModeOptions = computed(() => [
+  { value: 'base', label: t('admin.groups.modelPricing.basePrice', '基础价 × 倍率') },
+  { value: 'final', label: t('admin.groups.modelPricing.finalPrice', '最终人民币价') },
 ])
 
 const billingModeLabel = computed(() => {

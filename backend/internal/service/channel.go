@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,11 @@ import (
 
 // BillingMode 计费模式
 type BillingMode string
+
+const (
+	PriceModeBase  = "base"
+	PriceModeFinal = "final"
+)
 
 const (
 	BillingModeToken      BillingMode = "token"       // 按 token 区间计费
@@ -84,47 +90,117 @@ type AccountStatsPricingRule struct {
 
 // ChannelModelPricing 渠道模型定价条目
 type ChannelModelPricing struct {
-	ID                           int64
-	ChannelID                    int64
-	Platform                     string      // 所属平台（anthropic/openai/gemini/...）
-	Models                       []string    // 绑定的模型列表
-	BillingMode                  BillingMode // 计费模式
-	InputPrice                   *float64    // 每 token 输入价格（USD）— 向后兼容 flat 定价
-	OutputPrice                  *float64    // 每 token 输出价格（USD）
-	CacheWritePrice              *float64    // 缓存写入价格
-	CacheWrite1hPrice            *float64    // 1 小时缓存写入价格
-	CacheReadPrice               *float64    // 缓存读取价格
-	FastMultiplier               *float64    // Fast/priority 服务档倍率
-	FlexMultiplier               *float64    // Flex 服务档倍率
-	MaxReasoningEffortMultiplier *float64
-	ImageInputPrice              *float64          // 图片输入 token 价格（如 gpt-image-2 图片编辑）；未配置时回退文本输入价
-	ImageOutputPrice             *float64          // 图片输出价格（向后兼容）
-	PerRequestPrice              *float64          // 默认按次计费价格（USD）
-	Intervals                    []PricingInterval // 区间定价列表
-	CreatedAt                    time.Time
-	UpdatedAt                    time.Time
+	ID                           int64             `json:"id,omitempty"`
+	ChannelID                    int64             `json:"channel_id,omitempty"`
+	Platform                     string            `json:"platform"`     // 所属平台（anthropic/openai/gemini/...）
+	Models                       []string          `json:"models"`       // 绑定的模型列表
+	BillingMode                  BillingMode       `json:"billing_mode"` // 计费模式
+	PriceMode                    string            `json:"price_mode,omitempty"`
+	InputPrice                   *float64          `json:"input_price"` // base: USD/token; final: RMB/token
+	OutputPrice                  *float64          `json:"output_price"`
+	CacheWritePrice              *float64          `json:"cache_write_price"`
+	CacheWrite1hPrice            *float64          `json:"cache_write_1h_price,omitempty"`
+	CacheReadPrice               *float64          `json:"cache_read_price"`
+	FastMultiplier               *float64          `json:"fast_multiplier,omitempty"`
+	FlexMultiplier               *float64          `json:"flex_multiplier,omitempty"`
+	MaxReasoningEffortMultiplier *float64          `json:"max_reasoning_effort_multiplier,omitempty"`
+	ImageInputPrice              *float64          `json:"image_input_price"`
+	ImageOutputPrice             *float64          `json:"image_output_price"`
+	PerRequestPrice              *float64          `json:"per_request_price"`
+	Intervals                    []PricingInterval `json:"intervals"`
+	CreatedAt                    time.Time         `json:"created_at,omitempty"`
+	UpdatedAt                    time.Time         `json:"updated_at,omitempty"`
 }
 
 // PricingInterval 定价区间（token 区间 / 按次分层 / 图片分辨率分层）
 type PricingInterval struct {
-	ID                   int64
-	PricingID            int64
-	MinTokens            int      // 区间下界（含）
-	MaxTokens            *int     // 区间上界（不含），nil = 无上限
-	TierLabel            string   // 层级标签（按次/图片模式：1K, 2K, 4K, HD 等）
-	InputPrice           *float64 // token 模式：每 token 输入价
-	OutputPrice          *float64 // token 模式：每 token 输出价
-	CacheWritePrice      *float64 // token 模式：缓存写入价
-	CacheWrite1hPrice    *float64 // token 模式：1 小时缓存写入价
-	CacheReadPrice       *float64 // token 模式：缓存读取价
-	InputMultiplier      *float64 // 未配置输入价时，对渠道基础输入价应用的倍率
-	OutputMultiplier     *float64 // 未配置输出价时，对渠道基础输出价应用的倍率
-	CacheWriteMultiplier *float64 // 未配置缓存写入价时，对渠道基础缓存写入价应用的倍率
-	CacheReadMultiplier  *float64 // 未配置缓存读取价时，对渠道基础缓存读取价应用的倍率
-	PerRequestPrice      *float64 // 按次/图片模式：每次请求价格
-	SortOrder            int
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                   int64     `json:"id,omitempty"`
+	PricingID            int64     `json:"pricing_id,omitempty"`
+	MinTokens            int       `json:"min_tokens"`
+	MaxTokens            *int      `json:"max_tokens"`
+	TierLabel            string    `json:"tier_label"`
+	InputPrice           *float64  `json:"input_price"`
+	OutputPrice          *float64  `json:"output_price"`
+	CacheWritePrice      *float64  `json:"cache_write_price"`
+	CacheWrite1hPrice    *float64  `json:"cache_write_1h_price,omitempty"`
+	CacheReadPrice       *float64  `json:"cache_read_price"`
+	InputMultiplier      *float64  `json:"input_multiplier"`
+	OutputMultiplier     *float64  `json:"output_multiplier"`
+	CacheWriteMultiplier *float64  `json:"cache_write_multiplier"`
+	CacheReadMultiplier  *float64  `json:"cache_read_multiplier"`
+	PerRequestPrice      *float64  `json:"per_request_price"`
+	SortOrder            int       `json:"sort_order"`
+	CreatedAt            time.Time `json:"created_at,omitempty"`
+	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+}
+
+func normalizeLegacyPricingJSON(data []byte, keys map[string]string) ([]byte, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return data, nil
+	}
+	for legacy, canonical := range keys {
+		if _, exists := object[canonical]; !exists {
+			if value, ok := object[legacy]; ok {
+				object[canonical] = value
+			}
+		}
+		delete(object, legacy)
+	}
+	return json.Marshal(object)
+}
+
+// UnmarshalJSON accepts both the current snake_case representation and the
+// CamelCase JSON stored by older XIASS releases. RawMessage remapping keeps
+// explicit zero and null values intact.
+func (p *ChannelModelPricing) UnmarshalJSON(data []byte) error {
+	normalized, err := normalizeLegacyPricingJSON(data, map[string]string{
+		"ID": "id", "ChannelID": "channel_id", "Platform": "platform", "Models": "models",
+		"BillingMode": "billing_mode", "PriceMode": "price_mode", "InputPrice": "input_price",
+		"OutputPrice": "output_price", "CacheWritePrice": "cache_write_price",
+		"CacheWrite1hPrice": "cache_write_1h_price", "CacheReadPrice": "cache_read_price",
+		"FastMultiplier": "fast_multiplier", "FlexMultiplier": "flex_multiplier",
+		"MaxReasoningEffortMultiplier": "max_reasoning_effort_multiplier",
+		"ImageInputPrice":              "image_input_price", "ImageOutputPrice": "image_output_price",
+		"PerRequestPrice": "per_request_price", "Intervals": "intervals",
+		"CreatedAt": "created_at", "UpdatedAt": "updated_at",
+	})
+	if err != nil {
+		return err
+	}
+	type pricingAlias ChannelModelPricing
+	var decoded pricingAlias
+	if err := json.Unmarshal(normalized, &decoded); err != nil {
+		return err
+	}
+	*p = ChannelModelPricing(decoded)
+	return nil
+}
+
+func (p *PricingInterval) UnmarshalJSON(data []byte) error {
+	normalized, err := normalizeLegacyPricingJSON(data, map[string]string{
+		"ID": "id", "PricingID": "pricing_id", "MinTokens": "min_tokens",
+		"MaxTokens": "max_tokens", "TierLabel": "tier_label", "InputPrice": "input_price",
+		"OutputPrice": "output_price", "CacheWritePrice": "cache_write_price",
+		"CacheWrite1hPrice": "cache_write_1h_price", "CacheReadPrice": "cache_read_price",
+		"InputMultiplier": "input_multiplier", "OutputMultiplier": "output_multiplier",
+		"CacheWriteMultiplier": "cache_write_multiplier", "CacheReadMultiplier": "cache_read_multiplier",
+		"PerRequestPrice": "per_request_price", "SortOrder": "sort_order",
+		"CreatedAt": "created_at", "UpdatedAt": "updated_at",
+	})
+	if err != nil {
+		return err
+	}
+	type intervalAlias PricingInterval
+	var decoded intervalAlias
+	if err := json.Unmarshal(normalized, &decoded); err != nil {
+		return err
+	}
+	*p = PricingInterval(decoded)
+	return nil
 }
 
 // IsActive 判断渠道是否启用

@@ -1136,6 +1136,15 @@ func normalizeGroupModelPricing(platform string, pricing []ChannelModelPricing) 
 		if out[i].Platform == "" {
 			out[i].Platform = platform
 		}
+		out[i].PriceMode = strings.ToLower(strings.TrimSpace(out[i].PriceMode))
+		if out[i].PriceMode == PriceModeFinal &&
+			out[i].BillingMode != "" && out[i].BillingMode != BillingModeToken {
+			return nil, infraerrors.New(
+				http.StatusBadRequest,
+				"FINAL_PRICE_TOKEN_ONLY",
+				"final price mode is only supported for token billing",
+			)
+		}
 
 		for j := range out[i].Models {
 			out[i].Models[j] = strings.TrimSpace(out[i].Models[j])

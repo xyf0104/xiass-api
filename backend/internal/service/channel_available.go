@@ -35,6 +35,7 @@ type AvailableGroupRef struct {
 	VideoPrice480P       *float64
 	VideoPrice720P       *float64
 	VideoPrice1080P      *float64
+	ModelPricing         []ChannelModelPricing
 }
 
 // AvailableChannel 可用渠道视图：用于「可用渠道」页面展示渠道基础信息 +
@@ -97,6 +98,7 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 			VideoPrice480P:       g.VideoPrice480P,
 			VideoPrice720P:       g.VideoPrice720P,
 			VideoPrice1080P:      g.VideoPrice1080P,
+			ModelPricing:         g.ModelPricing,
 		}
 	}
 

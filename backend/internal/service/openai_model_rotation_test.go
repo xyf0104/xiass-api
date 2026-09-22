@@ -3,13 +3,17 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func modelRotationTestContext(userID, keyID int64) context.Context {
@@ -268,6 +272,39 @@ func TestNormalizeOpenAIModelRotationModelDoesNotConflateFamilies(t *testing.T) 
 	} {
 		require.Equal(t, expected, normalizeOpenAIModelRotationModel(input))
 	}
+}
+
+func TestOpenAIModelResponseMismatchGuardHTTPMessageAndUnknownBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	message := openAIModelResponseMismatchMessage("gpt-5.6-luna")
+	writeOpenAIModelResponseMismatchHTTP(c, message)
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+	require.Equal(t, message, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
+	require.Equal(t, "model_mismatch", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+
+	svc, key, _ := modelRotationTestGateway(t, "advanced")
+	ctx := modelRotationTestContext(key.UserID, key.ID)
+	guard := svc.newOpenAIModelResponseGuard(ctx, "gpt-6-astra", "gpt-6-astra")
+	_, mismatch := guard.mismatch("gpt-5.6-luna", false)
+	require.True(t, mismatch)
+	_, mismatch = guard.mismatch("", false)
+	require.False(t, mismatch)
+	_, mismatch = guard.mismatch("unknown", true)
+	require.False(t, mismatch)
+	require.Contains(t, openAIModelResponseMismatchMessage("gpt-5.6-terra"), "gpt-5.6-terra模型")
+}
+
+func TestOpenAIModelResponseMismatchGuardDisabledBySmartRotation(t *testing.T) {
+	svc, key, _ := modelRotationTestGateway(t, "advanced")
+	settings, err := svc.settingService.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	settings.SmartRotationEnabled = false
+	require.NoError(t, svc.settingService.SetOpenAIModelPrioritySettings(context.Background(), settings))
+	ctx := modelRotationTestContext(key.UserID, key.ID)
+	_, mismatch := svc.newOpenAIModelResponseGuard(ctx, "gpt-6-astra", "gpt-6-astra").mismatch("gpt-5.6-luna", false)
+	require.False(t, mismatch)
 }
 
 func TestOpenAIModelRotationRetainsPendingDecisionsWhenRedisReadsRecover(t *testing.T) {

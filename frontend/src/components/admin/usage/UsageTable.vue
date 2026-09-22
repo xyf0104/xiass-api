@@ -214,6 +214,13 @@
                   <span class="font-medium text-pink-600 dark:text-pink-400">{{ row.image_output_tokens.toLocaleString() }}</span>
                 </div>
               </div>
+              <div class="flex items-center gap-2" data-testid="output-token-speed">
+                <span class="text-gray-400 dark:text-gray-500">{{ t('usage.outputSpeed') }}</span>
+                <span class="font-medium tabular-nums text-cyan-600 dark:text-cyan-400">{{ formatOutputTokenSpeed(row) }}</span>
+                <span v-if="getOutputTokenSpeed(row)?.usesNonStreamFallback" class="text-[10px] text-gray-400 dark:text-gray-500">
+                  {{ t('usage.outputSpeedNonStream') }}
+                </span>
+              </div>
             </div>
             <!-- Token Detail Tooltip -->
             <div
@@ -548,6 +555,7 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import { formatOutputTokenSpeed, getOutputTokenSpeed } from '@/utils/outputTokenSpeed'
 import {
   LATENCY_BAR_CLASSES,
   LATENCY_BAR_FROM_CLASSES,

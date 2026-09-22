@@ -43,7 +43,7 @@ func pricingAuthFixture(enabled bool) *APIKey {
 		Group: &Group{ID: 3, Platform: PlatformOpenAI, Status: StatusActive,
 			LongContextPricingEnabled: enabled,
 			ModelPricing: []ChannelModelPricing{{
-				Models: []string{"gpt-5.6-luna"}, BillingMode: BillingModeToken,
+				Models: []string{"gpt-5.6-luna"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
 				InputPrice: &price, OutputPrice: &price, CacheWritePrice: &price, CacheReadPrice: &price,
 				FastMultiplier: &multiplier, FlexMultiplier: &multiplier,
 				ImageInputPrice: &price, ImageOutputPrice: &price, PerRequestPrice: &price,

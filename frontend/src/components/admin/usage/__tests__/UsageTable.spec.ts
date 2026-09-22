@@ -67,6 +67,8 @@ const messages: Record<string, string> = {
   'usage.upstreamResponseModel': 'Upstream response',
   'usage.modelVariant': 'Possible version variant',
   'usage.modelMismatch': 'Different model',
+  'usage.outputSpeed': 'Output speed',
+  'usage.outputSpeedNonStream': 'non-stream',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -714,5 +716,40 @@ describe('admin UsageTable deleted-user badge', () => {
 
     expect(wrapper.text()).not.toContain('Deleted')
     expect(wrapper.text()).toContain('active@test.com')
+  })
+})
+
+describe('admin UsageTable output token speed', () => {
+  it('shows streamed output speed and an explicit non-stream fallback label', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            request_id: 'req-stream-speed', output_tokens: 900, input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0,
+            first_token_ms: 500, duration_ms: 3500, stream: true, model: 'gpt-5.4', actual_cost: 0, total_cost: 0,
+          },
+          {
+            request_id: 'req-sync-speed', output_tokens: 120, input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0,
+            first_token_ms: null, duration_ms: 2000, stream: false, model: 'gpt-5.4', actual_cost: 0, total_cost: 0,
+          },
+          {
+            request_id: 'req-invalid-speed', output_tokens: 100, input_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0,
+            first_token_ms: 1000, duration_ms: 1000, stream: true, model: 'gpt-5.4', actual_cost: 0, total_cost: 0,
+          },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    const speedRows = wrapper.findAll('[data-testid="output-token-speed"]')
+    expect(speedRows[0].text()).toContain('300.00 t/s')
+    expect(speedRows[0].text()).not.toContain('non-stream')
+    expect(speedRows[1].text()).toContain('60.00 t/s')
+    expect(speedRows[1].text()).toContain('non-stream')
+    expect(speedRows[2].text()).toContain('-')
   })
 })

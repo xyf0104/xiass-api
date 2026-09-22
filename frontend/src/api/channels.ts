@@ -6,6 +6,16 @@
 import { apiClient } from './client'
 import type { BillingMode } from '@/constants/channel'
 
+export interface UserGroupModelPricing {
+  models: string[]
+  billing_mode: BillingMode | ''
+  price_mode: 'base' | 'final'
+  input_price: number | null
+  output_price: number | null
+  cache_write_price: number | null
+  cache_read_price: number | null
+}
+
 export interface UserAvailableGroup {
   id: number
   name: string
@@ -33,6 +43,7 @@ export interface UserAvailableGroup {
   video_price_480p?: number | null
   video_price_720p?: number | null
   video_price_1080p?: number | null
+  model_pricing?: UserGroupModelPricing[]
 }
 
 export interface UserPricingInterval {
@@ -63,6 +74,7 @@ export interface UserSupportedModelPricing {
   image_output_price: number | null
   per_request_price: number | null
   intervals: UserPricingInterval[]
+  price_mode?: 'base' | 'final'
 }
 
 export interface UserSupportedModel {

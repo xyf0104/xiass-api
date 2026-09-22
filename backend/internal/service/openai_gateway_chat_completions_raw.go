@@ -281,6 +281,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
+	modelResponseGuard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		modelResponseGuard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, upstreamModel)
+	}
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
@@ -289,6 +293,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	modelMismatchSuppressed := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -341,12 +346,29 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
 				}
+				if !clientOutputStarted && !modelMismatchSuppressed {
+					if message, mismatch := modelResponseGuard.mismatch(observer.Model(), observer.Conflict()); mismatch {
+						notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, upstreamModel, observer.Model(), startTime)
+						pendingLines = nil
+						writeStreamHeaders()
+						if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE("model_mismatch", message)); err != nil {
+							clientDisconnected = true
+						} else {
+							_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+							c.Writer.Flush()
+							clientOutputStarted = true
+						}
+						modelMismatchSuppressed = true
+					}
+				}
 			}
 		}
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 
-		writeLine(line)
+		if !modelMismatchSuppressed {
+			writeLine(line)
+		}
 		if line == "" {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
@@ -412,7 +434,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		return resultWithUsage(), newOpenAIUpstreamStreamReadError(cause)
 	}
 
-	if scanErr == nil && !clientDisconnected && !clientOutputStarted {
+	if scanErr == nil && !clientDisconnected && !clientOutputStarted && !modelMismatchSuppressed {
 		if refusalDetector.IsSilentRefusal() {
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
@@ -505,6 +527,22 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
 		usage = parsedUsage
 	}
+	result := &OpenAIForwardResult{
+		RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel,
+		UpstreamModel: upstreamModel, UpstreamResponseModel: observedUpstreamResponseModel(c),
+		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c), ReasoningEffort: reasoningEffort,
+		ServiceTier: serviceTier, Stream: false, Duration: time.Since(startTime),
+	}
+	guard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		guard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, upstreamModel)
+	}
+	if message, mismatch := guard.mismatch(result.UpstreamResponseModel, result.UpstreamResponseModelConflict); mismatch {
+		notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, upstreamModel, result.UpstreamResponseModel, time.Time{})
+		writeOpenAIModelResponseMismatchHTTP(c, message)
+		return result, nil
+	}
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
 
 	if s.responseHeaderFilter != nil {
@@ -518,20 +556,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = c.Writer.Write(respBody)
 
-	return &OpenAIForwardResult{
-		RequestID:                     requestID,
-		Usage:                         usage,
-		Model:                         originalModel,
-		BillingModel:                  billingModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-		ReasoningEffort:               reasoningEffort,
-		ServiceTier:                   serviceTier,
-		Stream:                        false,
-		Duration:                      time.Since(startTime),
-	}, nil
+	return result, nil
 }
 
 // buildOpenAIChatCompletionsURL 拼接上游 Chat Completions 端点 URL。

@@ -731,7 +731,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			if err != nil {
 				return nil, err
 			}
-			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
+			baseCtx := c.Request.Context()
+			attemptStartedAt := time.Now()
+			attemptCtx := service.WithOpenAIModelResponseMismatchStartedAt(baseCtx, attemptStartedAt)
+			attemptCtx = service.WithOpenAIModelResponseMismatchObserver(attemptCtx, func(requestedModel, upstreamModel, responseModel string, startedAt time.Time) {
+				h.gatewayService.ObserveOpenAIModelRotationImmediate(baseCtx, apiKey, account, requestedModel, &service.OpenAIForwardResult{
+					UpstreamModel: upstreamModel, UpstreamResponseModel: responseModel, Duration: time.Since(startedAt),
+				})
+			})
+			c.Request = c.Request.WithContext(attemptCtx)
+			return h.gatewayService.Forward(attemptCtx, c, account, attemptBody)
 		}()
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {

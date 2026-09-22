@@ -299,6 +299,44 @@ func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, u
 	return cost
 }
 
+func TestOpenAIGatewayRecordUsage_FinalGroupPricingBillsDirectRMBWithoutUserRate(t *testing.T) {
+	groupID := int64(9911)
+	finalInput := 2e-6
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	rate := 4.0
+	rateRepo := &openAIUserGroupRateRepoStub{rate: &rate}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, rateRepo)
+	svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai_final_group_price",
+			Model:     "claude-sonnet-4",
+			Usage:     OpenAIUsage{InputTokens: 1_000_000},
+			Duration:  time.Second,
+		},
+		APIKey: &APIKey{
+			ID:      9912,
+			UserID:  9913,
+			GroupID: i64p(groupID),
+			Group: &Group{ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 3,
+				ModelPricing: []ChannelModelPricing{{
+					Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken,
+					PriceMode: PriceModeFinal, InputPrice: &finalInput,
+				}},
+			},
+		},
+		User:    &User{ID: 9913},
+		Account: &Account{ID: 9914, Platform: PlatformOpenAI},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, 2.0, usageRepo.lastLog.ActualCost, 1e-9)
+	require.InDelta(t, 2.0, userRepo.lastAmount, 1e-9)
+	require.NotEqual(t, usageRepo.lastLog.TotalCost*4, usageRepo.lastLog.ActualCost)
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a

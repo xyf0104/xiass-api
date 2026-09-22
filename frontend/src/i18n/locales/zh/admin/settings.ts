@@ -5,7 +5,7 @@ export default {
       modelPriorityTitle: '模型优先调度',
       modelPriorityDescription: '为指定模型选择第一优先账号；这些账号没有可用槽位时立即使用普通调度。',
       smartRotationTitle: '智能轮询满血模型系统',
-      smartRotationDescription: '按用户和 API Key 独立判断。上游返回模型不匹配时，后续请求依序换号；模型缺失不判为成功。全部不可用时回退普通调度，固定续链会话不换号。',
+      smartRotationDescription: '按用户和 API Key 独立判断。内容发出前发现模型不匹配时拦截并提示重试，后续请求依序换号；模型缺失不判为成功。全部不可用时回退普通调度，固定续链会话不换号。',
       smartRotationRequiresPriority: '请先开启模型优先调度；智能轮询会作用于所有已配置且匹配的模型规则。',
       smartRotationInactive: '当前未生效',
       smartRotationCooldown: '跳过时长',

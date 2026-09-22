@@ -1576,6 +1576,7 @@
               :key="index"
               :entry="entry"
               :platform="createForm.platform"
+              allow-final-price-mode
               hide-token-intervals
               @update="createForm.model_pricing[index] = $event"
               @remove="createForm.model_pricing.splice(index, 1)"
@@ -3462,6 +3463,7 @@
               :key="index"
               :entry="entry"
               :platform="editForm.platform"
+              allow-final-price-mode
               hide-token-intervals
               @update="editForm.model_pricing[index] = $event"
               @remove="editForm.model_pricing.splice(index, 1)"
@@ -5041,8 +5043,9 @@ const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
 
 const emptyGroupPricing = (): PricingFormEntry => ({
-  models: [],
-  billing_mode: "token",
+	models: [],
+	billing_mode: "token",
+	price_mode: "base",
   input_price: null,
   output_price: null,
   cache_write_price: null,
@@ -5060,8 +5063,9 @@ const groupPricingFromAPI = (
   pricing: ChannelModelPricing[] | undefined,
 ): PricingFormEntry[] =>
   (pricing || []).map((entry) => ({
-    models: entry.models || [],
-    billing_mode: entry.billing_mode || "token",
+	models: entry.models || [],
+	billing_mode: entry.billing_mode || "token",
+	price_mode: entry.price_mode || "base",
     input_price: perTokenToMTok(entry.input_price),
     output_price: perTokenToMTok(entry.output_price),
     cache_write_price: perTokenToMTok(entry.cache_write_price),
@@ -5081,8 +5085,9 @@ const groupPricingToAPI = (
     .map((entry) => {
       const groupPricing: ChannelModelPricing = {
         platform,
-        models: entry.models,
-        billing_mode: entry.billing_mode,
+		models: entry.models,
+		billing_mode: entry.billing_mode,
+		price_mode: entry.price_mode || "base",
         input_price: mTokToPerToken(entry.input_price),
         output_price: mTokToPerToken(entry.output_price),
         cache_write_price: mTokToPerToken(entry.cache_write_price),

@@ -504,6 +504,24 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.Observe(finalResponse.Model, true)
+	guard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		guard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, upstreamModel)
+	}
+	buildResult := func() *OpenAIForwardResult {
+		return &OpenAIForwardResult{
+			RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel,
+			UpstreamModel: upstreamModel, UpstreamResponseModel: observedUpstreamResponseModel(c),
+			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+			Stream:                        false, Duration: time.Since(startTime),
+		}
+	}
+	if message, mismatch := guard.mismatch(observedUpstreamResponseModel(c), observedUpstreamResponseModelConflict(c)); mismatch {
+		notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, upstreamModel, observedUpstreamResponseModel(c), time.Time{})
+		writeOpenAIModelResponseMismatchHTTP(c, message)
+		return buildResult(), nil
+	}
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
 		// cyber_policy 致命不可重试：不 failover，以 Chat Completions 错误格式回写（F4），
@@ -562,17 +580,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	c.JSON(http.StatusOK, chatResp)
 
-	return &OpenAIForwardResult{
-		RequestID:                     requestID,
-		Usage:                         usage,
-		Model:                         originalModel,
-		BillingModel:                  billingModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		Stream:                        false,
-		Duration:                      time.Since(startTime),
-	}, nil
+	return buildResult(), nil
 }
 
 func (s *OpenAIGatewayService) newOpenAICompatBufferedReadFailoverError(
@@ -650,6 +658,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
+	modelResponseGuard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		modelResponseGuard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, upstreamModel)
+	}
+	modelMismatchSuppressed := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -709,6 +722,24 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if event.Response != nil && event.Response.Usage != nil {
 				usage = copyOpenAIUsageFromResponsesUsage(event.Response.Usage)
 			}
+		}
+		if !clientOutputStarted && !modelMismatchSuppressed {
+			if message, mismatch := modelResponseGuard.mismatch(observer.Model(), observer.Conflict()); mismatch {
+				notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, upstreamModel, observer.Model(), startTime)
+				pendingSSE = nil
+				writeStreamHeaders()
+				if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE("model_mismatch", message)); err != nil {
+					clientDisconnected = true
+				} else {
+					_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+					c.Writer.Flush()
+					clientOutputStarted = true
+				}
+				modelMismatchSuppressed = true
+			}
+		}
+		if modelMismatchSuppressed {
+			return isTerminalEvent
 		}
 		if strings.TrimSpace(event.Type) == "response.failed" {
 			payloadBytes := []byte(payload)
@@ -842,6 +873,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
+		}
+		if modelMismatchSuppressed {
+			return resultWithUsage(), nil
 		}
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {

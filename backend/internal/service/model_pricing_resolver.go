@@ -39,6 +39,10 @@ type ResolvedPricing struct {
 
 	// 渠道定价原始配置（用于区间模式下获取 ImageOutputPrice）
 	channelPricing *ChannelModelPricing
+	// FinalTokenPricing only replaces user ActualCost dimensions. The resolved
+	// base/channel pricing remains authoritative for TotalCost/account cost.
+	FinalTokenPricing   *ChannelModelPricing
+	pricingPolicySource string
 
 	longContextPricingEnabled bool
 }
@@ -78,6 +82,25 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 			stripped := groupPricing.Clone()
 			stripped.Intervals = nil
 			groupPricing = &stripped
+		}
+		if groupPricing.PriceMode == PriceModeFinal &&
+			(groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken) {
+			resolved := r.Resolve(ctx, PricingInput{
+				Model:   input.Model,
+				GroupID: input.GroupID,
+			})
+			// A fully specified final token price can still bill the user when a
+			// newly introduced model has no catalog/channel account-cost price yet.
+			// Keep the zero base isolated to TotalCost; partial final pricing still
+			// requires an underlying source so nil fields retain inherit semantics.
+			if resolved.BasePricing == nil && len(resolved.Intervals) == 0 && hasCompleteFinalTokenPricing(groupPricing) {
+				resolved.BasePricing = &ModelPricing{}
+			}
+			resolved.pricingPolicySource = resolved.Source
+			resolved.Source = PricingSourceGroup
+			resolved.FinalTokenPricing = groupPricing
+			resolved.longContextPricingEnabled = longContextPricingEnabled
+			return resolved
 		}
 		resolved := r.resolveConfiguredPricing(groupPricing, input.Model, PricingSourceGroup)
 		resolved.longContextPricingEnabled = longContextPricingEnabled
@@ -142,6 +165,14 @@ func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPric
 	resolved.SupportsCacheBreakdown = resolved.BasePricing != nil && resolved.BasePricing.SupportsCacheBreakdown
 	r.applyTokenOverrides(config, resolved)
 	return resolved
+}
+
+func hasCompleteFinalTokenPricing(pricing *ChannelModelPricing) bool {
+	return pricing != nil &&
+		pricing.InputPrice != nil &&
+		pricing.OutputPrice != nil &&
+		pricing.CacheWritePrice != nil &&
+		pricing.CacheReadPrice != nil
 }
 
 func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {

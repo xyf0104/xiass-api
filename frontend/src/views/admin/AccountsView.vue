@@ -4,6 +4,7 @@
       <template #filters>
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
+            class="accounts-filters-compact"
             v-model:searchQuery="params.search"
             :filters="params"
             :groups="groups"
@@ -14,6 +15,7 @@
             @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
+            class="accounts-actions-compact"
             v-if="accountActionsReady && !pairingUnavailable"
             :loading="loading"
             @refresh="handleManualRefresh"
@@ -2937,6 +2939,31 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.accounts-page.table-page-layout {
+  gap: 0.75rem;
+}
+
+.accounts-page :deep(.accounts-filters-compact),
+.accounts-page :deep(.accounts-actions-compact) {
+  gap: 0.5rem;
+}
+
+.accounts-page :deep(.accounts-filters-compact .select-trigger) {
+  @apply rounded-lg px-3 py-2 text-sm;
+}
+
+.accounts-page :deep(.accounts-filters-compact .input) {
+  @apply rounded-lg px-3 py-2 text-sm;
+}
+
+.accounts-page :deep(.accounts-actions-compact .btn) {
+  @apply rounded-lg px-3 py-2 text-sm;
+}
+
+.accounts-page :deep(.accounts-actions-compact .btn-secondary.px-2) {
+  padding: 0.5rem;
+}
+
 .accounts-page :deep(.table-wrapper) {
   overscroll-behavior: contain;
   overflow-anchor: none;
@@ -2949,6 +2976,12 @@ onUnmounted(() => {
 
 .account-tools-menu-icon {
   @apply inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md;
+}
+
+@media (max-width: 1023px) {
+  .accounts-page.table-page-layout {
+    height: auto;
+  }
 }
 
 @media (max-width: 767px) {
@@ -2967,6 +3000,16 @@ onUnmounted(() => {
     min-width: 0;
     max-width: 100%;
     overflow-x: hidden;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .accounts-page :deep(.accounts-filters-compact > :first-child) {
+    width: 13rem;
+  }
+
+  .accounts-page :deep(.accounts-filters-compact > :not(:first-child)) {
+    width: 8.75rem;
   }
 }
 </style>

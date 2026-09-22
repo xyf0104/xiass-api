@@ -1692,6 +1692,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
+	modelResponseGuard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		modelResponseGuard = s.newOpenAIModelResponseGuard(ctx, originalModel, mappedModel)
+	}
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Delay this account-bound header until the first downstream SSE frame.
 	// A pre-output protocol failure may still switch accounts, in which case the
@@ -1740,6 +1744,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
+	modelMismatchSuppressed := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
@@ -1796,6 +1801,17 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			trimmedData := strings.TrimSpace(data)
 			rawEventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			observer.ObserveOpenAI(dataBytes, rawEventType)
+			if !clientOutputStarted && !modelMismatchSuppressed {
+				if message, mismatch := modelResponseGuard.mismatch(observer.Model(), observer.Conflict()); mismatch {
+					notifyOpenAIModelResponseMismatch(ctx, originalModel, mappedModel, observer.Model(), startTime)
+					pendingLines = nil
+					if err := writeOpenAIModelResponseMismatchSSE(w, flusher, message); err != nil {
+						return resultWithUsage(), err
+					}
+					modelMismatchSuppressed = true
+					clientOutputStarted = true
+				}
+			}
 			if needModelReplace && strings.Contains(data, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 				if replacedData, replaced := extractOpenAISSEDataLine(line); replaced {
@@ -1934,7 +1950,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			s.parseSSEUsageBytes(dataBytes, usage)
 		}
 
-		if !clientDisconnected {
+		if !clientDisconnected && !modelMismatchSuppressed {
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
 				continue
@@ -2013,7 +2029,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 		s.clearOpenAIProxyStreamDisconnect(account)
 	}
-
 	return resultWithUsage(), nil
 }
 
@@ -2062,6 +2077,20 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if !usageParsed {
 		// 兜底：尝试从 SSE 文本中解析 usage
 		usage = s.parseSSEUsageFromBody(string(body))
+	}
+	guard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		guard = s.newOpenAIModelResponseGuard(ctx, originalModel, mappedModel)
+	}
+	if message, mismatch := guard.mismatch(observedUpstreamResponseModel(c), observedUpstreamResponseModelConflict(c)); mismatch {
+		notifyOpenAIModelResponseMismatch(ctx, originalModel, mappedModel, observedUpstreamResponseModel(c), time.Time{})
+		writeOpenAIModelResponseMismatchHTTP(c, message)
+		return &openaiNonStreamingResultPassthrough{
+			OpenAIUsage:      usage,
+			usage:            usage,
+			imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+			imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		}, nil
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -2145,6 +2174,20 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)
 		}
 		body = []byte(bodyText)
+	}
+	guard := openAIModelResponseGuard{}
+	if account != nil && account.Platform == PlatformOpenAI {
+		guard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, mappedModel)
+	}
+	if message, mismatch := guard.mismatch(observedUpstreamResponseModel(c), observedUpstreamResponseModelConflict(c)); mismatch {
+		notifyOpenAIModelResponseMismatch(c.Request.Context(), originalModel, mappedModel, observedUpstreamResponseModel(c), time.Time{})
+		writeOpenAIModelResponseMismatchHTTP(c, message)
+		return &openaiNonStreamingResultPassthrough{
+			OpenAIUsage:      usage,
+			usage:            usage,
+			imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
+			imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		}, nil
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

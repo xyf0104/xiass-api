@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -658,6 +659,11 @@ func RemovePreviousResponseIDFromBody(body []byte) []byte {
 // validateChannelConfig 校验渠道的定价和映射配置（冲突检测 + 区间校验 + 计费模式校验）。
 // Create 和 Update 共用此函数，避免重复。
 func validateChannelConfig(pricing []ChannelModelPricing, mapping map[string]map[string]string) error {
+	for _, p := range pricing {
+		if p.PriceMode == PriceModeFinal {
+			return infraerrors.BadRequest("FINAL_PRICE_GROUP_ONLY", "final price mode is only supported by group model pricing")
+		}
+	}
 	if err := validatePricingEntries(pricing); err != nil {
 		return err
 	}
@@ -681,6 +687,11 @@ func validatePricingEntries(pricing []ChannelModelPricing) error {
 
 func validateAccountStatsPricingRules(rules []AccountStatsPricingRule) error {
 	for i := range rules {
+		for _, p := range rules[i].Pricing {
+			if p.PriceMode == PriceModeFinal {
+				return infraerrors.BadRequest("FINAL_PRICE_GROUP_ONLY", "final price mode is not supported by account stats pricing")
+			}
+		}
 		if err := validatePricingEntries(rules[i].Pricing); err != nil {
 			return fmt.Errorf("account stats pricing rule #%d: %w", i+1, err)
 		}
@@ -691,6 +702,9 @@ func validateAccountStatsPricingRules(rules []AccountStatsPricingRule) error {
 // validatePricingBillingMode 校验计费模式配置：按次/图片模式必须配价格或区间，所有价格字段不能为负，区间至少有一个价格字段。
 func validatePricingBillingMode(pricing []ChannelModelPricing) error {
 	for _, p := range pricing {
+		if p.PriceMode != "" && p.PriceMode != PriceModeBase && p.PriceMode != PriceModeFinal {
+			return infraerrors.BadRequest("INVALID_PRICE_MODE", "price_mode must be base or final")
+		}
 		if err := checkBillingModeRequirements(p); err != nil {
 			return err
 		}
@@ -724,12 +738,16 @@ func checkPricesNotNegative(p ChannelModelPricing) error {
 		{"input_price", p.InputPrice},
 		{"output_price", p.OutputPrice},
 		{"cache_write_price", p.CacheWritePrice},
+		{"cache_write_1h_price", p.CacheWrite1hPrice},
 		{"cache_read_price", p.CacheReadPrice},
 		{"image_input_price", p.ImageInputPrice},
 		{"image_output_price", p.ImageOutputPrice},
 		{"per_request_price", p.PerRequestPrice},
 	}
 	for _, c := range checks {
+		if c.val != nil && (math.IsNaN(*c.val) || math.IsInf(*c.val, 0)) {
+			return infraerrors.BadRequest("INVALID_PRICE", fmt.Sprintf("%s must be finite", c.field))
+		}
 		if c.val != nil && *c.val < 0 {
 			return infraerrors.BadRequest("NEGATIVE_PRICE", fmt.Sprintf("%s must be >= 0", c.field))
 		}
@@ -741,7 +759,7 @@ func checkPricesNotNegative(p ChannelModelPricing) error {
 		{"fast_multiplier", p.FastMultiplier},
 		{"flex_multiplier", p.FlexMultiplier},
 	} {
-		if c.val != nil && *c.val <= 0 {
+		if c.val != nil && (math.IsNaN(*c.val) || math.IsInf(*c.val, 0) || *c.val <= 0) {
 			return infraerrors.BadRequest("INVALID_MULTIPLIER", fmt.Sprintf("%s must be > 0", c.field))
 		}
 	}
@@ -750,6 +768,21 @@ func checkPricesNotNegative(p ChannelModelPricing) error {
 
 func checkIntervalsHavePrices(p ChannelModelPricing) error {
 	for _, iv := range p.Intervals {
+		for _, c := range []struct {
+			field string
+			val   *float64
+		}{
+			{"interval.input_price", iv.InputPrice},
+			{"interval.output_price", iv.OutputPrice},
+			{"interval.cache_write_price", iv.CacheWritePrice},
+			{"interval.cache_write_1h_price", iv.CacheWrite1hPrice},
+			{"interval.cache_read_price", iv.CacheReadPrice},
+			{"interval.per_request_price", iv.PerRequestPrice},
+		} {
+			if c.val != nil && (math.IsNaN(*c.val) || math.IsInf(*c.val, 0) || *c.val < 0) {
+				return infraerrors.BadRequest("INVALID_PRICE", fmt.Sprintf("%s must be finite and >= 0", c.field))
+			}
+		}
 		if iv.InputPrice == nil && iv.OutputPrice == nil &&
 			iv.CacheWritePrice == nil && iv.CacheReadPrice == nil &&
 			iv.PerRequestPrice == nil && iv.InputMultiplier == nil &&

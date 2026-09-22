@@ -244,7 +244,16 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
+			baseCtx := c.Request.Context()
+			attemptStartedAt := time.Now()
+			attemptCtx := service.WithOpenAIModelResponseMismatchStartedAt(baseCtx, attemptStartedAt)
+			attemptCtx = service.WithOpenAIModelResponseMismatchObserver(attemptCtx, func(requestedModel, upstreamModel, responseModel string, startedAt time.Time) {
+				h.gatewayService.ObserveOpenAIModelRotationImmediate(baseCtx, apiKey, account, requestedModel, &service.OpenAIForwardResult{
+					UpstreamModel: upstreamModel, UpstreamResponseModel: responseModel, Duration: time.Since(startedAt),
+				})
+			})
+			c.Request = c.Request.WithContext(attemptCtx)
+			return h.gatewayService.ForwardAsChatCompletions(attemptCtx, c, account, forwardBody, promptCacheKey, "")
 		}()
 		var cyberBlockBodyChat []byte
 		if service.GetOpsCyberPolicy(c) != nil {

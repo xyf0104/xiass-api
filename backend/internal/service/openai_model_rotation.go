@@ -5,19 +5,76 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
 )
 
 const (
 	openAIModelRotationStoreTimeout = 50 * time.Millisecond
 	openAIModelRotationMemoryLimit  = 16384
 )
+
+type openAIModelResponseGuard struct {
+	enabled  bool
+	expected string
+}
+
+type openAIModelResponseMismatchObserverKey struct{}
+type openAIModelResponseMismatchBypassKey struct{}
+type openAIModelResponseMismatchStartedAtKey struct{}
+
+type openAIModelResponseMismatchObserver struct {
+	once     sync.Once
+	observed atomic.Bool
+	observe  func(requestedModel, upstreamModel, responseModel string, startedAt time.Time)
+}
+
+func WithOpenAIModelResponseMismatchObserver(ctx context.Context, observe func(string, string, string, time.Time)) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIModelResponseMismatchObserverKey{}, &openAIModelResponseMismatchObserver{observe: observe})
+}
+
+func WithOpenAIModelResponseMismatchStartedAt(ctx context.Context, startedAt time.Time) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIModelResponseMismatchStartedAtKey{}, startedAt)
+}
+
+func notifyOpenAIModelResponseMismatch(ctx context.Context, requestedModel, upstreamModel, responseModel string, startedAt time.Time) {
+	observer, _ := ctx.Value(openAIModelResponseMismatchObserverKey{}).(*openAIModelResponseMismatchObserver)
+	if observer == nil || observer.observe == nil {
+		return
+	}
+	if startedAt.IsZero() {
+		startedAt, _ = ctx.Value(openAIModelResponseMismatchStartedAtKey{}).(time.Time)
+	}
+	observer.once.Do(func() {
+		observer.observed.Store(true)
+		observer.observe(requestedModel, upstreamModel, responseModel, startedAt)
+	})
+}
+
+func openAIModelResponseMismatchObserved(ctx context.Context) bool {
+	observer, _ := ctx.Value(openAIModelResponseMismatchObserverKey{}).(*openAIModelResponseMismatchObserver)
+	return observer != nil && observer.observed.Load()
+}
+
+func (s *OpenAIGatewayService) ObserveOpenAIModelRotationImmediate(ctx context.Context, apiKey *APIKey, account *Account, requestedModel string, result *OpenAIForwardResult) {
+	s.ObserveOpenAIModelRotation(context.WithValue(ctx, openAIModelResponseMismatchBypassKey{}, true), apiKey, account, requestedModel, result)
+}
 
 // OpenAIModelRotationStore is optional on GatewayCache, keeping other gateway
 // cache implementations compatible. Observations contain no credentials.
@@ -164,6 +221,49 @@ func (s *OpenAIGatewayService) openAIModelRotationCooldown(ctx context.Context, 
 	return time.Duration(minutes) * time.Minute
 }
 
+func (s *OpenAIGatewayService) newOpenAIModelResponseGuard(ctx context.Context, requestedModel, upstreamModel string) openAIModelResponseGuard {
+	expected := normalizeOpenAIModelRotationModel(upstreamSentModel(requestedModel, upstreamModel))
+	return openAIModelResponseGuard{enabled: expected != "" && s.openAIModelRotationCooldown(ctx, requestedModel) > 0, expected: expected}
+}
+
+func (g openAIModelResponseGuard) mismatch(responseModel string, conflict bool) (string, bool) {
+	observed := normalizeOpenAIModelRotationModel(responseModel)
+	if !g.enabled || conflict || observed == "" || observed == "unknown" || observed == "unknown-model" || observed == "n/a" || observed == g.expected {
+		return "", false
+	}
+	return openAIModelResponseMismatchMessage(responseModel), true
+}
+
+func openAIModelResponseMismatchMessage(responseModel string) string {
+	display := strings.TrimSpace(responseModel)
+	if normalizeOpenAIModelRotationModel(display) == "gpt-5.6-luna" {
+		display = "luna"
+	}
+	return fmt.Sprintf("检测到该条回复已降智（%s模型），将不予采纳。请重新发起请求。下一次请求将轮询健康账号。", display)
+}
+
+func writeOpenAIModelResponseMismatchHTTP(c *gin.Context, message string) {
+	if c == nil || c.Writer == nil || c.Writer.Written() {
+		return
+	}
+	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "model_mismatch", "code": "model_mismatch", "message": message}})
+}
+
+func writeOpenAIModelResponseMismatchSSE(w io.Writer, flusher http.Flusher, message string) error {
+	if w == nil {
+		return nil
+	}
+	payload := `data: {"type":"error","sequence_number":0,"error":{"type":"model_mismatch","message":` + strconv.Quote(message) + `,"code":"model_mismatch"}}` + "\n\ndata: [DONE]\n\n"
+	if _, err := io.WriteString(w, payload); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
 func (s *OpenAIGatewayService) openAIModelRotationExclusions(ctx context.Context, groupID *int64, model string) []int64 {
 	if s.openAIModelRotationCooldown(ctx, model) == 0 {
 		return nil
@@ -245,6 +345,9 @@ func normalizeOpenAIModelRotationModel(model string) string {
 // replays the completed response or changes billing or global account health.
 func (s *OpenAIGatewayService) ObserveOpenAIModelRotation(ctx context.Context, apiKey *APIKey, account *Account, requestedModel string, result *OpenAIForwardResult) {
 	if s == nil || apiKey == nil || account == nil || account.Platform != PlatformOpenAI || result == nil || ctx == nil {
+		return
+	}
+	if bypass, _ := ctx.Value(openAIModelResponseMismatchBypassKey{}).(bool); !bypass && openAIModelResponseMismatchObserved(ctx) {
 		return
 	}
 	observed := normalizeOpenAIModelRotationModel(result.UpstreamResponseModel)

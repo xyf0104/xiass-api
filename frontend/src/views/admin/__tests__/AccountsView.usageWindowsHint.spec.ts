@@ -169,6 +169,14 @@ describe('admin AccountsView usage windows hint', () => {
     expect(hint.text()).toBe('admin.accounts.usageWindowsHint')
   })
 
+  it('keeps account filters and actions on the page-specific compact layout hooks', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('.accounts-filters-compact').exists()).toBe(true)
+    expect(wrapper.find('.accounts-actions-compact').exists()).toBe(true)
+  })
+
   it('keeps Ollama Cloud in the single usage column and ignores legacy column preferences', async () => {
     localStorage.setItem('account-hidden-columns', JSON.stringify(['ollama_cloud_usage']))
     const wrapper = mountView()

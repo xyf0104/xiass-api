@@ -195,4 +195,66 @@ describe('PricingView', () => {
     wrapper.unmount()
     vi.useRealTimers()
   })
+
+  it('matches base exact before final wildcard and does not multiply final fields', async () => {
+	vi.useFakeTimers({ toFake: ['Date'] })
+	vi.setSystemTime(new Date('2026-07-10T07:00:00Z'))
+	const channels = grokChannelFixture()
+	const section = channels[0]!.platforms[0]!
+	const group = section.groups[0]!
+	group.subscription_type = 'subscription'
+	group.peak_rate_enabled = true
+	group.peak_start = '14:00'
+	group.peak_end = '18:00'
+	group.peak_rate_multiplier = 2
+	group.model_pricing = [
+	  {
+		models: ['grok-4'],
+		billing_mode: 'token',
+		price_mode: 'base',
+		input_price: null,
+		output_price: null,
+		cache_write_price: null,
+		cache_read_price: null
+	  },
+	  {
+		models: ['grok-*'],
+		billing_mode: 'token',
+		price_mode: 'final',
+		input_price: 0.000009,
+		output_price: null,
+		cache_write_price: 0,
+		cache_read_price: 0.000003
+	  }
+	]
+	section.supported_models.push({
+	  name: 'grok-4-fast',
+	  platform: 'grok',
+	  pricing: pricing({ input_price: 0.000001, output_price: 0.000002 })
+	})
+	getPricing.mockResolvedValue(channels)
+	getUserGroupRates.mockResolvedValue({ 9: 2 })
+
+	const wrapper = mount(PricingView, {
+	  global: {
+		stubs: {
+		  AppLayout: { template: '<main><slot /></main>' },
+		  Icon: { template: '<span />' },
+		  PlatformBrandIcon: { template: '<span />' }
+		}
+	  }
+	})
+	await flushPromises()
+
+	// Backend exact-match precedence keeps grok-4 on base pricing: 1e-6 * 4.
+	expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥4')
+	// The wildcard applies to grok-4-fast. Explicit final input is direct RMB,
+	// while nil output inherits the base price and active 4x multiplier.
+	expect(wrapper.get('[data-test="price-grok-4-fast-input"]').text()).toContain('¥9')
+	expect(wrapper.get('[data-test="price-grok-4-fast-output"]').text()).toContain('¥8')
+	expect(wrapper.get('[data-test="price-grok-4-fast-cache-write"]').text()).toContain('¥0')
+
+	wrapper.unmount()
+	vi.useRealTimers()
+  })
 })
