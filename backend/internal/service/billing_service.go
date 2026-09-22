@@ -1584,24 +1584,31 @@ func (s *BillingService) computeTokenBreakdown(
 // computeCacheCreationCost 计算缓存创建费用（支持 5m/1h 分类或标准计费）。
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
 func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
-	total, _, _ := s.computeCacheCreationCosts(pricing, tokens, price, multiplier)
-	return total
+	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
+		total, _, _ := s.computeCacheCreationBreakdownCosts(pricing, tokens, multiplier)
+		return total
+	}
+	return float64(tokens.CacheCreationTokens) * price * multiplier
 }
 
 func (s *BillingService) computeCacheCreationCosts(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) (total, cost5m, cost1h float64) {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
-		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
-		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
-			// API 未返回 ephemeral 明细，回退到全部按 5m 单价计费
-			cost5m = float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
-			return cost5m, cost5m, 0
-		}
-		cost5m = float64(cacheCreation5mTokens) * pricing.CacheCreation5mPrice * multiplier
-		cost1h = float64(cacheCreation1hTokens) * pricing.CacheCreation1hPrice * multiplier
-		return cost5m + cost1h, cost5m, cost1h
+		return s.computeCacheCreationBreakdownCosts(pricing, tokens, multiplier)
 	}
-	total = float64(tokens.CacheCreationTokens) * price * multiplier
+	total = s.computeCacheCreationCost(pricing, tokens, price, multiplier)
 	return total, total, 0
+}
+
+func (s *BillingService) computeCacheCreationBreakdownCosts(pricing *ModelPricing, tokens UsageTokens, multiplier float64) (total, cost5m, cost1h float64) {
+	cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
+	if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
+		// API 未返回 ephemeral 明细，回退到全部按 5m 单价计费
+		cost5m = float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
+		return cost5m, cost5m, 0
+	}
+	cost5m = float64(cacheCreation5mTokens) * pricing.CacheCreation5mPrice * multiplier
+	cost1h = float64(cacheCreation1hTokens) * pricing.CacheCreation1hPrice * multiplier
+	return cost5m + cost1h, cost5m, cost1h
 }
 
 // normalizeCacheCreationBreakdown caps contradictory 5m/1h details at an explicitly
