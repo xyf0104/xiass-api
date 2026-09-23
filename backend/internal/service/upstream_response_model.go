@@ -235,7 +235,7 @@ func firstTrimmedGJSONModel(values ...gjson.Result) string {
 // explicit lets rotation detect a real Luna declaration without guessing from
 // ticket length, latency, token count, or response text.
 func extractExplicitOpenAIResponseModel(payload []byte) string {
-	return firstTrimmedGJSONModel(
+	model := firstTrimmedGJSONModel(
 		gjson.GetBytes(payload, "response.model"),
 		gjson.GetBytes(payload, "model"),
 		gjson.GetBytes(payload, "response.model_id"),
@@ -246,12 +246,57 @@ func extractExplicitOpenAIResponseModel(payload []byte) string {
 		gjson.GetBytes(payload, "model_slug"),
 		gjson.GetBytes(payload, "response.metadata.model"),
 		gjson.GetBytes(payload, "response.metadata.model_id"),
+		gjson.GetBytes(payload, "response.metadata.model_name"),
+		gjson.GetBytes(payload, "response.metadata.model_slug"),
 		gjson.GetBytes(payload, "metadata.model"),
 		gjson.GetBytes(payload, "metadata.model_id"),
-		gjson.GetBytes(payload, "response.output.0.model"),
-		gjson.GetBytes(payload, "response.output.0.model_id"),
-		gjson.GetBytes(payload, "output.0.model"),
-		gjson.GetBytes(payload, "output.0.model_id"),
+		gjson.GetBytes(payload, "metadata.model_name"),
+		gjson.GetBytes(payload, "metadata.model_slug"),
+	)
+	if model != "" {
+		return model
+	}
+	for _, path := range []string{"response.output", "output"} {
+		if model := firstModelFromOpenAIOutputItems(gjson.GetBytes(payload, path)); model != "" {
+			return model
+		}
+	}
+	return ""
+}
+
+func firstModelFromOpenAIOutputItems(output gjson.Result) string {
+	if !output.Exists() || !output.IsArray() {
+		return ""
+	}
+	var model string
+	output.ForEach(func(_, item gjson.Result) bool {
+		if !item.IsObject() {
+			return true
+		}
+		itemType := strings.TrimSpace(item.Get("type").String())
+		if itemType != "" && itemType != "message" {
+			return true
+		}
+		role := strings.TrimSpace(item.Get("role").String())
+		if role != "" && !strings.EqualFold(role, "assistant") {
+			return true
+		}
+		model = explicitOpenAIModelFromObject(item)
+		return model == ""
+	})
+	return model
+}
+
+func explicitOpenAIModelFromObject(object gjson.Result) string {
+	return firstTrimmedGJSONModel(
+		object.Get("model"),
+		object.Get("model_id"),
+		object.Get("model_name"),
+		object.Get("model_slug"),
+		object.Get("metadata.model"),
+		object.Get("metadata.model_id"),
+		object.Get("metadata.model_name"),
+		object.Get("metadata.model_slug"),
 	)
 }
 

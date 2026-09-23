@@ -69,6 +69,8 @@ const messages: Record<string, string> = {
   'usage.modelMismatch': 'Different model',
   'usage.outputSpeed': 'Output speed',
   'usage.outputSpeedNonStream': 'non-stream',
+  'usage.latencyFirstToken': 'First',
+  'usage.latencyDuration': 'Total',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -88,8 +90,9 @@ const DataTableStub = {
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
         <slot name="cell-billing_mode" :row="row" />
-        <slot name="cell-tokens" :row="row" />
+        <div data-testid="tokens-cell"><slot name="cell-tokens" :row="row" /></div>
         <slot name="cell-cost" :row="row" />
+        <div data-testid="latency-cell"><slot name="cell-latency" :row="row" /></div>
       </div>
     </div>
   `,
@@ -243,6 +246,39 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.get('[data-testid="long-context-billing-marker"]').text()).toBe('x2')
   })
 
+  it('places output speed below total duration in the latency cell', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-output-speed-placement',
+          model: 'gpt-6-astra',
+          input_tokens: 761,
+          output_tokens: 942,
+          duration_ms: 52060,
+          first_token_ms: 14000,
+          stream: true,
+        }],
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const speedLabel = wrapper.get('[data-testid="output-token-speed-label"]')
+    expect(wrapper.get('[data-testid="tokens-cell"]').find('[data-testid="output-token-speed"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="latency-cell"]').find('[data-testid="output-token-speed"]').exists()).toBe(true)
+    const latency = speedLabel.element.parentElement
+    expect(latency).not.toBeNull()
+    expect(latency?.querySelector('[data-testid="output-token-speed"]')?.textContent?.trim()).toBe('24.75 t/s')
+    expect(latency?.textContent?.indexOf('Total')).toBeLessThan(latency?.textContent?.indexOf('Output speed'))
+  })
+
   it('shows service tier and billing breakdown in cost tooltip', async () => {
     const row = {
       request_id: 'req-admin-1',
@@ -318,6 +354,7 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).toContain('Video')
     expect(wrapper.text()).toContain('1 video')
     expect(wrapper.text()).toContain('720p · 8s')
+    expect(wrapper.find('[data-testid="output-token-speed"]').exists()).toBe(false)
 
     const tooltipTriggers = wrapper.findAll('.group.relative')
     await tooltipTriggers[tooltipTriggers.length - 1].trigger('mouseenter')
@@ -487,6 +524,7 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('Input size')
     expect(text).toContain('Output size')
     expect(text).toContain('Per-image price')
+    expect(wrapper.find('[data-testid="output-token-speed"]').exists()).toBe(false)
     expect(text).toContain('Image total price')
     for (const value of expected) {
       expect(text).toContain(value)

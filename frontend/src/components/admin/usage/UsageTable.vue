@@ -214,13 +214,6 @@
                   <span class="font-medium text-pink-600 dark:text-pink-400">{{ row.image_output_tokens.toLocaleString() }}</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2" data-testid="output-token-speed">
-                <span class="text-gray-400 dark:text-gray-500">{{ t('usage.outputSpeed') }}</span>
-                <span class="font-medium tabular-nums text-cyan-600 dark:text-cyan-400">{{ formatOutputTokenSpeed(row) }}</span>
-                <span v-if="getOutputTokenSpeed(row)?.usesNonStreamFallback" class="text-[10px] text-gray-400 dark:text-gray-500">
-                  {{ t('usage.outputSpeedNonStream') }}
-                </span>
-              </div>
             </div>
             <!-- Token Detail Tooltip -->
             <div
@@ -277,6 +270,15 @@
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              <template v-if="!isImageUsage(row) && !isVideoUsage(row)">
+                <span class="text-gray-400 dark:text-gray-500" data-testid="output-token-speed-label">{{ t('usage.outputSpeed') }}</span>
+                <span class="font-medium tabular-nums text-cyan-600 dark:text-cyan-400" data-testid="output-token-speed">
+                  {{ formatOutputTokenSpeed(row) }}
+                  <span v-if="getOutputTokenSpeed(row)?.usesNonStreamFallback" class="ml-1 text-[10px] text-gray-400 dark:text-gray-500">
+                    {{ t('usage.outputSpeedNonStream') }}
+                  </span>
+                </span>
+              </template>
             </div>
           </div>
         </template>
