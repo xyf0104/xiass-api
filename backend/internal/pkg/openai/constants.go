@@ -19,7 +19,9 @@ type Model struct {
 // DefaultModels OpenAI models list
 var DefaultModels = []Model{
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
+	{ID: "gpt-6-sol", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
+	{ID: "gpt-6-luna", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-6", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 (Astra)"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
@@ -39,7 +41,9 @@ var DefaultModels = []Model{
 
 var defaultAccountTestModelIDs = []string{
 	"gpt-5.6-sol",
+	"gpt-6-sol",
 	"gpt-6-astra",
+	"gpt-6-luna",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
@@ -117,7 +121,7 @@ func latestCodexInstructions() string {
 }
 
 // CodexBaseInstructionsForModel 按模型返回最匹配的真实 Codex base instructions：
-//   - gpt-6 / gpt-6-astra（含供应商前缀与日期变体）→ GPT-6 Astra prompt
+//   - gpt-6 / gpt-6-sol / gpt-6-astra / gpt-6-luna（含供应商前缀与日期变体）→ GPT-6 prompt
 //   - 含 "codex" 的模型（gpt-5-codex / gpt-5.x-codex / codex-max / spark 等）→ GPT-5-Codex prompt
 //   - gpt-5.5 系非 codex 模型 → GPT-5.5 prompt
 //   - gpt-5.2 系非 codex 模型 → GPT-5.2 prompt
@@ -128,7 +132,8 @@ func latestCodexInstructions() string {
 func CodexBaseInstructionsForModel(model string) string {
 	m := CanonicalizeOpenAIModelAliasSpelling(model)
 	switch {
-	case m == "gpt-6" || m == "gpt-6-astra" || strings.HasPrefix(m, "gpt-6-astra-"):
+	case m == "gpt-6" || m == "gpt-6-sol" || m == "gpt-6-astra" || m == "gpt-6-luna" ||
+		strings.HasPrefix(m, "gpt-6-sol-") || strings.HasPrefix(m, "gpt-6-astra-") || strings.HasPrefix(m, "gpt-6-luna-"):
 		if strings.TrimSpace(instructionsGPT6Astra) != "" {
 			return instructionsGPT6Astra
 		}

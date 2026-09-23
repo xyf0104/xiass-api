@@ -516,14 +516,18 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 			if isOpenAIGPT56Model(modelID) {
 				descriptor.MaxContextWindow = configuredCodexGPT56MaxContext
 			}
-			if isOpenAIGPT6AstraModel(modelID) {
+			if isOpenAIGPT6Model(modelID) {
 				// Codex resolves the Ultra workflow to this effort before inference.
-				// openai/codex a9896da3: codex-rs/models-manager/models.json.
+				// Keep the GPT-6 family on the same large-context contract.
 				multiAgentEffort := "xhigh"
-				descriptor.MultiAgentReasoningEffort = &multiAgentEffort
-				descriptor.MultiAgentVersion = "v2"
 				descriptor.ContextWindow = configuredCodexGPT6AstraContext
 				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
+				if isOpenAIGPT6AstraModel(modelID) {
+					// Only Astra advertises the multi-agent workflow. Sol/Luna share
+					// the GPT-6 context contract without inheriting that metadata.
+					descriptor.MultiAgentReasoningEffort = &multiAgentEffort
+					descriptor.MultiAgentVersion = "v2"
+				}
 			}
 		}
 		if SupportsVerbosity(modelID) {
@@ -563,7 +567,7 @@ func configuredCodexSupportsPriorityServiceTier(modelID string) bool {
 		}
 	}
 	// GPT-6 Astra advertises Fast via service_tier=priority in public model metadata.
-	return isOpenAIGPT6AstraModel(modelID)
+	return isOpenAIGPT6Model(modelID)
 }
 
 func configuredCodexSupportsUltrafastServiceTier(modelID string) bool {
@@ -626,7 +630,7 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 		{Effort: "xhigh", Description: "Extra-high reasoning depth for difficult tasks"},
 	}
 	normalized := getNormalizedCodexModel(modelID)
-	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6AstraModel(modelID) {
+	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6Model(modelID) {
 		levels = append(levels, configuredCodexReasoningLevel{
 			Effort:      "max",
 			Description: "Maximum reasoning depth for complex tasks",
@@ -651,12 +655,12 @@ func isOpenAICodexGPTModel(modelID string) bool {
 
 func isOpenAICodexReasoningGPTModel(modelID string) bool {
 	normalized := canonicalizeOpenAIModelAliasSpelling(modelID)
-	return isOpenAIGPT6AstraModel(normalized) || strings.HasPrefix(normalized, "gpt-5")
+	return isOpenAIGPT6Model(normalized) || strings.HasPrefix(normalized, "gpt-5")
 }
 
 func isOpenAICodexImageInputModel(modelID string) bool {
 	normalized := canonicalizeOpenAIModelAliasSpelling(modelID)
-	return isOpenAIGPT6AstraModel(normalized) ||
+	return isOpenAIGPT6Model(normalized) ||
 		strings.HasPrefix(normalized, "gpt-5") ||
 		strings.HasPrefix(normalized, "gpt-4o") ||
 		strings.HasPrefix(normalized, "gpt-4.1") ||
@@ -2017,7 +2021,9 @@ func CodexModelsManifestETag(body []byte) string {
 }
 
 var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
+	"gpt-6-sol":     {},
 	"gpt-6-astra":   {},
+	"gpt-6-luna":    {},
 	"gpt-5.6-sol":   {},
 	"gpt-5.6-terra": {},
 	"gpt-5.6-luna":  {},

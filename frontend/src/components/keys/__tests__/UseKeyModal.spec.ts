@@ -328,7 +328,7 @@ describe('UseKeyModal', () => {
       expect(models[model].variants).toHaveProperty('xhigh')
     }
     expect(models['gpt-5.6'].name).toBe('GPT-5.6 (Sol)')
-    for (const model of ['gpt-6', 'gpt-6-astra']) {
+    for (const model of ['gpt-6', 'gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna']) {
       expect(models[model]).toBeDefined()
       expect(models[model].limit).toEqual({ context: 1050000, output: 128000 })
       expect(models[model].variants).toHaveProperty('max')
@@ -336,6 +336,8 @@ describe('UseKeyModal', () => {
     }
     expect(models['gpt-6'].name).toBe('GPT-6 (Astra)')
     expect(models['gpt-6-astra'].name).toBe('GPT-6 Astra')
+    expect(models['gpt-6-sol'].name).toBe('GPT-6 Sol')
+    expect(models['gpt-6-luna'].name).toBe('GPT-6 Luna')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {

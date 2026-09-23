@@ -429,7 +429,7 @@ func TestOpenAICodexTicketStatusesExplainAccountShapeAndExpiry(t *testing.T) {
 	personal.Credentials["plan_type"] = "plus"
 	personal312 := statusFor(personal, syntheticCodexTicketState(11, now, 11))
 	require.Equal(t, "personal", personal312.AccountMode)
-	require.Equal(t, 292, personal312.ExpectedLength)
+	require.Zero(t, personal312.ExpectedLength)
 	require.Equal(t, 312, personal312.Length)
 	require.Equal(t, 11, personal312.Blocks)
 	require.False(t, personal312.ShapeValid)
@@ -441,7 +441,7 @@ func TestOpenAICodexTicketStatusesExplainAccountShapeAndExpiry(t *testing.T) {
 	team.Credentials["plan_type"] = "team"
 	team332 := statusFor(team, syntheticCodexTicketState(12, now, 12))
 	require.Equal(t, "team", team332.AccountMode)
-	require.Equal(t, 332, team332.ExpectedLength)
+	require.Zero(t, team332.ExpectedLength)
 	require.Equal(t, 332, team332.Length)
 	require.Equal(t, 12, team332.Blocks)
 	require.True(t, team332.ShapeValid)
@@ -450,12 +450,29 @@ func TestOpenAICodexTicketStatusesExplainAccountShapeAndExpiry(t *testing.T) {
 	expired := ticketTestAccount(912)
 	expired.Credentials["plan_type"] = "plus"
 	expired292 := statusFor(expired, syntheticCodexTicketState(10, now.Add(-2*time.Hour), 10))
-	require.Equal(t, 292, expired292.ExpectedLength)
+	require.Zero(t, expired292.ExpectedLength)
 	require.Equal(t, 292, expired292.Length)
 	require.True(t, expired292.ShapeValid, "shape validity is independent from local TTL expiry")
 	require.False(t, expired292.Ready)
 	require.NotNil(t, expired292.IssuedAt)
 	require.Equal(t, now.Add(-2*time.Hour), *expired292.IssuedAt)
+}
+
+func TestOpenAICodexTicketStatusesAcceptsNewVariableLengthState(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	account := ticketTestAccount(913)
+	state := syntheticCodexTicketState(33, now, 33) // 780-byte state
+	account.Extra[openAICodexTicketExtraKey("gpt-6-astra")] = map[string]any{
+		"state": state, "length": len(state), "model": "gpt-6-astra", "captured_at": now,
+	}
+	statuses := OpenAICodexTicketStatuses(account, config.OpenAICodexTicketConfig{
+		Models: []string{"gpt-6-astra"}, TTLSeconds: 3600, FailClosed: true,
+	}, now)
+	require.Len(t, statuses, 1)
+	require.Equal(t, 780, statuses[0].Length)
+	require.Zero(t, statuses[0].ExpectedLength)
+	require.Equal(t, 33, statuses[0].Blocks)
+	require.True(t, statuses[0].Ready)
 }
 
 func TestExtractOpenAICodexTicketModel(t *testing.T) {

@@ -222,6 +222,14 @@ func pricingWithPriorityMultiplier(base *ModelPricing, multiplier float64) *Mode
 	return &cloned
 }
 
+func cloneBillingModelPricing(base *ModelPricing) *ModelPricing {
+	if base == nil {
+		return nil
+	}
+	cloned := *base
+	return &cloned
+}
+
 func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	if cost == nil || multiplier == 1 {
 		return
@@ -506,7 +514,6 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:        openAIGPT54LongContextOutputMultiplier,
 	}
-
 	// OpenAI GPT-5.6 官方价格（USD/token）。缓存写入为输入价的 1.25 倍。
 	s.fallbackPrices["gpt-5.6-sol"] = &ModelPricing{
 		InputPricePerToken:                 5e-6,
@@ -547,6 +554,10 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:        openAIGPT54LongContextOutputMultiplier,
 	}
+	// GPT-6 Sol/Luna use the same compatibility fallback cards as their GPT-5.6
+	// counterparts until an administrator configures explicit channel pricing.
+	s.fallbackPrices["gpt-6-sol"] = cloneBillingModelPricing(s.fallbackPrices["gpt-5.6-sol"])
+	s.fallbackPrices["gpt-6-luna"] = cloneBillingModelPricing(s.fallbackPrices["gpt-5.6-luna"])
 
 	s.fallbackPrices["gpt-5.4-mini"] = &ModelPricing{
 		InputPricePerToken:     7.5e-7,
@@ -1047,8 +1058,12 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
+		case "gpt-6-sol":
+			return s.fallbackPrices["gpt-6-sol"]
 		case "gpt-6-astra":
 			return s.fallbackPrices["gpt-6-astra"]
+		case "gpt-6-luna":
+			return s.fallbackPrices["gpt-6-luna"]
 		case "gpt-5.6-sol":
 			return s.fallbackPrices["gpt-5.6-sol"]
 		case "gpt-5.6-terra":

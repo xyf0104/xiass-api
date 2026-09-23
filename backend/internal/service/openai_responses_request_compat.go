@@ -147,7 +147,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 }
 
 func normalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
-	if len(body) == 0 || isOpenAIGPT6AstraModel(gjson.GetBytes(body, "model").String()) {
+	if len(body) == 0 || isOpenAIGPT6Model(gjson.GetBytes(body, "model").String()) {
 		return body, false, nil
 	}
 	mode := gjson.GetBytes(body, "reasoning.mode")

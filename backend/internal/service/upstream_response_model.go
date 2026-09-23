@@ -60,10 +60,7 @@ func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType 
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return
 	}
-	model := firstTrimmedGJSONModel(
-		gjson.GetBytes(payload, "response.model"),
-		gjson.GetBytes(payload, "model"),
-	)
+	model := extractExplicitOpenAIResponseModel(payload)
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
 	o.Observe(model, terminal)
 	if model == "" || (!terminal && strings.TrimSpace(eventType) != "") {
@@ -230,6 +227,32 @@ func firstTrimmedGJSONModel(values ...gjson.Result) string {
 		}
 	}
 	return ""
+}
+
+// extractExplicitOpenAIResponseModel accepts only model declarations emitted
+// by the upstream response envelope. Newer Codex responses have moved this
+// field between response metadata and output items; keeping these paths
+// explicit lets rotation detect a real Luna declaration without guessing from
+// ticket length, latency, token count, or response text.
+func extractExplicitOpenAIResponseModel(payload []byte) string {
+	return firstTrimmedGJSONModel(
+		gjson.GetBytes(payload, "response.model"),
+		gjson.GetBytes(payload, "model"),
+		gjson.GetBytes(payload, "response.model_id"),
+		gjson.GetBytes(payload, "model_id"),
+		gjson.GetBytes(payload, "response.model_name"),
+		gjson.GetBytes(payload, "model_name"),
+		gjson.GetBytes(payload, "response.model_slug"),
+		gjson.GetBytes(payload, "model_slug"),
+		gjson.GetBytes(payload, "response.metadata.model"),
+		gjson.GetBytes(payload, "response.metadata.model_id"),
+		gjson.GetBytes(payload, "metadata.model"),
+		gjson.GetBytes(payload, "metadata.model_id"),
+		gjson.GetBytes(payload, "response.output.0.model"),
+		gjson.GetBytes(payload, "response.output.0.model_id"),
+		gjson.GetBytes(payload, "output.0.model"),
+		gjson.GetBytes(payload, "output.0.model_id"),
+	)
 }
 
 func isUpstreamResponseModelTerminalEvent(eventType string) bool {

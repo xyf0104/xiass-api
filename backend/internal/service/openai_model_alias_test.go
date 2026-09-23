@@ -51,6 +51,19 @@ func TestNormalizeKnownOpenAICodexModel_GPT6AstraAliases(t *testing.T) {
 	}
 }
 
+func TestNormalizeKnownOpenAICodexModel_GPT6SolAndLunaAliases(t *testing.T) {
+	for input, expected := range map[string]string{
+		"gpt-6-sol":                      "gpt-6-sol",
+		"openai/gpt-6-sol-2026-09-01":    "gpt-6-sol",
+		"gpt-6-luna":                     "gpt-6-luna",
+		"provider/gpt-6-luna-2026-09-01": "gpt-6-luna",
+	} {
+		t.Run(input, func(t *testing.T) {
+			require.Equal(t, expected, normalizeKnownOpenAICodexModel(input))
+		})
+	}
+}
+
 func TestUsageBillingModelCandidates_BareGPT56IncludesSol(t *testing.T) {
 	require.Equal(t,
 		[]string{"gpt-5.6", "gpt-5.6-sol"},

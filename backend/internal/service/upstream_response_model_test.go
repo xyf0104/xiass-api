@@ -67,6 +67,20 @@ func TestObserveOpenAISSEBodyIgnoresMalformedPayload(t *testing.T) {
 	require.False(t, observer.Conflict())
 }
 
+func TestUpstreamResponseModelObserverReadsNewCodexModelDeclarationShapes(t *testing.T) {
+	cases := []string{
+		`{"response":{"metadata":{"model_id":"gpt-6-astra"}}}`,
+		`{"response":{"model_slug":"gpt-6-luna"}}`,
+		`{"response":{"output":[{"model":"gpt-6-astra"}]}}`,
+		`{"model_id":"gpt-6-luna"}`,
+	}
+	for _, payload := range cases {
+		observer := &upstreamResponseModelObserver{}
+		observer.ObserveOpenAI([]byte(payload), "response.completed")
+		require.NotEmpty(t, observer.Model(), payload)
+	}
+}
+
 func TestUpstreamResponseModelObserverBoundsUntrustedModelName(t *testing.T) {
 	observer := &upstreamResponseModelObserver{}
 	observer.Observe("  "+strings.Repeat("模", upstreamResponseModelMaxLength+1)+"  ", false)

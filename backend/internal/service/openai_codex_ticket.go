@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -264,7 +263,6 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	}
 	policy := openAICodexTicketPolicy(account, cfg)
 	accountMode := openAICodexTicketAccountMode(account)
-	expectedLength := base64.URLEncoding.EncodedLen(57 + 16*policy.Blocks)
 	out := make([]OpenAICodexTicketStatus, 0, len(models))
 	for _, model := range models {
 		model = normalizeOpenAICodexTicketModel(model)
@@ -272,8 +270,11 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 			continue
 		}
 		status := OpenAICodexTicketStatus{
-			Model:          model,
-			ExpectedLength: expectedLength,
+			Model: model,
+			// The upstream envelope is variable-length. Keep this field at zero
+			// so the UI displays the observed length instead of pretending that
+			// personal/team reference lengths reject newer 780-byte states.
+			ExpectedLength: 0,
 			AccountMode:    accountMode,
 		}
 		ticket := parseOpenAICodexTicketFromAny(0, model, nil)
@@ -829,7 +830,12 @@ func extractOpenAICodexProbeModel(body []byte) string {
 		return ""
 	}
 	readModel := func(raw []byte) string {
-		for _, path := range []string{"model", "response.model", "response.output.model"} {
+		for _, path := range []string{
+			"model", "response.model", "response.model_id", "model_id",
+			"response.model_name", "model_name", "response.model_slug", "model_slug",
+			"response.metadata.model", "response.metadata.model_id",
+			"metadata.model", "metadata.model_id", "response.output.0.model", "output.0.model",
+		} {
 			if model := strings.TrimSpace(gjson.GetBytes(raw, path).String()); model != "" {
 				return model
 			}
@@ -1070,7 +1076,7 @@ func chooseOpenAICodexTicketCandidate(candidates []openAICodexTicketCandidate, r
 	for _, candidate := range candidates {
 		if normalizeTicketModel(candidate.ObservedModel) == target {
 			correct = append(correct, candidate)
-		} else if normalizeTicketModel(candidate.ObservedModel) == normalizeTicketModel("gpt-5.6-luna") {
+		} else if isOpenAICodexLunaModel(candidate.ObservedModel) {
 			fallback = append(fallback, candidate)
 		}
 	}

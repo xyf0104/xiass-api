@@ -13,6 +13,8 @@ func TestDefaultModelsIncludeBareGPT56Alias(t *testing.T) {
 func TestDefaultModelsIncludeGPT6AstraAndAlias(t *testing.T) {
 	require.Contains(t, DefaultModelIDs(), "gpt-6-astra")
 	require.Contains(t, DefaultModelIDs(), "gpt-6")
+	require.Contains(t, DefaultModelIDs(), "gpt-6-sol")
+	require.Contains(t, DefaultModelIDs(), "gpt-6-luna")
 }
 
 func TestDefaultAccountTestModelsOnlyIncludeCurrentRunnableModels(t *testing.T) {
@@ -27,7 +29,9 @@ func TestDefaultAccountTestModelsOnlyIncludeCurrentRunnableModels(t *testing.T) 
 
 	require.Equal(t, []string{
 		"gpt-5.6-sol",
+		"gpt-6-sol",
 		"gpt-6-astra",
+		"gpt-6-luna",
 		"gpt-5.6-terra",
 		"gpt-5.6-luna",
 		"gpt-5.5",

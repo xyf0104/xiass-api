@@ -226,9 +226,12 @@ func (s *OpenAIGatewayService) newOpenAIModelResponseGuard(ctx context.Context, 
 	return openAIModelResponseGuard{enabled: expected != "" && s.openAIModelRotationCooldown(ctx, requestedModel) > 0, expected: expected}
 }
 
-func (g openAIModelResponseGuard) mismatch(responseModel string, conflict bool) (string, bool) {
+func (g openAIModelResponseGuard) mismatch(responseModel string, _ bool) (string, bool) {
 	observed := normalizeOpenAIModelRotationModel(responseModel)
-	if !g.enabled || conflict || observed == "" || observed == "unknown" || observed == "unknown-model" || observed == "n/a" || observed == g.expected {
+	// The terminal response model wins over an earlier response.created model.
+	// Do not let a conflict hide a terminal Luna response, which previously let
+	// Astra-created/Luna-completed streams pass without rotation.
+	if !g.enabled || observed == "" || observed == "unknown" || observed == "unknown-model" || observed == "n/a" || observed == g.expected {
 		return "", false
 	}
 	return openAIModelResponseMismatchMessage(responseModel), true
@@ -236,7 +239,7 @@ func (g openAIModelResponseGuard) mismatch(responseModel string, conflict bool) 
 
 func openAIModelResponseMismatchMessage(responseModel string) string {
 	display := strings.TrimSpace(responseModel)
-	if normalizeOpenAIModelRotationModel(display) == "gpt-5.6-luna" {
+	if isOpenAICodexLunaModel(display) {
 		display = "luna"
 	}
 	return fmt.Sprintf("检测到该条回复已降智（%s模型），将不予采纳。请重新发起请求。下一次请求将轮询健康账号。", display)
@@ -330,14 +333,26 @@ var openAIModelRotationDateSuffix = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
 func normalizeOpenAIModelRotationModel(model string) string {
 	model = strings.ToLower(lastOpenAIModelSegment(model))
 	model = openAIModelRotationDateSuffix.ReplaceAllString(model, "")
+	if normalized := normalizeKnownOpenAICodexModel(model); normalized != "" {
+		return normalized
+	}
 	switch model {
 	case "gpt-6":
 		return "gpt-6-astra"
+	case "gpt-6-sol":
+		return "gpt-6-sol"
+	case "gpt-6-luna":
+		return "gpt-6-luna"
 	case "gpt-5.6":
 		return "gpt-5.6-sol"
 	default:
 		return model
 	}
+}
+
+func isOpenAICodexLunaModel(model string) bool {
+	normalized := normalizeOpenAIModelRotationModel(model)
+	return normalized == "gpt-5.6-luna" || normalized == "gpt-6-luna"
 }
 
 // ObserveOpenAIModelRotation runs before async usage recording, so the next

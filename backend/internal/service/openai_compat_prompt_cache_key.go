@@ -14,9 +14,9 @@ const compatPromptCacheKeyPrefix = "compat_cc_"
 func shouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(model))
 	canonical := canonicalizeOpenAIModelAliasSpelling(trimmed)
-	// GPT-6 is the public alias for Astra. Keep this deliberately scoped to
-	// Astra so unrelated GPT-6 families do not inherit Messages state.
-	if canonical == "gpt-6" || canonical == "gpt-6-astra" {
+	// All explicit GPT-6 Codex families use the same Responses-compatible
+	// prompt-cache contract; keep the public gpt-6 alias mapped to Astra.
+	if canonical == "gpt-6" || canonical == "gpt-6-sol" || canonical == "gpt-6-astra" || canonical == "gpt-6-luna" {
 		return true
 	}
 	// 仅对 Codex OAuth 路径支持的 GPT-5 族开启自动注入，避免 normalizeCodexModel
