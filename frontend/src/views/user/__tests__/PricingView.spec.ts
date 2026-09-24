@@ -246,6 +246,11 @@ describe('PricingView', () => {
 	})
 	await flushPromises()
 
+	// Final-price implementation details remain private; the group card keeps
+	// the same public multiplier and discount presentation as other groups.
+	expect(wrapper.text()).not.toContain('逐模型最终价')
+	expect(wrapper.text()).not.toContain('已配置逐模型最终价')
+	expect(wrapper.text()).toContain('4x 倍率')
 	// Backend exact-match precedence keeps grok-4 on base pricing: 1e-6 * 4.
 	expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥4')
 	// The wildcard applies to grok-4-fast. Explicit final input is direct RMB,

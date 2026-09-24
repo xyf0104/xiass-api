@@ -93,11 +93,8 @@
                 <span class="text-base font-bold text-gray-900 dark:text-white truncate">
                   {{ group.name }}
                 </span>
-                <span v-if="!groupHasFinalPricing(group)" class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                <span class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
                   {{ formatDisplayDiscount(group) }}折
-                </span>
-                <span v-else class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
-                  逐模型最终价
                 </span>
                 <span
                   v-if="isGroupPeakActive(group)"
@@ -117,9 +114,7 @@
               </div>
               <!-- 倍率描述 -->
               <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap truncate w-full text-left">
-                {{ groupHasFinalPricing(group)
-                  ? `已配置逐模型最终价 · 其他模型 ${formatDisplayMultiplier(group)}x`
-                  : `${formatDisplayMultiplier(group)}x 倍率 · 相当于约 ${formatDisplayDiscount(group)}折` }}
+                {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
               </span>
               <span
                 v-if="hasPeakRate(group)"
@@ -496,10 +491,6 @@ function finalTokenPriceFor(model: UserSupportedModel, field: FinalTokenPriceFie
 
 function priceMultiplierFor(model: UserSupportedModel, field: FinalTokenPriceField): number {
   return finalTokenPriceFor(model, field) == null ? multiplierFor(model) : 1
-}
-
-function groupHasFinalPricing(group: PricingGroup): boolean {
-  return (group.model_pricing ?? []).some(entry => entry.price_mode === 'final')
 }
 
 function modelSavingsPercent(model: UserSupportedModel): number | null {
