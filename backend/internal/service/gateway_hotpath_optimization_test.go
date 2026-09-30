@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
@@ -721,6 +723,8 @@ func TestGetAvailableModels_HidesAntigravityGemini37InternalRoutes(t *testing.T)
 
 func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 	groupID := int64(10)
+	mixedModels := append(openai.DefaultModelIDs(), "configured-model", "gpt-6.1-sol")
+	sort.Strings(mixedModels)
 
 	tests := []struct {
 		name     string
@@ -740,12 +744,12 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "passthrough wins over ordinary account mapping",
+			name: "passthrough preserves defaults and ordinary account mapping",
 			accounts: []Account{
 				{
 					ID:          2,
 					Platform:    PlatformOpenAI,
-					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}},
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream", "gpt-6.1-sol": "gpt-6.1-sol", "gpt-6-sol": "gpt-6-sol"}},
 				},
 				{
 					ID:          3,
@@ -754,7 +758,7 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 					Extra:       map[string]any{"openai_passthrough": true},
 				},
 			},
-			want: nil,
+			want: mixedModels,
 		},
 		{
 			name: "ordinary accounts preserve mapped whitelist",
@@ -778,7 +782,17 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 				modelsListCacheTTL: time.Minute,
 			}
 
-			require.Equal(t, tt.want, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+			first := svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI)
+			require.Equal(t, tt.want, first)
+			if len(first) > 0 {
+				first[0] = "mutated-by-caller"
+			}
+			require.Equal(t, tt.want, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI), "cached lists must be isolated from callers")
+			svc.InvalidateAvailableModelsCache(&groupID, PlatformOpenAI)
+			for left, right := 0, len(tt.accounts)-1; left < right; left, right = left+1, right-1 {
+				tt.accounts[left], tt.accounts[right] = tt.accounts[right], tt.accounts[left]
+			}
+			require.Equal(t, tt.want, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI), "account order must not hide mapped models")
 		})
 	}
 }
