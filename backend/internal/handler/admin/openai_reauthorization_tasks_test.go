@@ -88,6 +88,18 @@ func reauthorizationAccount(id int64) *service.Account {
 	}
 }
 
+func TestOpenAIAccountNeedsReauthorizationIncludesTemporaryOAuth401(t *testing.T) {
+	account := reauthorizationAccount(449)
+	account.Status = service.StatusActive
+	account.ErrorMessage = ""
+	account.TempUnschedulableReason = "OAuth 401: Encountered invalidated oauth token"
+
+	require.True(t, openAIAccountNeedsReauthorization(account), "active OAuth accounts with a temporary oauth_401 block must remain selectable for reauthorization")
+
+	account.TempUnschedulableReason = "temporary network failure"
+	require.False(t, openAIAccountNeedsReauthorization(account), "ordinary temporary failures must not open the 401 reauthorization flow")
+}
+
 func TestOpenAIReauthorizationTaskUsesSavedLoginAndAccountProxy(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")

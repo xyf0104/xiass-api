@@ -289,11 +289,23 @@ func parseOpenAIReauthorizationAccountIDs(raw string) map[int64]struct{} {
 }
 
 func openAIAccountNeedsReauthorization(account *service.Account) bool {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() || account.Status != service.StatusError {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return false
 	}
 	if value, ok := account.Extra["needs_reauth"].(bool); ok && value {
 		return true
+	}
+	// A normal OAuth 401 is deliberately recorded as a temporary scheduling
+	// block so the token-refresh worker can try recovery while the account
+	// remains active. The account must still be offered by the dedicated 401
+	// reauthorization page; requiring status=error here made the workbench show
+	// the 401 badge while the reauthorization selector omitted the same account.
+	tempReason := strings.ToLower(strings.TrimSpace(account.TempUnschedulableReason))
+	if strings.HasPrefix(tempReason, "oauth_401") || strings.HasPrefix(tempReason, "oauth 401") {
+		return true
+	}
+	if account.Status != service.StatusError {
+		return false
 	}
 	parts := []string{account.ErrorMessage, account.GetExtraString("error"), account.GetExtraString("error_code")}
 	text := strings.ToLower(strings.Join(parts, " "))
