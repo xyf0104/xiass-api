@@ -109,7 +109,17 @@
       class="text-[10px] text-red-600 dark:text-red-400"
       :title="error"
     >
-      {{ truncatedError }}
+      <span>{{ truncatedError }}</span>
+      <button
+        v-if="isPendingError"
+        type="button"
+        data-testid="reset-pending-reconcile"
+        class="ml-1 inline-flex items-center rounded px-1 py-0.5 font-medium text-blue-600 underline decoration-dotted underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400"
+        :disabled="reconciling || resetting || loading || readOnly"
+        @click="handleReconcile"
+      >
+        {{ reconciling ? t('admin.accounts.autoResetCredit.reconciling') : t('admin.accounts.autoResetCredit.reconcile') }}
+      </button>
     </div>
     <div
       v-else-if="resetWarning"
@@ -144,6 +154,7 @@ import type { Account } from '@/types'
 import {
   refreshOpenAIQuota,
   resetOpenAIQuota,
+  reconcileOpenAIQuotaReset,
   type OpenAIQuotaUsage,
   type OpenAIQuotaResetResult
 } from '@/api/admin/accounts'
@@ -173,6 +184,7 @@ const resetMessage = ref<string | null>(null)
 const resetWarning = ref<string | null>(null)
 const showResetConfirm = ref(false)
 const showResetCreditDetails = ref(false)
+const reconciling = ref(false)
 let requestGeneration = 0
 onBeforeUnmount(() => { requestGeneration++ })
 
@@ -271,6 +283,8 @@ const truncatedError = computed(() => {
   if (error.value === t('admin.accounts.autoResetCredit.pending')) return error.value
   return error.value.length > 80 ? `${error.value.slice(0, 80)}…` : error.value
 })
+
+const isPendingError = computed(() => error.value === t('admin.accounts.autoResetCredit.pending'))
 
 const getResetCreditExpiryTime = (value: string): number => {
   const time = new Date(value).getTime()
@@ -410,6 +424,31 @@ const confirmReset = async () => {
   }
 }
 
+const handleReconcile = async () => {
+  if (props.readOnly || resetting.value || loading.value || reconciling.value) return
+  reconciling.value = true
+  const generation = ++requestGeneration
+  error.value = null
+  resetMessage.value = null
+  resetWarning.value = null
+  try {
+    const result: OpenAIQuotaResetResult = await reconcileOpenAIQuotaReset(props.account.id)
+    if (generation !== requestGeneration || props.readOnly) return
+    if (result.cache_refreshed && result.quota) {
+      data.value = result.quota
+      cachedData.value = result.quota
+    } else {
+      data.value = null
+    }
+    if (result.account) emit('account-updated', result.account)
+    resetMessage.value = t('admin.accounts.autoResetCredit.reconcileSuccess')
+  } catch (e) {
+    if (generation === requestGeneration) error.value = extractErrorMessage(e)
+  } finally {
+    if (generation === requestGeneration) reconciling.value = false
+  }
+}
+
 watch(
   [() => props.account.id, () => props.readOnly, () => props.account.extra?.codex_reset_credit_snapshot],
   () => {
@@ -422,6 +461,7 @@ watch(
     resetWarning.value = null
     loading.value = false
     resetting.value = false
+    reconciling.value = false
     showResetConfirm.value = false
     showResetCreditDetails.value = false
   },

@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import OpenAIQuotaResetCell from '../OpenAIQuotaResetCell.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { Account } from '@/types'
-import { refreshOpenAIQuota, resetOpenAIQuota } from '@/api/admin/accounts'
+import { refreshOpenAIQuota, resetOpenAIQuota, reconcileOpenAIQuotaReset } from '@/api/admin/accounts'
 
 vi.mock('@/api/admin/accounts', () => ({
   refreshOpenAIQuota: vi.fn(),
   resetOpenAIQuota: vi.fn(),
+  reconcileOpenAIQuotaReset: vi.fn(),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -62,6 +63,7 @@ const resetButton = (wrapper: ReturnType<typeof mount>) =>
 beforeEach(() => {
   vi.mocked(refreshOpenAIQuota).mockReset()
   vi.mocked(resetOpenAIQuota).mockReset()
+  vi.mocked(reconcileOpenAIQuotaReset).mockReset()
 })
 
 describe('OpenAIQuotaResetCell read-only ownership', () => {
@@ -394,6 +396,49 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
     expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.resetAccountRecoveryFailed')
     expect(resetButton(wrapper).attributes('disabled')).toBeDefined()
     expect(wrapper.emitted('account-updated')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('结果未确认时提供核验入口，核验成功后不重复消费重置卡', async () => {
+    const account = makeAccount({
+      parent_account_id: null,
+      extra: {
+        codex_reset_credit_snapshot: {
+          available_count: 1,
+          credits: [{ expires_at: FUTURE_EXPIRY_EARLY }],
+        },
+      },
+    })
+    vi.mocked(resetOpenAIQuota).mockRejectedValueOnce({
+      reason: 'OPENAI_RESET_PENDING',
+      message: 'pending',
+    })
+    vi.mocked(reconcileOpenAIQuotaReset).mockResolvedValueOnce({
+      code: 'success',
+      windows_reset: 1,
+      cache_refreshed: true,
+      account_state_recovered: true,
+      quota: {
+        rate_limit_reset_credits: { available_count: 0, credits: [] },
+        fetched_at: 1770000000,
+      },
+      account,
+    })
+
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+    await resetButton(wrapper).trigger('click')
+    wrapper.findComponent(ConfirmDialog).vm.$emit('confirm')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="reset-pending-reconcile"]').text()).toContain('reconcile')
+    expect(resetOpenAIQuota).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('[data-testid="reset-pending-reconcile"]').trigger('click')
+    await flushPromises()
+
+    expect(reconcileOpenAIQuotaReset).toHaveBeenCalledWith(1)
+    expect(wrapper.text()).toContain('reconcileSuccess')
+    expect(wrapper.emitted('account-updated')).toEqual([[account]])
     wrapper.unmount()
   })
 })

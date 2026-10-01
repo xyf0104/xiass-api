@@ -71,6 +71,10 @@ type openAIQuotaService interface {
 	ResetCredit(ctx context.Context, accountID int64) (*service.OpenAIQuotaResetResult, error)
 }
 
+type openAIQuotaPendingReconciler interface {
+	ReconcilePendingReset(ctx context.Context, accountID int64) (*service.OpenAIQuotaResetResult, error)
+}
+
 type openAIAccountStateRecoverer interface {
 	RecoverAccountState(ctx context.Context, accountID int64, options service.AccountRecoveryOptions) (*service.SuccessfulTestRecoveryResult, error)
 }
@@ -952,5 +956,53 @@ func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 		return
 	}
 	resetResponse.Account = dto.AccountFromService(account)
+	response.Success(c, resetResponse)
+}
+
+// ReconcileReset verifies a previously sent reset request without consuming a
+// second credit. It is intentionally separate from ResetQuota so a repeated
+// click after a lost response cannot issue another upstream consume request.
+// POST /api/v1/admin/openai/accounts/:id/reset-quota/reconcile
+func (h *OpenAIOAuthHandler) ReconcileReset(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if h.quotaService == nil {
+		response.BadRequest(c, "openai quota service is not enabled")
+		return
+	}
+	reconciler, ok := h.quotaService.(openAIQuotaPendingReconciler)
+	if !ok {
+		response.BadRequest(c, "openai quota reconciliation is not enabled")
+		return
+	}
+	result, err := reconciler.ReconcilePendingReset(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if result == nil || result.PostResetQuota == nil {
+		response.Error(c, http.StatusConflict, "openai quota reset result is still unconfirmed")
+		return
+	}
+
+	resetResponse := openAIQuotaResetResponse{
+		OpenAIQuotaResetResult: *result,
+		Quota:                  result.PostResetQuota,
+		CacheRefreshed:         true,
+		AccountStateRecovered:  true,
+	}
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		resetResponse.WarningCode = openAIQuotaResetWarningAccountRefreshFailed
+	} else {
+		resetResponse.Account = dto.AccountFromService(account)
+	}
 	response.Success(c, resetResponse)
 }

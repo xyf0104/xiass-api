@@ -258,6 +258,54 @@ func sameOpenAIResetCredentials(a, b *Account) bool {
 	return err == nil && bytes.Equal(left, right)
 }
 
+// openAIResetRecordFingerprint binds a pending exchange to the account
+// identity that was allowed to send it. The fingerprint is stored only in the
+// idempotency record; credentials and proxy details never leave the account
+// row. This prevents a later token/account replacement from being mistaken for
+// a successful result from the old exchange.
+func openAIResetRecordFingerprint(a *Account) string {
+	if a == nil {
+		return ""
+	}
+	payload := struct {
+		ID            int64          `json:"id"`
+		Platform      string         `json:"platform"`
+		Type          string         `json:"type"`
+		Credentials   map[string]any `json:"credentials"`
+		ProxyID       *int64         `json:"proxy_id,omitempty"`
+		Proxy         any            `json:"proxy,omitempty"`
+		ExecutionNode any            `json:"execution_node,omitempty"`
+	}{
+		ID:            a.ID,
+		Platform:      a.Platform,
+		Type:          a.Type,
+		Credentials:   a.Credentials,
+		ProxyID:       a.ProxyID,
+		Proxy:         a.Proxy,
+		ExecutionNode: a.Extra[AccountExecutionNodeExtraKey],
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return HashIdempotencyKey(string(raw))
+}
+
+func pendingResetIdentityMatches(record *IdempotencyRecord, account *Account) bool {
+	if record == nil || account == nil {
+		return false
+	}
+	current := openAIResetRecordFingerprint(account)
+	if current != "" && record.RequestFingerprint == current {
+		return true
+	}
+	// Records created before the identity fingerprint was introduced used the
+	// account id as their fingerprint. They are safe to reconcile only when the
+	// account row has not changed since the pending record was last claimed.
+	return record.RequestFingerprint == fmt.Sprint(account.ID) &&
+		(record.UpdatedAt.IsZero() || account.UpdatedAt.IsZero() || !account.UpdatedAt.After(record.UpdatedAt))
+}
+
 func sameOpenAIManualResetAccount(a, b *Account) bool {
 	if a != nil && b != nil && a.IsOpenAIAgentIdentity() && b.IsOpenAIAgentIdentity() {
 		// Task renewal is part of the existing manual assertion-auth flow, not
@@ -405,7 +453,7 @@ func (s *OpenAIAutoResetService) reset(ctx context.Context, id int64, automatic 
 	// moving quota reset ETAs. Only a proven pre-send failure is retryable.
 	forever := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Now()
-	record := &IdempotencyRecord{Scope: openAIResetScope, IdempotencyKeyHash: HashIdempotencyKey(strconv.FormatInt(id, 10)), RequestFingerprint: fmt.Sprint(id), Status: IdempotencyStatusProcessing, LockedUntil: &forever, ExpiresAt: forever}
+	record := &IdempotencyRecord{Scope: openAIResetScope, IdempotencyKeyHash: HashIdempotencyKey(strconv.FormatInt(id, 10)), RequestFingerprint: openAIResetRecordFingerprint(a), Status: IdempotencyStatusProcessing, LockedUntil: &forever, ExpiresAt: forever}
 	claimed, err := s.ledger.CreateProcessing(ctx, record)
 	if err != nil {
 		return nil, ErrOpenAIResetUnavailable
@@ -550,4 +598,75 @@ func (s *OpenAIAutoResetService) reset(ctx context.Context, id int64, automatic 
 	}
 	result.PostResetQuota = post
 	return result, nil
+}
+
+// reconcilePending checks the result of a reset request that was already sent
+// upstream but whose response was lost or otherwise ambiguous. It never sends
+// another consume request. A pending record is released only after a fresh
+// quota read proves that the account is no longer exhausted.
+func (s *OpenAIAutoResetService) reconcilePending(ctx context.Context, id int64) (*OpenAIQuotaResetResult, error) {
+	if s == nil || s.quota == nil || s.ledger == nil {
+		return nil, ErrOpenAIResetUnavailable
+	}
+	account, err := s.account(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	record, err := s.ledger.GetByScopeAndKeyHash(ctx, openAIResetScope, HashIdempotencyKey(strconv.FormatInt(id, 10)))
+	if err != nil {
+		return nil, ErrOpenAIResetUnavailable
+	}
+	if record == nil || record.Status != IdempotencyStatusProcessing {
+		return nil, ErrOpenAIResetPending
+	}
+	if !pendingResetIdentityMatches(record, account) {
+		return nil, ErrOpenAIResetPending
+	}
+
+	usage, err := s.quota.QueryUsage(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !openAIResetQuotaRecovered(usage) {
+		return nil, ErrOpenAIResetPending
+	}
+	if s.recoverer == nil {
+		return nil, ErrOpenAIResetPending
+	}
+	if _, err := s.recoverer.RecoverAccountState(ctx, id, AccountRecoveryOptions{InvalidateToken: true, ForceCleanup: true}); err != nil {
+		return nil, ErrOpenAIResetPending
+	}
+	if err := s.quota.CachePostResetSnapshot(ctx, id, usage); err != nil {
+		return nil, ErrOpenAIResetPending
+	}
+	forever := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.ledger.MarkFailedRetryable(ctx, record.ID, "RESET_CONFIRMED", time.Now().Add(time.Minute), forever); err != nil {
+		return nil, ErrOpenAIResetPending
+	}
+	return &OpenAIQuotaResetResult{Code: "ok", PostResetQuota: usage}, nil
+}
+
+// ReconcilePending verifies an already-sent reset without consuming another
+// credit. It is exposed to the admin handler for an explicit operator retry.
+func (s *OpenAIAutoResetService) ReconcilePending(ctx context.Context, id int64) (*OpenAIQuotaResetResult, error) {
+	return s.reconcilePending(ctx, id)
+}
+
+// openAIResetQuotaRecovered is deliberately conservative. A missing, null, or
+// still-exhausted window is not proof that the previously sent reset succeeded.
+func openAIResetQuotaRecovered(usage *OpenAIQuotaUsage) bool {
+	if usage == nil || usage.RateLimit == nil || usage.RateLimit.LimitReached {
+		return false
+	}
+	observed := false
+	for _, window := range []*OpenAIRateLimitWindow{usage.RateLimit.PrimaryWindow, usage.RateLimit.SecondaryWindow} {
+		if window == nil {
+			continue
+		}
+		if !validOpenAIResetWindow(window) || window.UsedPercent >= 100 {
+			return false
+		}
+		observed = true
+	}
+	return observed
 }

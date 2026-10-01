@@ -529,3 +529,25 @@ func TestOpenAIAutoResetManualDisconnectRemainsPending(t *testing.T) {
 	require.True(t, c.Pending)
 	require.Equal(t, int32(1), q.consumes.Load())
 }
+
+func TestOpenAIAutoResetReconcilePendingNeverConsumesAgain(t *testing.T) {
+	s, q := resetFixture(t, false)
+	q.onConsume = func(context.Context) error { return errors.New("connection lost after send") }
+	_, err := s.reset(context.Background(), 42, false)
+	require.ErrorIs(t, err, ErrOpenAIResetPending)
+
+	_, err = s.ReconcilePending(context.Background(), 42)
+	require.ErrorIs(t, err, ErrOpenAIResetPending, "an exhausted quota is not proof of success")
+	require.Equal(t, int32(1), q.consumes.Load())
+
+	result, err := s.ReconcilePending(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, "ok", result.Code)
+	require.NotNil(t, result.PostResetQuota)
+	require.Equal(t, int32(1), q.consumes.Load(), "reconciliation must never consume another credit")
+	require.Equal(t, int32(1), q.recoveries.Load())
+	require.Equal(t, int32(1), q.caches.Load())
+
+	_, err = s.reset(context.Background(), 42, false)
+	require.ErrorIs(t, err, ErrOpenAIResetCooldown)
+}

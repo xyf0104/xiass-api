@@ -56,7 +56,8 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showInfo: vi.fn(),
+    showWarning: vi.fn()
   })
 }))
 
@@ -244,6 +245,21 @@ describe('admin AccountsView initial data synchronization', () => {
     expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).toContain('XIASS工作台')
     expect(wrapper.find('[data-testid="create-team-child"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="create-account"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the workbench 401 reminder when the OAuth account is temporarily blocked for oauth_401', async () => {
+    listAccounts.mockResolvedValueOnce(paginated({
+      ...completeAccount,
+      temp_unschedulable_until: '2026-10-01T10:00:00Z',
+      temp_unschedulable_reason: 'oauth_401'
+    }))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="openai-401-reminder"]').text()).toContain('1')
     wrapper.unmount()
   })
 

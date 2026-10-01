@@ -944,6 +944,16 @@ export async function resetOpenAIQuota(id: number): Promise<OpenAIQuotaResetResu
   return data
 }
 
+/** Verify a previously sent reset without consuming another reset credit. */
+export async function reconcileOpenAIQuotaReset(id: number): Promise<OpenAIQuotaResetResult> {
+  const { data } = await apiClient.post<OpenAIQuotaResetResult>(
+    `/admin/openai/accounts/${id}/reset-quota/reconcile`,
+    undefined,
+    { timeout: 90_000 }
+  )
+  return data
+}
+
 export interface SparkShadowCreatePayload {
   name?: string
   priority?: number
@@ -1116,6 +1126,7 @@ export const accountsAPI = {
   revertProxyFallback,
   refreshOpenAIQuota,
   resetOpenAIQuota,
+  reconcileOpenAIQuotaReset,
   createSparkShadow,
   getUpstreamBillingProbeSettings,
   updateUpstreamBillingProbeSettings,

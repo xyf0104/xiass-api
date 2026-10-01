@@ -427,6 +427,16 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 	return s.autoReset.reset(ctx, accountID, false)
 }
 
+// ReconcilePendingReset checks the result of an already-sent reset request.
+// It never sends another consume request and therefore cannot spend another
+// reset credit.
+func (s *OpenAIQuotaService) ReconcilePendingReset(ctx context.Context, accountID int64) (*OpenAIQuotaResetResult, error) {
+	if s == nil || s.autoReset == nil {
+		return nil, ErrOpenAIResetUnavailable
+	}
+	return s.autoReset.ReconcilePending(ctx, accountID)
+}
+
 func (s *OpenAIQuotaService) GetAutoResetConfig(ctx context.Context, id int64) (OpenAIAutoResetConfig, error) {
 	if s == nil || s.autoReset == nil {
 		return OpenAIAutoResetConfig{}, ErrOpenAIResetUnavailable
