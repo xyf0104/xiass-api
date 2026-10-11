@@ -92,7 +92,10 @@ func (h *OpenAIOAuthHandler) StopOpenAIReauthorizationAutoWorker() {
 	if !ok {
 		return
 	}
-	r := value.(*openAIReauthorizationAutoRuntime)
+	r, ok := value.(*openAIReauthorizationAutoRuntime)
+	if !ok || r == nil {
+		return
+	}
 	r.cancel()
 	r.wg.Wait()
 }
@@ -117,7 +120,10 @@ func (h *OpenAIOAuthHandler) HandleOpenAIUnauthorizedEvent(parent context.Contex
 	if !ok {
 		return
 	}
-	r := value.(*openAIReauthorizationAutoRuntime)
+	r, ok := value.(*openAIReauthorizationAutoRuntime)
+	if !ok || r == nil {
+		return
+	}
 	r.enqueue(accountID)
 }
 

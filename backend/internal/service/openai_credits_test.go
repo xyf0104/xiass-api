@@ -136,7 +136,8 @@ func TestOpenAICreditsStreamPreservesChunkedDelivery(t *testing.T) {
 			buf := make([]byte, size)
 			for {
 				n, err := tap.Read(buf)
-				output.Write(buf[:n])
+				_, writeErr := output.Write(buf[:n])
+				require.NoError(t, writeErr)
 				if err != nil {
 					require.ErrorIs(t, err, io.EOF)
 					break
@@ -207,7 +208,9 @@ func TestOpenAICreditsTransportCapturesOriginalRequestAndBothBalances(t *testing
 		}
 		select {
 		case updates := <-repo.updates:
-			snapshot := updates[openaiQuotaCreditsKey].(*openAICreditsSnapshot)
+			snapshot, ok := updates[openaiQuotaCreditsKey].(*openAICreditsSnapshot)
+			require.True(t, ok)
+			require.NotNil(t, snapshot)
 			balances = append(balances, *snapshot.Credits.Balance)
 			require.NotContains(t, updates, openaiQuotaResetCreditsKey)
 		case <-time.After(time.Second):

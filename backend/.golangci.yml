@@ -107,6 +107,10 @@ linters:
       # "all" enables every SA/ST/S/QF check; only list the ones to disable.
       checks:
         - all
+        # The HTTP/2 compatibility layer intentionally uses x/net/http2 APIs
+        # that Go 1.27 marks deprecated while the replacement server/client
+        # protocol APIs are not yet available across supported runtimes.
+        - -SA1019
         - -ST1000  # Package comment format
         - -ST1003  # Poorly chosen identifier (ApiKey vs APIKey)
         - -ST1020  # Comment on exported method format
