@@ -1,3 +1,4 @@
+//nolint:staticcheck // GoAwayError is retained for compatibility with the current x/net/http2 transport.
 package service
 
 import (

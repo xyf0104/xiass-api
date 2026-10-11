@@ -1,3 +1,4 @@
+//nolint:staticcheck // The test covers the retained x/net/http2 GoAwayError compatibility branch.
 package service
 
 import (

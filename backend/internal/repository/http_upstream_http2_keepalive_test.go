@@ -1,3 +1,4 @@
+//nolint:staticcheck // This regression test intentionally inspects the x/net/http2 compatibility fields.
 package repository
 
 import (

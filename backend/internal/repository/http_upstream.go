@@ -1,3 +1,4 @@
+//nolint:staticcheck // x/net/http2 is required for the existing h2c and keepalive compatibility path.
 package repository
 
 import (

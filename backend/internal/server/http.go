@@ -1,4 +1,6 @@
 // Package server provides HTTP server initialization and configuration.
+//
+//nolint:staticcheck // The server keeps the existing x/net/http2 h2c compatibility path.
 package server
 
 import (
