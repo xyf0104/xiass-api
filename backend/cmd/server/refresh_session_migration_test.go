@@ -200,7 +200,9 @@ func TestRefreshMigrationCommandDispatch(t *testing.T) {
 		{"-migrate-refresh-sessions", "/missing-file", "-offline-maintenance"},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		command := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestRefreshMigrationCommandDispatch$", "--"}, args...)...)
+		// os.Args[0] is the current test binary and args are fixed test fixtures;
+		// the child process is used only to exercise the CLI dispatch path.
+		command := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestRefreshMigrationCommandDispatch$", "--"}, args...)...) // #nosec G702 -- fixed current test binary and test-only arguments.
 		command.Env = append(os.Environ(), "XIASS_TEST_MIGRATION_CHILD=1")
 		output, err := command.CombinedOutput()
 		cancel()

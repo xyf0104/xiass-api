@@ -294,19 +294,6 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	resolved.Intervals = filterValidIntervals(chPricing.Intervals)
 }
 
-// applyChannelImageInputPrice 应用渠道图片输入价：显式配置则用配置值；
-// 未配置时归零，使 computeTokenBreakdown 回退到文本输入价（向后兼容，
-// 避免 commit 引入的 LiteLLM 图片输入价泄漏进渠道自定义定价）。
-// 与 image_output 不同，此处不设 Explicit 标志——图片输入未配置应回退文本价，
-// 而非硬置 0。
-func applyChannelImageInputPrice(chPricing *ChannelModelPricing, pricing *ModelPricing) {
-	if chPricing != nil && chPricing.ImageInputPrice != nil {
-		pricing.ImageInputPricePerToken = *chPricing.ImageInputPrice
-	} else {
-		pricing.ImageInputPricePerToken = 0
-	}
-}
-
 // applyRequestTierOverrides 应用按次/图片模式的渠道覆盖
 func (r *ModelPricingResolver) applyRequestTierOverrides(chPricing *ChannelModelPricing, resolved *ResolvedPricing) {
 	resolved.RequestTiers = filterValidIntervals(chPricing.Intervals)
