@@ -236,6 +236,129 @@ describe('OpenAIQuotaResetCell reauthorization evidence', () => {
   })
 })
 
+describe('OpenAIQuotaResetCell ordinary OpenAI Credit display', () => {
+  const mountWithQuery = (account: Account) => mount(OpenAIQuotaResetCell, {
+    props: { account, spreadActions: true },
+    slots: {
+      'pre-actions': '<button data-testid="active-query">查询</button>'
+    }
+  })
+
+  it('keeps the original three-action wrapping layout when no ordinary Credit grant exists', () => {
+    const wrapper = mountWithQuery(makeAccount({
+      extra: {
+        codex_credits_snapshot: {
+          credits: { has_credits: false, unlimited: false, balance: '0' },
+          fetched_at: 1770000000
+        }
+      }
+    }))
+
+    const row = wrapper.get('[data-testid="openai-quota-action-row"]')
+    expect(row.attributes('data-action-count')).toBe('3')
+    expect(row.classes()).toContain('flex-wrap')
+    expect(row.classes()).toContain('gap-4')
+    expect(wrapper.find('[data-testid="openai-codex-credits"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows unlimited Credit as a fourth 10px item without wrapping', () => {
+    const wrapper = mountWithQuery(makeAccount({
+      extra: {
+        codex_credits_snapshot: {
+          credits: { has_credits: false, unlimited: true, balance: null },
+          fetched_at: 1770000000
+        }
+      }
+    }))
+
+    const row = wrapper.get('[data-testid="openai-quota-action-row"]')
+    const points = wrapper.get('[data-testid="openai-codex-credits"]')
+    expect(row.attributes('data-action-count')).toBe('4')
+    expect(row.classes()).toContain('whitespace-nowrap')
+    expect(row.classes()).not.toContain('flex-wrap')
+    expect(points.classes()).toContain('text-[10px]')
+    expect(points.text()).toContain('admin.accounts.openaiQuotaReset.codexCreditsUnlimited')
+    wrapper.unmount()
+  })
+
+  it('keeps 62500 readable and preserves the exact finite balance in the tooltip', () => {
+    const wrapper = mountWithQuery(makeAccount({
+      extra: {
+        codex_credits_snapshot: {
+          credits: { has_credits: true, unlimited: false, balance: '62500' },
+          fetched_at: 1770000000
+        }
+      }
+    }))
+
+    const points = wrapper.get('[data-testid="openai-codex-credits"]')
+    expect(points.text()).toContain('62500')
+    expect(points.text()).not.toContain('62.5K')
+    expect(points.attributes('title')).toContain('62500')
+    wrapper.unmount()
+  })
+
+  it('keeps provider decimal balances verbatim instead of compacting them', () => {
+    const wrapper = mountWithQuery(makeAccount({
+      extra: {
+        codex_credits_snapshot: {
+          credits: { has_credits: true, unlimited: false, balance: '500.2000' },
+          fetched_at: 1770000000
+        }
+      }
+    }))
+
+    const points = wrapper.get('[data-testid="openai-codex-credits"]')
+    expect(points.text()).toContain('500.2000')
+    expect(points.attributes('title')).toContain('500.2000')
+    wrapper.unmount()
+  })
+
+  it('shows Available for a known grant with an unreadable balance', () => {
+    const wrapper = mountWithQuery(makeAccount({
+      extra: {
+        codex_credits_snapshot: {
+          credits: { has_credits: true, unlimited: false, balance: 'not-a-number' },
+          fetched_at: 1770000000
+        }
+      }
+    }))
+
+    expect(wrapper.get('[data-testid="openai-codex-credits"]').text())
+      .toContain('admin.accounts.openaiQuotaReset.codexCreditsAvailable')
+    wrapper.unmount()
+  })
+
+  it('adopts a live queried balance and emits only a persisted Credit snapshot patch', async () => {
+    vi.mocked(refreshOpenAIQuota).mockResolvedValueOnce({
+      rate_limit_reset_credits: { available_count: 0, credits: [] },
+      credits: { has_credits: true, unlimited: false, balance: '62500' },
+      fetched_at: 1770000000,
+      cache_persisted: true,
+      credits_cache_persisted: true
+    })
+    const account = makeAccount({ extra: { unrelated: 'preserve' } })
+    const wrapper = mountWithQuery(account)
+
+    await wrapper.get('[data-testid="openai-reset-credit-count"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="openai-codex-credits"]').text()).toContain('62500')
+    expect(account.extra).toEqual({ unrelated: 'preserve' })
+    expect(wrapper.emitted('credits-updated')).toEqual([[
+      {
+        accountId: 1,
+        snapshot: {
+          credits: { has_credits: true, unlimited: false, balance: '62500' },
+          fetched_at: 1770000000
+        }
+      }
+    ]])
+    wrapper.unmount()
+  })
+})
+
 describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
   it('影子账号(parent_account_id 非空)的 reset 按钮被禁用且提示在母账号重置', () => {
     const account = makeAccount({ parent_account_id: 100 })

@@ -163,12 +163,16 @@
                 :read-only="readOnly"
                 :spread-actions="true"
                 @account-updated="handleQuotaResetAccountUpdated"
+                @credits-updated="handleQuotaCreditsUpdated"
                 @reauth-status="handleQuotaReauthStatus"
               >
-                <template #pre-actions>
+                <template #pre-actions="{ compact }">
                   <button
                     type="button"
-                    class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                    :class="[
+                      'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                      compact ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
+                    ]"
                     :disabled="readOnly || activeQueryLoading"
                     @click="loadActiveUsage"
                   >
@@ -214,12 +218,16 @@
             :read-only="readOnly"
             :spread-actions="true"
             @account-updated="handleQuotaResetAccountUpdated"
+            @credits-updated="handleQuotaCreditsUpdated"
             @reauth-status="handleQuotaReauthStatus"
           >
-            <template #pre-actions>
+            <template #pre-actions="{ compact }">
               <button
                 type="button"
-                class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                :class="[
+                  'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  compact ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
+                ]"
                 :disabled="readOnly || activeQueryLoading"
                 @click="loadActiveUsage"
               >
@@ -263,6 +271,7 @@
           :read-only="readOnly"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
+          @credits-updated="handleQuotaCreditsUpdated"
           @reauth-status="handleQuotaReauthStatus"
         />
       </div>
@@ -1741,6 +1750,20 @@ const quotaTotalBar = computed((): QuotaBarInfo | null => {
 const handleQuotaResetAccountUpdated = (account: Account) => {
   if (props.readOnly || account.id !== props.account.id) return
   emit('account-updated', account)
+}
+
+const handleQuotaCreditsUpdated = (payload: {
+  accountId: number
+  snapshot: NonNullable<Account['extra']>['codex_credits_snapshot']
+}) => {
+  if (props.readOnly || payload.accountId !== props.account.id) return
+  emit('account-updated', {
+    ...props.account,
+    extra: {
+      ...props.account.extra,
+      codex_credits_snapshot: payload.snapshot
+    }
+  })
 }
 
 const clearUsageReauthEvidence = () => {

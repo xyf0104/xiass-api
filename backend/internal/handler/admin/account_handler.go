@@ -68,6 +68,7 @@ type AccountHandler struct {
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	codexTicketSettings     *service.SettingService
 	codexTicketRefresher    codexTicketRefresher
+	openAICreditsRefresher  openAICreditsRefresher
 	cfg                     *config.Config
 }
 
@@ -141,6 +142,14 @@ func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService
 // without changing the constructor used by focused admin tests.
 func (h *AccountHandler) SetCodexTicketRefresher(refresher codexTicketRefresher) {
 	h.codexTicketRefresher = refresher
+}
+
+// SetOpenAICreditsRefresher attaches optional post-create Credit detection
+// without expanding the constructor used throughout focused handler tests.
+func (h *AccountHandler) SetOpenAICreditsRefresher(refresher openAICreditsRefresher) {
+	if h != nil {
+		h.openAICreditsRefresher = refresher
+	}
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -1376,6 +1385,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if err := service.ValidateOpenAICreditsExtra(req.Platform, req.Type, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
@@ -1446,6 +1459,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// 探测失败不影响账号创建响应。
 	h.scheduleOpenAIResponsesProbe(createdAccount)
 	h.scheduleGrokImportProbe(createdAccount)
+	scheduleOpenAICreditsRefresh(h.openAICreditsRefresher, createdAccount)
 	response.Success(c, result.Data)
 }
 
@@ -2035,6 +2049,14 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	targetType := existing.Type
+	if req.Type != "" {
+		targetType = req.Type
+	}
+	if err := service.ValidateOpenAICreditsExtra(existing.Platform, targetType, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	teamChildEmail, isTeamChild := teamChildAccountWorkflowEmail(existing)
 	if isTeamChild {
 		// A Team-child reauthorization must stay bound to the mailbox that the
@@ -2578,6 +2600,10 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			response.ErrorFrom(c, err)
 			return
 		}
+		if err := service.ValidateOpenAICreditsExtra(item.Platform, item.Type, item.Extra); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 	groupIDs := make([]int64, 0)
 	for _, item := range req.Accounts {
@@ -2649,6 +2675,7 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			// OpenAI APIKey 账号异步探测 /v1/responses 能力。
 			h.scheduleOpenAIResponsesProbe(account)
 			h.scheduleGrokImportProbe(account)
+			scheduleOpenAICreditsRefresh(h.openAICreditsRefresher, account)
 			success++
 			results = append(results, gin.H{
 				"name":    item.Name,

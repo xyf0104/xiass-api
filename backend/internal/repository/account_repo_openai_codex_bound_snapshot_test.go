@@ -86,6 +86,9 @@ func TestBoundQuotaSnapshotRejectsInvalidMetadataAndEstimatePatches(t *testing.T
 		{"codex_usage_updated_at": at.Add(time.Hour).Format(time.RFC3339Nano), "codex_7d_used_percent": 10},
 		{"codex_reset_credit_snapshot": map[string]any{"available_count": 0}},
 		{"codex_reset_credit_snapshot_updated_at": at.Format(time.RFC3339Nano)},
+		{"codex_credits_snapshot": map[string]any{"credits": nil}},
+		{"codex_credits_snapshot_updated_at": at.Format(time.RFC3339Nano)},
+		{"codex_credits_snapshot": map[string]any{"credits": nil}, "codex_credits_snapshot_updated_at": at.Add(time.Second).Format(time.RFC3339Nano)},
 		{"codex_usage_updated_at": at.Format(time.RFC3339Nano), "codex_7d_estimate_baseline": nil},
 		{"codex_usage_updated_at": at.Format(time.RFC3339Nano), service.OpenAIWeeklyStateRevisionKey: 2},
 		{"codex_usage_updated_at": at.Format(time.RFC3339Nano), "codex_fingerprint_seed": "forbidden"},
@@ -104,6 +107,26 @@ func TestBoundQuotaSnapshotRejectsInvalidMetadataAndEstimatePatches(t *testing.T
 	require.Error(t, err)
 	require.False(t, applied)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBoundQuotaOrdinaryCreditsIndependentOfRawWindows(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	a := &service.Account{ID: 42, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{}}
+	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	patch := map[string]any{"codex_credits_snapshot": map[string]any{"credits": nil, "fetched_at": at.Unix()}, "codex_credits_snapshot_updated_at": at.Format(time.RFC3339Nano)}
+	payload, err := json.Marshal(patch)
+	require.NoError(t, err)
+	mock.ExpectExec(regexp.QuoteMeta(updateOpenAIQuotaBoundSnapshotQuery)).
+		WithArgs(string(payload), a.ID, at, a.Platform, a.Type, `{}`, nil, a.ID, a.Platform, a.Type, `{}`, nil, nil, service.QuotaDimensionGlobal, `{}`, `{}`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	applied, err := (&accountRepository{sql: db}).UpdateOpenAIQuotaSnapshotIfIdentityMatches(context.Background(), a, a, at, patch)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Contains(t, updateOpenAIQuotaBoundSnapshotQuery, "extra ->> 'codex_credits_snapshot_updated_at'")
+	require.Error(t, validateBoundCodexSnapshotFields(patch, false))
 }
 
 func TestBoundQuotaSnapshotSQLBindsTargetAndParentRevisions(t *testing.T) {

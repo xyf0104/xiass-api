@@ -425,6 +425,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, fmt.Errorf("normalize duplicate account extra: %w", err)
 	}
+	accountExtra, err = normalizeOpenAICreditsExtra(input.Platform, input.Type, accountExtra)
+	if err != nil {
+		return nil, fmt.Errorf("normalize duplicate account credits extra: %w", err)
+	}
 	// A duplicate is a new account created by the instance receiving this
 	// request. In multi-node mode it must use that instance's durable node and
 	// private egress instead of inheriting the source account's ownership.
@@ -737,7 +741,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if !input.AllowOpenAIReauthorizationCredentials && containsOpenAIReauthorizationCredentials(input.Credentials) {
 		return nil, infraerrors.BadRequest("OPENAI_REAUTH_CREDENTIALS_MANAGED", "OpenAI reauthorization credentials must be saved through the dedicated encrypted endpoint")
 	}
-	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
+	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, stripOpenAIQuotaRuntimeExtra(input.Extra))
+	if err != nil {
+		return nil, err
+	}
+	accountExtra, err = normalizeOpenAICreditsExtra(input.Platform, input.Type, accountExtra)
 	if err != nil {
 		return nil, err
 	}
@@ -889,6 +897,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
+		if err != nil {
+			return nil, err
+		}
+		normalizedExtra, err = normalizeOpenAICreditsUpdateExtra(account, input, normalizedExtra)
 		if err != nil {
 			return nil, err
 		}
@@ -1049,6 +1061,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				normalizedExtra[key] = v
 			}
 		}
+		for key, value := range account.Extra {
+			if IsOpenAIQuotaRuntimeExtraKey(key) {
+				normalizedExtra[key] = value
+			}
+		}
 		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
@@ -1072,6 +1089,19 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.Extra == nil {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
+		if account.Platform == PlatformOpenAI && input.Type != "" {
+			account.Extra = maps.Clone(account.Extra)
+			if account.Type == AccountTypeOAuth {
+				if account.Extra == nil {
+					account.Extra = make(map[string]any, 1)
+				}
+				if _, exists := account.Extra[OpenAICreditsEnabledExtraKey]; !exists {
+					account.Extra[OpenAICreditsEnabledExtraKey] = false
+				}
+			} else {
+				delete(account.Extra, OpenAICreditsEnabledExtraKey)
+			}
+		}
 	}
 	if proxyBindingsChanged {
 		account.Extra = setAccountProxyBindingsExtra(account.Extra, normalizedBindings)
@@ -1467,13 +1497,22 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
-	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
+	_, hasLongContextBillingUpdate := updates[openAILongContextBillingEnabledKey]
+	_, hasCreditsEnabledUpdate := updates[OpenAICreditsEnabledExtraKey]
+	if hasLongContextBillingUpdate || hasCreditsEnabledUpdate {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
 			return err
 		}
-		if err := ValidateOpenAILongContextBillingExtra(account.Platform, updates); err != nil {
-			return err
+		if hasLongContextBillingUpdate {
+			if err := ValidateOpenAILongContextBillingExtra(account.Platform, updates); err != nil {
+				return err
+			}
+		}
+		if hasCreditsEnabledUpdate {
+			if err := ValidateOpenAICreditsExtra(account.Platform, account.Type, updates); err != nil {
+				return err
+			}
 		}
 	}
 	if len(updates) == 0 {
@@ -1546,6 +1585,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 	_, hasLongContextBillingUpdate := input.Extra[openAILongContextBillingEnabledKey]
+	_, hasCreditsEnabledUpdate := input.Extra[OpenAICreditsEnabledExtraKey]
 
 	// 仅在需要读取账号内容时预取目标账号，供凭据守卫/代理守卫/混合
 	// 渠道检查共用，避免多次 DB 查询。节点管理模式即使只是改调度开关，
@@ -1556,6 +1596,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		input.ProxyID != nil ||
 		needMixedChannelCheck ||
 		hasLongContextBillingUpdate ||
+		hasCreditsEnabledUpdate ||
 		hasFingerprintModeUpdate ||
 		input.ProbeEnabled != nil ||
 		input.RateMultiplier != nil
@@ -1621,6 +1662,23 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 				return nil, err
 			}
 			break
+		}
+	}
+	if hasCreditsEnabledUpdate {
+		targetsByID := make(map[int64]*Account, len(cachedTargets))
+		for _, account := range cachedTargets {
+			if account != nil {
+				targetsByID[account.ID] = account
+			}
+		}
+		for _, accountID := range input.AccountIDs {
+			account, ok := targetsByID[accountID]
+			if !ok {
+				return nil, ErrAccountNotFound
+			}
+			if err := ValidateOpenAICreditsExtra(account.Platform, account.Type, input.Extra); err != nil {
+				return nil, err
+			}
 		}
 	}
 

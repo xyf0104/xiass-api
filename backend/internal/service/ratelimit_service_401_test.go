@@ -17,8 +17,11 @@ type rateLimitAccountRepoStub struct {
 	mockAccountRepoForGemini
 	setErrorCalls          int
 	tempCalls              int
+	usageAuthCalls         int
 	updateCredentialsCalls int
 	updateExtraCalls       int
+	usageAuthReject        bool
+	lastUsageAuthAccount   *Account
 	lastCredentials        map[string]any
 	lastExtraUpdates       map[string]any
 	lastErrorMsg           string
@@ -26,6 +29,15 @@ type rateLimitAccountRepoStub struct {
 	lastErrorID            int64
 	lastTempID             int64
 	tempErr                error
+}
+
+func (r *rateLimitAccountRepoStub) UpdateOpenAIUsageAuthIfIdentityMatches(_ context.Context, expected *Account, unauthorized bool) (bool, error) {
+	r.usageAuthCalls++
+	r.lastUsageAuthAccount = expected
+	if r.usageAuthReject || !unauthorized {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
@@ -58,6 +70,18 @@ type tokenCacheInvalidatorRecorder struct {
 	accounts []*Account
 	err      error
 }
+
+type accountRuntimeBlockerRecorder struct {
+	blockedAccountIDs []int64
+	reasons           []string
+}
+
+func (r *accountRuntimeBlockerRecorder) BlockAccountScheduling(account *Account, _ time.Time, reason string) {
+	r.blockedAccountIDs = append(r.blockedAccountIDs, account.ID)
+	r.reasons = append(r.reasons, reason)
+}
+
+func (r *accountRuntimeBlockerRecorder) ClearAccountSchedulingBlock(int64) {}
 
 type openAI403CounterCacheStub struct {
 	counts     []int64
@@ -168,7 +192,7 @@ func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t 
 		ID:          parentID,
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
-		Credentials: map[string]any{"refresh_token": "rt-mother"},
+		Credentials: map[string]any{"access_token": "at-mother", "refresh_token": "rt-mother"},
 	}
 	repo.accountsByID[parentID] = mother
 
@@ -186,8 +210,9 @@ func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t 
 
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls, "spark shadow must not be permanently disabled on a parent-token 401")
-	require.Equal(t, 1, repo.tempCalls)
-	require.Equal(t, parentID, repo.lastTempID, "temp-unschedulable must target the credential owner (parent)")
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 1, repo.usageAuthCalls)
+	require.Equal(t, parentID, repo.lastUsageAuthAccount.ID, "identity-bound marker must target the credential owner (parent)")
 	require.Len(t, invalidator.accounts, 1)
 	require.Equal(t, parentID, invalidator.accounts[0].ID, "token cache invalidation must target the parent")
 }
@@ -207,6 +232,7 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
+			"access_token":  "at-101",
 			"refresh_token": "rt-101",
 		},
 	}
@@ -215,7 +241,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 1, repo.usageAuthCalls)
 	require.Equal(t, 0, repo.updateCredentialsCalls)
 	require.Len(t, invalidator.accounts, 1)
 }
@@ -261,18 +288,21 @@ func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredential
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.updateCredentialsCalls, "401 handler must not write credentials back from the request-start snapshot")
 	require.Equal(t, 0, repo.updateExtraCalls, "OpenAI 401 must not set Antigravity force-refresh marker")
-	require.Equal(t, 1, repo.tempCalls, "401 handler should still set temp-unschedulable cooldown")
+	require.Equal(t, 0, repo.tempCalls, "OpenAI 401 must use the identity-bound auth marker instead of an unbound cooldown write")
+	require.Equal(t, 1, repo.usageAuthCalls)
 	require.Nil(t, repo.lastCredentials, "no credentials should have been persisted")
 }
 
-// 缺少 refresh_token 的 OAuth 账号 401 应直接 SetError 永久禁用，
-// 不再走 10 分钟冷却（冷却期内无人能刷新它，结束后还会被选中再 502 一次）。
-func TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError(t *testing.T) {
+// XIASS 工作台保存的重新授权方式不依赖当前 refresh_token 仍然有效；因此
+// OpenAI OAuth 收到真实 401 后统一进入身份绑定的重新授权队列。
+func TestRateLimitService_HandleUpstreamError_OpenAI401WithoutRefreshTokenQueuesReauthorization(t *testing.T) {
 	t.Run("openai_no_refresh_token", func(t *testing.T) {
 		repo := &rateLimitAccountRepoStub{}
 		invalidator := &tokenCacheInvalidatorRecorder{}
 		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 		service.SetTokenCacheInvalidator(invalidator)
+		recorder := &openAIUnauthorizedHandlerRecorder{}
+		service.SetOpenAIUnauthorizedHandler(recorder.handler)
 		account := &Account{
 			ID:       2881,
 			Platform: PlatformOpenAI,
@@ -286,16 +316,19 @@ func TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError(t 
 		shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 		require.True(t, shouldDisable)
-		require.Equal(t, 1, repo.setErrorCalls, "AT-only OAuth 401 must SetError")
+		require.Equal(t, 0, repo.setErrorCalls, "workbench OAuth 401 must remain recoverable")
 		require.Equal(t, 0, repo.tempCalls, "AT-only OAuth 401 must NOT temp-unschedule")
+		require.Equal(t, 1, repo.usageAuthCalls)
 		require.Equal(t, 0, repo.updateCredentialsCalls, "no point forcing expires_at when refresh is impossible")
-		require.Contains(t, repo.lastErrorMsg, "refresh_token missing")
+		require.Equal(t, []int64{account.ID}, recorder.accountIDs)
 		require.Len(t, invalidator.accounts, 1, "cache should still be invalidated")
 	})
 
 	t.Run("openai_blank_refresh_token_treated_as_missing", func(t *testing.T) {
 		repo := &rateLimitAccountRepoStub{}
 		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		recorder := &openAIUnauthorizedHandlerRecorder{}
+		service.SetOpenAIUnauthorizedHandler(recorder.handler)
 		account := &Account{
 			ID:       2882,
 			Platform: PlatformOpenAI,
@@ -309,8 +342,10 @@ func TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError(t 
 		shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 		require.True(t, shouldDisable)
-		require.Equal(t, 1, repo.setErrorCalls)
+		require.Equal(t, 0, repo.setErrorCalls)
 		require.Equal(t, 0, repo.tempCalls)
+		require.Equal(t, 1, repo.usageAuthCalls)
+		require.Equal(t, []int64{account.ID}, recorder.accountIDs)
 	})
 
 	t.Run("antigravity_no_refresh_token_sets_error", func(t *testing.T) {
@@ -334,5 +369,104 @@ func TestRateLimitService_HandleUpstreamError_OAuth401NoRefreshTokenSetsError(t 
 		require.Equal(t, 0, repo.tempCalls)
 		require.Contains(t, repo.lastErrorMsg, "refresh_token missing")
 		require.Len(t, invalidator.accounts, 1)
+	})
+}
+
+func TestRateLimitService_OpenAI401NotifiesOnlyAfterCurrentIdentityWasMarked(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{usageAuthReject: true}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	blocker := &accountRuntimeBlockerRecorder{}
+	recorder := &openAIUnauthorizedHandlerRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	service.SetAccountRuntimeBlocker(blocker)
+	service.SetOpenAIUnauthorizedHandler(recorder.handler)
+	account := &Account{
+		ID: 400, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "stale-at", "refresh_token": "stale-rt"},
+	}
+
+	require.True(t, service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, nil, []byte(`{"error":"unauthorized"}`)))
+	require.Equal(t, 1, repo.usageAuthCalls)
+	require.Empty(t, recorder.accountIDs, "a stale 401 must not start reauthorization for the new credentials")
+	require.Empty(t, blocker.blockedAccountIDs, "a stale 401 must not block the current scheduler identity")
+}
+
+func TestRateLimitService_OpenAI401MarksAndNotifiesCredentialCopyOwner(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	repo.accountsByID = map[int64]*Account{}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	blocker := &accountRuntimeBlockerRecorder{}
+	recorder := &openAIUnauthorizedHandlerRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	service.SetAccountRuntimeBlocker(blocker)
+	service.SetOpenAIUnauthorizedHandler(recorder.handler)
+
+	owner := &Account{
+		ID: 420, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "owner-at", "refresh_token": "owner-rt"},
+	}
+	repo.accountsByID[owner.ID] = owner
+	copy := &Account{
+		ID: 421, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}},
+		Extra:       map[string]any{OpenAIOAuthCredentialSourceIDExtraKey: owner.ID},
+	}
+
+	require.True(t, service.HandleUpstreamError(context.Background(), copy, http.StatusUnauthorized, nil, []byte("unauthorized")))
+	require.Equal(t, 1, repo.usageAuthCalls)
+	require.Same(t, owner, repo.lastUsageAuthAccount)
+	require.Equal(t, []int64{owner.ID}, recorder.accountIDs)
+	require.Equal(t, []int64{owner.ID}, blocker.blockedAccountIDs)
+	require.Equal(t, []string{OpenAIUsageUnauthorizedReason}, blocker.reasons)
+	require.Len(t, invalidator.accounts, 1)
+	require.Same(t, owner, invalidator.accounts[0])
+}
+
+func TestRateLimitService_OpenAI401BypassesPoolAndCustomPolicyButNotAPIKeyOrAgentIdentity(t *testing.T) {
+	t.Run("oauth pool account", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		recorder := &openAIUnauthorizedHandlerRecorder{}
+		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		service.SetOpenAIUnauthorizedHandler(recorder.handler)
+		account := &Account{
+			ID: 410, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			Credentials: map[string]any{
+				"access_token": "at-410", "refresh_token": "rt-410",
+				"pool_mode": true,
+			},
+		}
+		require.True(t, service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, nil, []byte("custom body")))
+		require.Equal(t, 1, repo.usageAuthCalls)
+		require.Equal(t, []int64{account.ID}, recorder.accountIDs)
+	})
+
+	t.Run("api key", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		recorder := &openAIUnauthorizedHandlerRecorder{}
+		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		service.SetOpenAIUnauthorizedHandler(recorder.handler)
+		account := &Account{ID: 411, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+		require.True(t, service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, nil, []byte("custom body")))
+		require.Equal(t, 0, repo.usageAuthCalls)
+		require.Empty(t, recorder.accountIDs)
+	})
+
+	t.Run("agent identity", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		recorder := &openAIUnauthorizedHandlerRecorder{}
+		service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		service.SetOpenAIUnauthorizedHandler(recorder.handler)
+		account := &Account{
+			ID: 412, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			Credentials: map[string]any{
+				"access_token": "agent-at", "refresh_token": "agent-rt",
+				openAIAuthModeCredentialKey: OpenAIAuthModeAgentIdentity,
+			},
+		}
+		require.True(t, service.HandleUpstreamError(context.Background(), account, http.StatusUnauthorized, nil, []byte("unauthorized")))
+		require.Equal(t, 0, repo.usageAuthCalls)
+		require.Empty(t, recorder.accountIDs)
 	})
 }

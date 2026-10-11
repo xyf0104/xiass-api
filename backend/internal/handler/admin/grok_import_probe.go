@@ -185,6 +185,7 @@ func ProvideAccountHandler(
 	rpmCache service.RPMCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 	grokQuotaService *service.GrokQuotaService,
+	openAIQuotaService *service.OpenAIQuotaService,
 ) *AccountHandler {
 	handler := NewAccountHandler(
 		adminService,
@@ -203,6 +204,7 @@ func ProvideAccountHandler(
 		tokenCacheInvalidator,
 	)
 	handler.grokImportProber = grokQuotaService
+	handler.SetOpenAICreditsRefresher(openAIQuotaService)
 	handler.cfg = cfg
 	return handler
 }

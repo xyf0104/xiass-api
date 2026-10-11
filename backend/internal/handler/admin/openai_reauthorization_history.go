@@ -47,6 +47,7 @@ type openAIReauthorizationAccountStatus struct {
 	SuccessfulAuthorizationTimes     []time.Time  `json:"successful_authorization_times,omitempty"`
 	LastResult                       string       `json:"last_result,omitempty"`
 	LastReason                       string       `json:"last_reason,omitempty"`
+	LastInitiator                    string       `json:"last_initiator,omitempty"`
 	LastResultAt                     *time.Time   `json:"last_result_at,omitempty"`
 	HistorySource                    string       `json:"history_source,omitempty"`
 	HistoryConfidence                string       `json:"history_confidence,omitempty"`
@@ -95,6 +96,11 @@ func (h *OpenAIOAuthHandler) validateOpenAIReauthorizationStart(ctx context.Cont
 		return service.OpenAIReauthorizationState{}, 0, errors.New("请先确认本次 401 重新授权")
 	}
 	state := h.openAIReauthorizationState(ctx, account)
+	if state.LastInitiator == service.OpenAIReauthorizationInitiatorAutomatic &&
+		state.LastResult == service.OpenAIReauthorizationResultRunning &&
+		(state.AutoLeaseUntil == nil || now.Before(*state.AutoLeaseUntil)) {
+		return state, 0, errors.New("该账号正在自动重新授权，请等待本次任务完成")
+	}
 	if !openAIAccountNeedsReauthorization(account) {
 		return state, 0, errors.New("该账号当前没有检测到需要重新授权的 401 状态")
 	}
@@ -133,6 +139,15 @@ func (h *OpenAIOAuthHandler) persistOpenAIReauthorizationStart(ctx context.Conte
 	state.LastAttemptAt = &last
 	state.LastResult = service.OpenAIReauthorizationResultRunning
 	state.LastReason = ""
+	state.LastInitiator = service.OpenAIReauthorizationInitiatorManual
+	state.AutoEpisodeKey = ""
+	state.AutoClaimID = ""
+	state.AutoBrowserMode = ""
+	state.AutoExecutionNodeID = ""
+	state.AutoClaimedAt = nil
+	state.AutoLeaseUntil = nil
+	state.AutoFinishedAt = nil
+	state.AutoRestoreSchedulable = false
 	state.LastResultAt = &last
 	state.LastEventKey = task.ID + ":running"
 	state.HistorySource = "xiass_state"
@@ -186,6 +201,15 @@ func (h *OpenAIOAuthHandler) persistOpenAIReauthorizationTaskState(ctx context.C
 	state.LastAttemptAt = &lastAttempt
 	state.LastResult = result
 	state.LastReason = task.Reason
+	state.LastInitiator = service.OpenAIReauthorizationInitiatorManual
+	state.AutoEpisodeKey = ""
+	state.AutoClaimID = ""
+	state.AutoBrowserMode = ""
+	state.AutoExecutionNodeID = ""
+	state.AutoClaimedAt = nil
+	state.AutoLeaseUntil = nil
+	state.AutoFinishedAt = nil
+	state.AutoRestoreSchedulable = false
 	state.LastResultAt = &now
 	state.LastEventKey = eventKey
 	state.HistorySource = "xiass_state"
@@ -353,6 +377,7 @@ func buildOpenAIReauthorizationAccountStatus(account *service.Account, state ser
 		FirstSucceededAt: state.FirstSucceededAt, LastSucceededAt: state.LastSucceededAt,
 		SuccessfulAuthorizationTimes: append([]time.Time(nil), state.SuccessfulAuthorizationTimes...),
 		LastResult:                   state.LastResult, LastReason: state.LastReason, LastResultAt: state.LastResultAt,
+		LastInitiator: state.LastInitiator,
 		HistorySource: state.HistorySource, HistoryConfidence: state.HistoryConfidence,
 		LegacyEvidenceCount: state.LegacyEvidenceCount,
 	}

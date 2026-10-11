@@ -22,6 +22,14 @@ type quotaAuthRepo struct {
 	ownerIDs  []int64
 }
 
+type openAIUnauthorizedHandlerRecorder struct {
+	accountIDs []int64
+}
+
+func (r *openAIUnauthorizedHandlerRecorder) handler(_ context.Context, accountID int64) {
+	r.accountIDs = append(r.accountIDs, accountID)
+}
+
 func (r *quotaAuthRepo) UpdateOpenAIUsageAuthIfIdentityMatches(_ context.Context, expected *Account, unauthorized bool) (bool, error) {
 	if !quotaTestIdentityMatches(r.accounts[expected.ID], expected) {
 		return false, nil
@@ -47,6 +55,24 @@ func newQuotaAuthService(t *testing.T, handler http.HandlerFunc) (*OpenAIQuotaSe
 	t.Cleanup(server.Close)
 	provider := NewOpenAITokenProvider(repo, &stubQuotaTokenCache{tokens: map[string]string{OpenAITokenCacheKey(account): account.GetOpenAIAccessToken()}}, nil)
 	return NewOpenAIQuotaService(repo, nil, provider, newQuotaRedirectingFactory(server)), repo, account
+}
+
+func TestUpdateOpenAIUsageAuthAndNotifyOnlyAfterAppliedIdentityBoundWrite(t *testing.T) {
+	account := quotaTestRequestIdentity().target
+	repo := &quotaAuthRepo{stubQuotaAccountRepo: &stubQuotaAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
+	recorder := &openAIUnauthorizedHandlerRecorder{}
+
+	require.True(t, updateOpenAIUsageAuthAndNotify(context.Background(), repo, account, true, recorder.handler))
+	require.Equal(t, []int64{account.ID}, recorder.accountIDs)
+
+	stale := *account
+	stale.Credentials = shallowCopyMap(account.Credentials)
+	stale.Credentials["access_token"] = "stale-access-token"
+	require.False(t, updateOpenAIUsageAuthAndNotify(context.Background(), repo, &stale, true, recorder.handler))
+	require.Equal(t, []int64{account.ID}, recorder.accountIDs, "stale credentials must not trigger auto reauthorization")
+
+	require.True(t, updateOpenAIUsageAuthAndNotify(context.Background(), repo, account, false, recorder.handler))
+	require.Equal(t, []int64{account.ID}, recorder.accountIDs, "successful probes clear state without scheduling reauthorization")
 }
 
 func TestOpenAIQuotaAuthRefreshRecordsOnlyConfirmedUpstream401(t *testing.T) {

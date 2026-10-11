@@ -941,6 +941,56 @@ describe('AccountUsageCell', () => {
     expect(getUsage).toHaveBeenCalledTimes(2)
   })
 
+  it('merges a persisted ordinary Credit snapshot into the latest account props', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: { utilization: 0, resets_at: null, remaining_seconds: 0 },
+      seven_day: null
+    })
+    const account = makeAccount({
+      id: 2005,
+      platform: 'openai',
+      type: 'oauth',
+      extra: { concurrent_marker: 'before' }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: {
+            props: ['account'],
+            emits: ['credits-updated'],
+            template: `<button data-test="credits-result" @click="$emit('credits-updated', {
+              accountId: account.id,
+              snapshot: {
+                credits: { has_credits: true, unlimited: false, balance: '62500' },
+                fetched_at: 1770000000
+              }
+            })" />`
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.setProps({
+      account: {
+        ...account,
+        extra: { concurrent_marker: 'latest', unrelated_runtime: true }
+      }
+    })
+    await wrapper.get('[data-test="credits-result"]').trigger('click')
+
+    const updatedAccount = wrapper.emitted<Account[]>('account-updated')?.[0]?.[0]
+    expect(updatedAccount?.extra?.concurrent_marker).toBe('latest')
+    expect(updatedAccount?.extra?.unrelated_runtime).toBe(true)
+    expect(updatedAccount?.extra?.codex_credits_snapshot).toEqual({
+      credits: { has_credits: true, unlimited: false, balance: '62500' },
+      fetched_at: 1770000000
+    })
+  })
+
   it('OpenAI OAuth 已限额时显示 /usage API 返回的限额数据', async () => {
 	getUsage.mockResolvedValue({
 	  five_hour: {

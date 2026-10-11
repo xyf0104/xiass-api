@@ -287,6 +287,20 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     )
   })
 
+  it('offers ordinary Credit opt-in only for OpenAI OAuth and defaults it off', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+
+    const toggle = wrapper.get('[data-testid="create-openai-codex-credits-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    await selectButtonByText(wrapper, 'API Key')
+    expect(wrapper.find('[data-testid="create-openai-codex-credits-toggle"]').exists()).toBe(false)
+  })
+
   it('enables upstream billing probes by default for new OpenAI API key accounts', async () => {
     await submitApiKeyAccount('openai')
 

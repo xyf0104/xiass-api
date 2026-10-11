@@ -1229,6 +1229,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return nil
 				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
+				if eventType == "codex.rate_limits" {
+					s.observeOpenAICreditsEvent(account, payload)
+				}
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 					turnHasSemanticOutput.Store(false)

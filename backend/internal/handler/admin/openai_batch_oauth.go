@@ -1202,6 +1202,7 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Success(c, t)
 		return
 	}
+	scheduleOpenAICreditsRefresh(h.quotaService, account)
 	if pendingAdsPowerBinding != nil {
 		h.adsPowerLaunchStore.deletePending(ctx, t.sessionID)
 	}

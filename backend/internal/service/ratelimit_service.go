@@ -27,6 +27,7 @@ type RateLimitService struct {
 	tempUnschedCache      TempUnschedCache
 	timeoutCounterCache   TimeoutCounterCache
 	openAI403CounterCache OpenAI403CounterCache
+	openAIUnauthorized    OpenAIUnauthorizedHandler
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
@@ -116,6 +117,13 @@ func (s *RateLimitService) SetOpenAI403CounterCache(cache OpenAI403CounterCache)
 	s.openAI403CounterCache = cache
 }
 
+// SetOpenAIUnauthorizedHandler installs the workbench auto-reauthorization
+// enqueue callback. It runs only after the identity-bound OAuth 401 marker was
+// committed, so a late response from old credentials cannot start a workflow.
+func (s *RateLimitService) SetOpenAIUnauthorizedHandler(handler OpenAIUnauthorizedHandler) {
+	s.openAIUnauthorized = handler
+}
+
 // SetSettingService 设置系统设置服务（可选依赖）
 func (s *RateLimitService) SetSettingService(settingService *SettingService) {
 	s.settingService = settingService
@@ -197,6 +205,14 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// Team-linked OpenAI failures must be observed before any pool/custom-policy
 	// early return. The helper deduplicates repeated observations.
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
+	// A real upstream OpenAI OAuth 401 is an authentication event, independent
+	// of pool mode and custom error policies. Persist it through the complete
+	// request-identity CAS before any early return, then notify the workbench to
+	// enqueue one automatic reauthorization attempt. API keys, Agent Identity,
+	// transport errors and non-401 responses stay on their existing paths.
+	if statusCode == http.StatusUnauthorized && s.handleOpenAIOAuthUnauthorized(ctx, account) {
+		return true
+	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
@@ -443,6 +459,44 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
+}
+
+func (s *RateLimitService) handleOpenAIOAuthUnauthorized(ctx context.Context, account *Account) bool {
+	if s == nil || account == nil || !account.IsOpenAIOAuth() {
+		return false
+	}
+	authAccount, err := resolveOpenAIUsageAuthOwner(ctx, s.accountRepo, account)
+	if err != nil {
+		slog.Warn("openai_oauth_401_owner_resolve_failed", "account_id", account.ID, "error", err)
+		// The current request must still fail over, but an unresolved linked row
+		// must not be mutated or submitted for reauthorization.
+		return account.RequiresCredentialResolution()
+	}
+	if authAccount == nil || authAccount.IsOpenAIAgentIdentity() {
+		return false
+	}
+
+	if s.tokenCacheInvalidator != nil {
+		if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
+			slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+		}
+	}
+
+	applied := updateOpenAIUsageAuthAndNotify(
+		ctx,
+		s.accountRepo,
+		authAccount,
+		true,
+		s.openAIUnauthorized,
+	)
+	if applied {
+		s.notifyAccountSchedulingBlocked(
+			authAccount,
+			time.Now().Add(OpenAIUsageUnauthorizedCooldown),
+			OpenAIUsageUnauthorizedReason,
+		)
+	}
+	return true
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.

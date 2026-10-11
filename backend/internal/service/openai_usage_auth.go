@@ -12,24 +12,64 @@ import (
 
 const OpenAIUsageUnauthorizedReason = "oauth_401: OpenAI usage authentication failed (401)"
 
+const OpenAIUsageUnauthorizedCooldown = 10 * time.Minute
+
+// OpenAIUnauthorizedHandler is invoked only after an identity-bound OAuth 401
+// marker has been committed. Implementations should enqueue the account and
+// return quickly; the authorization workflow itself must run asynchronously.
+type OpenAIUnauthorizedHandler func(ctx context.Context, accountID int64)
+
 // A late quota response must never invalidate newly refreshed credentials.
 type OpenAIUsageAuthRepository interface {
 	UpdateOpenAIUsageAuthIfIdentityMatches(ctx context.Context, expected *Account, unauthorized bool) (bool, error)
 }
 
-func updateOpenAIUsageAuth(ctx context.Context, repo AccountRepository, expected *Account, unauthorized bool) {
+func updateOpenAIUsageAuth(ctx context.Context, repo AccountRepository, expected *Account, unauthorized bool) bool {
 	if expected == nil || !expected.IsOpenAIOAuth() || expected.IsOpenAIAgentIdentity() {
-		return
+		return false
 	}
 	bound, ok := repo.(OpenAIUsageAuthRepository)
 	if !ok {
-		return
+		return false
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
-	if _, err := bound.UpdateOpenAIUsageAuthIfIdentityMatches(writeCtx, expected, unauthorized); err != nil {
-		slog.Warn("openai_usage_auth_state_failed", "account_id", expected.ID, "unauthorized", unauthorized)
+	applied, err := bound.UpdateOpenAIUsageAuthIfIdentityMatches(writeCtx, expected, unauthorized)
+	if err != nil {
+		slog.Warn("openai_usage_auth_state_failed", "account_id", expected.ID, "unauthorized", unauthorized, "error", err)
+		return false
 	}
+	return applied
+}
+
+func updateOpenAIUsageAuthAndNotify(
+	ctx context.Context,
+	repo AccountRepository,
+	expected *Account,
+	unauthorized bool,
+	handler OpenAIUnauthorizedHandler,
+) bool {
+	applied := updateOpenAIUsageAuth(ctx, repo, expected, unauthorized)
+	if applied && unauthorized && handler != nil {
+		handler(context.WithoutCancel(ctx), expected.ID)
+	}
+	return applied
+}
+
+// resolveOpenAIUsageAuthOwner maps every runtime OpenAI OAuth row to the
+// primary row that owns its credentials. Spark shadows and OAuth copies must
+// never receive their own 401 marker or authorization workflow.
+func resolveOpenAIUsageAuthOwner(ctx context.Context, repo AccountRepository, account *Account) (*Account, error) {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return account, nil
+	}
+	if account.IsOpenAIOAuthCredentialCopy() {
+		return resolveOpenAIOAuthCredentialSourceAccount(ctx, repo, account)
+	}
+	if account.IsCredentialShadow() {
+		return resolveCredentialAccount(ctx, repo, account)
+	}
+	return account, nil
 }
 
 func isOpenAIUsageUnauthorized(err error) bool {

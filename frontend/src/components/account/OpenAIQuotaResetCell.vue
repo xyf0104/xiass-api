@@ -11,12 +11,24 @@
       owns that real estate. This cell is purely about the rate-limit reset
       credit: query its count, consume one if needed.
     -->
-    <div :class="['flex flex-wrap items-center', spreadActions ? 'gap-4' : 'gap-1.5']">
-      <slot name="pre-actions" />
+    <div
+      data-testid="openai-quota-action-row"
+      :data-action-count="actionCount"
+      :class="[
+        hasVisibleCodexCredits
+          ? 'flex w-full min-w-0 items-center justify-between gap-1 whitespace-nowrap'
+          : ['flex flex-wrap items-center', spreadActions ? 'gap-4' : 'gap-1.5']
+      ]"
+    >
+      <slot name="pre-actions" :compact="hasVisibleCodexCredits" />
 
       <button
         type="button"
-        class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        data-testid="openai-reset-credit-count"
+        :class="[
+          'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30',
+          hasVisibleCodexCredits ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
+        ]"
         :disabled="readOnly || loading || resetting"
         :title="countButtonTitle"
         @click="handleQuery()"
@@ -40,7 +52,11 @@
 
       <button
         type="button"
-        class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-orange-600 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-orange-400 dark:hover:bg-orange-900/30"
+        data-testid="openai-reset-credit-reset"
+        :class="[
+          'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-orange-600 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-orange-400 dark:hover:bg-orange-900/30',
+          hasVisibleCodexCredits ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
+        ]"
         :disabled="resetting || loading || !canReset"
         :title="resetButtonTitle"
         @click="openResetConfirm"
@@ -61,6 +77,16 @@
         </svg>
         {{ t('admin.accounts.openaiQuotaReset.reset') }}
       </button>
+
+      <span
+        v-if="hasVisibleCodexCredits"
+        data-testid="openai-codex-credits"
+        class="inline-flex min-w-0 shrink items-center gap-0.5 rounded px-0.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+        :title="codexCreditsTitle"
+      >
+        <span>{{ t('admin.accounts.openaiQuotaReset.codexCredits') }}</span>
+        <span class="max-w-[3.25rem] truncate tabular-nums">{{ codexCreditsDisplay }}</span>
+      </span>
     </div>
 
     <div v-if="primaryResetCreditExpiry" class="space-y-1">
@@ -148,18 +174,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, useSlots } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
 import {
   refreshOpenAIQuota,
   resetOpenAIQuota,
   reconcileOpenAIQuotaReset,
+  type OpenAICredits,
   type OpenAIQuotaUsage,
   type OpenAIQuotaResetResult
 } from '@/api/admin/accounts'
 import { buildOpenAICredentialGenerationKey } from '@/utils/accountUsageRefresh'
 import { isOpenAIQuotaReauthError } from '@/utils/openAIQuotaReauth'
+import { formatCompactNumber } from '@/utils/format'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const props = defineProps<{
@@ -170,10 +198,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'account-updated': [account: Account]
+  'credits-updated': [payload: {
+    accountId: number
+    snapshot: NonNullable<Account['extra']>['codex_credits_snapshot']
+  }]
   'reauth-status': [payload: { accountId: number; needsReauth: boolean }]
 }>()
 
 const { t } = useI18n()
+const slots = useSlots()
 
 // Visible only for OpenAI OAuth accounts.
 const visible = computed(() => props.account.platform === 'openai' && props.account.type === 'oauth')
@@ -184,6 +217,7 @@ const resetting = ref(false)
 const error = ref<string | null>(null)
 const data = ref<OpenAIQuotaUsage | null>(null)
 const cachedData = ref<OpenAIQuotaUsage | null>(null)
+const liveCodexCredits = ref<OpenAICredits | null | undefined>(undefined)
 const resetMessage = ref<string | null>(null)
 const resetWarning = ref<string | null>(null)
 const showResetConfirm = ref(false)
@@ -252,6 +286,55 @@ data.value = cachedData.value
 const isShadow = computed(() => props.account.parent_account_id != null)
 
 const availableResetCount = computed(() => data.value?.rate_limit_reset_credits?.available_count ?? 0)
+const cachedCodexCredits = computed<OpenAICredits | null>(() => {
+  const credits = props.account.extra?.codex_credits_snapshot?.credits
+  if (!credits || typeof credits !== 'object' || Array.isArray(credits)) return null
+  return {
+    has_credits: credits.has_credits === true,
+    unlimited: credits.unlimited === true,
+    balance: typeof credits.balance === 'string' ? credits.balance : null
+  }
+})
+const codexCredits = computed(() =>
+  liveCodexCredits.value === undefined ? cachedCodexCredits.value : liveCodexCredits.value
+)
+const hasVisibleCodexCredits = computed(() => {
+  const credits = codexCredits.value
+  return credits?.unlimited === true || credits?.has_credits === true
+})
+const actionCount = computed(() =>
+  (slots['pre-actions'] ? 1 : 0) + 2 + (hasVisibleCodexCredits.value ? 1 : 0)
+)
+const rawCodexCreditsBalance = computed(() => codexCredits.value?.balance?.trim() ?? '')
+const parsedCodexCreditsBalance = computed(() => {
+  const value = rawCodexCreditsBalance.value
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+})
+const codexCreditsDisplay = computed(() => {
+  if (codexCredits.value?.unlimited === true) {
+    return t('admin.accounts.openaiQuotaReset.codexCreditsUnlimited')
+  }
+  if (parsedCodexCreditsBalance.value != null) {
+    // Keep ordinary provider balances verbatim (for example 500.2000 and
+    // 62499.75). Only unusually long values are compacted to keep the four
+    // actions on one line; the title still exposes the full raw value.
+    if (rawCodexCreditsBalance.value.length <= 12) return rawCodexCreditsBalance.value
+    return formatCompactNumber(parsedCodexCreditsBalance.value)
+  }
+  return t('admin.accounts.openaiQuotaReset.codexCreditsAvailable')
+})
+const codexCreditsTitle = computed(() => {
+  const description = t('admin.accounts.openaiQuotaReset.codexCreditsTooltip')
+  if (codexCredits.value?.unlimited === true) {
+    return `${description} ${t('admin.accounts.openaiQuotaReset.codexCreditsUnlimited')}`
+  }
+  if (parsedCodexCreditsBalance.value != null) {
+    return `${description} ${rawCodexCreditsBalance.value}`
+  }
+  return `${description} ${t('admin.accounts.openaiQuotaReset.codexCreditsAvailable')}`
+})
 // Prefer the live payload and fall back to the persisted snapshot only when the
 // live state is unknown, so the count and the expirations never come from two
 // different generations of the same data.
@@ -357,6 +440,29 @@ const toggleResetCreditDetails = () => {
   showResetCreditDetails.value = !showResetCreditDetails.value
 }
 
+const applyCodexCreditsFromUsage = (
+  usage: OpenAIQuotaUsage | null | undefined,
+  persisted: boolean
+) => {
+  if (!usage || !Object.prototype.hasOwnProperty.call(usage, 'credits')) return
+  const credits = usage.credits
+    ? {
+        has_credits: usage.credits.has_credits === true,
+        unlimited: usage.credits.unlimited === true,
+        balance: typeof usage.credits.balance === 'string' ? usage.credits.balance : null
+      }
+    : null
+  liveCodexCredits.value = credits
+  if (!persisted) return
+  emit('credits-updated', {
+    accountId: props.account.id,
+    snapshot: {
+      credits,
+      fetched_at: usage.fetched_at
+    }
+  })
+}
+
 const handleQuery = async () => {
   if (props.readOnly || loading.value || resetting.value) return
   const generation = ++requestGeneration
@@ -372,6 +478,7 @@ const handleQuery = async () => {
     // the live count is always adopted. Only the persisted view is left alone,
     // which keeps the displayed expirations consistent with what is stored.
     data.value = result
+    applyCodexCreditsFromUsage(result, result.credits_cache_persisted === true)
     if (result.cache_persisted) {
       cachedData.value = result
     } else {
@@ -416,6 +523,7 @@ const confirmReset = async () => {
     if (result.cache_refreshed && result.quota) {
       data.value = result.quota
       cachedData.value = result.quota
+      applyCodexCreditsFromUsage(result.quota, true)
     } else {
       // A credit was consumed but the post-reset count could not be read back.
       // Whatever we still hold is one generation stale, so report the count as
@@ -459,6 +567,7 @@ const handleReconcile = async () => {
     if (result.cache_refreshed && result.quota) {
       data.value = result.quota
       cachedData.value = result.quota
+      applyCodexCreditsFromUsage(result.quota, true)
     } else {
       data.value = null
     }
@@ -480,12 +589,13 @@ watch(
     () => props.account.id,
     () => props.readOnly,
     () => props.account.extra?.codex_reset_credit_snapshot,
+    () => props.account.extra?.codex_credits_snapshot,
     () => credentialGenerationKey.value
   ],
-  ([accountID, , , generationKey], previous) => {
+  ([accountID, , , , generationKey], previous) => {
     requestGeneration++
     const previousAccountID = previous?.[0]
-    const previousGenerationKey = previous?.[3]
+    const previousGenerationKey = previous?.[4]
     if (previousAccountID !== accountID) {
       reportedReauthAccountID = Number(accountID)
       reportedNeedsReauth = false
@@ -495,6 +605,7 @@ watch(
     // Account row may be reused across paginated lists; reset local state.
     cachedData.value = readCachedResetCredits(props.account)
     data.value = cachedData.value
+    liveCodexCredits.value = undefined
     error.value = null
     resetMessage.value = null
     resetWarning.value = null

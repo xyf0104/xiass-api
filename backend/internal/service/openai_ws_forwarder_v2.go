@@ -631,6 +631,9 @@ readLoop:
 			continue
 		}
 		responseModelObserver.ObserveOpenAI(message, eventType)
+		if eventType == "codex.rate_limits" {
+			s.observeOpenAICreditsEvent(account, message)
+		}
 		eventCount++
 		if firstEventType == "" {
 			firstEventType = eventType

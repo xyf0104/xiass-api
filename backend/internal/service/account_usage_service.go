@@ -323,12 +323,21 @@ type AccountUsageService struct {
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
 	openAIQuotaService      *OpenAIQuotaService
+	openAIUnauthorized      OpenAIUnauthorizedHandler
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 	openAIProbeStates       sync.Map
+}
+
+// SetOpenAIUnauthorizedHandler connects passive/active account usage probes to
+// the same durable automatic reauthorization queue as gateway and quota 401s.
+func (s *AccountUsageService) SetOpenAIUnauthorizedHandler(handler OpenAIUnauthorizedHandler) {
+	if s != nil {
+		s.openAIUnauthorized = handler
+	}
 }
 
 type openAIProbeState struct {
@@ -1081,9 +1090,10 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		updateOpenAIUsageAuth(ctx, s.accountRepo, authIdentity, true)
+		updateOpenAIUsageAuthAndNotify(ctx, s.accountRepo, authIdentity, true, s.openAIUnauthorized)
 	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		updateOpenAIUsageAuth(ctx, s.accountRepo, authIdentity, false)
+		persistOpenAICreditsHeadersAsync(s.accountRepo, authIdentity, resp.Header)
 	}
 	updates, err := extractOpenAICodexProbeUpdates(resp)
 	if err != nil {

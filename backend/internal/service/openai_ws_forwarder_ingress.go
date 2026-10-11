@@ -1054,6 +1054,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 			eventType, eventResponseID, _ := parseOpenAIWSEventEnvelope(upstreamMessage)
 			responseModelObserver.ObserveOpenAI(upstreamMessage, eventType)
+			if eventType == "codex.rate_limits" {
+				s.observeOpenAICreditsEvent(account, upstreamMessage)
+			}
 			if responseID == "" && eventResponseID != "" {
 				responseID = eventResponseID
 			}

@@ -113,7 +113,8 @@ type openAIQuotaResetResponse struct {
 // failed display-cache write must never discard a successful upstream read.
 type openAIQuotaRefreshResponse struct {
 	service.OpenAIQuotaUsage
-	CachePersisted bool `json:"cache_persisted"`
+	CachePersisted        bool `json:"cache_persisted"`
+	CreditsCachePersisted bool `json:"credits_cache_persisted"`
 }
 
 // openAIQuotaResetPostProcessContext detaches the post-reset bookkeeping from the
@@ -625,6 +626,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	scheduleOpenAICreditsRefresh(h.quotaService, account)
 	if teamSecret != nil {
 		// A link can be generated while the mailbox is being used for OAuth.
 		// Once import succeeds, bind that durable capability to the new account
@@ -649,6 +651,10 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		return
 	}
 	if err := service.ValidateOpenAILongContextBillingExtra(service.PlatformOpenAI, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := service.ValidateOpenAICreditsExtra(service.PlatformOpenAI, service.AccountTypeOAuth, req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -734,6 +740,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	scheduleOpenAICreditsRefresh(h.quotaService, account)
 
 	response.Success(c, dto.AccountFromService(account))
 }
@@ -819,10 +826,18 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	// which would leave the card without a credit count at all.
 	if err := h.quotaService.CacheResetCreditsSnapshot(c.Request.Context(), accountID, usage.RateLimitResetCredits); err != nil {
 		slog.Warn("openai_quota_reset_credit_cache_persist_failed", "account_id", accountID, "error", err)
-		response.Success(c, refreshResponse)
-		return
+	} else {
+		refreshResponse.CachePersisted = true
 	}
-	refreshResponse.CachePersisted = true
+	if creditsCache, ok := h.quotaService.(interface {
+		CacheCreditsSnapshot(context.Context, int64, *service.OpenAIQuotaUsage) error
+	}); ok {
+		if err := creditsCache.CacheCreditsSnapshot(c.Request.Context(), accountID, usage); err != nil {
+			slog.Warn("openai_credits_cache_persist_failed", "account_id", accountID, "error", err)
+		} else {
+			refreshResponse.CreditsCachePersisted = true
+		}
+	}
 	response.Success(c, refreshResponse)
 }
 

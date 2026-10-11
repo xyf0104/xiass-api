@@ -80,7 +80,7 @@ func validateBoundCodexSnapshotFields(updates map[string]any, allowCredits bool)
 			"codex_primary_over_secondary_percent",
 			"codex_5h_used_percent", "codex_5h_reset_after_seconds", "codex_5h_window_minutes", "codex_5h_reset_at",
 			"codex_7d_used_percent", "codex_7d_reset_after_seconds", "codex_7d_window_minutes", "codex_7d_reset_at":
-		case "codex_reset_credit_snapshot", "codex_reset_credit_snapshot_updated_at":
+		case "codex_reset_credit_snapshot", "codex_reset_credit_snapshot_updated_at", "codex_credits_snapshot", "codex_credits_snapshot_updated_at":
 			if !allowCredits {
 				return errors.New("bound codex snapshot contains a non-runtime quota field")
 			}
@@ -115,6 +115,8 @@ var updateOpenAIQuotaBoundSnapshotQuery = `
 			(` + openAICodexCurrentTimestampExpression + `)::timestamptz <= $3::timestamptz, TRUE))
 		AND (NOT ($1::jsonb ? 'codex_reset_credit_snapshot_updated_at') OR COALESCE(
 			(` + strings.ReplaceAll(openAICodexCurrentTimestampExpression, "codex_usage_updated_at", "codex_reset_credit_snapshot_updated_at") + `)::timestamptz <= $3::timestamptz, TRUE))
+		AND (NOT ($1::jsonb ? 'codex_credits_snapshot_updated_at') OR COALESCE(
+			(` + strings.ReplaceAll(openAICodexCurrentTimestampExpression, "codex_usage_updated_at", "codex_credits_snapshot_updated_at") + `)::timestamptz <= $3::timestamptz, TRUE))
 		AND xiass_openai_weekly_raw_write_allowed(extra, COALESCE(extra, '{}'::jsonb) || $1::jsonb, FALSE)
 		AND xiass_openai_weekly_raw_write_allowed(extra, COALESCE(extra, '{}'::jsonb) || $1::jsonb, TRUE)
 `
@@ -141,7 +143,7 @@ func (r *accountRepository) UpdateOpenAIQuotaSnapshotIfIdentityMatches(ctx conte
 	for key, value := range updates {
 		patch[key] = value
 	}
-	for _, key := range []string{"codex_usage_updated_at", "codex_reset_credit_snapshot_updated_at"} {
+	for _, key := range []string{"codex_usage_updated_at", "codex_reset_credit_snapshot_updated_at", "codex_credits_snapshot_updated_at"} {
 		if raw, present := patch[key]; present {
 			value, ok := raw.(string)
 			at, err := time.Parse(time.RFC3339Nano, value)
@@ -157,8 +159,13 @@ func (r *accountRepository) UpdateOpenAIQuotaSnapshotIfIdentityMatches(ctx conte
 	if hasCredits != hasCreditsTime {
 		return false, errors.New("quota credit snapshot requires its observation timestamp")
 	}
+	_, hasOrdinaryCredits := patch["codex_credits_snapshot"]
+	_, hasOrdinaryCreditsTime := patch["codex_credits_snapshot_updated_at"]
+	if hasOrdinaryCredits != hasOrdinaryCreditsTime {
+		return false, errors.New("ordinary credit snapshot requires its observation timestamp")
+	}
 	for key := range patch {
-		if key != "codex_reset_credit_snapshot" && key != "codex_reset_credit_snapshot_updated_at" && !hasRawTime {
+		if key != "codex_reset_credit_snapshot" && key != "codex_reset_credit_snapshot_updated_at" && key != "codex_credits_snapshot" && key != "codex_credits_snapshot_updated_at" && !hasRawTime {
 			return false, errors.New("raw quota snapshot requires its observation timestamp")
 		}
 	}

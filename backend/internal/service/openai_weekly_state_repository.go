@@ -16,7 +16,8 @@ func IsOpenAIQuotaRuntimeExtraKey(key string) bool {
 		strings.HasPrefix(key, "codex_secondary_") ||
 		strings.HasPrefix(key, "codex_5h_") ||
 		strings.HasPrefix(key, "codex_7d_") ||
-		strings.HasPrefix(key, "codex_reset_credit_")
+		strings.HasPrefix(key, "codex_reset_credit_") ||
+		strings.HasPrefix(key, "codex_credits_snapshot")
 }
 
 func stripOpenAIQuotaRuntimeExtra(updates map[string]any) map[string]any {

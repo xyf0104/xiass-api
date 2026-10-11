@@ -37,6 +37,8 @@ const (
 	openaiQuotaSecFetchDest        = "empty"
 	openaiQuotaResetCreditsKey     = "codex_reset_credit_snapshot"
 	openaiQuotaResetCreditsTimeKey = "codex_reset_credit_snapshot_updated_at"
+	openaiQuotaCreditsKey          = "codex_credits_snapshot"
+	openaiQuotaCreditsTimeKey      = "codex_credits_snapshot_updated_at"
 )
 
 // OpenAIRateLimitWindow describes a single rate-limit window returned by
@@ -97,6 +99,20 @@ type OpenAIRateLimitResetCredits struct {
 	requestIdentity *openAIQuotaRequestIdentity
 }
 
+// OpenAICredits is the ordinary Codex credit balance returned by /wham/usage.
+// Balance stays a string because upstream may use a large integer and JSON
+// number round-tripping through float64 would lose precision.
+type OpenAICredits struct {
+	HasCredits bool    `json:"has_credits"`
+	Unlimited  bool    `json:"unlimited"`
+	Balance    *string `json:"balance"`
+}
+
+type openAICreditsSnapshot struct {
+	Credits   *OpenAICredits `json:"credits"`
+	FetchedAt int64          `json:"fetched_at"`
+}
+
 // OpenAIQuotaUsage is the typed projection of /wham/usage we expose to the UI.
 // Fields not relevant to the quota card are intentionally omitted to keep the
 // surface narrow; full upstream payload preservation is unnecessary.
@@ -108,6 +124,7 @@ type OpenAIQuotaUsage struct {
 	RateLimit             *OpenAIRateLimit             `json:"rate_limit,omitempty"`
 	AdditionalRateLimits  []OpenAIAdditionalRateLimit  `json:"additional_rate_limits,omitempty"`
 	RateLimitResetCredits *OpenAIRateLimitResetCredits `json:"rate_limit_reset_credits,omitempty"`
+	Credits               *OpenAICredits               `json:"credits,omitempty"`
 	FetchedAt             int64                        `json:"fetched_at"`
 	requestIdentity       *openAIQuotaRequestIdentity
 	resetCandidates       []openAIResetCreditCandidate
@@ -154,6 +171,7 @@ type OpenAIQuotaService struct {
 	agentIdentityTaskMu  sync.Mutex
 	agentIdentityWS      agentIdentityWSConnectionInvalidator
 	autoReset            *OpenAIAutoResetService
+	openAIUnauthorized   OpenAIUnauthorizedHandler
 }
 
 // NewOpenAIQuotaService constructs a quota service. token provider is required —
@@ -170,6 +188,14 @@ func NewOpenAIQuotaService(
 		proxyRepo:            proxyRepo,
 		tokenProvider:        tokenProvider,
 		privacyClientFactory: privacyClientFactory,
+	}
+}
+
+// SetOpenAIUnauthorizedHandler connects explicit quota refreshes to the same
+// unattended reauthorization queue used by live gateway 401 responses.
+func (s *OpenAIQuotaService) SetOpenAIUnauthorizedHandler(handler OpenAIUnauthorizedHandler) {
+	if s != nil {
+		s.openAIUnauthorized = handler
 	}
 }
 
@@ -241,7 +267,7 @@ func (s *OpenAIQuotaService) queryUsage(ctx context.Context, accountID int64, re
 			}
 			status := resp.StatusCode
 			if recordAuth && status == http.StatusUnauthorized {
-				updateOpenAIUsageAuth(ctx, s.accountRepo, identity.credential, true)
+				updateOpenAIUsageAuthAndNotify(ctx, s.accountRepo, identity.credential, true, s.openAIUnauthorized)
 			}
 			body := truncate(s.redactQuotaErrorBody(ctx, accountID, resp.String()), 240)
 			slog.Warn("openai_quota_query_failed", "account_id", accountID, "status", status, "body", body)
@@ -311,12 +337,48 @@ func (s *OpenAIQuotaService) CachePostResetSnapshot(ctx context.Context, account
 			updates["codex_usage_updated_at"] = identity.observedAt.Format(time.RFC3339Nano)
 		}
 	}
+	if updates == nil {
+		updates = make(map[string]any, 2)
+	}
+	mergeOpenAICreditsExtraUpdates(updates, usage, identity.observedAt)
 	return s.cacheResetCreditsSnapshot(
 		ctx,
 		accountID,
 		usage.RateLimitResetCredits,
 		updates,
 	)
+}
+
+// CacheCreditsSnapshot persists the ordinary Credit result independently from
+// reset-credit metadata. A nil Credits pointer is intentional: it records that
+// the upstream response was checked and did not advertise ordinary credits,
+// allowing the UI to hide the fourth item without inventing a zero balance.
+func (s *OpenAIQuotaService) CacheCreditsSnapshot(ctx context.Context, accountID int64, usage *OpenAIQuotaUsage) error {
+	if usage == nil || usage.requestIdentity == nil {
+		return missingOpenAIQuotaRequestIdentity()
+	}
+	identity := usage.requestIdentity
+	updates := make(map[string]any, 2)
+	mergeOpenAICreditsExtraUpdates(updates, usage, identity.observedAt)
+	applied, err := persistBoundOpenAIQuotaSnapshot(ctx, s.accountRepo, accountID, identity, updates)
+	if err != nil {
+		return infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_CACHE_WRITE_FAILED", "failed to cache Codex credits").WithCause(err)
+	}
+	if !applied {
+		return infraerrors.New(http.StatusConflict, "OPENAI_QUOTA_SNAPSHOT_SUPERSEDED", "quota request identity or observation is no longer current; query again")
+	}
+	return nil
+}
+
+func mergeOpenAICreditsExtraUpdates(updates map[string]any, usage *OpenAIQuotaUsage, observedAt time.Time) {
+	if updates == nil || usage == nil || observedAt.IsZero() {
+		return
+	}
+	updates[openaiQuotaCreditsKey] = &openAICreditsSnapshot{
+		Credits:   usage.Credits,
+		FetchedAt: usage.FetchedAt,
+	}
+	updates[openaiQuotaCreditsTimeKey] = observedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
 }
 
 func (s *OpenAIQuotaService) cacheResetCreditsSnapshot(ctx context.Context, accountID int64, credits *OpenAIRateLimitResetCredits, updates map[string]any) error {

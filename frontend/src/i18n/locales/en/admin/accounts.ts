@@ -637,6 +637,9 @@ export default {
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
+        codexCreditsEnabled: 'Allow official Credit balance',
+        codexCreditsEnabledDesc:
+          'Disabled by default. When OpenAI explicitly reports ordinary Credit balance, allow this OAuth account to continue after its normal quota is exhausted; reset credits remain separate.',
         wsMode: 'WS mode',
         wsModeDesc:
           'Only applies to the current OpenAI account type; account WS modes, including http_bridge, take effect only when the global gateway.openai_ws.mode_router_v2_enabled=true.',
@@ -1618,6 +1621,10 @@ export default {
       },
       openaiQuotaReset: {
         count: 'Credits',
+        codexCredits: 'Points',
+        codexCreditsUnlimited: 'Unlimited',
+        codexCreditsAvailable: 'Available',
+        codexCreditsTooltip: 'Official OpenAI Credit balance; separate from customer billing and reset credits.',
         reset: 'Reset',
         countTooltipLoad: 'Click to load the available reset-credit count',
         countTooltipRefresh: 'Click to refresh the available reset-credit count',

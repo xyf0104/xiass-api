@@ -1402,6 +1402,15 @@ export interface Account {
       available_count?: number
       credits?: { expires_at?: string }[]
     }
+    codex_credits_enabled?: boolean
+    codex_credits_snapshot?: {
+      credits?: {
+        has_credits?: boolean
+        unlimited?: boolean
+        balance?: string | null
+      } | null
+      fetched_at?: number
+    }
   } & Record<string, unknown>)
 	proxy_id: number | null
 	proxy_bindings?: AccountProxyBinding[]
