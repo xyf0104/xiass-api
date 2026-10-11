@@ -234,3 +234,68 @@ func TestPoolLateCallbackCannotStopNewerLease(t *testing.T) {
 	require.False(t, called)
 	require.Equal(t, "new-session", helper.cfg.ProfileLeases["shared"].SessionID)
 }
+
+func TestPoolAlreadyClosedBrowserReleasesOwnedLease(t *testing.T) {
+	stopCalls := 0
+	ads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/browser-profile/stop":
+			stopCalls++
+			_, _ = w.Write([]byte(`{"code":-1,"msg":"Profile is not open"}`))
+		case "/api/v1/browser/active":
+			require.Equal(t, "profile", r.URL.Query().Get("user_id"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"status":"Inactive"}}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer ads.Close()
+	cfg := &config{path: filepath.Join(t.TempDir(), "config.json"), AdsPowerBaseURL: ads.URL,
+		ProfileLeases:   map[string]profileLease{"profile": {SessionID: "session", Until: time.Now().Add(time.Minute)}},
+		ManagedProfiles: map[string]managedProfile{"profile": {ServerOrigin: "https://api.test", EnvironmentKey: "api", Shared: true}},
+		PendingProfiles: map[string]pendingProfileBinding{"account": {ProfileID: "profile"}},
+	}
+	helper := newHelperServer(cfg)
+	helper.adsPower.minInterval = 0
+	require.NoError(t, helper.stopOwnedProfile(context.Background(), "profile", "session"))
+	require.Equal(t, 1, stopCalls)
+	require.NotContains(t, helper.cfg.ProfileLeases, "profile")
+	require.True(t, helper.cfg.ManagedProfiles["profile"].Shared)
+	require.Equal(t, "profile", helper.cfg.PendingProfiles["account"].ProfileID)
+	raw, err := os.ReadFile(cfg.path)
+	require.NoError(t, err)
+	var saved config
+	require.NoError(t, json.Unmarshal(raw, &saved))
+	require.NotContains(t, saved.ProfileLeases, "profile")
+}
+
+func TestPoolStopFailurePreservesLeaseUnlessExplicitlyInactive(t *testing.T) {
+	for _, statusBody := range []string{
+		`{"code":0,"data":{"status":"Active"}}`,
+		`{"code":0,"data":{"status":"Starting"}}`,
+		`{"code":0,"data":{}}`,
+		`{"code":-1,"msg":"status unavailable"}`,
+		`not-json`,
+	} {
+		t.Run(statusBody, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v2/browser-profile/stop" {
+					_, _ = w.Write([]byte(`{"code":-1,"msg":"Profile is not open"}`))
+					return
+				}
+				require.Equal(t, "/api/v1/browser/active", r.URL.Path)
+				_, _ = w.Write([]byte(statusBody))
+				w.(http.Flusher).Flush()
+				cancel()
+			}))
+			defer ads.Close()
+			helper := newHelperServer(&config{AdsPowerBaseURL: ads.URL,
+				ProfileLeases: map[string]profileLease{"profile": {SessionID: "session", Until: time.Now().Add(time.Minute)}}})
+			helper.adsPower.minInterval = 0
+			require.Error(t, helper.stopOwnedProfile(ctx, "profile", "session"))
+			require.Equal(t, "session", helper.cfg.ProfileLeases["profile"].SessionID)
+		})
+	}
+}

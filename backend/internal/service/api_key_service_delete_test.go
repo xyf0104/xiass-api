@@ -2,7 +2,8 @@
 
 // API Key 服务删除方法的单元测试
 // 测试 APIKeyService.Delete 方法在各种场景下的行为，
-// 包括权限验证、缓存清理和错误处理
+// 包括权限验证、认证缓存清理和错误处理。
+// 删除 API Key 不会退还独立的创建次数计数器，避免绕过创建频率限制。
 
 package service
 
@@ -233,7 +234,8 @@ func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKe
 }
 
 // apiKeyCacheStub 是 APIKeyCache 接口的测试桩实现。
-// 用于验证删除操作时缓存清理逻辑是否被正确调用。
+// 用于验证删除操作时认证缓存清理逻辑是否被正确调用，
+// 以及创建次数计数器不会因删除 API Key 被退还。
 //
 // 设计说明：
 //   - invalidated: 记录被清除缓存的用户 ID 列表
@@ -253,7 +255,7 @@ func (s *apiKeyCacheStub) IncrementCreateAttemptCount(ctx context.Context, userI
 }
 
 // DeleteCreateAttemptCount 记录被清除缓存的用户 ID。
-// 删除 API Key 时会调用此方法清除用户的创建尝试计数缓存。
+// 删除 API Key 时不应调用此方法，创建次数计数器不能被删除操作退还。
 func (s *apiKeyCacheStub) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
 	s.invalidated = append(s.invalidated, userID)
 	return nil
@@ -316,7 +318,8 @@ func TestApiKeyService_Delete_OwnerMismatch(t *testing.T) {
 //   - GetKeyAndOwnerID 返回所有者 ID 为 7
 //   - 调用者 userID 为 7（匹配）
 //   - Delete 成功执行
-//   - 缓存被正确清除（使用 ownerID）
+//   - 认证缓存被正确清除
+//   - 创建次数计数器不被清除
 //   - 返回 nil 错误
 func TestApiKeyService_Delete_Success(t *testing.T) {
 	repo := &apiKeyRepoStub{
@@ -328,8 +331,8 @@ func TestApiKeyService_Delete_Success(t *testing.T) {
 
 	err := svc.Delete(context.Background(), 42, 7) // API Key ID=42, 调用者 userID=7
 	require.NoError(t, err)
-	require.Equal(t, []int64{42}, repo.deletedIDs)  // 验证正确的 API Key 被删除
-	require.Equal(t, []int64{7}, cache.invalidated) // 验证所有者的缓存被清除
+	require.Equal(t, []int64{42}, repo.deletedIDs) // 验证正确的 API Key 被删除
+	require.Empty(t, cache.invalidated)            // 删除不应退还创建次数计数器
 	require.Equal(t, []string{svc.authCacheKey("k")}, cache.deleteAuthKeys)
 	_, exists := svc.lastUsedTouchL1.Load(int64(42))
 	require.False(t, exists, "delete should clear touch debounce cache")

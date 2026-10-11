@@ -158,6 +158,8 @@ import {
   type OpenAIQuotaUsage,
   type OpenAIQuotaResetResult
 } from '@/api/admin/accounts'
+import { buildOpenAICredentialGenerationKey } from '@/utils/accountUsageRefresh'
+import { isOpenAIQuotaReauthError } from '@/utils/openAIQuotaReauth'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const props = defineProps<{
@@ -168,12 +170,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'account-updated': [account: Account]
+  'reauth-status': [payload: { accountId: number; needsReauth: boolean }]
 }>()
 
 const { t } = useI18n()
 
 // Visible only for OpenAI OAuth accounts.
 const visible = computed(() => props.account.platform === 'openai' && props.account.type === 'oauth')
+const credentialGenerationKey = computed(() => buildOpenAICredentialGenerationKey(props.account))
 
 const loading = ref(false)
 const resetting = ref(false)
@@ -187,6 +191,16 @@ const showResetCreditDetails = ref(false)
 const reconciling = ref(false)
 let requestGeneration = 0
 onBeforeUnmount(() => { requestGeneration++ })
+let reportedNeedsReauth = false
+let reportedReauthAccountID = props.account.id
+
+const reportReauthStatus = (needsReauth: boolean, force = false) => {
+  const accountId = props.account.id
+  if (!force && reportedReauthAccountID === accountId && reportedNeedsReauth === needsReauth) return
+  reportedReauthAccountID = accountId
+  reportedNeedsReauth = needsReauth
+  emit('reauth-status', { accountId, needsReauth })
+}
 
 // Rehydrate the card from the persisted snapshot. Credits that already expired
 // are dropped and the count is clamped to what remains: the snapshot has no
@@ -363,8 +377,12 @@ const handleQuery = async () => {
     } else {
       resetWarning.value = t('admin.accounts.openaiQuotaReset.refreshCachePersistFailed')
     }
+    reportReauthStatus(false, true)
   } catch (e) {
-    if (generation === requestGeneration) error.value = extractErrorMessage(e)
+    if (generation === requestGeneration) {
+      if (isOpenAIQuotaReauthError(e)) reportReauthStatus(true)
+      error.value = extractErrorMessage(e)
+    }
   } finally {
     if (generation === requestGeneration) loading.value = false
   }
@@ -405,6 +423,7 @@ const confirmReset = async () => {
       data.value = null
     }
     if (result.account) emit('account-updated', result.account)
+    reportReauthStatus(false, true)
 
     if (result.warning_code === 'reset_credit_cache_refresh_failed') {
       resetWarning.value = t('admin.accounts.openaiQuotaReset.resetCacheRefreshFailed')
@@ -418,7 +437,10 @@ const confirmReset = async () => {
       })
     }
   } catch (e) {
-    if (generation === requestGeneration) error.value = extractErrorMessage(e)
+    if (generation === requestGeneration) {
+      if (isOpenAIQuotaReauthError(e)) reportReauthStatus(true)
+      error.value = extractErrorMessage(e)
+    }
   } finally {
     if (generation === requestGeneration) resetting.value = false
   }
@@ -441,18 +463,35 @@ const handleReconcile = async () => {
       data.value = null
     }
     if (result.account) emit('account-updated', result.account)
+    reportReauthStatus(false, true)
     resetMessage.value = t('admin.accounts.autoResetCredit.reconcileSuccess')
   } catch (e) {
-    if (generation === requestGeneration) error.value = extractErrorMessage(e)
+    if (generation === requestGeneration) {
+      if (isOpenAIQuotaReauthError(e)) reportReauthStatus(true)
+      error.value = extractErrorMessage(e)
+    }
   } finally {
     if (generation === requestGeneration) reconciling.value = false
   }
 }
 
 watch(
-  [() => props.account.id, () => props.readOnly, () => props.account.extra?.codex_reset_credit_snapshot],
-  () => {
+  [
+    () => props.account.id,
+    () => props.readOnly,
+    () => props.account.extra?.codex_reset_credit_snapshot,
+    () => credentialGenerationKey.value
+  ],
+  ([accountID, , , generationKey], previous) => {
     requestGeneration++
+    const previousAccountID = previous?.[0]
+    const previousGenerationKey = previous?.[3]
+    if (previousAccountID !== accountID) {
+      reportedReauthAccountID = Number(accountID)
+      reportedNeedsReauth = false
+    } else if (previous && previousGenerationKey !== generationKey) {
+      reportReauthStatus(false)
+    }
     // Account row may be reused across paginated lists; reset local state.
     cachedData.value = readCachedResetCredits(props.account)
     data.value = cachedData.value

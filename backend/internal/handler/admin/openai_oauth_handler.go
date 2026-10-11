@@ -796,7 +796,14 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 		return
 	}
 
-	usage, err := h.quotaService.QueryUsage(c.Request.Context(), accountID)
+	var usage *service.OpenAIQuotaUsage
+	if refresh, ok := h.quotaService.(interface {
+		RefreshUsage(context.Context, int64) (*service.OpenAIQuotaUsage, error)
+	}); ok {
+		usage, err = refresh.RefreshUsage(c.Request.Context(), accountID)
+	} else {
+		usage, err = h.quotaService.QueryUsage(c.Request.Context(), accountID)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

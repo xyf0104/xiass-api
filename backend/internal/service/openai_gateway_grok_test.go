@@ -786,6 +786,31 @@ func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T)
 	require.Equal(t, `{"model":"grok-4.3"}`, strings.TrimSpace(string(data)))
 }
 
+func TestApplyGrokCLIHeadersUsesOfficialInteractiveIdentity(t *testing.T) {
+	t.Run("pinned identity", func(t *testing.T) {
+		t.Setenv(xai.CLIVersionEnv, "")
+		headers := make(http.Header)
+
+		applyGrokCLIHeaders(headers)
+
+		require.Equal(t, xai.CLIClientVersion, headers.Get("X-Grok-Client-Version"))
+		require.Equal(t, xai.CLIClientVersion, headers.Get("x-grok-client-version"))
+		require.Equal(t, xai.CLIClientIdentifier, headers.Get("x-grok-client-identifier"))
+		require.Equal(t, xai.CLIClientMode, headers.Get("X-Grok-Client-Mode"))
+		require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), headers.Get("User-Agent"))
+	})
+
+	t.Run("administrator override", func(t *testing.T) {
+		t.Setenv(xai.CLIVersionEnv, "1.0.47-alpha.1")
+		headers := make(http.Header)
+
+		applyGrokCLIHeaders(headers)
+
+		require.Equal(t, "1.0.47-alpha.1", headers.Get("X-Grok-Client-Version"))
+		require.Equal(t, xai.CLIUserAgent("1.0.47-alpha.1"), headers.Get("User-Agent"))
+	})
+}
+
 func TestBuildGrokCompactRequestBodyUsesResponsesCompactionTurn(t *testing.T) {
 	body := []byte(`{"model":"grok-4.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"function","name":"shell"}],"stream":true}`)
 

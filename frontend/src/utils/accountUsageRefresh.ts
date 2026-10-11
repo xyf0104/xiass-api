@@ -5,14 +5,40 @@ const normalizeUsageRefreshValue = (value: unknown): string => {
   return String(value)
 }
 
-export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platform' | 'type' | 'updated_at' | 'last_used_at' | 'rate_limit_reset_at' | 'extra'>): string => {
+type OpenAICredentialGenerationAccount = Pick<
+  Account,
+  'id' | 'platform' | 'type' | 'credentials' | 'extra'
+>
+
+export const buildOpenAICredentialGenerationKey = (
+  account: OpenAICredentialGenerationAccount
+): string => {
+  if (account.platform !== 'openai' || account.type !== 'oauth') {
+    return ''
+  }
+
+  const extra = account.extra ?? {}
+  const reauthorizationState = extra.xiass_openai_reauthorization_state
+  const state = reauthorizationState && typeof reauthorizationState === 'object' && !Array.isArray(reauthorizationState)
+    ? reauthorizationState as Record<string, unknown>
+    : {}
+  return [
+    account.id,
+    account.credentials?._token_version,
+    account.credentials?.expires_at,
+    state.last_succeeded_at,
+    state.success_count
+  ].map(normalizeUsageRefreshValue).join('|')
+}
+
+export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platform' | 'type' | 'updated_at' | 'last_used_at' | 'rate_limit_reset_at' | 'credentials' | 'extra'>): string => {
   if (account.platform !== 'openai' || account.type !== 'oauth') {
     return ''
   }
 
   const extra = account.extra ?? {}
   return [
-    account.id,
+    buildOpenAICredentialGenerationKey(account),
     account.updated_at,
     account.last_used_at,
     account.rate_limit_reset_at,

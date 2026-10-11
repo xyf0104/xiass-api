@@ -429,7 +429,7 @@ const workflowNodeDefinitions: Array<[TeamChildWorkflowNodeKey, string]> = [
   ['oauth', '同一隐私页打开 OAuth'], ['password', '完成 OAuth 邮箱登录验证'], ['phone', '进入手机号页面'],
   ['sms_confirm', '确认领取手机号'], ['phone_submit', '填入号码并选择 Text message'], ['sms_poll', '轮询短信验证码'],
   ['sms_code', '自动填入短信验证码'], ['profile_wait', '等待资料页 5 秒'], ['profile', '填写 black / 26'],
-  ['workspace_wait', '等待工作空间 10 秒'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
+  ['workspace_wait', '等待工作空间页面'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
   ['import', '按勾选配置导入 XIASS']
 ]
 

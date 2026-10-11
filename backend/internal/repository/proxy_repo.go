@@ -790,7 +790,7 @@ func restrictExecutionNodeProxyFallback(policy executionNodeProxyFallbackPolicy,
 // 全部代理处理完后若有账号被改投，再统一 enqueue 一次 account_bulk_changed 事件——该 enqueue 在子事务之外
 // （走 r.sql、失败仅记日志、由调度器周期性 full rebuild 兜底），故「改投 → 失效」整体并非原子。
 func (r *proxyRepository) SweepExpiredProxies(ctx context.Context, now time.Time) (int64, error) {
-	// 快照读（事务前）：允许脏读不影响正确性，事务内已加锁写。
+	// 快照用于选择候选；事务内条件更新再次校验有效期、状态及回退配置。
 	all, err := r.ListAllForFallback(ctx)
 	if err != nil {
 		return 0, err
@@ -816,7 +816,7 @@ func (r *proxyRepository) SweepExpiredProxies(ctx context.Context, now time.Time
 			logger.LegacyPrintf("repository.proxy", "[ProxyExpiry] proxy %d expired but fallback chain unresolved (cycle/all-expired); accounts kept", p.ID)
 		}
 
-		changedAccountIDs, sweepErr := r.sweepOneExpiredProxy(ctx, p.ID, target, change, executionNodeID)
+		changedAccountIDs, sweepErr := r.sweepOneExpiredProxy(ctx, p, now, target, change, executionNodeID)
 		if sweepErr != nil {
 			return totalChanged, sweepErr
 		}
@@ -854,7 +854,7 @@ func sortedUniqueAccountIDs(accountIDs []int64) []int64 {
 
 // sweepOneExpiredProxy 在单事务内原子执行：标记代理 expired + 改投绑定账号。
 // 若 r.client 已绑定事务（测试注入场景），直接在 r.sql 上执行，由外层事务保证原子性。
-func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int64, target *int64, change bool, executionNodeID string) ([]int64, error) {
+func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, snapshot service.Proxy, now time.Time, target *int64, change bool, executionNodeID string) ([]int64, error) {
 	// 尝试开启子事务；若 r.client 已是事务 client，则返回 ErrTxStarted，退回使用 r.sql。
 	tx, txErr := r.client.Tx(ctx)
 	if txErr != nil {
@@ -862,13 +862,13 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int6
 			return nil, txErr
 		}
 		// 已在外层事务中（集成测试场景），直接用 r.sql 执行
-		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, proxyID, target, change, executionNodeID)
+		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, snapshot, now, target, change, executionNodeID)
 	}
 
 	// 使用新事务执行
 	var accountIDs []int64
 	var err error
-	accountIDs, err = r.sweepOneExpiredProxyOnExec(ctx, tx, proxyID, target, change, executionNodeID)
+	accountIDs, err = r.sweepOneExpiredProxyOnExec(ctx, tx, snapshot, now, target, change, executionNodeID)
 	if err != nil {
 		_ = tx.Rollback()
 		return nil, err
@@ -880,11 +880,35 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int6
 }
 
 // sweepOneExpiredProxyOnExec 在给定的 sqlExecutor 上执行：标记 expired + 改投账号。
-func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, proxyID int64, target *int64, change bool, executionNodeID string) ([]int64, error) {
-	if _, err := exec.ExecContext(ctx,
-		`UPDATE proxies SET status=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
-		service.StatusExpired, proxyID); err != nil {
+func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, snapshot service.Proxy, now time.Time, target *int64, change bool, executionNodeID string) ([]int64, error) {
+	proxyID := snapshot.ID
+	var snapshotExpiresAt any
+	if snapshot.ExpiresAt != nil {
+		snapshotExpiresAt = *snapshot.ExpiresAt
+	}
+	var snapshotBackupProxyID any
+	if snapshot.BackupProxyID != nil {
+		snapshotBackupProxyID = *snapshot.BackupProxyID
+	}
+	// Lock the row through a conditional update and recheck every field used by
+	// fallback selection. A stale sweep must leave a renewed, disabled, deleted,
+	// or reconfigured proxy and its account bindings untouched.
+	result, err := exec.ExecContext(ctx, `
+		UPDATE proxies SET status=$1, updated_at=NOW()
+		WHERE id=$2 AND deleted_at IS NULL AND status=$3
+		  AND expires_at <= $4 AND expires_at = $5
+		  AND fallback_mode=$6 AND backup_proxy_id IS NOT DISTINCT FROM $7`,
+		service.StatusExpired, proxyID, service.StatusActive, now, snapshotExpiresAt,
+		snapshot.FallbackMode, snapshotBackupProxyID)
+	if err != nil {
 		return nil, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if changed == 0 {
+		return nil, nil
 	}
 	if !change {
 		if _, err := invalidateProxyProbeSnapshots(ctx, exec, proxyID); err != nil {
@@ -901,7 +925,6 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	}
 	var (
 		rows *sql.Rows
-		err  error
 	)
 	nodeFilter := ""
 	if executionNodeID != "" {

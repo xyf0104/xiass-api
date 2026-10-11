@@ -15,6 +15,9 @@ import (
 var ErrUsageBillingRequestIDRequired = errors.New("usage billing request_id is required")
 var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerprint conflict")
 var ErrUsageBillingPrimaryUnavailable = errors.New("usage billing writable primary is not ready")
+var ErrUsageBillingUsageLogRequired = errors.New("usage billing usage log is required")
+var ErrUsageBillingUsageLogConflict = errors.New("usage billing usage log conflict")
+var ErrUsageBillingUsageLogMissing = errors.New("usage billing usage log is missing for an applied request")
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
@@ -224,4 +227,12 @@ type UsageBillingRepository interface {
 	ReserveBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	CaptureBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	ReleaseBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
+}
+
+// UsageBillingWithUsageLogRepository is an optional extension used by normal
+// gateway billing. Implementations must commit the billing effects and usage
+// log in one database transaction. Keeping it separate preserves compatibility
+// with existing UsageBillingRepository mocks and degraded implementations.
+type UsageBillingWithUsageLogRepository interface {
+	ApplyWithUsageLog(ctx context.Context, cmd *UsageBillingCommand, log *UsageLog) (*UsageBillingApplyResult, error)
 }

@@ -213,8 +213,9 @@ func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, st
 }
 
 // GetGroupUsageSummary returns today's and cumulative cost for all groups.
-func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error) {
-	results, err := s.usageRepo.GetAllGroupUsageSummary(ctx, todayStart)
+// The day window is half-open so the summary cannot accidentally depend on the database timezone.
+func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart, tomorrowStart time.Time) ([]usagestats.GroupUsageSummary, error) {
+	results, err := s.usageRepo.GetAllGroupUsageSummary(ctx, todayStart, tomorrowStart)
 	if err != nil {
 		return nil, fmt.Errorf("get group usage summary: %w", err)
 	}

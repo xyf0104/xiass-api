@@ -216,6 +216,10 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 
 func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog) (bool, error) {
 	prepared := prepareUsageLogInsert(log)
+	return r.createSinglePrepared(ctx, sqlq, log, prepared)
+}
+
+func (r *usageLogRepository) createSinglePrepared(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog, prepared usageLogInsertPrepared) (bool, error) {
 	if sqlq == nil {
 		sqlq = r.sql
 	}
@@ -313,6 +317,81 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 	}
 	log.RateMultiplier = prepared.rateMultiplier
 	return true, nil
+}
+
+var usageBillingLogMatchColumns = map[string]struct{}{
+	"user_id": {}, "api_key_id": {}, "account_id": {}, "request_id": {},
+	"model": {}, "requested_model": {}, "upstream_model": {}, "upstream_response_model": {}, "upstream_model_mismatch": {},
+	"group_id": {}, "subscription_id": {},
+	"input_tokens": {}, "output_tokens": {}, "cache_creation_tokens": {}, "cache_read_tokens": {},
+	"cache_creation_5m_tokens": {}, "cache_creation_1h_tokens": {},
+	"image_output_tokens": {}, "image_output_cost": {}, "image_input_tokens": {}, "image_input_cost": {},
+	"input_cost": {}, "output_cost": {}, "cache_creation_cost": {}, "cache_read_cost": {},
+	"total_cost": {}, "actual_cost": {}, "rate_multiplier": {}, "account_rate_multiplier": {}, "billing_type": {},
+	"image_count": {}, "image_size": {}, "image_input_size": {}, "image_output_size": {}, "image_size_source": {}, "image_size_breakdown": {},
+	"video_count": {}, "video_resolution": {}, "video_duration_seconds": {},
+	"service_tier": {}, "reasoning_effort": {}, "requested_reasoning_effort": {},
+	"cache_ttl_overridden": {}, "long_context_billing_applied": {},
+	"channel_id": {}, "model_mapping_chain": {}, "billing_tier": {}, "billing_mode": {}, "account_stats_cost": {},
+}
+
+var usageBillingLogNumericScales = map[string]int{
+	"image_output_cost": 10, "image_input_cost": 10,
+	"input_cost": 10, "output_cost": 10, "cache_creation_cost": 10, "cache_read_cost": 10,
+	"total_cost": 10, "actual_cost": 10, "account_stats_cost": 10,
+	"rate_multiplier": 4, "account_rate_multiplier": 4,
+}
+
+// verifyPreparedUsageLog is used only after the billing idempotency key says a
+// transaction was already applied. The external request ID is merely the lookup
+// key; accounting fields must match the committed row. Timing, transport and
+// observational metadata may legitimately differ when the same event is retried.
+func verifyPreparedUsageLog(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog, prepared usageLogInsertPrepared) error {
+	columns := strings.Split(usageLogSelectColumns, ", ")
+	if len(columns) == 0 || columns[0] != "id" {
+		return errors.New("usage log select columns do not start with id")
+	}
+	columns = columns[1:]
+	if len(columns) != len(prepared.args) || len(columns) != len(usageLogInsertArgTypes) {
+		return fmt.Errorf("usage log insert shape mismatch: columns=%d args=%d types=%d", len(columns), len(prepared.args), len(usageLogInsertArgTypes))
+	}
+
+	predicates := make([]string, 0, len(usageBillingLogMatchColumns))
+	args := make([]any, 0, len(usageBillingLogMatchColumns))
+	for i, column := range columns {
+		if _, ok := usageBillingLogMatchColumns[column]; !ok {
+			continue
+		}
+		args = append(args, prepared.args[i])
+		if scale, ok := usageBillingLogNumericScales[column]; ok {
+			predicates = append(predicates, fmt.Sprintf("%s IS NOT DISTINCT FROM ROUND($%d::numeric, %d)", column, len(args), scale))
+			continue
+		}
+		predicates = append(predicates, fmt.Sprintf("%s IS NOT DISTINCT FROM $%d::%s", column, len(args), usageLogInsertArgTypes[i]))
+	}
+	query := "SELECT id, created_at FROM usage_logs WHERE " + strings.Join(predicates, " AND ")
+	var id int64
+	var createdAt time.Time
+	if err := scanSingleRow(ctx, sqlq, query, args, &id, &createdAt); err == nil {
+		if log != nil {
+			log.ID = id
+			log.CreatedAt = createdAt
+			log.RateMultiplier = prepared.rateMultiplier
+		}
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	var existingID int64
+	keyQuery := "SELECT id FROM usage_logs WHERE request_id = $1 AND api_key_id = $2"
+	if err := scanSingleRow(ctx, sqlq, keyQuery, []any{prepared.requestID, prepared.args[1]}, &existingID); err == nil {
+		return service.ErrUsageBillingUsageLogConflict
+	} else if errors.Is(err, sql.ErrNoRows) {
+		return service.ErrUsageBillingUsageLogMissing
+	} else {
+		return err
+	}
 }
 
 func (r *usageLogRepository) createBatched(ctx context.Context, log *service.UsageLog) (bool, error) {

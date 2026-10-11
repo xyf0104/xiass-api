@@ -186,6 +186,264 @@ describe('AccountUsageCell', () => {
     wrapper.unmount()
   })
 
+  it('manual OpenAI reauthorization markers supersede an older usage request for the same account', async () => {
+    let resolveOldUsage!: (value: unknown) => void
+    getUsage
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOldUsage = resolve }))
+      .mockResolvedValueOnce({
+        seven_day: { utilization: 25, weekly_estimate_usd: 2400 }
+      })
+    const initialAccount = makeAccount({
+      id: 9105,
+      platform: 'openai',
+      type: 'oauth',
+      credentials: { expires_at: 1_800_000_000 },
+      extra: {
+        xiass_openai_reauthorization_state: {
+          last_succeeded_at: '2026-09-30T10:00:00Z',
+          success_count: 1
+        }
+      }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: initialAccount },
+      global: { stubs: { UsageProgressBar: billingUsageProgressBarStub, OpenAIQuotaResetCell: true } }
+    })
+
+    await flushPromises()
+    await wrapper.setProps({
+      account: makeAccount({
+        ...initialAccount,
+        credentials: { expires_at: 1_900_000_000 },
+        extra: {
+          xiass_openai_reauthorization_state: {
+            last_succeeded_at: '2026-10-01T10:00:00Z',
+            success_count: 2
+          }
+        }
+      })
+    })
+    await flushPromises()
+
+    resolveOldUsage({
+      needs_reauth: true,
+      error_code: 'unauthenticated',
+      error: 'late pre-reauthorization 401',
+      seven_day: { utilization: 99, weekly_estimate_usd: 9900 }
+    })
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$2,400.00')
+    expect(wrapper.emitted('reauth-status')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('treats structured unauthenticated usage as reauth evidence and clears it after a successful refresh', async () => {
+    getUsage
+      .mockResolvedValueOnce({
+        needs_reauth: false,
+        error_code: 'unauthenticated',
+        error: 'upstream authentication failed'
+      })
+      .mockResolvedValueOnce({
+        seven_day: { utilization: 25, weekly_estimate_usd: 2400 }
+      })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9106, platform: 'openai', type: 'oauth' }),
+        manualRefreshToken: 0
+      },
+      global: { stubs: { UsageProgressBar: billingUsageProgressBarStub, OpenAIQuotaResetCell: true } }
+    })
+
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([[
+      { accountId: 9106, needsReauth: true }
+    ]])
+
+    await wrapper.setProps({ manualRefreshToken: 1 })
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 9106, needsReauth: true }],
+      [{ accountId: 9106, needsReauth: false }]
+    ])
+    wrapper.unmount()
+  })
+
+  it('relays quota reset reauth evidence while ignoring another account id', async () => {
+    getUsage.mockResolvedValue({
+      seven_day: { utilization: 25, weekly_estimate_usd: 2400 }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 9107, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          UsageProgressBar: billingUsageProgressBarStub,
+          OpenAIQuotaResetCell: {
+            name: 'OpenAIQuotaResetCell',
+            emits: ['reauth-status'],
+            template: '<div><slot name="pre-actions" /></div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    const quotaCell = wrapper.findComponent({ name: 'OpenAIQuotaResetCell' })
+    quotaCell.vm.$emit('reauth-status', { accountId: 9999, needsReauth: true })
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toBeUndefined()
+
+    quotaCell.vm.$emit('reauth-status', { accountId: 9107, needsReauth: true })
+    await flushPromises()
+    quotaCell.vm.$emit('reauth-status', { accountId: 9107, needsReauth: false })
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 9107, needsReauth: true }],
+      [{ accountId: 9107, needsReauth: false }]
+    ])
+    wrapper.unmount()
+  })
+
+  it('a successful quota-cell refresh clears stale reauth fields loaded by usage', async () => {
+    getUsage.mockResolvedValue({
+      needs_reauth: true,
+      error_code: 'unauthenticated',
+      error: 'upstream authentication failed'
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 9109, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          UsageProgressBar: billingUsageProgressBarStub,
+          OpenAIQuotaResetCell: {
+            name: 'OpenAIQuotaResetCell',
+            emits: ['reauth-status'],
+            template: '<div><slot name="pre-actions" /></div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([[
+      { accountId: 9109, needsReauth: true }
+    ]])
+
+    wrapper.findComponent({ name: 'OpenAIQuotaResetCell' }).vm.$emit('reauth-status', {
+      accountId: 9109,
+      needsReauth: false
+    })
+    await flushPromises()
+
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 9109, needsReauth: true }],
+      [{ accountId: 9109, needsReauth: false }]
+    ])
+    const recoveredUsage = (wrapper.vm as unknown as {
+      usageInfo: { needs_reauth?: boolean; error_code?: string; error?: string } | null
+    }).usageInfo
+    expect(recoveredUsage).toMatchObject({ needs_reauth: false })
+    expect(recoveredUsage?.error_code).toBeUndefined()
+    expect(recoveredUsage?.error).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('quota confirmation rejects a stale in-flight usage 401 without blocking later refreshes', async () => {
+    let resolveStaleUsage!: (value: unknown) => void
+    getUsage
+      .mockResolvedValueOnce({
+        needs_reauth: true,
+        error_code: 'unauthenticated',
+        error: 'first upstream 401',
+        seven_day: { utilization: 25, weekly_estimate_usd: 2400 }
+      })
+      .mockImplementationOnce(() => new Promise(resolve => { resolveStaleUsage = resolve }))
+      .mockResolvedValueOnce({
+        seven_day: { utilization: 26, weekly_estimate_usd: 2400 }
+      })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9110, platform: 'openai', type: 'oauth' }),
+        manualRefreshToken: 0
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: billingUsageProgressBarStub,
+          OpenAIQuotaResetCell: {
+            name: 'OpenAIQuotaResetCell',
+            emits: ['reauth-status'],
+            template: '<div><slot name="pre-actions" /></div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    const quotaCell = wrapper.findComponent({ name: 'OpenAIQuotaResetCell' })
+    await wrapper.setProps({ manualRefreshToken: 1 })
+    quotaCell.vm.$emit('reauth-status', { accountId: 9110, needsReauth: false })
+    await flushPromises()
+
+    resolveStaleUsage({
+      needs_reauth: true,
+      error_code: 'unauthenticated',
+      error: 'late upstream 401',
+      seven_day: { utilization: 99, weekly_estimate_usd: 9900 }
+    })
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 9110, needsReauth: true }],
+      [{ accountId: 9110, needsReauth: false }]
+    ])
+
+    await wrapper.setProps({ manualRefreshToken: 2 })
+    await flushPromises()
+    expect(getUsage).toHaveBeenCalledTimes(3)
+    expect(getUsage).toHaveBeenLastCalledWith(9110, undefined, true)
+    expect(wrapper.emitted('reauth-status')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('clears quota reset evidence after a current forced usage refresh succeeds', async () => {
+    getUsage
+      .mockResolvedValueOnce({ seven_day: { utilization: 25, weekly_estimate_usd: 2400 } })
+      .mockResolvedValueOnce({ seven_day: { utilization: 26, weekly_estimate_usd: 2400 } })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9108, platform: 'openai', type: 'oauth' }),
+        manualRefreshToken: 0
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: billingUsageProgressBarStub,
+          OpenAIQuotaResetCell: {
+            name: 'OpenAIQuotaResetCell',
+            emits: ['reauth-status'],
+            template: '<div><slot name="pre-actions" /></div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    wrapper.findComponent({ name: 'OpenAIQuotaResetCell' }).vm.$emit('reauth-status', {
+      accountId: 9108,
+      needsReauth: true
+    })
+    await flushPromises()
+    await wrapper.setProps({ manualRefreshToken: 1 })
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenLastCalledWith(9108, undefined, true)
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 9108, needsReauth: true }],
+      [{ accountId: 9108, needsReauth: false }]
+    ])
+    wrapper.unmount()
+  })
+
   it.each(['antigravity', 'gemini', 'grok'] as const)('does not actively probe unsupported remote %s usage', async platform => {
     const wrapper = mount(AccountUsageCell, {
       props: { account: makeAccount({ id: 9105, platform, type: 'oauth' }), readOnly: true },

@@ -92,6 +92,26 @@ func TestSanitizeOpenAIResponsesToolParameterTypes_ObjectUnionSafetyBoundary(t *
 	}
 }
 
+func TestSanitizeOpenAIResponsesToolParameterTypes_PreservesRootSchemaUnions(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","parameters":{
+		"allOf":[{"type":"object","required":null}],
+		"anyOf":[{"type":"object","properties":{"a":{"type":"string"}},"required":null}],
+		"oneOf":[{"type":"object","required":null}]
+	}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1, int(gjson.GetBytes(sanitized, "tools.0.parameters.allOf.#").Int()))
+	require.Equal(t, 1, int(gjson.GetBytes(sanitized, "tools.0.parameters.anyOf.#").Int()))
+	require.Equal(t, 1, int(gjson.GetBytes(sanitized, "tools.0.parameters.oneOf.#").Int()))
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.allOf.0.required").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.anyOf.0.required").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.oneOf.0.required").Exists())
+	require.Equal(t, "string", gjson.GetBytes(sanitized, "tools.0.parameters.anyOf.0.properties.a.type").String())
+}
+
 // 多轮历史：工具定义沉进 input 后，upstream 报错路径形如
 // input[N].tools[i].tools[j].parameters，两层都要修。
 func TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools(t *testing.T) {

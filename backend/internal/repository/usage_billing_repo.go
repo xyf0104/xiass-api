@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -19,7 +20,18 @@ func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBill
 	return &usageBillingRepository{db: sqlDB}
 }
 
-func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
+func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
+	return r.apply(ctx, cmd, nil)
+}
+
+func (r *usageBillingRepository) ApplyWithUsageLog(ctx context.Context, cmd *service.UsageBillingCommand, usageLog *service.UsageLog) (*service.UsageBillingApplyResult, error) {
+	if usageLog == nil {
+		return nil, service.ErrUsageBillingUsageLogRequired
+	}
+	return r.apply(ctx, cmd, usageLog)
+}
+
+func (r *usageBillingRepository) apply(ctx context.Context, cmd *service.UsageBillingCommand, usageLog *service.UsageLog) (_ *service.UsageBillingApplyResult, err error) {
 	if cmd == nil {
 		return &service.UsageBillingApplyResult{}, nil
 	}
@@ -30,6 +42,19 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	cmd.Normalize()
 	if cmd.RequestID == "" {
 		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+
+	var preparedLog *usageLogInsertPrepared
+	var transactionUsageLog *service.UsageLog
+	if usageLog != nil {
+		usageLogCopy := *usageLog
+		prepared := prepareUsageLogInsert(&usageLogCopy)
+		usageLogCopy.CreatedAt = prepared.createdAt
+		if err := validateUsageBillingUsageLog(cmd, &usageLogCopy); err != nil {
+			return nil, err
+		}
+		preparedLog = &prepared
+		transactionUsageLog = &usageLogCopy
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -48,24 +73,121 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		}
 	}()
 
+	// Force PostgreSQL's normal synchronous-commit policy for this transaction.
+	// This setting does not enable synchronous replication by itself; when the
+	// server has synchronous_standby_names configured, PostgreSQL follows that
+	// configuration and may wait for the selected synchronous standby.
+	if _, err := tx.ExecContext(ctx, "SET LOCAL synchronous_commit = on"); err != nil {
+		return nil, err
+	}
+
 	applied, err := r.claimUsageBillingKey(ctx, tx, cmd)
 	if err != nil {
 		return nil, err
 	}
-	if !applied {
-		return &service.UsageBillingApplyResult{Applied: false}, nil
+	result := &service.UsageBillingApplyResult{Applied: applied}
+	if applied {
+		if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
+			return nil, err
+		}
 	}
 
-	result := &service.UsageBillingApplyResult{Applied: true}
-	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
-		return nil, err
+	if preparedLog != nil {
+		logRepo := &usageLogRepository{}
+		if applied {
+			inserted, err := logRepo.createSinglePrepared(ctx, tx, transactionUsageLog, *preparedLog)
+			if err != nil {
+				return nil, err
+			}
+			if !inserted {
+				return nil, service.ErrUsageBillingUsageLogConflict
+			}
+		} else if err := verifyPreparedUsageLog(ctx, tx, transactionUsageLog, *preparedLog); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
+	if usageLog != nil && transactionUsageLog != nil {
+		*usageLog = *transactionUsageLog
+	}
 	return result, nil
+}
+
+func validateUsageBillingUsageLog(cmd *service.UsageBillingCommand, log *service.UsageLog) error {
+	if cmd == nil || log == nil {
+		return service.ErrUsageBillingUsageLogRequired
+	}
+	conflict := func(field string) error {
+		return fmt.Errorf("%w: %s", service.ErrUsageBillingUsageLogConflict, field)
+	}
+	if strings.TrimSpace(log.RequestID) != cmd.RequestID {
+		return conflict("request_id")
+	}
+	if log.APIKeyID != cmd.APIKeyID {
+		return conflict("api_key_id")
+	}
+	if log.UserID != cmd.UserID {
+		return conflict("user_id")
+	}
+	if log.AccountID != cmd.AccountID {
+		return conflict("account_id")
+	}
+	if !sameOptionalInt64(log.SubscriptionID, cmd.SubscriptionID) {
+		return conflict("subscription_id")
+	}
+	if strings.TrimSpace(log.Model) != strings.TrimSpace(cmd.Model) {
+		return conflict("model")
+	}
+	if log.BillingType != cmd.BillingType {
+		return conflict("billing_type")
+	}
+	if log.InputTokens != cmd.InputTokens || log.OutputTokens != cmd.OutputTokens ||
+		log.CacheCreationTokens != cmd.CacheCreationTokens || log.CacheReadTokens != cmd.CacheReadTokens ||
+		log.ImageCount != cmd.ImageCount {
+		return conflict("usage")
+	}
+	if optionalTrimmedValue(log.ServiceTier) != strings.TrimSpace(cmd.ServiceTier) {
+		return conflict("service_tier")
+	}
+	if optionalTrimmedValue(log.ReasoningEffort) != strings.TrimSpace(cmd.ReasoningEffort) {
+		return conflict("reasoning_effort")
+	}
+
+	userCost := service.QuantizeUsageBillingAmount(cmd.BalanceCost + cmd.SubscriptionCost)
+	if service.QuantizeUsageBillingAmount(log.ActualCost) != userCost {
+		return conflict("actual_cost")
+	}
+	if cmd.APIKeyQuotaCost > 0 && service.QuantizeUsageBillingAmount(log.ActualCost) != cmd.APIKeyQuotaCost {
+		return conflict("api_key_quota_cost")
+	}
+	if cmd.APIKeyRateLimitCost > 0 && service.QuantizeUsageBillingAmount(log.ActualCost) != cmd.APIKeyRateLimitCost {
+		return conflict("api_key_rate_limit_cost")
+	}
+	if cmd.AccountQuotaCost > 0 && log.AccountRateMultiplier != nil {
+		expected := service.QuantizeUsageBillingAmount(log.TotalCost * *log.AccountRateMultiplier)
+		if expected != cmd.AccountQuotaCost {
+			return conflict("account_quota_cost")
+		}
+	}
+	return nil
+}
+
+func sameOptionalInt64(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func optionalTrimmedValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {
@@ -193,16 +315,17 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.BalanceOverdrafted = !sufficient
 	}
 
+	// Deleting a key during an in-flight request must not undo user/account billing.
 	if cmd.APIKeyQuotaCost > 0 {
 		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
-		if err != nil {
+		if err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
 	}
 
 	if cmd.APIKeyRateLimitCost > 0 {
-		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil {
+		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 	}

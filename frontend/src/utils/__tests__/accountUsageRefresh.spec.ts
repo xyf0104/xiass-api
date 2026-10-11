@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildOpenAIUsageRefreshKey } from '../accountUsageRefresh'
+import {
+  buildOpenAICredentialGenerationKey,
+  buildOpenAIUsageRefreshKey
+} from '../accountUsageRefresh'
 
 describe('buildOpenAIUsageRefreshKey', () => {
   it('会在 codex 快照变化时生成不同 key', () => {
@@ -59,5 +62,33 @@ describe('buildOpenAIUsageRefreshKey', () => {
       last_used_at: '2026-03-07T10:00:00Z',
       extra: {}
     } as any)).toBe('')
+  })
+
+  it('OpenAI 手动重新授权标记或凭据到期时间变化时生成新的凭据代次', () => {
+    const base = {
+      id: 4,
+      platform: 'openai',
+      type: 'oauth',
+      credentials: { expires_at: 1_800_000_000 },
+      extra: {
+        xiass_openai_reauthorization_state: {
+          last_succeeded_at: '2026-09-30T10:00:00Z',
+          success_count: 1
+        }
+      }
+    } as any
+    const reauthorized = {
+      ...base,
+      credentials: { expires_at: 1_900_000_000 },
+      extra: {
+        xiass_openai_reauthorization_state: {
+          last_succeeded_at: '2026-10-01T10:00:00Z',
+          success_count: 2
+        }
+      }
+    }
+
+    expect(buildOpenAICredentialGenerationKey(base))
+      .not.toBe(buildOpenAICredentialGenerationKey(reauthorized))
   })
 })

@@ -308,7 +308,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	billingCtx, cancel := detachedUsageBillingRecoveryContext(ctx, deps.cfg)
 	defer cancel()
 
-	result, attempts, err := retryUsageBilling(billingCtx, repo, cmd)
+	result, attempts, err := retryUsageBillingWithUsageLog(billingCtx, repo, cmd, usageLog)
 	if err != nil {
 		return false, err
 	}
@@ -345,15 +345,27 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 }
 
 func retryUsageBilling(ctx context.Context, repo UsageBillingRepository, cmd *UsageBillingCommand) (*UsageBillingApplyResult, int, error) {
+	return retryUsageBillingWithUsageLog(ctx, repo, cmd, nil)
+}
+
+func retryUsageBillingWithUsageLog(ctx context.Context, repo UsageBillingRepository, cmd *UsageBillingCommand, usageLog *UsageLog) (*UsageBillingApplyResult, int, error) {
 	if repo == nil || cmd == nil || strings.TrimSpace(cmd.RequestID) == "" {
 		return nil, 0, ErrUsageBillingRequestIDRequired
 	}
+	atomicRepo, useAtomicLog := repo.(UsageBillingWithUsageLogRepository)
+	useAtomicLog = useAtomicLog && usageLog != nil
 	delay := 100 * time.Millisecond
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, attempt - 1, err
 		}
-		result, err := repo.Apply(ctx, cmd)
+		var result *UsageBillingApplyResult
+		var err error
+		if useAtomicLog {
+			result, err = atomicRepo.ApplyWithUsageLog(ctx, cmd, usageLog)
+		} else {
+			result, err = repo.Apply(ctx, cmd)
+		}
 		if err == nil || !transientUsageBillingError(err) {
 			return result, attempt, err
 		}
@@ -600,6 +612,9 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if repo == nil || usageLog == nil {
 		return
 	}
+	if usageLog.ID > 0 {
+		return
+	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
@@ -626,6 +641,19 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if _, err := repo.Create(usageCtx, usageLog); err != nil {
 		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
 	}
+}
+
+func writeUsageLogAfterBillingError(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string, billingErr error) {
+	if usageLog == nil || billingErr == nil {
+		return
+	}
+	if errors.Is(billingErr, ErrUsageBillingRequestConflict) ||
+		errors.Is(billingErr, ErrUsageBillingUsageLogMissing) ||
+		errors.Is(billingErr, ErrUsageBillingUsageLogConflict) {
+		return
+	}
+	usageLog.ActualCost = 0
+	writeUsageLogBestEffort(ctx, repo, usageLog, logKey)
 }
 
 // recordUsageOpts 内部选项，参数化普通计费与长上下文计费的差异点。
@@ -860,8 +888,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
-		usageLog.ActualCost = 0
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		writeUsageLogAfterBillingError(ctx, s.usageLogRepo, usageLog, "service.gateway", billingErr)
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")

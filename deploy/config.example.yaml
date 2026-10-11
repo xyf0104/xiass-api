@@ -697,6 +697,14 @@ api_key_auth_cache:
     capacity: 16384
 
 # =============================================================================
+# API Key Creation Limits
+# 用户创建 API Key 的防滥用限制（0 表示不限制）
+# =============================================================================
+api_key_create:
+  max_active_per_user: 200
+  max_per_user_per_hour: 60
+
+# =============================================================================
 # Dashboard Cache Configuration
 # 仪表盘缓存配置
 # =============================================================================
@@ -871,6 +879,17 @@ redis:
   # Database number (0-15)
   # 数据库编号（0-15）
   db: 0
+  # Explicit discovery mode: direct (default) or sentinel
+  # 显式发现模式：direct（默认）或 sentinel
+  discovery_mode: "direct"
+  # Used only when discovery_mode is sentinel
+  # 仅在 discovery_mode 为 sentinel 时使用
+  sentinel_addrs: []
+  sentinel_master_name: ""
+  # Sentinel authentication is separate from Redis data-node authentication
+  # Sentinel 认证与 Redis 数据节点认证相互独立
+  sentinel_username: ""
+  sentinel_password: ""
   # Connection pool size (max concurrent connections)
   # 连接池大小（最大并发连接数）
   pool_size: 1024

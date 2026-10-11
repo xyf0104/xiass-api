@@ -3,6 +3,7 @@ package xai
 import (
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 
 	"golang.org/x/mod/semver"
@@ -10,11 +11,11 @@ import (
 
 const (
 	CLIProxyHost        = "cli-chat-proxy.grok.com"
-	CLIStableVersion    = "0.2.93"
+	CLIStableVersion    = "1.0.13"
 	CLIVersionEnv       = "XAI_GROK_CLI_VERSION"
 	CLITokenAuth        = "xai-grok-cli"
-	CLIClientIdentifier = "grok-shell"
-	CLIClientMode       = "cli"
+	CLIClientIdentifier = "grok-pager"
+	CLIClientMode       = "interactive"
 )
 
 func ResolveCLIVersion() string {
@@ -37,7 +38,19 @@ func CLIUserAgent(version string) string {
 	if strings.TrimSpace(version) == "" {
 		version = CLIClientVersion
 	}
-	return "xai-grok-workspace/" + version
+	platform, arch := runtime.GOOS, runtime.GOARCH
+	if platform == "darwin" {
+		platform = "macos"
+	}
+	switch arch {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "aarch64"
+	case "386":
+		arch = "x86"
+	}
+	return "grok-pager/" + version + " grok-shell/" + version + " (" + platform + "; " + arch + ")"
 }
 
 func ApplyCLIProxyHeaders(req *http.Request) {
@@ -51,5 +64,7 @@ func ApplyCLIProxyHeaders(req *http.Request) {
 	req.Header.Set("X-XAI-Token-Auth", CLITokenAuth)
 	req.Header.Set("x-grok-client-version", version)
 	req.Header.Set("x-grok-client-identifier", CLIClientIdentifier)
+	req.Header.Set("x-grok-client-mode", CLIClientMode)
+	req.Header.Set("x-authenticateresponse", "authenticate-response")
 	req.Header.Set("User-Agent", CLIUserAgent(version))
 }

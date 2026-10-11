@@ -107,6 +107,7 @@ func TestAdminPaymentRoutesUsePanelRateLimiter(t *testing.T) {
 		servermiddleware.AuditLogMiddleware(pass),
 		settings,
 		limiter,
+		redisClient,
 	)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/payment/dashboard", nil)

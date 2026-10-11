@@ -75,7 +75,7 @@ func sanitizeOpenAIResponsesToolParameterTypes(body []byte) ([]byte, bool, error
 		})
 	}
 	if len(hits) == 0 {
-		return body, false, nil
+		return sanitizeOpenAIResponsesNullRequiredIfPresent(body)
 	}
 
 	// tools 与 input 在 body 里的先后顺序由客户端决定，收集顺序不保证单调。
@@ -93,7 +93,117 @@ func sanitizeOpenAIResponsesToolParameterTypes(body []byte) ([]byte, bool, error
 		cursor = hit.offset + hit.length
 	}
 	sanitized = append(sanitized, body[cursor:]...)
+	if requiredBody, requiredChanged, err := sanitizeOpenAIResponsesNullRequiredIfPresent(sanitized); err != nil {
+		return body, false, err
+	} else if requiredChanged {
+		return requiredBody, true, nil
+	}
 	return sanitized, true, nil
+}
+
+func sanitizeOpenAIResponsesNullRequiredIfPresent(body []byte) ([]byte, bool, error) {
+	// Most Responses requests do not contain a required keyword at all. Avoid
+	// decoding and re-encoding those bodies so the byte-span rewrite remains
+	// allocation-stable as the number of repaired types grows.
+	if !bytes.Contains(body, []byte(`"required"`)) && !bytes.Contains(body, []byte(`\u`)) {
+		return body, false, nil
+	}
+	return sanitizeOpenAIResponsesNullRequired(body)
+}
+
+// sanitizeOpenAIResponsesNullRequired removes the invalid JSON value
+// required:null from tool schema roots while leaving instance data such as
+// default/examples/const/enum untouched.
+func sanitizeOpenAIResponsesNullRequired(body []byte) ([]byte, bool, error) {
+	var document any
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&document); err != nil {
+		return body, false, nil
+	}
+	changed := false
+	if root, ok := document.(map[string]any); ok {
+		changed = sanitizeOpenAIResponsesToolList(root["tools"], 0)
+		if input, ok := root["input"].([]any); ok {
+			for _, raw := range input {
+				if item, ok := raw.(map[string]any); ok && sanitizeOpenAIResponsesToolList(item["tools"], 0) {
+					changed = true
+				}
+			}
+		}
+	}
+	if !changed {
+		return body, false, nil
+	}
+	updated, err := json.Marshal(document)
+	if err != nil {
+		return body, false, fmt.Errorf("marshal sanitized required schema: %w", err)
+	}
+	return updated, true, nil
+}
+
+func sanitizeOpenAIResponsesToolList(value any, depth int) bool {
+	if depth > openAIResponsesToolSchemaMaxDepth {
+		return false
+	}
+	tools, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"parameters", "input_schema"} {
+			if schema, ok := tool[key].(map[string]any); ok && sanitizeOpenAIResponsesSchemaRequired(schema, depth+1) {
+				changed = true
+			}
+		}
+		if fn, ok := tool["function"].(map[string]any); ok {
+			if schema, ok := fn["parameters"].(map[string]any); ok && sanitizeOpenAIResponsesSchemaRequired(schema, depth+1) {
+				changed = true
+			}
+		}
+		if sanitizeOpenAIResponsesToolList(tool["tools"], depth+1) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func sanitizeOpenAIResponsesSchemaRequired(schema map[string]any, depth int) bool {
+	if depth > openAIResponsesToolSchemaMaxDepth {
+		return false
+	}
+	changed := false
+	if required, ok := schema["required"]; ok && required == nil {
+		delete(schema, "required")
+		changed = true
+	}
+	for _, key := range []string{
+		"properties", "patternProperties", "additionalProperties", "additionalItems", "contains", "not",
+		"if", "then", "else", "items", "contentSchema", "allOf", "anyOf", "oneOf",
+	} {
+		value, ok := schema[key]
+		if !ok {
+			continue
+		}
+		switch nested := value.(type) {
+		case map[string]any:
+			if sanitizeOpenAIResponsesSchemaRequired(nested, depth+1) {
+				changed = true
+			}
+		case []any:
+			for _, item := range nested {
+				if child, ok := item.(map[string]any); ok && sanitizeOpenAIResponsesSchemaRequired(child, depth+1) {
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
 }
 
 // collectOpenAIResponsesToolSchemaNullTypes 收集一个 tools 数组里所有需要修正的

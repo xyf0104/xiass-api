@@ -123,14 +123,13 @@ gateway:
 
 ### 既有网页登录会话兼容
 
-离线会话迁移 CLI 已移除。多节点启用、网页配对、启动和更新都不会自动迁移会话、重建会话数据或把 Redis 提升为新的状态主节点。
+XIASS 提供显式手动会话迁移命令，将已盘点的 Redis 刷新会话一次性迁移到现有 PostgreSQL authority。默认启动、网页配对、更新和多节点启用都不会调用该命令；仅修改 `JWT_REFRESH_TOKEN_STORE` 也不会导入会话。完整清单格式、执行步骤和失败恢复要求见 [HA_SESSION_MIGRATION.md](HA_SESSION_MIGRATION.md)。
 
-- 未迁移的实例继续使用既有 Redis 会话、签名密钥与原到期时间，不因取消容灾而清空登录状态。
-- 已完成 PostgreSQL 会话迁移的实例必须保留 `JWT_REFRESH_TOKEN_STORE=postgres`、数据库中的 authority/transition 记录以及会话、签发和撤销数据。启动 provider 继续校验并读取既有 PostgreSQL 会话；不得改回 Redis、从旧副本补回会话或删除已发布迁移。
-- `JWT_REFRESH_TOKEN_MIGRATION_READINESS` 仅为既有配置保留兼容，不是新部署步骤或自动迁移开关。若既有实例仍使用该模式，不应在未核实实际会话 authority 的情况下直接改成 Redis 固定模式。
-- 保留已经部署的应用 Redis 凭据、受限 ACL 和部署方已接入的会话运行时环境配置；取消离线迁移工具不意味着可以删除这些文件或恢复旧会话命名空间权限。普通应用不得使用迁移操作员凭据。
-- 所有应用节点必须使用与同一份会话 authority 兼容的配置和相同签名密钥；仅修改 `JWT_REFRESH_TOKEN_STORE` 不会导入会话，也不能绕过启动校验。
-- 登录、刷新、退出、会话绑定和七天期限继续按既有逻辑执行。备份须包含现有状态和配置，但恢复旧快照可能丢失已确认的撤销记录，不能视作安全的自动回退。
+- v1 是离线维护：必须排空相关请求并停止所有会访问该会话 authority 的应用进程；仅从公网入口摘除但仍保持应用运行不满足要求。
+- v2 是显式 runtime fence：必须由外部入口阻断并排空所有登录、刷新和撤销请求；固定白名单内的推理缓存、并发和调度流量可以继续，但不能据此宣称认证完全无中断或整套系统零停机。
+- 一旦 Redis ACL fence 开始，失败会保持 fail-closed，不自动恢复旧会话权限，也不擦除当前会话数据。必须保持相同维护边界，并使用完全相同的私密清单、恢复密钥和 runtime 输入重试。
+- 已完成迁移的实例必须保留 `JWT_REFRESH_TOKEN_STORE=postgres`、authority/transition 记录、会话、签发和撤销数据以及已部署的受限 Redis ACL。不得切回 Redis authority、从异步副本补回会话、删除已发布 migration，或回滚到只认识 Redis 会话的旧版本。
+- 所有应用节点必须使用同一会话 authority 和相同签名密钥。登录、刷新、退出、会话绑定和七天期限继续按既有逻辑执行；旧快照可能丢失已确认的撤销记录，不能作为安全自动回退。
 
 ### 应用节点启用
 
@@ -155,7 +154,7 @@ gateway:
 
 ## 故障边界
 
-XIASS 当前没有内置整机自动容灾、Witness 仲裁、Redis Sentinel 自动发现、数据库自动升主或跨节点临时出口接管。执行节点心跳不是数据库接管、管理权限仲裁或状态恢复机制。
+XIASS 当前没有内置整机自动容灾、Witness 仲裁、Redis Sentinel 部署/启用、数据库自动升主或跨节点临时出口接管。应用可在运维已部署并验证 Sentinel 后，显式设置 `REDIS_DISCOVERY_MODE=sentinel`，使用 `REDIS_SENTINEL_ADDRS` 和 `REDIS_SENTINEL_MASTER_NAME` 发现当前主节点；默认 `direct` 仍固定使用 `REDIS_HOST`/`REDIS_PORT`，历史 `REDIS_SENTINEL_*` 变量单独存在不会启用发现。该模式只消费 Sentinel 的主节点发现结果，不负责部署 Sentinel、复制数据、选主仲裁、写入 fencing、会话迁移或零丢失保证。执行节点心跳不是数据库接管、管理权限仲裁或状态恢复机制。
 
 必须区分应用故障与整机故障：共享状态和必经隧道仍在线时，健康应用可以继续服务；唯一状态源整机断电时，其他应用节点不能独立接管。外部入口和状态服务的可用性由部署方独立维护，本功能不配置或保证它们的自动恢复。不要停止生产服务来验证这些边界。
 

@@ -723,13 +723,15 @@ func TestFilterValidIntervals(t *testing.T) {
 // ===========================================================================
 
 func TestApplyTokenOverrides_FlatSetsImageOutputPriceExplicit(t *testing.T) {
+	zero := 0.0
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: BillingModeToken,
 		InputPrice:  testPtrFloat64(3e-6),
 		OutputPrice: testPtrFloat64(15e-6),
-		// ImageOutputPrice intentionally nil
+		// An explicitly entered zero must remain a real, explicit price.
+		ImageOutputPrice: &zero,
 	}})
 	resolved := r.Resolve(context.Background(), PricingInput{
 		Model:   "claude-sonnet-4",
@@ -760,11 +762,14 @@ func TestApplyTokenOverrides_FlatWithImageOutputPriceSetsExplicit(t *testing.T) 
 }
 
 func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) {
+	zero := 0.0
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",
 		Models:      []string{"claude-sonnet-4"},
 		BillingMode: BillingModeToken,
-		// No ImageOutputPrice
+		// An interval must retain the channel's explicitly entered zero image
+		// output price rather than falling back to the text output price.
+		ImageOutputPrice: &zero,
 		Intervals: []PricingInterval{
 			{MinTokens: 0, MaxTokens: testPtrInt(100000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)},
 		},
@@ -828,6 +833,10 @@ func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) 
 			{MinTokens: 0, MaxTokens: testPtrInt(100000), InputPrice: testPtrFloat64(2e-6), OutputPrice: testPtrFloat64(8e-6)},
 		},
 	}})
+	// A channel that leaves image output pricing unset must inherit the model
+	// catalog value without turning that inherited value into an explicit
+	// channel price.
+	r.billingService.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 25e-6
 
 	resolved := r.Resolve(context.Background(), PricingInput{
 		Model:   "claude-sonnet-4",
@@ -835,11 +844,19 @@ func TestApplyTokenOverrides_IntervalDoesNotPolluteFallbackPrices(t *testing.T) 
 	})
 
 	require.NotNil(t, resolved)
-	require.True(t, resolved.BasePricing.ImageOutputPriceExplicit)
+	require.InDelta(t, 25e-6, resolved.BasePricing.ImageOutputPricePerToken, 1e-12)
+	require.False(t, resolved.BasePricing.ImageOutputPriceExplicit)
+
+	intervalPricing := r.GetIntervalPricing(resolved, 50000)
+	require.InDelta(t, 2e-6, intervalPricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 8e-6, intervalPricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 25e-6, intervalPricing.ImageOutputPricePerToken, 1e-12)
+	require.False(t, intervalPricing.ImageOutputPriceExplicit)
 
 	// Global fallbackPrices must NOT be polluted
 	fp := r.billingService.fallbackPrices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fp.InputPricePerToken, 1e-12, "fallback InputPricePerToken polluted")
 	require.InDelta(t, 15e-6, fp.OutputPricePerToken, 1e-12, "fallback OutputPricePerToken polluted")
+	require.InDelta(t, 25e-6, fp.ImageOutputPricePerToken, 1e-12, "fallback ImageOutputPricePerToken polluted")
 	require.False(t, fp.ImageOutputPriceExplicit, "fallback ImageOutputPriceExplicit polluted")
 }

@@ -29,6 +29,8 @@ var (
 	ErrAPIKeyTooShort       = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
 	ErrAPIKeyInvalidChars   = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
 	ErrAPIKeyRateLimited    = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrAPIKeyCreateLimited  = infraerrors.TooManyRequests("API_KEY_CREATE_RATE_LIMITED", "too many api keys created recently, please try again later")
+	ErrAPIKeyCountExceeded  = infraerrors.Forbidden("API_KEY_COUNT_EXCEEDED", "api key count limit reached, please delete unused keys first")
 	ErrAPIKeyAuthOverloaded = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
 	ErrInvalidIPPattern     = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
@@ -47,6 +49,7 @@ const (
 	defaultAuthLookupConcurrency = 64
 	defaultNegativeAuthCacheSize = 16384
 	apiKeyMaxErrorsPerHour       = 20
+	apiKeyCreateCountWindow      = time.Hour
 	apiKeyLastUsedMinTouch       = 30 * time.Second
 	apiKeySortCurrentConcurrency = "current_concurrency"
 	// DB 写失败后的短退避，避免请求路径持续同步重试造成写风暴与高延迟。
@@ -183,6 +186,13 @@ type APIKeyCache interface {
 	// Pub/Sub for L1 cache invalidation across instances
 	PublishAuthCacheInvalidation(ctx context.Context, cacheKey string) error
 	SubscribeAuthCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error
+}
+
+// APIKeyCreateCounter is implemented by caches that support the independent
+// fixed-window creation counter. Keeping it optional preserves compatibility
+// with existing in-memory/test cache implementations.
+type APIKeyCreateCounter interface {
+	IncrementCreateCount(ctx context.Context, userID int64, window time.Duration) (int64, error)
 }
 
 type authCacheSubscriptionReadyKey struct{}
@@ -413,6 +423,35 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 	_ = s.cache.IncrementCreateAttemptCount(ctx, userID)
 }
 
+func (s *APIKeyService) checkAPIKeyCreateLimits(ctx context.Context, userID int64) error {
+	if s.cfg == nil {
+		return nil
+	}
+	if maxActive := s.cfg.APIKeyCreate.MaxActivePerUser; maxActive > 0 {
+		count, err := s.apiKeyRepo.CountByUserID(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("count api keys: %w", err)
+		}
+		if count >= int64(maxActive) {
+			return ErrAPIKeyCountExceeded
+		}
+	}
+	if maxPerHour := s.cfg.APIKeyCreate.MaxPerUserPerHour; maxPerHour > 0 && s.cache != nil {
+		counter, ok := s.cache.(APIKeyCreateCounter)
+		if !ok {
+			return nil
+		}
+		count, err := counter.IncrementCreateCount(ctx, userID, apiKeyCreateCountWindow)
+		if err != nil {
+			return nil
+		}
+		if count > int64(maxPerHour) {
+			return ErrAPIKeyCreateLimited
+		}
+	}
+	return nil
+}
+
 // canUserBindGroup 检查用户是否可以绑定指定分组
 // 对于订阅类型分组：检查用户是否有有效订阅
 // 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
@@ -494,6 +533,10 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		if err != nil {
 			return nil, fmt.Errorf("generate key: %w", err)
 		}
+	}
+
+	if err := s.checkAPIKeyCreateLimits(ctx, userID); err != nil {
+		return nil, err
 	}
 
 	// 创建API Key记录
@@ -783,10 +826,6 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.Status != nil {
 		apiKey.Status = *req.Status
 		fields.Status = true
-		// 如果状态改变，清除Redis缓存
-		if s.cache != nil {
-			_ = s.cache.DeleteCreateAttemptCount(ctx, apiKey.UserID)
-		}
 	}
 
 	// Update quota fields
@@ -893,10 +932,7 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 		return fmt.Errorf("delete api key: %w", err)
 	}
 
-	// 删除成功后再清理缓存,避免"缓存已清但删除失败"的竞态。
-	if s.cache != nil {
-		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
-	}
+	// Deleting a key must not refund the independent hourly creation counter.
 	s.InvalidateAuthCacheByKey(ctx, key)
 	s.lastUsedTouchL1.Delete(id)
 

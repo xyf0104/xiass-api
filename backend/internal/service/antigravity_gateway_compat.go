@@ -436,17 +436,29 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 		c.Header("x-request-id", requestID)
 	}
 	streamResult, err := s.consumeAntigravityCompatSuccess(c, call, resp)
-	if err != nil {
+	if streamResult == nil {
 		return nil, err
 	}
-	if streamResult.usage == nil {
-		streamResult.usage = &ClaudeUsage{}
+	result := buildAntigravityCompatForwardResult(c, call, resp, requestID, streamResult)
+	return result, err
+}
+
+func buildAntigravityCompatForwardResult(
+	c *gin.Context,
+	call *antigravityCompatUpstreamCall,
+	resp *http.Response,
+	requestID string,
+	streamResult *antigravityStreamResult,
+) *ForwardResult {
+	usage := ClaudeUsage{}
+	if streamResult.usage != nil {
+		usage = *streamResult.usage
 	}
 
 	return &ForwardResult{
 		RequestID:                     requestID,
 		UpstreamHeaders:               resp.Header,
-		Usage:                         *streamResult.usage,
+		Usage:                         usage,
 		Model:                         call.request.originalModel,
 		UpstreamModel:                 call.billingModel,
 		UpstreamResponseModel:         observedUpstreamResponseModel(c),
@@ -456,7 +468,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 		FirstTokenMs:                  streamResult.firstTokenMs,
 		ReasoningEffort:               call.request.reasoningEffort,
 		ClientDisconnect:              streamResult.clientDisconnect,
-	}, nil
+	}
 }
 
 func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(

@@ -221,8 +221,12 @@ func (s *helperServer) launch(w http.ResponseWriter, r *http.Request) {
 	}
 	if profileID != "" {
 		if err := s.checkProfileIdle(ctx, adsPower, profileID); err != nil {
-			s.progress(serverOrigin, payload, "failed", "failed", "adspower_profile_busy")
-			s.renderLaunch(w, http.StatusConflict, launchView{Title: "指纹环境正在使用", Message: err.Error()})
+			reason, status, title := "automation_start_failed", http.StatusServiceUnavailable, "无法查询 AdsPower 环境状态"
+			if errors.Is(err, errAdsPowerProfileBusy) {
+				reason, status, title = "adspower_profile_busy", http.StatusConflict, "指纹环境正在使用"
+			}
+			s.progress(serverOrigin, payload, "failed", "failed", reason)
+			s.renderLaunch(w, status, launchView{Title: title, Message: err.Error()})
 			return
 		}
 	}

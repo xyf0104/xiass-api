@@ -14,6 +14,7 @@ const {
   beginWorkflowEmailChallenge,
   callbackURLFromNavigationEntries,
   cancelWorkflowState,
+  chooseDefaultWorkspace,
   confirmOfficialMemberRemoval,
   completeReauthorizationOnlyNodes,
   completeWorkflowNode,
@@ -553,6 +554,69 @@ describe('Team child OAuth automation state', () => {
     assert.equal(workflow.currentNodeKey, 'signup')
     assert.equal(workflow.nodes.find((node) => node.key === 'email')?.status, 'pending')
     assert.match(workflow.nodes.find((node) => node.key === 'signup')?.message || '', /非目标账号/)
+  })
+
+  it('continues an immediately ready workspace without a fixed dwell', { timeout: 1500 }, async () => {
+    const observed = { defaultClicks: 0, continueClicks: 0, bodyReads: 0 }
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const defaultChoice = {
+      isVisible: async () => true,
+      click: async () => { observed.defaultClicks += 1 }
+    }
+    const continueButton = {
+      isVisible: async () => true,
+      click: async () => { observed.continueClicks += 1 }
+    }
+    const page = {
+      url: () => 'https://auth.openai.com/sign-in-with-chatgpt/codex/consent',
+      locator: (selector) => {
+        assert.equal(selector, 'body')
+        return { innerText: async () => { observed.bodyReads += 1; return 'Continue to Codex using your workspace' } }
+      },
+      getByRole: (role, options) => {
+        if (role === 'radio' && options.name.test('Default workspace')) return collection([defaultChoice])
+        if (role === 'button' && options.name.test('Continue')) return collection([continueButton])
+        return collection([])
+      }
+    }
+
+    await chooseDefaultWorkspace(page)
+
+    assert.equal(observed.defaultClicks, 1)
+    assert.equal(observed.continueClicks, 1)
+    assert.equal(observed.bodyReads, 1)
+  })
+
+  it('polls a delayed workspace DOM and continues as soon as authorization is actionable', { timeout: 2500 }, async () => {
+    const observed = { bodyReads: 0, continueClicks: 0 }
+    const collection = (items) => ({
+      count: async () => items.length,
+      nth: (index) => items[index]
+    })
+    const continueButton = {
+      isVisible: async () => true,
+      click: async () => { observed.continueClicks += 1 }
+    }
+    const page = {
+      url: () => 'https://auth.openai.com/sign-in-with-chatgpt/codex/consent',
+      locator: (selector) => {
+        assert.equal(selector, 'body')
+        return { innerText: async () => { observed.bodyReads += 1; return 'Authorize Codex for your workspace' } }
+      },
+      getByRole: (role, options) => {
+        const ready = observed.bodyReads >= 3
+        if (ready && role === 'button' && options.name.test('Authorize')) return collection([continueButton])
+        return collection([])
+      }
+    }
+
+    await chooseDefaultWorkspace(page)
+
+    assert.equal(observed.bodyReads, 3)
+    assert.equal(observed.continueClicks, 1)
   })
 
   it('allows a passwordless account and waits only if the official page asks for a password', async () => {

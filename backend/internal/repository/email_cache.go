@@ -17,7 +17,46 @@ const (
 	passwordResetKeyPrefix       = "password_reset:"
 	passwordResetSentAtKeyPrefix = "password_reset_sent:"
 	notifyCodeUserRateKeyPrefix  = "notify_code_user_rate:"
+	attemptsKeySuffix            = ":attempts"
 )
+
+// incrAttemptsScript atomically increments the attempt counter for an existing
+// verification code and aligns the counter TTL with the code TTL. If the code
+// predates the separate counter, its embedded attempt count is used as the base.
+var incrAttemptsScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return -1
+end
+if redis.call('EXISTS', KEYS[2]) == 0 then
+  local base = 0
+  local ok, data = pcall(cjson.decode, raw)
+  if ok and type(data) == 'table' and tonumber(data['Attempts']) then
+    base = tonumber(data['Attempts'])
+  end
+  redis.call('SET', KEYS[2], base)
+end
+local n = redis.call('INCR', KEYS[2])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl > 0 then
+  redis.call('PEXPIRE', KEYS[2], ttl)
+end
+return n
+`)
+
+// consumeResetTokenScript atomically compares the stored token hash and deletes it.
+var consumeResetTokenScript = redis.NewScript(`
+local value = redis.call('GET', KEYS[1])
+if not value then
+  return 0
+end
+local ok, data = pcall(cjson.decode, value)
+if not ok or type(data) ~= 'table' or data['Token'] ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+return 1
+`)
 
 // verifyCodeKey generates the Redis key for email verification code.
 // Email is lowercased for case-insensitive consistency.
@@ -50,8 +89,7 @@ func NewEmailCache(rdb *redis.Client) service.EmailCache {
 	return &emailCache{rdb: rdb}
 }
 
-func (c *emailCache) GetVerificationCode(ctx context.Context, email string) (*service.VerificationCodeData, error) {
-	key := verifyCodeKey(email)
+func (c *emailCache) getCode(ctx context.Context, key string) (*service.VerificationCodeData, error) {
 	val, err := c.rdb.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
@@ -60,21 +98,56 @@ func (c *emailCache) GetVerificationCode(ctx context.Context, email string) (*se
 	if err := json.Unmarshal([]byte(val), &data); err != nil {
 		return nil, err
 	}
+	if attempts, err := c.rdb.Get(ctx, key+attemptsKeySuffix).Int(); err == nil && attempts > data.Attempts {
+		data.Attempts = attempts
+	}
 	return &data, nil
 }
 
-func (c *emailCache) SetVerificationCode(ctx context.Context, email string, data *service.VerificationCodeData, ttl time.Duration) error {
-	key := verifyCodeKey(email)
+func (c *emailCache) setCode(ctx context.Context, key string, data *service.VerificationCodeData, ttl time.Duration) error {
 	val, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return c.rdb.Set(ctx, key, val, ttl).Err()
+	pipe := c.rdb.TxPipeline()
+	pipe.Set(ctx, key, val, ttl)
+	pipe.Del(ctx, key+attemptsKeySuffix)
+	if data.Attempts > 0 {
+		pipe.Set(ctx, key+attemptsKeySuffix, data.Attempts, ttl)
+	}
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+func (c *emailCache) incrCodeAttempts(ctx context.Context, key string) (int, error) {
+	attempts, err := incrAttemptsScript.Run(ctx, c.rdb, []string{key, key + attemptsKeySuffix}).Int()
+	if err != nil {
+		return 0, err
+	}
+	if attempts < 0 {
+		return 0, redis.Nil
+	}
+	return attempts, nil
+}
+
+func (c *emailCache) deleteCode(ctx context.Context, key string) error {
+	return c.rdb.Del(ctx, key, key+attemptsKeySuffix).Err()
+}
+
+func (c *emailCache) GetVerificationCode(ctx context.Context, email string) (*service.VerificationCodeData, error) {
+	return c.getCode(ctx, verifyCodeKey(email))
+}
+
+func (c *emailCache) SetVerificationCode(ctx context.Context, email string, data *service.VerificationCodeData, ttl time.Duration) error {
+	return c.setCode(ctx, verifyCodeKey(email), data, ttl)
+}
+
+func (c *emailCache) IncrVerificationCodeAttempts(ctx context.Context, email string) (int, error) {
+	return c.incrCodeAttempts(ctx, verifyCodeKey(email))
 }
 
 func (c *emailCache) DeleteVerificationCode(ctx context.Context, email string) error {
-	key := verifyCodeKey(email)
-	return c.rdb.Del(ctx, key).Err()
+	return c.deleteCode(ctx, verifyCodeKey(email))
 }
 
 // Password reset token methods
@@ -101,6 +174,16 @@ func (c *emailCache) SetPasswordResetToken(ctx context.Context, email string, da
 	return c.rdb.Set(ctx, key, val, ttl).Err()
 }
 
+// ConsumePasswordResetToken atomically deletes the stored reset token when its
+// stored value equals expectedTokenValue. Only the winning caller returns true.
+func (c *emailCache) ConsumePasswordResetToken(ctx context.Context, email, expectedTokenValue string) (bool, error) {
+	consumed, err := consumeResetTokenScript.Run(ctx, c.rdb, []string{passwordResetKey(email)}, expectedTokenValue).Int()
+	if err != nil {
+		return false, err
+	}
+	return consumed == 1, nil
+}
+
 func (c *emailCache) DeletePasswordResetToken(ctx context.Context, email string) error {
 	key := passwordResetKey(email)
 	return c.rdb.Del(ctx, key).Err()
@@ -122,30 +205,19 @@ func (c *emailCache) SetPasswordResetEmailCooldown(ctx context.Context, email st
 // Notify email verification code methods
 
 func (c *emailCache) GetNotifyVerifyCode(ctx context.Context, email string) (*service.VerificationCodeData, error) {
-	key := notifyVerifyKey(email)
-	val, err := c.rdb.Get(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-	var data service.VerificationCodeData
-	if err := json.Unmarshal([]byte(val), &data); err != nil {
-		return nil, err
-	}
-	return &data, nil
+	return c.getCode(ctx, notifyVerifyKey(email))
 }
 
 func (c *emailCache) SetNotifyVerifyCode(ctx context.Context, email string, data *service.VerificationCodeData, ttl time.Duration) error {
-	key := notifyVerifyKey(email)
-	val, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return c.rdb.Set(ctx, key, val, ttl).Err()
+	return c.setCode(ctx, notifyVerifyKey(email), data, ttl)
+}
+
+func (c *emailCache) IncrNotifyVerifyCodeAttempts(ctx context.Context, email string) (int, error) {
+	return c.incrCodeAttempts(ctx, notifyVerifyKey(email))
 }
 
 func (c *emailCache) DeleteNotifyVerifyCode(ctx context.Context, email string) error {
-	key := notifyVerifyKey(email)
-	return c.rdb.Del(ctx, key).Err()
+	return c.deleteCode(ctx, notifyVerifyKey(email))
 }
 
 // User-level rate limiting for notify email verification codes

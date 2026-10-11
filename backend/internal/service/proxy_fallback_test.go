@@ -10,12 +10,23 @@ import (
 )
 
 func mkProxy(id int64, mode string, backup *int64, expiresInDays *int, now time.Time) Proxy {
-	p := Proxy{ID: id, FallbackMode: mode, BackupProxyID: backup}
+	p := Proxy{ID: id, Status: StatusActive, FallbackMode: mode, BackupProxyID: backup}
 	if expiresInDays != nil {
 		t := now.AddDate(0, 0, *expiresInDays)
 		p.ExpiresAt = &t
 	}
 	return p
+}
+
+func TestResolveFallbackSkipsInactiveBackup(t *testing.T) {
+	now := time.Now()
+	source := mkProxy(1, FallbackModeProxy, i64(2), di(-1), now)
+	disabled := mkProxy(2, FallbackModeProxy, i64(3), di(30), now)
+	disabled.Status = "inactive"
+	healthy := mkProxy(3, FallbackModeNone, nil, di(30), now)
+	target, change := ResolveProxyFallbackTarget(source, map[int64]Proxy{1: source, 2: disabled, 3: healthy}, now)
+	require.True(t, change)
+	require.Equal(t, healthy.ID, *target)
 }
 func i64(v int64) *int64 { return &v }
 func di(v int) *int      { return &v }

@@ -3,14 +3,17 @@ package repository
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +68,40 @@ func redisDiscoveryTestConfig() *config.Config {
 	}}
 }
 
+func TestBuildRedisFailoverOptions(t *testing.T) {
+	cfg := redisDiscoveryTestConfig()
+	cfg.Redis.DiscoveryMode = config.RedisDiscoveryModeSentinel
+	cfg.Redis.MinIdleConns = 2
+	cfg.Redis.SentinelMasterName = "cache-primary"
+	cfg.Redis.SentinelAddrs = []string{"sentinel.example.net:26379", "[::1]:26380"}
+	cfg.Redis.SentinelUsername = "discovery-user"
+	cfg.Redis.SentinelPassword = "sentinel-secret"
+	base := buildRedisOptions(cfg)
+	opts := buildRedisFailoverOptions(cfg)
+	require.Equal(t, cfg.Redis.SentinelMasterName, opts.MasterName)
+	require.Equal(t, cfg.Redis.SentinelAddrs, opts.SentinelAddrs)
+	require.Equal(t, "discovery-user", opts.SentinelUsername)
+	require.Equal(t, "sentinel-secret", opts.SentinelPassword)
+	require.Equal(t, base.Username, opts.Username)
+	require.Equal(t, base.Password, opts.Password)
+	require.Equal(t, base.DB, opts.DB)
+	require.Equal(t, base.DialTimeout, opts.DialTimeout)
+	require.Equal(t, base.ReadTimeout, opts.ReadTimeout)
+	require.Equal(t, base.WriteTimeout, opts.WriteTimeout)
+	require.Equal(t, base.PoolSize, opts.PoolSize)
+	require.Equal(t, base.MinIdleConns, opts.MinIdleConns)
+	require.Nil(t, opts.TLSConfig)
+	opts.SentinelAddrs[0] = "changed.example.net:26379"
+	require.Equal(t, "sentinel.example.net:26379", cfg.Redis.SentinelAddrs[0])
+
+	cfg.Redis.EnableTLS = true
+	opts = buildRedisFailoverOptions(cfg)
+	require.Equal(t, uint16(tls.VersionTLS12), opts.TLSConfig.MinVersion)
+	require.Empty(t, opts.TLSConfig.ServerName, "TLS must verify each actual endpoint")
+	require.False(t, opts.TLSConfig.InsecureSkipVerify)
+	require.Equal(t, cfg.Redis.Host, buildRedisOptions(cfg).TLSConfig.ServerName)
+}
+
 func TestInitRedisDirectConnection(t *testing.T) {
 	for _, timing := range []bool{false, true} {
 		t.Run("timing="+strconv.FormatBool(timing), func(t *testing.T) {
@@ -96,5 +133,87 @@ func TestInitRedisDirectConnection(t *testing.T) {
 			require.Equal(t, 7, client.Options().PoolSize)
 			require.Equal(t, 0, client.Options().MinIdleConns)
 		})
+	}
+}
+
+func TestInitRedisSentinelConnection(t *testing.T) {
+	for _, timing := range []bool{false, true} {
+		t.Run("timing="+strconv.FormatBool(timing), func(t *testing.T) {
+			master := miniredis.RunT(t)
+			master.RequireUserAuth("data-user", "data-secret")
+			sentinel, _ := syntheticRedisSentinel(t, master.Addr(), nil)
+			sentinel.RequireUserAuth("discovery-user", "sentinel-secret")
+			cfg := redisDiscoveryTestConfig()
+			cfg.Redis.DiscoveryMode = config.RedisDiscoveryModeSentinel
+			cfg.Redis.Host = "unused-direct.example.invalid"
+			cfg.Redis.SentinelAddrs = []string{sentinel.Addr()}
+			cfg.Redis.SentinelMasterName = "cache-primary"
+			cfg.Redis.SentinelUsername = "discovery-user"
+			cfg.Redis.SentinelPassword = "sentinel-secret"
+			cfg.Server.EnableServerTiming = timing
+
+			client := InitRedis(cfg)
+			t.Cleanup(func() { _ = client.Close() })
+			require.NoError(t, client.Ping(context.Background()).Err())
+			collector := servertiming.New(time.Now())
+			ctx := servertiming.WithCollector(context.Background(), collector)
+			require.NoError(t, client.Set(ctx, "sentinel-key", "value", 0).Err())
+			_, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Get(ctx, "sentinel-key")
+				pipe.Exists(ctx, "sentinel-key")
+				return nil
+			})
+			require.NoError(t, err)
+			value, err := master.DB(2).Get("sentinel-key")
+			require.NoError(t, err)
+			require.Equal(t, "value", value)
+			header := collector.HeaderValue(time.Now(), "bypass")
+			require.Equal(t, timing, strings.Contains(header, "commands=3"), header)
+			require.Equal(t, 7, client.Options().PoolSize)
+			require.Equal(t, time.Second, client.Options().DialTimeout)
+			require.Equal(t, 2*time.Second, client.Options().ReadTimeout)
+			require.Equal(t, 3*time.Second, client.Options().WriteTimeout)
+		})
+	}
+}
+
+// This fixture supplies Sentinel discovery and switch notifications. It is a
+// unit-test double; the integration test exercises a real Redis role switch.
+func syntheticRedisSentinel(t *testing.T, initialMaster string, tlsConfig *tls.Config) (*miniredis.Miniredis, func(string) int) {
+	t.Helper()
+	sentinel := miniredis.NewMiniRedis()
+	if tlsConfig == nil {
+		require.NoError(t, sentinel.Start())
+	} else {
+		require.NoError(t, sentinel.StartTLS(tlsConfig))
+	}
+	t.Cleanup(sentinel.Close)
+	var master atomic.Value
+	master.Store(initialMaster)
+	require.NoError(t, sentinel.Server().Register("SENTINEL", func(peer *server.Peer, _ string, args []string) {
+		if len(args) != 2 || args[1] != "cache-primary" {
+			peer.WriteError("ERR unexpected Sentinel request")
+			return
+		}
+		switch strings.ToLower(args[0]) {
+		case "get-master-addr-by-name":
+			addr, ok := master.Load().(string)
+			require.True(t, ok)
+			host, port, _ := net.SplitHostPort(addr)
+			peer.WriteLen(2)
+			peer.WriteBulk(host)
+			peer.WriteBulk(port)
+		case "sentinels":
+			peer.WriteLen(0)
+		default:
+			peer.WriteError("ERR unsupported Sentinel command")
+		}
+	}))
+	return sentinel, func(addr string) int {
+		previous, ok := master.Swap(addr).(string)
+		require.True(t, ok)
+		oldHost, oldPort, _ := net.SplitHostPort(previous)
+		newHost, newPort, _ := net.SplitHostPort(addr)
+		return sentinel.Publish("+switch-master", strings.Join([]string{"cache-primary", oldHost, oldPort, newHost, newPort}, " "))
 	}
 }

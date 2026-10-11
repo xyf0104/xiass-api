@@ -119,6 +119,123 @@ describe('OpenAIQuotaResetCell read-only ownership', () => {
   })
 })
 
+describe('OpenAIQuotaResetCell reauthorization evidence', () => {
+  it('emits a successful query clear even when this cell did not report the original 401', async () => {
+    vi.mocked(refreshOpenAIQuota).mockResolvedValueOnce({
+      rate_limit_reset_credits: { available_count: 0, credits: [] },
+      fetched_at: 1770000000,
+      cache_persisted: true
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account: makeAccount({}) } })
+
+    await wrapper.findAll('button')[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('reauth-status')).toEqual([[
+      { accountId: 1, needsReauth: false }
+    ]])
+    wrapper.unmount()
+  })
+
+  it('reports an explicit upstream quota 401 and clears it after a successful current query', async () => {
+    vi.mocked(refreshOpenAIQuota)
+      .mockRejectedValueOnce({
+        status: 401,
+        reason: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+        needs_reauth: true,
+        error_code: 'unauthenticated',
+        message: 'upstream returned 401'
+      })
+      .mockResolvedValueOnce({
+        rate_limit_reset_credits: { available_count: 0, credits: [] },
+        fetched_at: 1770000000,
+        cache_persisted: true
+      })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account: makeAccount({}) } })
+
+    await wrapper.findAll('button')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([[
+      { accountId: 1, needsReauth: true }
+    ]])
+
+    await wrapper.findAll('button')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 1, needsReauth: true }],
+      [{ accountId: 1, needsReauth: false }]
+    ])
+    wrapper.unmount()
+  })
+
+  it('does not infer account revocation from a generic administrator-session 401', async () => {
+    vi.mocked(refreshOpenAIQuota).mockRejectedValueOnce({
+      status: 401,
+      reason: 'TOKEN_REFRESH_FAILED',
+      message: 'administrator session expired'
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account: makeAccount({}) } })
+
+    await wrapper.findAll('button')[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('reauth-status')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('OpenAI reauthorization markers clear live evidence and supersede a late quota failure', async () => {
+    let rejectLateQuery!: (reason: unknown) => void
+    vi.mocked(refreshOpenAIQuota)
+      .mockRejectedValueOnce({
+        status: 401,
+        reason: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+        message: 'upstream returned 401'
+      })
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectLateQuery = reject }))
+    const wrapper = mount(OpenAIQuotaResetCell, {
+      props: {
+        account: makeAccount({
+          credentials: { expires_at: 1_800_000_000 },
+          extra: {
+            xiass_openai_reauthorization_state: {
+              last_succeeded_at: '2026-09-30T10:00:00Z',
+              success_count: 1
+            }
+          }
+        })
+      }
+    })
+
+    await wrapper.findAll('button')[0].trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button')[0].trigger('click')
+    await wrapper.setProps({
+      account: makeAccount({
+        credentials: { expires_at: 1_900_000_000 },
+        extra: {
+          xiass_openai_reauthorization_state: {
+            last_succeeded_at: '2026-10-01T10:00:00Z',
+            success_count: 2
+          }
+        }
+      })
+    })
+    await flushPromises()
+    rejectLateQuery({
+      status: 401,
+      reason: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+      message: 'late upstream 401'
+    })
+    await flushPromises()
+
+    expect(wrapper.emitted('reauth-status')).toEqual([
+      [{ accountId: 1, needsReauth: true }],
+      [{ accountId: 1, needsReauth: false }]
+    ])
+    wrapper.unmount()
+  })
+})
+
 describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
   it('影子账号(parent_account_id 非空)的 reset 按钮被禁用且提示在母账号重置', () => {
     const account = makeAccount({ parent_account_id: 100 })

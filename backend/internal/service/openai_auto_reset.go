@@ -528,7 +528,7 @@ func (s *OpenAIAutoResetService) reset(ctx context.Context, id int64, automatic 
 		_ = s.ledger.MarkFailedRetryable(cleanup, record.ID, "RESET_CONFIRMED", time.Now().Add(time.Minute), forever)
 		return result, nil
 	}
-	usage, err := s.quota.QueryUsage(ctx, id)
+	usage, err := queryOpenAIQuotaForMutation(ctx, s.quota, id)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +576,7 @@ func (s *OpenAIAutoResetService) reset(ctx context.Context, id int64, automatic 
 	if _, err := s.recoverer.RecoverAccountState(callCtx, id, AccountRecoveryOptions{InvalidateToken: true, ForceCleanup: true}); err != nil {
 		return nil, ErrOpenAIResetPending
 	}
-	post, err := s.quota.QueryUsage(callCtx, id)
+	post, err := queryOpenAIQuotaForMutation(callCtx, s.quota, id)
 	if err != nil || post == nil || post.requestIdentity == nil ||
 		!sameOpenAIResetCredentials(expected, post.requestIdentity.credential) ||
 		!post.requestIdentity.observedAt.After(usage.requestIdentity.observedAt) {
@@ -623,7 +623,7 @@ func (s *OpenAIAutoResetService) reconcilePending(ctx context.Context, id int64)
 		return nil, ErrOpenAIResetPending
 	}
 
-	usage, err := s.quota.QueryUsage(ctx, id)
+	usage, err := queryOpenAIQuotaForMutation(ctx, s.quota, id)
 	if err != nil {
 		return nil, err
 	}

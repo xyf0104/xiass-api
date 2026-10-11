@@ -19,6 +19,15 @@ type usageBillingRecoveryRepo struct {
 	apply func(context.Context, *UsageBillingCommand) (*UsageBillingApplyResult, error)
 }
 
+type usageBillingAtomicRecoveryRepo struct {
+	usageBillingRecoveryRepo
+	applyWithUsageLog func(context.Context, *UsageBillingCommand, *UsageLog) (*UsageBillingApplyResult, error)
+}
+
+func (r usageBillingAtomicRecoveryRepo) ApplyWithUsageLog(ctx context.Context, cmd *UsageBillingCommand, log *UsageLog) (*UsageBillingApplyResult, error) {
+	return r.applyWithUsageLog(ctx, cmd, log)
+}
+
 func (r usageBillingRecoveryRepo) Apply(ctx context.Context, cmd *UsageBillingCommand) (*UsageBillingApplyResult, error) {
 	return r.apply(ctx, cmd)
 }
@@ -45,6 +54,60 @@ func TestUsageBillingRecoveryRetriesSameIdempotencyCommand(t *testing.T) {
 		require.Equal(t, 2, attempts)
 		require.Equal(t, applied, result.Applied, "an already-committed retry must not be reported as a new charge")
 	}
+}
+
+func TestUsageBillingRecoveryRetriesAtomicUsageLogAfterLostCommitAck(t *testing.T) {
+	cmd := &UsageBillingCommand{RequestID: "local:lost-commit", APIKeyID: 9, BalanceCost: 0.178}
+	cmd.Normalize()
+	usageLog := &UsageLog{RequestID: cmd.RequestID, APIKeyID: cmd.APIKeyID, ActualCost: cmd.BalanceCost}
+	calls := 0
+	repo := usageBillingAtomicRecoveryRepo{
+		usageBillingRecoveryRepo: usageBillingRecoveryRepo{apply: func(context.Context, *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+			t.Fatal("atomic repository must not fall back to Apply")
+			return nil, nil
+		}},
+		applyWithUsageLog: func(_ context.Context, receivedCmd *UsageBillingCommand, receivedLog *UsageLog) (*UsageBillingApplyResult, error) {
+			calls++
+			require.Same(t, cmd, receivedCmd)
+			require.Same(t, usageLog, receivedLog)
+			if calls == 1 {
+				return nil, io.EOF
+			}
+			return &UsageBillingApplyResult{Applied: false}, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, attempts, err := retryUsageBillingWithUsageLog(ctx, repo, cmd, usageLog)
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	require.Equal(t, 2, calls)
+	require.False(t, result.Applied)
+}
+
+func TestWriteUsageLogBestEffort_SkipsAlreadyPersistedLog(t *testing.T) {
+	repo := &openAIRecordUsageLogRepoStub{}
+	writeUsageLogBestEffort(context.Background(), repo, &UsageLog{ID: 101}, "test")
+	require.Zero(t, repo.calls)
+}
+
+func TestWriteUsageLogAfterBillingError_DoesNotCreateZeroCostConflict(t *testing.T) {
+	for _, billingErr := range []error{ErrUsageBillingRequestConflict, ErrUsageBillingUsageLogMissing, ErrUsageBillingUsageLogConflict} {
+		repo := &openAIRecordUsageLogRepoStub{}
+		usageLog := &UsageLog{ActualCost: 1.25}
+		writeUsageLogAfterBillingError(context.Background(), repo, usageLog, "test", billingErr)
+		require.Zero(t, repo.calls)
+		require.Equal(t, 1.25, usageLog.ActualCost)
+	}
+}
+
+func TestWriteUsageLogAfterBillingError_PreservesLegacyZeroCostErrorLog(t *testing.T) {
+	repo := &openAIRecordUsageLogRepoStub{inserted: true}
+	usageLog := &UsageLog{ActualCost: 1.25}
+	writeUsageLogAfterBillingError(context.Background(), repo, usageLog, "test", errors.New("billing failed before commit"))
+	require.Equal(t, 1, repo.calls)
+	require.Zero(t, usageLog.ActualCost)
 }
 
 func TestUsageBillingRecoveryDoesNotReplayPermanentFailure(t *testing.T) {

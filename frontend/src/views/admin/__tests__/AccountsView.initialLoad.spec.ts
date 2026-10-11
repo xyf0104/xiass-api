@@ -248,11 +248,17 @@ describe('admin AccountsView initial data synchronization', () => {
     wrapper.unmount()
   })
 
-  it('shows the workbench 401 reminder when the OAuth account is temporarily blocked for oauth_401', async () => {
+  it.each([
+    'oauth_401',
+    'oauth_401: OpenAI usage authentication failed (401)',
+    'OAuth 401: access token rejected',
+    'Authentication failed (401): access token rejected',
+    '  OAUTH 401: access token rejected  '
+  ])('shows the workbench 401 reminder for known OAuth reason %s', async (reason) => {
     listAccounts.mockResolvedValueOnce(paginated({
       ...completeAccount,
       temp_unschedulable_until: '2026-10-01T10:00:00Z',
-      temp_unschedulable_reason: 'oauth_401'
+      temp_unschedulable_reason: reason
     }))
 
     const wrapper = mountView()
@@ -260,6 +266,21 @@ describe('admin AccountsView initial data synchronization', () => {
 
     expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).toContain('1')
     expect(wrapper.get('[data-testid="openai-401-reminder"]').text()).toContain('1')
+    wrapper.unmount()
+  })
+
+  it('does not treat an unrelated temporary failure containing 401 as OAuth revocation', async () => {
+    listAccounts.mockResolvedValueOnce(paginated({
+      ...completeAccount,
+      temp_unschedulable_until: '2026-10-01T10:00:00Z',
+      temp_unschedulable_reason: 'Proxy authentication failed (401)'
+    }))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="batch-openai-oauth"]').text()).not.toContain('1')
+    expect(wrapper.find('[data-testid="openai-401-reminder"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

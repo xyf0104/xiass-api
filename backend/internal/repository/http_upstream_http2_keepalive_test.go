@@ -34,14 +34,21 @@ func requireHTTP2EagerlyConfigured(t *testing.T, tr *http.Transport, message str
 func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
-	h2, err := enableHTTP2KeepAlive(tr)
+	h2, err := enableHTTP2KeepAlive(tr, upstreamProtocolModeOpenAIH2)
 	require.NoError(t, err)
 	require.NotNil(t, h2, "必须返回已配置的 *http2.Transport")
 
 	require.Positive(t, h2.ReadIdleTimeout, "必须启用空闲 PING 探测以剔除死连接")
-	require.Equal(t, longStreamHTTP2ReadIdleTimeout, h2.ReadIdleTimeout)
-	require.Equal(t, longStreamHTTP2PingTimeout, h2.PingTimeout, "PING 无响应必须有超时判定")
+	require.Equal(t, openAIHTTP2ReadIdleTimeout, h2.ReadIdleTimeout)
+	require.Equal(t, openAIHTTP2PingTimeout, h2.PingTimeout, "PING 无响应必须有超时判定")
 	requireHTTP2EagerlyConfigured(t, tr, "http2 必须已挂到底层 http.Transport 上")
+}
+
+func TestEnableHTTP2KeepAlive_PreservesOtherProtocolTimeouts(t *testing.T) {
+	h2, err := enableHTTP2KeepAlive(&http.Transport{}, upstreamProtocolModeDefault)
+	require.NoError(t, err)
+	require.Equal(t, longStreamHTTP2ReadIdleTimeout, h2.ReadIdleTimeout)
+	require.Equal(t, longStreamHTTP2PingTimeout, h2.PingTimeout)
 }
 
 // openai_h2 模式构建的 Transport 必须带上 H2 PING 健康探测，从源头剔除死连接。

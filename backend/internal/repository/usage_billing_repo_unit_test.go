@@ -5,7 +5,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"io"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
@@ -13,6 +15,325 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+func atomicUsageBillingFixture() (*service.UsageBillingCommand, *service.UsageLog) {
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	cmd := &service.UsageBillingCommand{
+		RequestID:    "local:atomic-billing",
+		APIKeyID:     9,
+		UserID:       42,
+		AccountID:    77,
+		Model:        "gpt-5.6-luna",
+		BillingType:  service.BillingTypeBalance,
+		InputTokens:  120,
+		OutputTokens: 30,
+		BalanceCost:  1.25,
+	}
+	cmd.Normalize()
+	log := &service.UsageLog{
+		UserID:       cmd.UserID,
+		APIKeyID:     cmd.APIKeyID,
+		AccountID:    cmd.AccountID,
+		RequestID:    cmd.RequestID,
+		Model:        cmd.Model,
+		InputTokens:  cmd.InputTokens,
+		OutputTokens: cmd.OutputTokens,
+		TotalCost:    1.0,
+		ActualCost:   cmd.BalanceCost,
+		BillingType:  cmd.BillingType,
+		CreatedAt:    createdAt,
+	}
+	return cmd, log
+}
+
+func expectNewUsageBillingClaim(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery("INSERT INTO usage_billing_dedup").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("SELECT request_fingerprint\\s+FROM usage_billing_dedup_archive").
+		WillReturnError(sql.ErrNoRows)
+}
+
+func expectExistingUsageBillingClaim(mock sqlmock.Sqlmock, fingerprint string) {
+	mock.ExpectQuery("INSERT INTO usage_billing_dedup").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT request_fingerprint\\s+FROM usage_billing_dedup").
+		WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(fingerprint))
+}
+
+func TestUsageBillingApplyWithUsageLog_CommitsEffectsAndLogTogether(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectNewUsageBillingClaim(mock)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(cmd.BalanceCost, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery("INSERT INTO usage_logs").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, log.CreatedAt))
+	mock.ExpectCommit()
+
+	result, err := (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, int64(101), log.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingApplyWithUsageLog_LogConflictRollsBackBilling(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectNewUsageBillingClaim(mock)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(cmd.BalanceCost, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery("INSERT INTO usage_logs").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT id, created_at FROM usage_logs WHERE request_id").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(88, log.CreatedAt.Add(-time.Minute)))
+	mock.ExpectRollback()
+
+	_, err = (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.ErrorIs(t, err, service.ErrUsageBillingUsageLogConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingApplyWithUsageLog_LostCommitRetryVerifiesExactLog(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	durationMs := 987
+	firstTokenMs := 321
+	userAgent := "retry-agent"
+	ipAddress := "127.0.0.2"
+	log.DurationMs = &durationMs
+	log.FirstTokenMs = &firstTokenMs
+	log.UserAgent = &userAgent
+	log.IPAddress = &ipAddress
+	log.CreatedAt = log.CreatedAt.Add(5 * time.Second)
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectExistingUsageBillingClaim(mock, cmd.RequestFingerprint)
+	mock.ExpectQuery("SELECT id, created_at FROM usage_logs WHERE user_id IS NOT DISTINCT FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, log.CreatedAt))
+	mock.ExpectCommit()
+
+	result, err := (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	require.Equal(t, int64(101), log.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingLogMatchColumns_ExcludeRetryMetadata(t *testing.T) {
+	for _, column := range []string{"actual_cost", "total_cost", "billing_type", "input_tokens", "image_output_cost", "video_duration_seconds"} {
+		_, ok := usageBillingLogMatchColumns[column]
+		require.True(t, ok, "billing field %s must be verified", column)
+	}
+	for _, column := range []string{"created_at", "duration_ms", "first_token_ms", "user_agent", "ip_address", "upstream_request_id", "session_id"} {
+		_, ok := usageBillingLogMatchColumns[column]
+		require.False(t, ok, "retry metadata %s must not cause a billing conflict", column)
+	}
+}
+
+func TestUsageBillingApplyWithUsageLog_OldZeroCostLogConflicts(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectExistingUsageBillingClaim(mock, cmd.RequestFingerprint)
+	mock.ExpectQuery("SELECT id, created_at FROM usage_logs WHERE user_id IS NOT DISTINCT FROM").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT id FROM usage_logs WHERE request_id").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(88))
+	mock.ExpectRollback()
+
+	_, err = (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.ErrorIs(t, err, service.ErrUsageBillingUsageLogConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingApplyWithUsageLog_AppliedKeyWithoutLogFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectExistingUsageBillingClaim(mock, cmd.RequestFingerprint)
+	mock.ExpectQuery("SELECT id, created_at FROM usage_logs WHERE user_id IS NOT DISTINCT FROM").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT id FROM usage_logs WHERE request_id").WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.ErrorIs(t, err, service.ErrUsageBillingUsageLogMissing)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingApplyWithUsageLog_LostCommitAckRetryFindsCommittedLog(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectNewUsageBillingClaim(mock)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(cmd.BalanceCost, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery("INSERT INTO usage_logs").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, log.CreatedAt))
+	mock.ExpectCommit().WillReturnError(io.ErrUnexpectedEOF)
+
+	_, err = (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Zero(t, log.ID, "an unconfirmed commit must not publish the transactional log ID")
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectExistingUsageBillingClaim(mock, cmd.RequestFingerprint)
+	mock.ExpectQuery("SELECT id, created_at FROM usage_logs WHERE user_id IS NOT DISTINCT FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, log.CreatedAt))
+	mock.ExpectCommit()
+
+	result, err := (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	require.Equal(t, int64(101), log.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingApplyWithUsageLog_RolledBackCommitRetryReapplies(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	cmd, log := atomicUsageBillingFixture()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectNewUsageBillingClaim(mock)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(cmd.BalanceCost, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery("INSERT INTO usage_logs").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, log.CreatedAt))
+	mock.ExpectCommit().WillReturnError(io.ErrUnexpectedEOF)
+
+	_, err = (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Zero(t, log.ID)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	expectNewUsageBillingClaim(mock)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(cmd.BalanceCost, cmd.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery("INSERT INTO usage_logs").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(202, log.CreatedAt))
+	mock.ExpectCommit()
+
+	result, err := (&usageBillingRepository{db: db}).ApplyWithUsageLog(ctx, cmd, log)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, int64(202), log.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateUsageBillingUsageLog_AllowsNumeric10PricingAgainstQuantized8Billing(t *testing.T) {
+	subscriptionID := int64(11)
+	accountMultiplier := 1.5
+	tests := []struct {
+		name string
+		cmd  service.UsageBillingCommand
+		log  service.UsageLog
+	}{
+		{
+			name: "fine grained balance charge",
+			cmd: service.UsageBillingCommand{
+				RequestID: "local:fine", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "gpt-5.6-luna", BalanceCost: 0.000078125,
+			},
+			log: service.UsageLog{
+				RequestID: "local:fine", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "gpt-5.6-luna", ActualCost: 0.000078125,
+			},
+		},
+		{
+			name: "custom discounted price",
+			cmd: service.UsageBillingCommand{
+				RequestID: "local:discount", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "claude-sonnet-4-5", BalanceCost: 0.12345678905,
+			},
+			log: service.UsageLog{
+				RequestID: "local:discount", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "claude-sonnet-4-5", TotalCost: 0.2469135781, ActualCost: 0.12345678905,
+			},
+		},
+		{
+			name: "zero multiplier subscription",
+			cmd: service.UsageBillingCommand{
+				RequestID: "local:free-sub", APIKeyID: 9, UserID: 42, AccountID: 77,
+				SubscriptionID: &subscriptionID, Model: "claude-sonnet-4-5", BillingType: service.BillingTypeSubscription,
+			},
+			log: service.UsageLog{
+				RequestID: "local:free-sub", APIKeyID: 9, UserID: 42, AccountID: 77,
+				SubscriptionID: &subscriptionID, Model: "claude-sonnet-4-5", BillingType: service.BillingTypeSubscription,
+				TotalCost: 1.2345678901, ActualCost: 0, RateMultiplier: 0,
+			},
+		},
+		{
+			name: "image pricing",
+			cmd: service.UsageBillingCommand{
+				RequestID: "local:image", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "gpt-image-1", ImageCount: 2, BalanceCost: 0.30150000004, AccountQuotaCost: 0.30150000005,
+			},
+			log: service.UsageLog{
+				RequestID: "local:image", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "gpt-image-1", ImageCount: 2, TotalCost: 0.20100000003, ActualCost: 0.30150000004,
+				AccountRateMultiplier: &accountMultiplier,
+			},
+		},
+		{
+			name: "video pricing",
+			cmd: service.UsageBillingCommand{
+				RequestID: "local:video", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "grok-imagine-video", BalanceCost: 0.80400000004, AccountQuotaCost: 0.80400000005,
+			},
+			log: service.UsageLog{
+				RequestID: "local:video", APIKeyID: 9, UserID: 42, AccountID: 77,
+				Model: "grok-imagine-video", VideoCount: 1, TotalCost: 0.53600000003, ActualCost: 0.80400000004,
+				AccountRateMultiplier: &accountMultiplier,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.cmd.Normalize()
+			require.NoError(t, validateUsageBillingUsageLog(&tc.cmd, &tc.log))
+		})
+	}
+}
 
 func TestUsageBillingApply_RecoveryClassificationIsScopedToBegin(t *testing.T) {
 	for _, tc := range []struct {
@@ -32,6 +353,7 @@ func TestUsageBillingApply_RecoveryClassificationIsScopedToBegin(t *testing.T) {
 				mock.ExpectBegin().WillReturnError(failure)
 			} else {
 				mock.ExpectBegin()
+				mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectQuery("INSERT INTO usage_billing_dedup").WillReturnError(failure)
 				mock.ExpectRollback()
 			}

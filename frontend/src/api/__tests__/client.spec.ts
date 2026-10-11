@@ -327,6 +327,35 @@ describe('API Client', () => {
       return stored
     }
 
+    it('keeps the admin session intact for an explicit OpenAI quota upstream 401', async () => {
+      const stored = seedExpiredSession()
+      const path = '/admin/openai/accounts/436/quota/refresh'
+      apiClient.defaults.adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 401,
+          data: {
+            code: 401,
+            reason: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+            message: 'upstream returned 401'
+          }
+        },
+        config: { url: path, headers: { Authorization: 'Bearer expired-token' } },
+        message: 'Request failed with status code 401'
+      })
+      const refresh = vi.spyOn(axios, 'post')
+
+      await expect(apiClient.post(path)).rejects.toMatchObject({
+        status: 401,
+        reason: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+        needs_reauth: true,
+        error_code: 'unauthenticated'
+      })
+
+      expect(refresh).not.toHaveBeenCalled()
+      Object.entries(stored).forEach(([key, value]) => expect(localStorage.getItem(key)).toBe(value))
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+    })
+
     it.each([
       ['503', { response: { status: 503, data: { code: 503, reason: 'SERVICE_UNAVAILABLE' } } }],
       ['502 HTML', { response: { status: 502, data: '<html>Bad Gateway</html>' } }],

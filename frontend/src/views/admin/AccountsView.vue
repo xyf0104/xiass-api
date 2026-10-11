@@ -1230,11 +1230,15 @@ const accountNeedsOpenAIReauthorization = (account: Account) => {
     typeof extra?.error_code === 'string' ? extra.error_code : ''
   ].join(' ')
   const tempUnschedulableReason = account.temp_unschedulable_reason || ''
+  const normalizedTempReason = tempUnschedulableReason.trim().toLowerCase()
+  const hasKnownOAuth401Reason = normalizedTempReason === 'oauth_401'
+    || normalizedTempReason.startsWith('oauth_401:')
+    || normalizedTempReason.startsWith('oauth 401:')
+    || normalizedTempReason.startsWith('authentication failed (401)')
   return usageReauthAccountIDs.value.has(account.id)
     || extra?.needs_reauth === true
     || extra?.error_code === 'unauthenticated'
-    || tempUnschedulableReason === 'oauth_401'
-    || tempUnschedulableReason.startsWith('oauth_401:')
+    || hasKnownOAuth401Reason
     || /\b401\b|unauthori[sz]ed|token\s*(?:expired|invalid|失效|过期)/i.test(errorText)
 }
 

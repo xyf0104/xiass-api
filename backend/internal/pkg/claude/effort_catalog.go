@@ -47,6 +47,9 @@ func normalizeEffortModelID(model string) string {
 	}
 	id = strings.TrimPrefix(id, "anthropic.")
 	id = strings.TrimSuffix(id, "-thinking")
+	if id == "claude-opus-5.5" {
+		id = "claude-opus-5-5"
+	}
 	if mapped, ok := ModelIDReverseOverrides[id]; ok {
 		id = mapped
 	}

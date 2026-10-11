@@ -66,3 +66,32 @@ func TestClientRequestIDPreservesExistingContextID(t *testing.T) {
 	require.Equal(t, "existing-client-request-id", w.Body.String())
 	require.Equal(t, "existing-client-request-id", w.Header().Get(clientRequestIDHeader))
 }
+
+func TestClientRequestIDDoesNotTrustRepeatedExternalHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ClientRequestID())
+	router.POST("/", func(c *gin.Context) {
+		value, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		c.String(http.StatusOK, value)
+	})
+
+	const externalID = "same-customer-provided-id"
+	seen := make(map[string]struct{})
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"model":"synthetic"}`))
+		req.Header.Set(clientRequestIDHeader, externalID)
+		req.Header.Set("X-Request-ID", externalID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		id := w.Body.String()
+		require.NotEmpty(t, id)
+		require.NotEqual(t, externalID, id)
+		require.Equal(t, id, w.Header().Get(clientRequestIDHeader))
+		_, duplicate := seen[id]
+		require.False(t, duplicate, "independent executions must not share a billing identity")
+		seen[id] = struct{}{}
+	}
+}

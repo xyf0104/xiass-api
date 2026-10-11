@@ -2759,6 +2759,15 @@ func (s *oauthPendingFlowEmailCacheStub) DeleteVerificationCode(_ context.Contex
 	return nil
 }
 
+func (s *oauthPendingFlowEmailCacheStub) IncrVerificationCodeAttempts(_ context.Context, email string) (int, error) {
+	data := s.verificationCodes[email]
+	if data == nil {
+		return 0, errors.New("verification code not found")
+	}
+	data.Attempts++
+	return data.Attempts, nil
+}
+
 func (s *oauthPendingFlowEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -2771,6 +2780,10 @@ func (s *oauthPendingFlowEmailCacheStub) DeleteNotifyVerifyCode(context.Context,
 	return nil
 }
 
+func (s *oauthPendingFlowEmailCacheStub) IncrNotifyVerifyCodeAttempts(context.Context, string) (int, error) {
+	return 0, errors.New("notify verification code not found")
+}
+
 func (s *oauthPendingFlowEmailCacheStub) GetPasswordResetToken(context.Context, string) (*service.PasswordResetTokenData, error) {
 	return nil, nil
 }
@@ -2781,6 +2794,10 @@ func (s *oauthPendingFlowEmailCacheStub) SetPasswordResetToken(context.Context, 
 
 func (s *oauthPendingFlowEmailCacheStub) DeletePasswordResetToken(context.Context, string) error {
 	return nil
+}
+
+func (s *oauthPendingFlowEmailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 
 func (s *oauthPendingFlowEmailCacheStub) IsPasswordResetEmailInCooldown(context.Context, string) bool {

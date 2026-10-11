@@ -245,6 +245,11 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use http or https")
 	}
 	parsed.Fragment = ""
+	// Client query parameters are not part of the XIASS return URL contract.
+	// buildPaymentReturnURL adds the signed order fields after canonicalization;
+	// retaining user-controlled pairs here would allow parameter smuggling in
+	// EasyPay-style signatures, whose values are concatenated without escaping.
+	parsed.RawQuery = ""
 	if parsed.Path == "" {
 		parsed.Path = "/"
 	}

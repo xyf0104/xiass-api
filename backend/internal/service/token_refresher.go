@@ -123,7 +123,7 @@ func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time
 
 func isOAuthRefreshRecoveryReason(reason string) bool {
 	reason = strings.ToLower(strings.TrimSpace(reason))
-	return strings.HasPrefix(reason, "oauth 401") ||
+	return IsOpenAIOAuthUnauthorizedReason(reason) || strings.HasPrefix(reason, "oauth 401") ||
 		strings.HasPrefix(reason, "authentication failed (401)") ||
 		strings.HasPrefix(reason, "token refresh retry exhausted")
 }

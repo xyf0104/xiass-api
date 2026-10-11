@@ -2016,18 +2016,28 @@ async function fillProfile(current) {
 }
 
 async function chooseDefaultWorkspace(current) {
-  await sleep(10000)
-  await waitForOAuthPage('OpenAI 未进入默认工作空间页面', async () => {
+  const workspaceActionPatterns = [/continue|next|verify|allow|authorize|继续|下一步/i]
+  const ready = await waitForOAuthPage('OpenAI 未进入可继续的默认工作空间页面', async () => {
+    if (/localhost:1455\/auth\/callback/.test(current.url())) return { callback: true }
     const body = await oauthBody(current)
-    return /workspace|工作空间|空间/i.test(body)
-      || /localhost:1455\/auth\/callback/.test(current.url())
+    if (!isReauthorizationWorkspacePage(body)) return null
+    const action = await firstVisibleRole(current, 'button', workspaceActionPatterns)
+      || await firstVisibleRole(current, 'link', workspaceActionPatterns)
+    return action ? { callback: false } : null
   })
-  if (/localhost:1455\/auth\/callback/.test(current.url())) return
+  if (ready.callback) return
 
   const defaultChoice = await firstVisibleRole(current, 'radio', [/default|workspace|默认|工作空间/i])
     || await firstVisibleRole(current, 'button', [/default workspace|默认工作空间/i])
   if (defaultChoice) await defaultChoice.click().catch(() => undefined)
-  await clickOAuthContinue(current)
+
+  const continuation = await waitForOAuthPage('OpenAI 工作空间页面中找不到继续授权按钮', async () => {
+    if (/localhost:1455\/auth\/callback/.test(current.url())) return { callback: true }
+    const action = await firstVisibleRole(current, 'button', workspaceActionPatterns)
+      || await firstVisibleRole(current, 'link', workspaceActionPatterns)
+    return action ? { callback: false, action } : null
+  })
+  if (!continuation.callback) await continuation.action.click()
 }
 
 function callbackURLFromNavigationEntries(entries, expectedState) {
@@ -2645,7 +2655,7 @@ const workflowNodeDefinitions = [
   ['sms_code', '自动填入短信验证码'],
   ['profile_wait', '等待资料页 5 秒'],
   ['profile', '填写 black / 26'],
-  ['workspace_wait', '等待工作空间 10 秒'],
+  ['workspace_wait', '等待工作空间页面'],
   ['workspace', '默认工作空间继续'],
   ['callback', '捕获 OAuth 回调'],
   ['import', '按勾选配置导入 XIASS']
@@ -3529,6 +3539,7 @@ export {
   activateBrowserPage,
   callbackURLFromNavigationEntries,
   cancelWorkflowState,
+  chooseDefaultWorkspace,
   confirmOfficialMemberRemoval,
   completeReauthorizationOnlyNodes,
   completeWorkflowNode,

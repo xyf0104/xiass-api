@@ -5126,6 +5126,7 @@ const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ["id"],
 };
 const CAPACITY_REFRESH_INTERVAL_MS = 5_000;
+const GROUP_USAGE_REFRESH_INTERVAL_MS = 10_000;
 
 const openActiveConcurrencyAccounts = (groupID: number) => {
   void openUserAccountRuntime(groupID);
@@ -6812,28 +6813,40 @@ const getQuotaUsageClass = (
   return "font-medium text-gray-700 dark:text-gray-300";
 };
 
-const loadUsageSummary = async () => {
+let groupUsageRefreshPromise: Promise<void> | null = null;
+
+const loadUsageSummary = (): Promise<void> => {
   if (authStore.isSimpleMode || !hasVisibleUsageSummaryConsumer.value) {
     usageLoading.value = false;
-    return;
+    return Promise.resolve();
   }
-  usageLoading.value = true;
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const data = await adminAPI.groups.getUsageSummary(tz);
-    const map = new Map<number, GroupUsageSummary>();
-    for (const item of data) {
-      map.set(item.group_id, {
-        today_cost: item.today_cost,
-        total_cost: item.total_cost,
-      });
+  if (groupUsageRefreshPromise !== null) {
+    return groupUsageRefreshPromise;
+  }
+
+  groupUsageRefreshPromise = (async () => {
+    usageLoading.value = true;
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const data = await adminAPI.groups.getUsageSummary(tz);
+      const map = new Map<number, GroupUsageSummary>();
+      for (const item of data) {
+        map.set(item.group_id, {
+          today_cost: item.today_cost,
+          total_cost: item.total_cost,
+        });
+      }
+      usageMap.value = map;
+    } catch (error) {
+      console.error("Error loading group usage summary:", error);
+    } finally {
+      usageLoading.value = false;
     }
-    usageMap.value = map;
-  } catch (error) {
-    console.error("Error loading group usage summary:", error);
-  } finally {
-    usageLoading.value = false;
-  }
+  })();
+  void groupUsageRefreshPromise.finally(() => {
+    groupUsageRefreshPromise = null;
+  });
+  return groupUsageRefreshPromise;
 };
 
 let capacityRefreshPromise: Promise<void> | null = null;
@@ -6911,6 +6924,34 @@ const stopCapacityRefresh = () => {
   if (capacityRefreshTimer === null) return;
   clearInterval(capacityRefreshTimer);
   capacityRefreshTimer = null;
+};
+
+let groupUsageRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+const startGroupUsageRefresh = () => {
+  if (groupUsageRefreshTimer !== null) return;
+  groupUsageRefreshTimer = setInterval(() => {
+    if (
+      document.visibilityState === "visible" &&
+      hasVisibleUsageSummaryConsumer.value
+    ) {
+      void loadUsageSummary();
+    }
+  }, GROUP_USAGE_REFRESH_INTERVAL_MS);
+};
+
+const stopGroupUsageRefresh = () => {
+  if (groupUsageRefreshTimer === null) return;
+  clearInterval(groupUsageRefreshTimer);
+  groupUsageRefreshTimer = null;
+};
+
+const handleGroupPageVisibilityChange = () => {
+  if (document.visibilityState !== "visible") return;
+  void loadUsageSummary();
+  if (hasVisibleCapacityColumn.value) {
+    void loadCapacitySummary();
+  }
 };
 
 let searchTimeout: ReturnType<typeof setTimeout>;
@@ -8067,15 +8108,19 @@ onMounted(() => {
   }
   if (!authStore.isSimpleMode) {
     startCapacityRefresh();
+    startGroupUsageRefresh();
   }
   document.addEventListener("click", handleClickOutside);
+  document.addEventListener("visibilitychange", handleGroupPageVisibilityChange);
 });
 
 onUnmounted(() => {
   clearRuntimeUserSearch();
   stopRuntimeConcurrencyRefresh();
   stopCapacityRefresh();
+  stopGroupUsageRefresh();
   document.removeEventListener("click", handleClickOutside);
+  document.removeEventListener("visibilitychange", handleGroupPageVisibilityChange);
   accountSearchRunner.clearAll();
   clearAllAccountSearchState();
 });

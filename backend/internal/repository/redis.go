@@ -21,7 +21,12 @@ import (
 // 2. MinIdleConns: 保持最小空闲连接，减少冷启动延迟（默认 10）
 // 3. DialTimeout/ReadTimeout/WriteTimeout: 精确控制各阶段超时
 func InitRedis(cfg *config.Config) *redis.Client {
-	client := redis.NewClient(buildRedisOptions(cfg))
+	var client *redis.Client
+	if cfg.Redis.UsesSentinel() {
+		client = redis.NewFailoverClient(buildRedisFailoverOptions(cfg))
+	} else {
+		client = redis.NewClient(buildRedisOptions(cfg))
+	}
 	if cfg.Server.EnableServerTiming {
 		client.AddHook(serverTimingRedisHook{})
 	}
@@ -51,4 +56,30 @@ func buildRedisOptions(cfg *config.Config) *redis.Options {
 	}
 
 	return opts
+}
+
+// buildRedisFailoverOptions preserves the direct client's data credentials,
+// pool, timeouts and TLS policy while adding separately scoped Sentinel auth.
+func buildRedisFailoverOptions(cfg *config.Config) *redis.FailoverOptions {
+	base := buildRedisOptions(cfg)
+	if base.TLSConfig != nil {
+		// go-redis shares this config between Sentinel and data connections.
+		// An empty ServerName lets crypto/tls verify each address actually dialed.
+		base.TLSConfig.ServerName = ""
+	}
+	return &redis.FailoverOptions{
+		MasterName:       cfg.Redis.SentinelMasterName,
+		SentinelAddrs:    append([]string(nil), cfg.Redis.SentinelAddrs...),
+		SentinelUsername: cfg.Redis.SentinelUsername,
+		SentinelPassword: cfg.Redis.SentinelPassword,
+		Username:         base.Username,
+		Password:         base.Password,
+		DB:               base.DB,
+		DialTimeout:      base.DialTimeout,
+		ReadTimeout:      base.ReadTimeout,
+		WriteTimeout:     base.WriteTimeout,
+		PoolSize:         base.PoolSize,
+		MinIdleConns:     base.MinIdleConns,
+		TLSConfig:        base.TLSConfig,
+	}
 }

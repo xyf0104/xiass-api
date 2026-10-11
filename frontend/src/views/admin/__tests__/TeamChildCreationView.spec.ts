@@ -104,6 +104,7 @@ vi.mock('@/composables/useOpenAIOAuth', async () => {
 vi.mock('@/stores/app', () => ({ useAppStore: () => appStore }))
 
 import TeamChildCreationView from '../TeamChildCreationView.vue'
+import TeamChildOAuthWorkspace from '@/components/admin/account/TeamChildOAuthWorkspace.vue'
 
 const testAuthURL = 'https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&code_challenge=test-challenge&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+profile+email+offline_access&state=team-state'
 const workflowNodeDefinitions = [
@@ -113,7 +114,7 @@ const workflowNodeDefinitions = [
   ['oauth', '同一隐私页打开 OAuth'], ['password', '完成 OAuth 邮箱登录验证'], ['phone', '进入手机号页面'],
   ['sms_confirm', '确认领取手机号'], ['phone_submit', '填入号码并选择 Text message'], ['sms_poll', '轮询短信验证码'],
   ['sms_code', '自动填入短信验证码'], ['profile_wait', '等待资料页 5 秒'], ['profile', '填写 black / 26'],
-  ['workspace_wait', '等待工作空间 10 秒'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
+  ['workspace_wait', '等待工作空间页面'], ['workspace', '默认工作空间继续'], ['callback', '捕获 OAuth 回调'],
   ['import', '按勾选配置导入 XIASS']
 ] as const
 
@@ -316,6 +317,17 @@ describe('TeamChildCreationView', () => {
 
     wrapper.unmount()
     expect(teamChildAPI.releaseTeamChildBrowserControl).toHaveBeenCalledWith('controller-token-abcdefghijklmnop')
+  })
+
+  it('describes workspace confirmation as readiness-based without a fixed ten-second wait', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const workflow = wrapper.getComponent(TeamChildOAuthWorkspace).props('workflow') as {
+      nodes: Array<{ key: string; label: string }>
+    }
+    expect(workflow.nodes.find((node) => node.key === 'workspace_wait')?.label).toBe('等待工作空间页面')
+    expect(workflow.nodes.map((node) => node.label).join(' ')).not.toContain('等待工作空间 10 秒')
   })
 
   it('keeps the embedded browser mounted after a transient heartbeat failure', async () => {

@@ -10,6 +10,7 @@ overrides:
   form-data@<4.0.6: '>=4.0.6'
   postcss@<8.5.18: 8.5.23
   dompurify@<3.4.14: 3.4.14
+  source-map-js@<1.2.2: 1.2.2
   nanoid: 3.3.18
   lodash@<4.18.0: 4.18.1
   brace-expansion@<1.1.18: 1.1.18

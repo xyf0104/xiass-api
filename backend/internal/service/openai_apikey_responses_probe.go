@@ -77,7 +77,8 @@ func openaiResponsesProbePayload(modelID string) []byte {
 //
 // 工具能力探测必须用上游真实存在的模型——用占位模型(DefaultTestModel)打第三方
 // 上游只会拿到 400 model-not-found,无从判定工具能力。优先取账号 model_mapping
-// 的上游模型(值),按字典序取首个具体(非通配符)模型以保证可复现;无映射时回退
+// 的上游模型(值),其中优先通用 GPT 文本模型,同类按字典序取首个具体(非通配符)
+// 模型以保证可复现;无映射时回退
 // DefaultTestModel(适配 OpenAI 官方 APIKey 账号)。
 func selectResponsesProbeModel(account *Account) string {
 	mapping := account.GetModelMapping()
@@ -93,6 +94,11 @@ func selectResponsesProbeModel(account *Account) string {
 		return openai.DefaultTestModel
 	}
 	sort.Strings(candidates)
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, "gpt-") && !isOpenAIImageGenerationModel(candidate) {
+			return candidate
+		}
+	}
 	return candidates[0]
 }
 
@@ -243,6 +249,9 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 // Completed 2xx responses remain conclusive, including a completed response
 // that contains reasoning but no function call.
 func responsesProbeVerdictIsConclusive(status int, body []byte) bool {
+	if isResponsesProbeModelUnavailable(status, body) {
+		return false
+	}
 	if status < 200 || status >= 300 {
 		return true
 	}
@@ -284,6 +293,9 @@ func isResponsesEndpointSupportedByStatus(status int) bool {
 //     输出项才算真正可用;否则(如火山方舟 coding/v3 × kimi-k2.6 仅回 reasoning)
 //     判为 false,使网关改走 /v1/chat/completions 直转路径。
 func decideResponsesProbeSupport(status int, body []byte) bool {
+	if isResponsesProbeModelUnavailable(status, body) {
+		return true
+	}
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
 		return false
 	}
@@ -291,6 +303,46 @@ func decideResponsesProbeSupport(status int, body []byte) bool {
 		return true
 	}
 	return responsesProbeBodyHasFunctionCall(body)
+}
+
+func isResponsesProbeModelUnavailable(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusNotFound {
+		return false
+	}
+	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String())) {
+		case "model_not_found", "model_not_available", "unsupported_model", "invalid_model":
+			return true
+		}
+	}
+	return isExplicitOpenAIModelAvailabilityMessage(extractUpstreamErrorMessage(body))
+}
+
+func isExplicitOpenAIModelAvailabilityMessage(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	for _, phrase := range []string{
+		"model not found",
+		"model does not exist",
+		"model is unavailable",
+		"model is not available",
+		"model is unsupported",
+		"model is not supported",
+		"unsupported model",
+	} {
+		if strings.Contains(value, phrase) {
+			return true
+		}
+	}
+	if strings.HasPrefix(value, "the model ") || strings.HasPrefix(value, "model ") {
+		return strings.Contains(value, " does not exist") ||
+			strings.Contains(value, " was not found") ||
+			strings.Contains(value, " is unavailable") ||
+			strings.Contains(value, " is not available")
+	}
+	return false
 }
 
 // responsesProbeBodyHasFunctionCall 判断非流式 Responses 响应体的 output 数组里

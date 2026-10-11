@@ -296,13 +296,18 @@ func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error
 }
 
 func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) (*BackupS3Config, error) {
-	// 如果没提供 secret，保留原有值
+	// 如果没提供 secret，保留原有值。loadS3Config 会解密，所以继承路径拿到的
+	// 是明文，和调用方新填的 secret 一样，都必须经过下面的加密再落库。
 	if cfg.SecretAccessKey == "" {
 		old, _ := s.loadS3Config(ctx)
 		if old != nil {
 			cfg.SecretAccessKey = old.SecretAccessKey
 		}
-	} else {
+	}
+
+	// 加密路径必须覆盖“继承已有 secret”的保存。管理端保存成功后会清空返回值
+	// 中的 secret，后续只修改 endpoint、bucket 或 schedule 时会再次走继承分支。
+	if cfg.SecretAccessKey != "" {
 		// 拒绝用自动生成的临时密钥加密：该密钥每次重启都会变化，落库的密文在
 		// 重启/升级后无法解密（#4524）。与支付、TOTP 的处理保持一致。
 		if !s.encryptionKeyConfigured {

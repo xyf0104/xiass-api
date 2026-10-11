@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // AnthropicToResponses converts an Anthropic Messages request directly into
@@ -467,10 +469,28 @@ func boolPtr(v bool) *bool {
 
 // isReasoningModel reports whether model is a reasoning model that does not
 // support sampling parameters (temperature, top_p) via the Responses API.
-// All gpt-5.x models are reasoning-only; the Responses API returns
+// GPT generation 5 and later are reasoning-only; the Responses API returns
 // "Unsupported parameter: temperature" if these fields are present.
 func isReasoningModel(model string) bool {
-	return strings.HasPrefix(model, "gpt-5")
+	major, ok := openAIModelGeneration(model)
+	return ok && major >= 5
+}
+
+func openAIModelGeneration(model string) (int, bool) {
+	canonical := openai.CanonicalizeOpenAIModelAliasSpelling(model)
+	rest, ok := strings.CutPrefix(canonical, "gpt-")
+	if !ok {
+		return 0, false
+	}
+	major, digits := 0, 0
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			break
+		}
+		major = major*10 + int(r-'0')
+		digits++
+	}
+	return major, digits > 0
 }
 
 // normalizeToolParameters ensures the tool parameter schema is valid for

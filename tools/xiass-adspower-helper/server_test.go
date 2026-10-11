@@ -145,6 +145,54 @@ func TestLaunchCreatesDedicatedProfileAndReportsSafeBinding(t *testing.T) {
 	require.Equal(t, 2, restarted.cfg.Servers[origin].NextFingerprintSlot)
 }
 
+func TestLaunchExistingProfileDistinguishesBusyFromUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		status int
+		reason string
+	}{
+		{"active", `{"code":0,"data":{"status":"Active"}}`, http.StatusConflict, "adspower_profile_busy"},
+		{"missing-status", `{"code":0,"data":{}}`, http.StatusServiceUnavailable, "automation_start_failed"},
+		{"api-error", `{"code":-1,"msg":"API unavailable"}`, http.StatusServiceUnavailable, "automation_start_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ads := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/api/v1/browser/active", r.URL.Path)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer ads.Close()
+			var reported map[string]any
+			xiass := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/tools/adspower/launch-tickets/redeem":
+					_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+						"session_id": "0123456789abcdef0123456789abcdef", "environment_key": "api", "callback_token": "callback-token",
+						"auth_url": "https://auth.openai.com/oauth/authorize?state=s", "binding_token": "binding-token",
+						"existing_binding": map[string]string{"profile_id": "profile", "device_id": "device", "environment_key": "api"},
+					}})
+				case "/api/v1/tools/adspower/progress/report":
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&reported))
+					_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer xiass.Close()
+			helper := newHelperServer(&config{AdsPowerBaseURL: ads.URL, DeviceID: "device",
+				Servers: map[string]serverConfig{xiass.URL: {EnvironmentKey: "api"}}})
+			helper.adsPower.minInterval = 0
+			recorder := httptest.NewRecorder()
+			helper.routes().ServeHTTP(recorder, localHelperRequest(http.MethodGet, launchURLFor(xiass.URL, "launch-ticket"), nil))
+			require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+			require.Equal(t, tc.reason, reported["reason"])
+			if tc.status == http.StatusServiceUnavailable {
+				require.NotContains(t, recorder.Body.String(), "指纹环境正在使用")
+			}
+		})
+	}
+}
+
 func TestCallbackReceiverAndObserverShareOneDelivery(t *testing.T) {
 	var reports, stops atomic.Int32
 	xiass := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

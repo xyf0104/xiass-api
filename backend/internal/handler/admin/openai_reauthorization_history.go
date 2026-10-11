@@ -301,7 +301,7 @@ func openAIAccountNeedsReauthorization(account *service.Account) bool {
 	// reauthorization page; requiring status=error here made the workbench show
 	// the 401 badge while the reauthorization selector omitted the same account.
 	tempReason := strings.ToLower(strings.TrimSpace(account.TempUnschedulableReason))
-	if strings.HasPrefix(tempReason, "oauth_401") || strings.HasPrefix(tempReason, "oauth 401") {
+	if service.IsOpenAIOAuthUnauthorizedReason(tempReason) {
 		return true
 	}
 	if account.Status != service.StatusError {

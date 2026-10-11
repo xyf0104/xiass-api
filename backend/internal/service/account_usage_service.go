@@ -55,7 +55,7 @@ type UsageLogRepository interface {
 	GetUpstreamEndpointStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usagestats.EndpointStat, error)
 	GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.GroupStat, error)
 	GetUserBreakdownStats(ctx context.Context, startTime, endTime time.Time, dim usagestats.UserBreakdownDimension, limit int) ([]usagestats.UserBreakdownItem, error)
-	GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error)
+	GetAllGroupUsageSummary(ctx context.Context, todayStart, tomorrowStart time.Time) ([]usagestats.GroupUsageSummary, error)
 	GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.APIKeyUsageTrendPoint, error)
 	GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, error)
 	GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.UserSpendingRankingResponse, error)
@@ -408,11 +408,9 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 	}
 
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
-		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
-		if err == nil {
-			s.tryClearRecoverableAccountError(ctx, account)
-		}
-		return usage, err
+		// Usage can come from a stored snapshot even when a probe fails. Neither
+		// that nor a working access token proves a rejected refresh token recovered.
+		return s.getOpenAIUsage(ctx, account, forceProbe)
 	}
 
 	if account.Platform == PlatformGemini {
@@ -637,6 +635,7 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 		now := time.Now()
 		info := &UsageInfo{Source: "passive"}
 		applyExtraToUsage(info, account.Extra, now)
+		applyOpenAIUsageUnauthorized(info, account)
 		if observedAt, ok := openAICodexSnapshotObservationAt(account, now); ok {
 			info.UpdatedAt = &observedAt
 		}
@@ -770,6 +769,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
+	applyOpenAIUsageUnauthorized(usage, account)
 
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
 		probeState := s.openAIProbeState(account.ID)
@@ -791,7 +791,10 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 				if force {
 					return nil, fmt.Errorf("force refresh openai codex quota failed: quota service unavailable")
 				}
-			} else if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err != nil {
+			} else if quotaUsage, err := s.openAIQuotaService.RefreshUsage(ctx, account.ID); err != nil {
+				if isOpenAIUsageUnauthorized(err) {
+					return degradedOpenAIUnauthorizedUsage(usage, err)
+				}
 				if force {
 					return nil, fmt.Errorf("force refresh openai codex quota failed: %w", err)
 				}
@@ -832,9 +835,13 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 					usage.UpdatedAt = &now
 				}
 				applyExtraToUsage(usage, account.Extra, now)
+				usage.NeedsReauth, usage.ErrorCode, usage.Error = false, "", ""
 			}
 		} else {
 			if updates, err := s.probeOpenAICodexSnapshot(ctx, account); err != nil {
+				if isOpenAIUsageUnauthorized(err) {
+					return degradedOpenAIUnauthorizedUsage(usage, err)
+				}
 				if force {
 					return nil, fmt.Errorf("force refresh openai codex quota failed: %w", err)
 				}
@@ -863,6 +870,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 					usage.UpdatedAt = &now
 				}
 				applyExtraToUsage(usage, account.Extra, now)
+				usage.NeedsReauth, usage.ErrorCode, usage.Error = false, "", ""
 			} else if force {
 				return nil, fmt.Errorf("force refresh openai codex quota failed: upstream returned no quota snapshot")
 			}
@@ -1005,6 +1013,10 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
 		return nil, fmt.Errorf("no access token available")
 	}
+	authIdentity, err := cloneOpenAICodexSnapshotIdentity(account)
+	if err != nil {
+		return nil, missingOpenAIQuotaRequestIdentity()
+	}
 	modelID := openaipkg.CodexUsageProbeModel
 	payload := createOpenAITestPayload(modelID, true)
 	payloadBytes, err := json.Marshal(payload)
@@ -1068,6 +1080,11 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		updateOpenAIUsageAuth(ctx, s.accountRepo, authIdentity, true)
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		updateOpenAIUsageAuth(ctx, s.accountRepo, authIdentity, false)
+	}
 	updates, err := extractOpenAICodexProbeUpdates(resp)
 	if err != nil {
 		return nil, err
@@ -1118,6 +1135,9 @@ func hasCodexWindowSnapshot(updates map[string]any, window string) bool {
 func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
 	if resp == nil {
 		return nil, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, infraerrors.New(http.StatusUnauthorized, "OPENAI_CODEX_PROBE_UNAUTHORIZED", "openai codex probe returned status 401; reauthorization required")
 	}
 	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil

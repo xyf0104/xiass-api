@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/textproto"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -85,6 +87,7 @@ type Config struct {
 	Pricing                 PricingConfig                 `mapstructure:"pricing"`
 	Gateway                 GatewayConfig                 `mapstructure:"gateway"`
 	APIKeyAuth              APIKeyAuthCacheConfig         `mapstructure:"api_key_auth_cache"`
+	APIKeyCreate            APIKeyCreateConfig            `mapstructure:"api_key_create"`
 	SubscriptionCache       SubscriptionCacheConfig       `mapstructure:"subscription_cache"`
 	SubscriptionMaintenance SubscriptionMaintenanceConfig `mapstructure:"subscription_maintenance"`
 	Dashboard               DashboardCacheConfig          `mapstructure:"dashboard_cache"`
@@ -1585,11 +1588,18 @@ func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 // RedisConfig Redis 连接配置
 // 性能优化：新增连接池和超时参数，提升高并发场景下的吞吐量
 type RedisConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	DB       int    `mapstructure:"db"`
+	Host          string `mapstructure:"host"`
+	Port          int    `mapstructure:"port"`
+	Username      string `mapstructure:"username"`
+	Password      string `mapstructure:"password"`
+	DB            int    `mapstructure:"db"`
+	DiscoveryMode string `mapstructure:"discovery_mode"`
+	// Sentinel discovery is enabled only by discovery_mode=sentinel. These
+	// fields alone remain inert for compatibility with retired HA deployments.
+	SentinelMasterName string   `mapstructure:"sentinel_master_name"`
+	SentinelAddrs      []string `mapstructure:"sentinel_addrs"`
+	SentinelUsername   string   `mapstructure:"sentinel_username"`
+	SentinelPassword   string   `mapstructure:"sentinel_password"`
 	// 连接池与超时配置（性能优化：可配置化连接池参数）
 	// DialTimeoutSeconds: 建立连接超时，防止慢连接阻塞
 	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
@@ -1607,6 +1617,15 @@ type RedisConfig struct {
 
 func (r *RedisConfig) Address() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
+}
+
+const (
+	RedisDiscoveryModeDirect   = "direct"
+	RedisDiscoveryModeSentinel = "sentinel"
+)
+
+func (r *RedisConfig) UsesSentinel() bool {
+	return r.DiscoveryMode == RedisDiscoveryModeSentinel
 }
 
 type OpsConfig struct {
@@ -1706,6 +1725,13 @@ type APIKeyAuthCacheConfig struct {
 	Singleflight       bool                   `mapstructure:"singleflight"`
 	LookupConcurrency  int                    `mapstructure:"lookup_concurrency"`
 	InvalidAbuse       InvalidAuthAbuseConfig `mapstructure:"invalid_abuse"`
+}
+
+// APIKeyCreateConfig controls per-user API key creation abuse limits.
+// A zero value disables the corresponding limit.
+type APIKeyCreateConfig struct {
+	MaxActivePerUser  int `mapstructure:"max_active_per_user"`
+	MaxPerUserPerHour int `mapstructure:"max_per_user_per_hour"`
 }
 
 type InvalidAuthAbuseConfig struct {
@@ -1842,6 +1868,19 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
+	}
+	// Scalar slice environment decoding is not consistent across Viper input
+	// forms, so keep the public comma-separated Sentinel variable explicit.
+	if addrs, ok := os.LookupEnv("REDIS_SENTINEL_ADDRS"); ok {
+		cfg.Redis.SentinelAddrs = nil
+		if strings.TrimSpace(addrs) != "" {
+			cfg.Redis.SentinelAddrs = strings.Split(addrs, ",")
+		}
+	}
+	cfg.Redis.DiscoveryMode = strings.ToLower(strings.TrimSpace(cfg.Redis.DiscoveryMode))
+	cfg.Redis.SentinelMasterName = strings.TrimSpace(cfg.Redis.SentinelMasterName)
+	for i := range cfg.Redis.SentinelAddrs {
+		cfg.Redis.SentinelAddrs[i] = strings.TrimSpace(cfg.Redis.SentinelAddrs[i])
 	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
@@ -2202,6 +2241,11 @@ func setDefaults() {
 	viper.SetDefault("redis.username", "")
 	viper.SetDefault("redis.password", "")
 	viper.SetDefault("redis.db", 0)
+	viper.SetDefault("redis.discovery_mode", RedisDiscoveryModeDirect)
+	viper.SetDefault("redis.sentinel_master_name", "")
+	viper.SetDefault("redis.sentinel_addrs", []string{})
+	viper.SetDefault("redis.sentinel_username", "")
+	viper.SetDefault("redis.sentinel_password", "")
 	viper.SetDefault("redis.dial_timeout_seconds", 5)
 	viper.SetDefault("redis.read_timeout_seconds", 3)
 	viper.SetDefault("redis.write_timeout_seconds", 3)
@@ -2347,6 +2391,8 @@ func setDefaults() {
 	viper.SetDefault("api_key_auth_cache.invalid_abuse.window_seconds", 60)
 	viper.SetDefault("api_key_auth_cache.invalid_abuse.block_seconds", 60)
 	viper.SetDefault("api_key_auth_cache.invalid_abuse.capacity", 16384)
+	viper.SetDefault("api_key_create.max_active_per_user", 200)
+	viper.SetDefault("api_key_create.max_per_user_per_hour", 60)
 
 	// Subscription auth L1 cache
 	viper.SetDefault("subscription_cache.l1_size", 16384)
@@ -2736,6 +2782,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("server.h2c.max_upload_buffer_per_stream must be positive")
 		}
 	}
+	if c.APIKeyCreate.MaxActivePerUser < 0 {
+		return fmt.Errorf("api_key_create.max_active_per_user must be non-negative")
+	}
+	if c.APIKeyCreate.MaxPerUserPerHour < 0 {
+		return fmt.Errorf("api_key_create.max_per_user_per_hour must be non-negative")
+	}
 	if c.APIKeyAuth.InvalidAbuse.Enabled {
 		if c.APIKeyAuth.InvalidAbuse.Threshold < 10 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.threshold must be at least 10")
@@ -3109,6 +3161,27 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.ConnMaxIdleTimeMinutes < 0 {
 		return fmt.Errorf("database.conn_max_idle_time_minutes must be non-negative")
+	}
+	switch c.Redis.DiscoveryMode {
+	case "", RedisDiscoveryModeDirect:
+		// Deliberately ignore retired REDIS_SENTINEL_* settings unless the
+		// operator explicitly selects Sentinel discovery.
+	case RedisDiscoveryModeSentinel:
+		if len(c.Redis.SentinelAddrs) == 0 || c.Redis.SentinelMasterName == "" {
+			return fmt.Errorf("redis.sentinel_addrs and redis.sentinel_master_name are required when redis.discovery_mode=sentinel")
+		}
+		if strings.ContainsAny(c.Redis.SentinelMasterName, " \t\r\n") {
+			return fmt.Errorf("redis.sentinel_master_name must not contain whitespace")
+		}
+		for i, addr := range c.Redis.SentinelAddrs {
+			host, port, err := net.SplitHostPort(addr)
+			portNumber, portErr := strconv.Atoi(port)
+			if err != nil || host == "" || strings.ContainsAny(host, " \t\r\n/@?#\\") || portErr != nil || portNumber < 1 || portNumber > 65535 {
+				return fmt.Errorf("redis.sentinel_addrs[%d] must be a host:port address with port 1-65535", i)
+			}
+		}
+	default:
+		return fmt.Errorf("redis.discovery_mode must be one of direct or sentinel")
 	}
 	if c.Redis.DialTimeoutSeconds <= 0 {
 		return fmt.Errorf("redis.dial_timeout_seconds must be positive")

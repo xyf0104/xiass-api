@@ -13,6 +13,22 @@ type accountUsageCodexProbeRepo struct {
 	rateLimitCh   chan time.Time
 }
 
+type accountUsageRefreshErrorRepo struct {
+	stubOpenAIAccountRepo
+	clearCalls int
+}
+
+func (r *accountUsageRefreshErrorRepo) ClearError(ctx context.Context, id int64) error {
+	r.clearCalls++
+	account, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	account.Status = StatusActive
+	account.ErrorMessage = ""
+	return nil
+}
+
 func (r *accountUsageCodexProbeRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	if r.updateExtraCh != nil {
 		copied := make(map[string]any, len(updates))
@@ -74,6 +90,57 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		},
 	}, usage, now) {
 		t.Fatal("expected stale ws snapshot to trigger refresh")
+	}
+}
+
+func TestAccountUsageService_OpenAIStoredSnapshotPreservesRejectedRefreshError(t *testing.T) {
+	const refreshError = "Token refresh failed (non-retryable): refresh_token_invalidated"
+	now := time.Now().UTC()
+
+	for _, tc := range []struct {
+		name        string
+		credentials map[string]any
+	}{
+		{
+			name:        "stored snapshot",
+			credentials: map[string]any{"refresh_token": "rejected-refresh-token"},
+		},
+		{
+			name: "valid access with rejected refresh",
+			credentials: map[string]any{
+				"access_token":  "still-valid-access-token",
+				"refresh_token": "rejected-refresh-token",
+				"expires_at":    now.Add(time.Hour).Format(time.RFC3339),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := Account{
+				ID: 7358, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+				Status: StatusError, ErrorMessage: refreshError,
+				Credentials: tc.credentials,
+				Extra: map[string]any{
+					"codex_5h_used_percent": 18.0,
+					"codex_5h_reset_at":     now.Add(4 * time.Hour).Format(time.RFC3339),
+					"codex_7d_used_percent": 34.0,
+					"codex_7d_reset_at":     now.Add(6 * 24 * time.Hour).Format(time.RFC3339),
+				},
+			}
+			repo := &accountUsageRefreshErrorRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+			svc := &AccountUsageService{accountRepo: repo, cache: NewUsageCache()}
+
+			usage, err := svc.GetUsage(context.Background(), account.ID)
+			if err != nil || usage == nil {
+				t.Fatalf("GetUsage() usage = %v, err = %v", usage, err)
+			}
+			stored, err := repo.GetByID(context.Background(), account.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repo.clearCalls != 0 || stored.Status != StatusError || stored.ErrorMessage != refreshError {
+				t.Fatalf("usage query erased refresh error: clearCalls=%d status=%q error=%q", repo.clearCalls, stored.Status, stored.ErrorMessage)
+			}
+		})
 	}
 }
 

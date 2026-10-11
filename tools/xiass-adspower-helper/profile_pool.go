@@ -145,6 +145,11 @@ func (s *helperServer) stopOwnedProfile(ctx context.Context, id, sessionID strin
 		if lastErr == nil {
 			return s.releaseProfileLease(id)
 		}
+		// AdsPower can reject stop when automation already closed the browser.
+		// Only an explicit inactive status permits releasing the owner's lease.
+		if active, err := ads.profileActive(ctx, id); err == nil && !active {
+			return s.releaseProfileLease(id)
+		}
 		if err := sleepWithContext(ctx, time.Duration(attempt+1)*time.Second); err != nil {
 			return err
 		}

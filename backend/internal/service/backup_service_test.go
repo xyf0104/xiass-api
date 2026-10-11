@@ -327,6 +327,27 @@ func TestBackupService_S3ConfigKeepExistingSecret(t *testing.T) {
 	require.Equal(t, "AKID-NEW", internal.AccessKeyID)
 }
 
+func TestBackupService_S3ConfigStaysEncryptedAfterInheritedSecretSave(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{Bucket: "my-bucket", AccessKeyID: "AKID", SecretAccessKey: "original-secret"})
+	require.NoError(t, err)
+	storedSecret := func() string {
+		raw, getErr := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+		require.NoError(t, getErr)
+		var stored BackupS3Config
+		require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+		return stored.SecretAccessKey
+	}
+	require.Equal(t, "ENC:original-secret", storedSecret())
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{Bucket: "my-bucket", AccessKeyID: "AKID-NEW"})
+	require.NoError(t, err)
+	require.Equal(t, "ENC:original-secret", storedSecret())
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{Bucket: "my-bucket", AccessKeyID: "AKID-THIRD"})
+	require.NoError(t, err)
+	require.Equal(t, "ENC:original-secret", storedSecret())
+}
+
 func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {
 	repo := newMockSettingRepo()
 	svc := newTestBackupServiceEphemeralKey(repo)

@@ -127,15 +127,24 @@ func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body m
 // normalizeDeepSeekResponsesRequestBody adapts stateless native Responses
 // endpoints. DeepSeek and Kimi reject server-side state fields.
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
-	if account == nil || !account.UsesNativeCNResponses() {
+	if account == nil {
 		return body
 	}
-	normalized, err := sjson.SetBytes(body, "store", false)
-	if err != nil {
+	applyStateless := account.UsesNativeCNResponses()
+	applyImages := targetsDeepSeekAPIHost(account)
+	if !applyStateless && !applyImages {
 		return body
 	}
-	if stripped, err := sjson.DeleteBytes(normalized, "previous_response_id"); err == nil {
-		normalized = stripped
+	normalized := body
+	if applyStateless {
+		patched, err := sjson.SetBytes(normalized, "store", false)
+		if err != nil {
+			return body
+		}
+		normalized = patched
+		if stripped, err := sjson.DeleteBytes(normalized, "previous_response_id"); err == nil {
+			normalized = stripped
+		}
 	}
 
 	var requestBody map[string]any
@@ -146,7 +155,17 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 	if !exists {
 		return normalized
 	}
-	liftedInput, changed := apicompat.LiftResponsesToolOutputMedia(input)
+	changed := false
+	liftedInput, lifted := apicompat.LiftResponsesToolOutputMedia(input)
+	if lifted {
+		requestBody["input"] = liftedInput
+		input = liftedInput
+		changed = true
+	}
+	if aliasedInput, aliased := aliasDeepSeekResponsesInputImages(input); aliased {
+		requestBody["input"] = aliasedInput
+		changed = true
+	}
 	if !changed {
 		return normalized
 	}
@@ -156,6 +175,66 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		return normalized
 	}
 	return rebuilt
+}
+
+func aliasDeepSeekResponsesInputImages(input any) (any, bool) {
+	items, ok := input.([]any)
+	if !ok {
+		return input, false
+	}
+	changed := false
+	for i, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if aliasDeepSeekResponsesImagePart(item) {
+			items[i] = item
+			changed = true
+		}
+		for _, key := range []string{"content", "output"} {
+			parts, ok := item[key].([]any)
+			if !ok {
+				continue
+			}
+			for j, partRaw := range parts {
+				if part, ok := partRaw.(map[string]any); ok && aliasDeepSeekResponsesImagePart(part) {
+					parts[j] = part
+					changed = true
+				}
+			}
+		}
+	}
+	return items, changed
+}
+
+func aliasDeepSeekResponsesImagePart(part map[string]any) bool {
+	typ := strings.TrimSpace(stringValue(part["type"]))
+	if typ != "input_image" && typ != "image_url" && typ != "image" {
+		return false
+	}
+	urlValue := strings.TrimSpace(stringValue(part["url"]))
+	if urlValue == "" {
+		if nested, ok := part["image_url"].(map[string]any); ok {
+			urlValue = strings.TrimSpace(stringValue(nested["url"]))
+		} else {
+			urlValue = strings.TrimSpace(stringValue(part["image_url"]))
+		}
+	}
+	if urlValue == "" {
+		return false
+	}
+	changed := typ != "input_image"
+	part["type"] = "input_image"
+	if strings.TrimSpace(stringValue(part["image_url"])) != urlValue {
+		part["image_url"] = urlValue
+		changed = true
+	}
+	if strings.TrimSpace(stringValue(part["url"])) != urlValue {
+		part["url"] = urlValue
+		changed = true
+	}
+	return changed
 }
 
 const OpenAIContextUnavailableCode = "context_unavailable"
@@ -924,8 +1003,11 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 }
 
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
+	// Only rewrite an exact upstream model match; aliases and unrelated values stay untouched.
+	if fromModel == "" || toModel == "" || fromModel == toModel || !gjson.ValidBytes(body) {
+		return body
+	}
+	if m := gjson.GetBytes(body, "model"); m.Type == gjson.String && m.String() == fromModel {
 		newBody, err := sjson.SetBytes(body, "model", toModel)
 		if err != nil {
 			return body

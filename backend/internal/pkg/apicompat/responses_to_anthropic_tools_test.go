@@ -138,3 +138,103 @@ func TestResponsesToAnthropic_DefaultToolNormalizesInputSchema(t *testing.T) {
 	assert.Equal(t, "shell", tools[0].Name)
 	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(tools[0].InputSchema))
 }
+
+func TestResponsesToAnthropic_RootUnionNullBranchClearsRequired(t *testing.T) {
+	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
+		Type: "function",
+		Name: "optional_filter",
+		Parameters: json.RawMessage(`{
+			"anyOf":[
+				{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]},
+				{"type":"null"}
+			]
+		}`),
+	}})
+
+	require.Len(t, tools, 1)
+	schema := requireObjectInputSchema(t, tools[0].InputSchema)
+	assert.NotContains(t, schema, "anyOf")
+	assert.NotContains(t, schema, "required")
+	assert.JSONEq(t, `{"query":{"type":"string"}}`, string(schema["properties"]))
+}
+
+func TestResponsesToAnthropic_RootUnionPreservesTuplePrefixItems(t *testing.T) {
+	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
+		Type: "function",
+		Name: "plot_point",
+		Parameters: json.RawMessage(`{
+			"oneOf":[{
+				"type":"object",
+				"properties":{"point":{"type":"array","prefixItems":[{"type":"number"},{"type":"number"}],"minItems":2,"maxItems":2}},
+				"required":["point"]
+			}]
+		}`),
+	}})
+
+	require.Len(t, tools, 1)
+	schema := requireObjectInputSchema(t, tools[0].InputSchema)
+	assert.NotContains(t, schema, "oneOf")
+	assert.JSONEq(t, `["point"]`, string(schema["required"]))
+
+	var properties map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(schema["properties"], &properties))
+	assert.JSONEq(t,
+		`{"type":"array","prefixItems":[{"type":"number"},{"type":"number"}],"minItems":2,"maxItems":2}`,
+		string(properties["point"]))
+}
+
+func TestResponsesToAnthropic_RootAllOfKeepsPropertyConjunction(t *testing.T) {
+	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
+		Type: "function",
+		Name: "bounded_score",
+		Parameters: json.RawMessage(`{
+			"allOf":[
+				{"type":"object","properties":{"score":{"type":"number","minimum":0}},"required":["score"]},
+				{"type":"object","properties":{"score":{"type":"number","maximum":10}},"required":["score"]}
+			]
+		}`),
+	}})
+
+	require.Len(t, tools, 1)
+	schema := requireObjectInputSchema(t, tools[0].InputSchema)
+	assert.NotContains(t, schema, "allOf")
+	assert.JSONEq(t, `["score"]`, string(schema["required"]))
+
+	var properties map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(schema["properties"], &properties))
+	assert.JSONEq(t,
+		`{"allOf":[{"type":"number","minimum":0},{"type":"number","maximum":10}]}`,
+		string(properties["score"]))
+}
+
+func TestResponsesToAnthropic_IndependentRootKeywordsAccumulateRequiredFields(t *testing.T) {
+	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
+		Type: "function",
+		Name: "combined_constraints",
+		Parameters: json.RawMessage(`{
+			"oneOf":[
+				{"type":"object","properties":{"from_one":{"type":"string"}},"required":["from_one"]},
+				{"type":"object","properties":{"from_one":{"type":"string","minLength":1}},"required":["from_one"]}
+			],
+			"anyOf":[
+				{"type":"object","properties":{"from_any":{"type":"string"}},"required":["from_any"]},
+				{"type":"object","properties":{"from_any":{"type":"string","maxLength":20}},"required":["from_any"]}
+			],
+			"allOf":[
+				{"type":"object","properties":{"from_all":{"type":"boolean"}},"required":["from_all"]}
+			]
+		}`),
+	}})
+
+	require.Len(t, tools, 1)
+	schema := requireObjectInputSchema(t, tools[0].InputSchema)
+	var required []string
+	require.NoError(t, json.Unmarshal(schema["required"], &required))
+	assert.ElementsMatch(t, []string{"from_one", "from_any", "from_all"}, required)
+
+	var properties map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(schema["properties"], &properties))
+	assert.Contains(t, properties, "from_one")
+	assert.Contains(t, properties, "from_any")
+	assert.Contains(t, properties, "from_all")
+}

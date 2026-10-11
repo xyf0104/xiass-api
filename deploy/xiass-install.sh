@@ -20,7 +20,7 @@ SERVER_PORT="${SERVER_PORT:-8080}"
 RAW_PORT_RANGE="${SOFT_ROUTER_PROXY_RAW_PORT_RANGE:-12083-12150}"
 PUBLIC_PORT_RANGE="${SOFT_ROUTER_PROXY_PUBLIC_PORT_RANGE:-1101-1120}"
 BACKUP_DIR="${BACKUP_DIR:-/root/xiass-backups}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@xiass.local}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 BUILD_MODE="${BUILD_MODE:-image}"
 TEAM_CHILD_BROWSER_ENABLED="${TEAM_CHILD_BROWSER_ENABLED:-true}"
@@ -365,7 +365,9 @@ validate_configuration() {
     fi
     ranges_overlap "$raw_start" "$raw_end" "$public_start" "$public_end" && die "Raw FRP 与公网 SOCKS 端口范围不能重叠。"
 
-    [[ "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die "管理员邮箱格式不正确。"
+    if [ -n "$ADMIN_EMAIL" ]; then
+        [[ "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die "管理员邮箱格式不正确。"
+    fi
     if [ -n "$ADMIN_PASSWORD" ]; then
         [ "${#ADMIN_PASSWORD}" -ge 12 ] || die "管理员密码至少需要 12 个字符。"
         [[ "$ADMIN_PASSWORD" =~ ^[A-Za-z0-9._~!@%+=:,/-]+$ ]] || die "管理员密码只能包含字母、数字和 ._~!@%+=:,/-。"
@@ -443,7 +445,7 @@ interactive_config() {
     ask "Web 服务端口" "$SERVER_PORT" SERVER_PORT
     ask "Raw FRP 端口范围" "$RAW_PORT_RANGE" RAW_PORT_RANGE
     ask "公网 SOCKS 端口范围" "$PUBLIC_PORT_RANGE" PUBLIC_PORT_RANGE
-    ask "管理员邮箱" "$ADMIN_EMAIL" ADMIN_EMAIL
+    ask "管理员邮箱（留空由后端随机生成）" "$ADMIN_EMAIL" ADMIN_EMAIL
 
     local generated_password
     generated_password=$(openssl rand -hex 12)
@@ -462,7 +464,11 @@ interactive_config() {
     echo "  Web 端口：      $SERVER_PORT"
     echo "  Raw FRP：       $RAW_PORT_RANGE"
     echo "  公网 SOCKS：    $PUBLIC_PORT_RANGE"
-    echo "  管理员邮箱：    $ADMIN_EMAIL"
+    if [ -n "$ADMIN_EMAIL" ]; then
+        echo "  管理员邮箱：    $ADMIN_EMAIL"
+    else
+        echo "  管理员邮箱：    后端首次启动随机生成（请查看 xiass-api 日志）"
+    fi
     confirm "确认安装？" true || exit 0
 }
 
@@ -658,7 +664,11 @@ print_completion() {
     echo -e "${GREEN}${BOLD}XIASS API 已完整安装并通过健康检查。${NC}"
     echo ""
     echo "访问地址：      http://${ip}:${SERVER_PORT}"
-    echo "管理员邮箱：    ${ADMIN_EMAIL}"
+    if [ -n "$ADMIN_EMAIL" ]; then
+        echo "管理员邮箱：    ${ADMIN_EMAIL}"
+    else
+        echo "管理员邮箱：    已由后端随机生成，请查看 xiass-api 容器首次启动日志"
+    fi
     if ! "$EXISTING_INSTALL"; then
         echo "管理员密码：    ${ADMIN_PASSWORD}"
         if "$ADMIN_PASSWORD_GENERATED"; then

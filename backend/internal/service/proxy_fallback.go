@@ -27,7 +27,9 @@ func ResolveProxyFallbackTarget(start Proxy, byID map[int64]Proxy, now time.Time
 			if !ok {
 				return nil, false
 			}
-			if !(&p).IsExpired(now) && p.Status != StatusExpired {
+			// A disabled fallback may still point to another proxy, but it cannot
+			// become an egress target until it is explicitly active again.
+			if p.IsActive() && !p.IsExpired(now) {
 				id := p.ID
 				return &id, true
 			}

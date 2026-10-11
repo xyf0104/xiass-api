@@ -52,6 +52,23 @@ UPDATE_BACKUP_CREATED=false
 log() { printf '[XIASS] %s\n' "$*"; }
 die() { printf '[XIASS] 错误：%s\n' "$*" >&2; exit 1; }
 
+disk_available_mb() {
+    local path="${1:-/}"
+    df -Pm "$path" 2>/dev/null | awk 'NR == 2 { print $4; exit }'
+}
+
+check_disk_headroom() {
+    local available minimum
+    available=$(disk_available_mb /)
+    [[ "$available" =~ ^[0-9]+$ ]] || die "无法读取根盘可用空间；为避免更新期间损坏数据，已停止更新。"
+    minimum="${XIASS_MIN_FREE_DISK_MB:-5120}"
+    [[ "$minimum" =~ ^[0-9]+$ ]] || minimum=5120
+    if [ "$available" -lt "$minimum" ]; then
+        die "根盘仅剩 ${available}MB，可用空间低于更新安全阈值 ${minimum}MB；请先清理 Docker 构建缓存/未引用镜像或扩容后重试。"
+    fi
+    log "根盘可用空间 ${available}MB，满足更新安全阈值 ${minimum}MB。"
+}
+
 read_env_value() {
     local key="$1"
     awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$DEPLOY_DIR/.env" 2>/dev/null
@@ -862,6 +879,7 @@ main() {
     resolve_install_dir
     [ -d "$INSTALL_DIR/.git" ] || die "$INSTALL_DIR 不是 XIASS Git 安装目录。"
     [ -f "$DEPLOY_DIR/.env" ] || die "未找到 .env。"
+    check_disk_headroom
     ensure_jq
 
     PREVIOUS_REF=$(git -C "$INSTALL_DIR" rev-parse HEAD)
@@ -917,6 +935,7 @@ main() {
     if ! git -C "$INSTALL_DIR" diff --quiet "$PREVIOUS_REF" "$UPDATE_REF" -- backend/migrations; then
         log "此版本包含数据库迁移变更；镜像回滚不能撤销迁移，请确认已有独立数据库备份及升级兼容性。"
     fi
+    check_disk_headroom
     prefetch_target_app_image
     log "更新准备耗时 $((SECONDS - prepare_started)) 秒；尚未开始应用切换（显式完整冷备除外）。"
     verify_target_image_id || die "切换前镜像 ID 已变化或不可读取；旧应用保持运行，请重新更新。"

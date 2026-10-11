@@ -163,6 +163,7 @@
                 :read-only="readOnly"
                 :spread-actions="true"
                 @account-updated="handleQuotaResetAccountUpdated"
+                @reauth-status="handleQuotaReauthStatus"
               >
                 <template #pre-actions>
                   <button
@@ -213,6 +214,7 @@
             :read-only="readOnly"
             :spread-actions="true"
             @account-updated="handleQuotaResetAccountUpdated"
+            @reauth-status="handleQuotaReauthStatus"
           >
             <template #pre-actions>
               <button
@@ -261,6 +263,7 @@
           :read-only="readOnly"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
+          @reauth-status="handleQuotaReauthStatus"
         />
       </div>
     </template>
@@ -737,7 +740,10 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { GrokQuotaProbeResult } from '@/api/admin/grok'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import {
+  buildOpenAICredentialGenerationKey,
+  buildOpenAIUsageRefreshKey
+} from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber, formatRelativeTime } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
@@ -793,6 +799,7 @@ const loading = ref(false)
 const activeQueryLoading = ref(false)
 const error = ref<string | null>(null)
 const usageInfo = ref<AccountUsageInfo | null>(null)
+const quotaNeedsReauth = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const isDesktopViewport = ref(
   typeof window === 'undefined' ? true : window.matchMedia(desktopViewportQuery).matches
@@ -907,11 +914,15 @@ const openAIWeeklyEstimateText = computed(() => {
 })
 
 const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))
+const openAICredentialGenerationKey = computed(() =>
+  buildOpenAICredentialGenerationKey(props.account)
+)
 const usageCacheVersionKey = computed(() => JSON.stringify([
   props.account.id,
   props.account.platform,
   props.account.type,
   props.readOnly,
+  openAICredentialGenerationKey.value,
   props.account.platform === 'openai' && props.account.type === 'oauth'
     ? openAIUsageRefreshKey.value
     : ''
@@ -1412,7 +1423,11 @@ const forbiddenType = computed(() => usageInfo.value?.forbidden_type || 'forbidd
 const validationURL = computed(() => usageInfo.value?.validation_url || '')
 
 // 需要重新授权（401）
-const needsReauth = computed(() => !!usageInfo.value?.needs_reauth)
+const needsReauth = computed(() =>
+  usageInfo.value?.needs_reauth === true ||
+  usageInfo.value?.error_code === 'unauthenticated' ||
+  quotaNeedsReauth.value
+)
 
 // 降级错误标签（rate_limited / network_error）
 const usageErrorLabel = computed(() => {
@@ -1455,6 +1470,18 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
   return props.account.platform === 'anthropic' && (props.account.type === 'oauth' || props.account.type === 'setup-token')
 })
 
+const isSuccessfulOpenAIUsageRefresh = (
+  result: AccountUsageInfo | null | undefined,
+  explicitlyActive: boolean
+): boolean =>
+  !!result &&
+  (explicitlyActive || result.source === 'active') &&
+  props.account.platform === 'openai' &&
+  props.account.type === 'oauth' &&
+  result.needs_reauth !== true &&
+  !result.error_code &&
+  !result.error
+
 const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?: boolean; force?: boolean }) => {
   if (!shouldFetchUsage.value) return
 
@@ -1490,6 +1517,12 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const result = await enqueueUsageRequest(requestedAccount, fetchFn)
     if (isCurrentRequest()) {
       usageInfo.value = result
+      if (isSuccessfulOpenAIUsageRefresh(
+        result,
+        source === 'active' || force === true
+      )) {
+        quotaNeedsReauth.value = false
+      }
       _usageCache.set(requestedAccount.id, {
         data: result,
         ts: Date.now(),
@@ -1569,6 +1602,7 @@ const loadActiveUsage = async () => {
     const result = await adminAPI.accounts.getUsage(requestedAccountID, 'active', true)
     if (isCurrentRequest()) {
       usageInfo.value = result
+      if (isSuccessfulOpenAIUsageRefresh(result, true)) quotaNeedsReauth.value = false
       _usageCache.set(requestedAccountID, {
         data: result,
         ts: Date.now(),
@@ -1709,6 +1743,42 @@ const handleQuotaResetAccountUpdated = (account: Account) => {
   emit('account-updated', account)
 }
 
+const clearUsageReauthEvidence = () => {
+  // A quota confirmation is newer upstream evidence than any usage request
+  // already in flight. Ignore those older completions without blocking the next
+  // scheduled or manual refresh.
+  usageRequestGeneration++
+  loading.value = false
+  activeQueryLoading.value = false
+  quotaNeedsReauth.value = false
+  const current = usageInfo.value
+  if (!current || (current.needs_reauth !== true && current.error_code !== 'unauthenticated')) return
+
+  const clearAuthError = current.error_code === 'unauthenticated' ||
+    (current.needs_reauth === true && !current.error_code)
+  const cleared: AccountUsageInfo = {
+    ...current,
+    needs_reauth: false,
+    error_code: current.error_code === 'unauthenticated' ? undefined : current.error_code,
+    error: clearAuthError ? undefined : current.error
+  }
+  usageInfo.value = cleared
+
+  const cached = _usageCache.get(props.account.id)
+  if (cached?.versionKey === usageCacheVersionKey.value) {
+    _usageCache.set(props.account.id, { ...cached, data: cleared })
+  }
+}
+
+const handleQuotaReauthStatus = (payload: { accountId: number; needsReauth: boolean }) => {
+  if (payload.accountId !== props.account.id) return
+  if (payload.needsReauth) {
+    quotaNeedsReauth.value = true
+    return
+  }
+  clearUsageReauthEvidence()
+}
+
 const openBillingDetails = (windowLabel: string, resetsAt: string | null | undefined, fallbackWindowMs: number) => {
   const end = new Date()
   const resetAt = resetsAt ? new Date(resetsAt) : null
@@ -1839,7 +1909,14 @@ onMounted(() => {
   requestAutoLoad(source)
 })
 
+let quotaEvidenceCredentialKey = openAICredentialGenerationKey.value
+
 watch(usageCacheVersionKey, () => {
+  const nextQuotaEvidenceCredentialKey = openAICredentialGenerationKey.value
+  if (nextQuotaEvidenceCredentialKey !== quotaEvidenceCredentialKey) {
+    quotaNeedsReauth.value = false
+  }
+  quotaEvidenceCredentialKey = nextQuotaEvidenceCredentialKey
   usageRequestGeneration++
   usageInfo.value = null
   error.value = null
@@ -1848,11 +1925,11 @@ watch(usageCacheVersionKey, () => {
   pendingAutoLoad.value = false
   _usageCache.delete(props.account.id)
   requestAutoLoad(isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined)
-})
+}, { flush: 'sync' })
 
 let lastReportedReauth: boolean | undefined
 watch(
-  [() => props.account.id, () => usageInfo.value?.needs_reauth],
+  [() => props.account.id, () => needsReauth.value],
   ([accountId, needsReauth], previous) => {
     const next = needsReauth === true
     const previousAccountID = previous?.[0]

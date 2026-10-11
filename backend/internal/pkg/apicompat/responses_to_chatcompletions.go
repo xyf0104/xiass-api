@@ -23,10 +23,11 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 	}
 
 	out := &ChatCompletionsResponse{
-		ID:      id,
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   model,
+		ID:          id,
+		Object:      "chat.completion",
+		Created:     time.Now().Unix(),
+		Model:       model,
+		ServiceTier: resp.ServiceTier,
 	}
 
 	var contentText string
@@ -127,6 +128,7 @@ type ResponsesEventToChatState struct {
 	OutputIndexToArguments map[int]string
 	IncludeUsage           bool
 	Usage                  *ChatUsage
+	ServiceTier            string
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
@@ -191,12 +193,13 @@ func FinalizeResponsesChatStream(state *ResponsesEventToChatState) []ChatComplet
 
 	if state.IncludeUsage && state.Usage != nil {
 		chunks = append(chunks, ChatCompletionsChunk{
-			ID:      state.ID,
-			Object:  "chat.completion.chunk",
-			Created: state.Created,
-			Model:   state.Model,
-			Choices: []ChatChunkChoice{},
-			Usage:   state.Usage,
+			ID:          state.ID,
+			Object:      "chat.completion.chunk",
+			Created:     state.Created,
+			Model:       state.Model,
+			ServiceTier: state.ServiceTier,
+			Choices:     []ChatChunkChoice{},
+			Usage:       state.Usage,
 		})
 	}
 
@@ -221,6 +224,9 @@ func resToChatHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToCh
 		}
 		if state.Model == "" && evt.Response.Model != "" {
 			state.Model = evt.Response.Model
+		}
+		if evt.Response.ServiceTier != "" {
+			state.ServiceTier = evt.Response.ServiceTier
 		}
 	}
 	// Emit the role chunk.
@@ -331,6 +337,9 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		if evt.Response.Usage != nil {
 			state.Usage = chatUsageFromResponsesUsage(evt.Response.Usage)
 		}
+		if evt.Response.ServiceTier != "" {
+			state.ServiceTier = evt.Response.ServiceTier
+		}
 
 		switch evt.Response.Status {
 		case "incomplete":
@@ -356,12 +365,13 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 
 	if state.IncludeUsage && state.Usage != nil {
 		chunks = append(chunks, ChatCompletionsChunk{
-			ID:      state.ID,
-			Object:  "chat.completion.chunk",
-			Created: state.Created,
-			Model:   state.Model,
-			Choices: []ChatChunkChoice{},
-			Usage:   state.Usage,
+			ID:          state.ID,
+			Object:      "chat.completion.chunk",
+			Created:     state.Created,
+			Model:       state.Model,
+			ServiceTier: state.ServiceTier,
+			Choices:     []ChatChunkChoice{},
+			Usage:       state.Usage,
 		})
 	}
 
@@ -431,10 +441,11 @@ func completionDetailsFromResponses(src *ResponsesOutputTokensDetails) *ChatToke
 
 func makeChatDeltaChunk(state *ResponsesEventToChatState, delta ChatDelta) ChatCompletionsChunk {
 	return ChatCompletionsChunk{
-		ID:      state.ID,
-		Object:  "chat.completion.chunk",
-		Created: state.Created,
-		Model:   state.Model,
+		ID:          state.ID,
+		Object:      "chat.completion.chunk",
+		Created:     state.Created,
+		Model:       state.Model,
+		ServiceTier: state.ServiceTier,
 		Choices: []ChatChunkChoice{{
 			Index:        0,
 			Delta:        delta,
@@ -446,10 +457,11 @@ func makeChatDeltaChunk(state *ResponsesEventToChatState, delta ChatDelta) ChatC
 func makeChatFinishChunk(state *ResponsesEventToChatState, finishReason string) ChatCompletionsChunk {
 	empty := ""
 	return ChatCompletionsChunk{
-		ID:      state.ID,
-		Object:  "chat.completion.chunk",
-		Created: state.Created,
-		Model:   state.Model,
+		ID:          state.ID,
+		Object:      "chat.completion.chunk",
+		Created:     state.Created,
+		Model:       state.Model,
+		ServiceTier: state.ServiceTier,
 		Choices: []ChatChunkChoice{{
 			Index:        0,
 			Delta:        ChatDelta{Content: &empty},
@@ -478,11 +490,17 @@ type bufferedFuncCall struct {
 	Args        strings.Builder
 }
 
+type bufferedTextPart struct {
+	OutputIndex  int
+	ContentIndex int
+}
+
 // BufferedResponseAccumulator collects content from Responses SSE delta events
 // so that non-streaming handlers can reconstruct output when the terminal event
 // (response.completed / response.done) carries an empty output array.
 type BufferedResponseAccumulator struct {
 	text                 strings.Builder
+	textByPart           map[bufferedTextPart]*strings.Builder
 	reasoning            strings.Builder
 	funcCalls            []bufferedFuncCall
 	outputIndexToFuncIdx map[int]int
@@ -492,18 +510,18 @@ type BufferedResponseAccumulator struct {
 func NewBufferedResponseAccumulator() *BufferedResponseAccumulator {
 	return &BufferedResponseAccumulator{
 		outputIndexToFuncIdx: make(map[int]int),
+		textByPart:           make(map[bufferedTextPart]*strings.Builder),
 	}
 }
 
-// ProcessEvent inspects a single Responses SSE event and accumulates any
-// content it carries. Only delta events that contribute to the final output
-// are handled; all other event types are silently ignored.
+// ProcessEvent inspects a single Responses SSE event and accumulates content
+// from deltas and authoritative done payloads. Other event types are ignored.
 func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) {
 	switch event.Type {
 	case "response.output_text.delta":
-		if event.Delta != "" {
-			_, _ = a.text.WriteString(event.Delta)
-		}
+		a.appendText(event, event.Delta, false)
+	case "response.output_text.done":
+		a.appendText(event, event.Text, true)
 	case "response.output_item.added":
 		if event.Item != nil && (event.Item.Type == "function_call" || event.Item.Type == "custom_tool_call") {
 			idx := len(a.funcCalls)
@@ -535,6 +553,35 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 			_, _ = a.reasoning.WriteString(event.Delta)
 		}
 	}
+}
+
+func (a *BufferedResponseAccumulator) appendText(event *ResponsesStreamEvent, value string, complete bool) {
+	if event == nil || value == "" {
+		return
+	}
+	if a.textByPart == nil {
+		a.textByPart = make(map[bufferedTextPart]*strings.Builder)
+	}
+	part := bufferedTextPart{OutputIndex: event.OutputIndex, ContentIndex: event.ContentIndex}
+	builder := a.textByPart[part]
+	if builder == nil {
+		builder = &strings.Builder{}
+		a.textByPart[part] = builder
+	}
+
+	delta := value
+	if complete {
+		delivered := builder.String()
+		if value == delivered || !strings.HasPrefix(value, delivered) {
+			return
+		}
+		delta = value[len(delivered):]
+	}
+	if delta == "" {
+		return
+	}
+	_, _ = builder.WriteString(delta)
+	_, _ = a.text.WriteString(delta)
 }
 
 // HasContent reports whether any content has been accumulated.
@@ -593,6 +640,18 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 		}
 		return
 	}
+	if a.text.Len() > 0 && !responsesOutputHasText(resp.Output) {
+		if !fillResponsesOutputText(resp.Output, a.text.String()) {
+			resp.Output = append(resp.Output, ResponsesOutput{
+				Type: "message",
+				Role: "assistant",
+				Content: []ResponsesContentPart{{
+					Type: "output_text",
+					Text: a.text.String(),
+				}},
+			})
+		}
+	}
 	for outputIndex := range resp.Output {
 		item := &resp.Output[outputIndex]
 		if (item.Type != "function_call" || item.Arguments != "") &&
@@ -619,4 +678,35 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 			break
 		}
 	}
+}
+
+func responsesOutputHasText(output []ResponsesOutput) bool {
+	for i := range output {
+		if output[i].Type != "message" {
+			continue
+		}
+		for _, part := range output[i].Content {
+			if part.Type == "output_text" && strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fillResponsesOutputText(output []ResponsesOutput, value string) bool {
+	for i := range output {
+		if output[i].Type != "message" {
+			continue
+		}
+		for j := range output[i].Content {
+			if output[i].Content[j].Type == "output_text" && strings.TrimSpace(output[i].Content[j].Text) == "" {
+				output[i].Content[j].Text = value
+				return true
+			}
+		}
+		output[i].Content = append(output[i].Content, ResponsesContentPart{Type: "output_text", Text: value})
+		return true
+	}
+	return false
 }

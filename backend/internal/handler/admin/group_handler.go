@@ -975,8 +975,9 @@ func (h *GroupHandler) GetUsageSummary(c *gin.Context) {
 	userTZ := c.Query("timezone")
 	now := timezone.NowInUserLocation(userTZ)
 	todayStart := timezone.StartOfDayInUserLocation(now, userTZ)
+	tomorrowStart := todayStart.AddDate(0, 0, 1)
 
-	results, err := h.dashboardService.GetGroupUsageSummary(c.Request.Context(), todayStart)
+	results, err := h.dashboardService.GetGroupUsageSummary(c.Request.Context(), todayStart, tomorrowStart)
 	if err != nil {
 		response.Error(c, 500, "Failed to get group usage summary")
 		return

@@ -1255,7 +1255,9 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 		pricing.ImageOutputPricePerToken = 0
 	}
 	pricing.ImageOutputPriceExplicit = true
-	applyChannelImageInputPrice(channelPricing, pricing)
+	if channelPricing.ImageInputPrice != nil {
+		pricing.ImageInputPricePerToken = *channelPricing.ImageInputPrice
+	}
 	return pricing, nil
 }
 

@@ -282,14 +282,14 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	if chPricing.MaxReasoningEffortMultiplier != nil {
 		resolved.BasePricing.MaxReasoningEffortMultiplier = chPricing.MaxReasoningEffortMultiplier
 	}
-	// 渠道定价覆盖一切：显式配置则用配置值，未配置则归零（不回退到 LiteLLM）
+	// 未填写的图片价格继承目录价格；显式填写的值（包括 0）仍覆盖目录。
 	if chPricing.ImageOutputPrice != nil {
 		resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
-	} else {
-		resolved.BasePricing.ImageOutputPricePerToken = 0
+		resolved.BasePricing.ImageOutputPriceExplicit = true
 	}
-	resolved.BasePricing.ImageOutputPriceExplicit = true
-	applyChannelImageInputPrice(chPricing, resolved.BasePricing)
+	if chPricing.ImageInputPrice != nil {
+		resolved.BasePricing.ImageInputPricePerToken = *chPricing.ImageInputPrice
+	}
 	// 区间未命中时回退到已应用渠道覆盖的基础价。
 	resolved.Intervals = filterValidIntervals(chPricing.Intervals)
 }
@@ -399,14 +399,16 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.CacheReadPricePerToken = applyMultiplier(pricing.CacheReadPricePerToken, iv.CacheReadMultiplier)
 		pricing.CacheReadPricePerTokenPriority = applyMultiplier(pricing.CacheReadPricePerTokenPriority, iv.CacheReadMultiplier)
 	}
-	// 渠道定价存在时，ImageOutputPrice 显式覆盖；图片输入价用渠道级配置
+	// 渠道显式图片价覆盖；留空时保留目录图片价。
 	// （区间不携带图片输入价，与 image_output 一致）。
 	if chPricing != nil {
-		pricing.ImageOutputPriceExplicit = true
 		if chPricing.ImageOutputPrice != nil {
 			pricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
+			pricing.ImageOutputPriceExplicit = true
 		}
-		applyChannelImageInputPrice(chPricing, pricing)
+		if chPricing.ImageInputPrice != nil {
+			pricing.ImageInputPricePerToken = *chPricing.ImageInputPrice
+		}
 	}
 	return pricing
 }

@@ -177,6 +177,16 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	return s.queryUsage(ctx, accountID, false)
+}
+
+// RefreshUsage records confirmed upstream authentication failures for the
+// workbench and reauthorization selector without changing quota or credentials.
+func (s *OpenAIQuotaService) RefreshUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	return s.queryUsage(ctx, accountID, true)
+}
+
+func (s *OpenAIQuotaService) queryUsage(ctx context.Context, accountID int64, recordAuth bool) (*OpenAIQuotaUsage, error) {
 	identity := &openAIQuotaRequestIdentity{}
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID, identity)
 	if err != nil {
@@ -230,6 +240,9 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 				continue
 			}
 			status := resp.StatusCode
+			if recordAuth && status == http.StatusUnauthorized {
+				updateOpenAIUsageAuth(ctx, s.accountRepo, identity.credential, true)
+			}
 			body := truncate(s.redactQuotaErrorBody(ctx, accountID, resp.String()), 240)
 			slog.Warn("openai_quota_query_failed", "account_id", accountID, "status", status, "body", body)
 			return nil, infraerrors.Newf(mapUpstreamStatus(status), "OPENAI_QUOTA_UPSTREAM_ERROR", "upstream returned %d: %s", status, body)
@@ -237,6 +250,9 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		break
 	}
 
+	if recordAuth {
+		updateOpenAIUsageAuth(ctx, s.accountRepo, identity.credential, false)
+	}
 	identity.observedAt = time.Now().UTC().Truncate(time.Microsecond)
 	payload.FetchedAt = identity.observedAt.Unix()
 	payload.requestIdentity = identity
@@ -474,14 +490,21 @@ func (s *OpenAIQuotaService) consumeResetCredit(ctx context.Context, accountID i
 	// must NOT fall through to prepareUpstreamCall. That function resolves a
 	// shadow to its parent and would perform a parent-level reset — exactly
 	// what this guard must prevent. Return the load error instead.
+	var authIdentity *Account
+	var authProxyURL string
 	if s.accountRepo != nil {
 		acc, loadErr := s.accountRepo.GetByID(ctx, accountID)
 		if loadErr != nil {
 			return nil, infraerrors.Newf(http.StatusNotFound, "OPENAI_QUOTA_ACCOUNT_NOT_FOUND", "account not found: %v", loadErr)
 		}
+		if acc == nil {
+			return nil, infraerrors.New(http.StatusNotFound, "OPENAI_QUOTA_ACCOUNT_NOT_FOUND", "account not found")
+		}
 		if acc.IsShadow() {
 			return nil, ErrSparkShadowResetNotSupported
 		}
+		authIdentity, _ = cloneOpenAICodexSnapshotIdentity(acc)
+		authProxyURL = acc.requestProxyURL()
 	}
 
 	var capture *openAIQuotaRequestIdentity
@@ -491,6 +514,19 @@ func (s *OpenAIQuotaService) consumeResetCredit(ctx context.Context, accountID i
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID, capture)
 	if err != nil {
 		return nil, err
+	}
+	if capture != nil {
+		authIdentity = capture.credential
+	} else if authIdentity != nil {
+		accountIDHeader := strings.TrimSpace(authIdentity.GetCredential("chatgpt_account_id"))
+		if accountIDHeader == "" {
+			accountIDHeader = strings.TrimSpace(authIdentity.GetCredential("organization_id"))
+		}
+		// Manual reset may refresh credentials while preparing. Only attribute
+		// its rejection to the frozen snapshot if it actually sent that identity.
+		if accessToken != authIdentity.GetOpenAIAccessToken() || chatGPTAccountID != accountIDHeader || proxyURL != authProxyURL {
+			authIdentity = nil
+		}
 	}
 
 	if strings.TrimSpace(redeemRequestID) == "" {
@@ -554,6 +590,9 @@ func (s *OpenAIQuotaService) consumeResetCredit(ctx context.Context, accountID i
 			}
 			status := resp.StatusCode
 			if rejected {
+				if status == http.StatusUnauthorized {
+					updateOpenAIUsageAuth(ctx, s.accountRepo, authIdentity, true)
+				}
 				return nil, infraerrors.Newf(mapUpstreamStatus(status), "OPENAI_QUOTA_RESET_REJECTED", "upstream rejected reset authentication (HTTP %d); no credit was consumed", status)
 			}
 			if creditID != "" {

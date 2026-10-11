@@ -570,6 +570,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		bridgeReplayInputExists := false
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
+		lastBridgeWindowID := ""
 		for turn := 1; ; turn++ {
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
@@ -583,6 +584,33 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if turnState != "" && c != nil && c.Request != nil {
 				c.Request.Header.Set(openAIWSTurnStateHeader, turnState)
+			}
+			boundaryPayload, contextWindowBoundary, boundaryErr := normalizeOpenAIWSContextWindowBoundary(
+				currentBridgePayload.payloadRaw,
+				lastBridgeWindowID,
+			)
+			if boundaryErr != nil {
+				return fmt.Errorf("normalize Codex websocket HTTP bridge context-window boundary: %w", boundaryErr)
+			}
+			if contextWindowBoundary.Changed {
+				identitySourcePayload, _, dropErr := dropPreviousResponseIDFromRawPayload(currentBridgePayload.accountIdentitySourceRaw)
+				if dropErr != nil {
+					return fmt.Errorf("normalize Codex websocket HTTP bridge failover boundary: %w", dropErr)
+				}
+				currentBridgePayload.payloadRaw = boundaryPayload
+				currentBridgePayload.accountIdentitySourceRaw = identitySourcePayload
+				currentBridgePayload.previousResponseID = ""
+				currentBridgePayload.payloadBytes = len(boundaryPayload)
+				bridgeReplayInput = nil
+				bridgeReplayInputExists = false
+				bridgeAccountFailoverInput = nil
+				bridgeAccountFailoverInputExists = false
+				logOpenAIWSModeInfo(
+					"ingress_ws_http_bridge_context_window_changed account_id=%d turn=%d action=break_previous_response_chain previous_response_id_removed=%v",
+					account.ID,
+					turn,
+					contextWindowBoundary.PreviousResponseIDRemoved,
+				)
 			}
 			// Keep payload and replay histories aligned. Rewritten items receive new
 			// immutable bodies; all untouched replay bodies remain shared.
@@ -710,6 +738,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
+			}
+			if contextWindowBoundary.WindowID != "" {
+				lastBridgeWindowID = contextWindowBoundary.WindowID
 			}
 			bridgeReplayInput = turnReplayInput
 			bridgeReplayInputExists = turnReplayInputExists
@@ -1320,6 +1351,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnPrevRecoveryTried := false
 	lastTurnFinishedAt := time.Time{}
 	lastTurnResponseID := ""
+	lastTurnWindowID := ""
 	lastTurnPayload := []byte(nil)
 	var lastTurnStrictState *openAIWSIngressPreviousTurnStrictState
 	lastTurnReplayInput := []json.RawMessage(nil)
@@ -1470,8 +1502,21 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalidDigests)
 			}
 		}
+		boundaryPayload, contextWindowBoundary, boundaryErr := normalizeOpenAIWSContextWindowBoundary(currentPayload, lastTurnWindowID)
+		if boundaryErr != nil {
+			return fmt.Errorf("normalize Codex websocket context-window boundary: %w", boundaryErr)
+		}
+		if contextWindowBoundary.Changed {
+			currentPayload = boundaryPayload
+			currentPayloadBytes = len(boundaryPayload)
+			logOpenAIWSModeInfo("ingress_ws_context_window_changed account_id=%d turn=%d action=break_previous_response_chain previous_response_id_removed=%v", account.ID, turn, contextWindowBoundary.PreviousResponseIDRemoved)
+		}
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
+		if contextWindowBoundary.Changed {
+			// Never infer an old-window anchor after an explicit rollover.
+			expectedPrev = ""
+		}
 		toolSignals := ToolContinuationSignals{
 			HasFunctionCallOutput: openAIWSRawPayloadHasToolCallOutput(currentPayload),
 		}
@@ -1797,6 +1842,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
+		if contextWindowBoundary.WindowID != "" {
+			lastTurnWindowID = contextWindowBoundary.WindowID
+		}
 		lastTurnReplayInput = currentTurnReplayInput
 		lastTurnReplayInputExists = currentTurnReplayInputExists
 		if result.wsReplayInputExists {
