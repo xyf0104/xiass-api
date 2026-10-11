@@ -62,6 +62,7 @@ yum() { package_manager yum "$@"; }
 apk() { package_manager apk "$@"; }
 id() { [ "$*" = -u ] || exit 97; printf '0\n'; }
 resolve_install_dir() { DEPLOY_DIR="$INSTALL_DIR/deploy"; }
+check_disk_headroom() { :; }
 git() {
     [ "$*" = "-C $INSTALL_DIR rev-parse HEAD" ] && [ "$jq_ready" = true ] \
         || { printf 'unexpected git\n' >> "$fixture/calls"; exit 97; }
