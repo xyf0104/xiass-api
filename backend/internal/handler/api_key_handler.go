@@ -31,7 +31,7 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
 	Name          string   `json:"name" binding:"required"`
-	GroupID       *int64   `json:"group_id"`        // nullable
+	GroupID       *int64   `json:"group_id"` // nullable
 	GroupIDs      []int64  `json:"group_ids"`
 	CustomKey     *string  `json:"custom_key"`      // 可选的自定义key
 	IPWhitelist   []string `json:"ip_whitelist"`    // IP 白名单
