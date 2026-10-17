@@ -59,6 +59,9 @@ func TestAPIKeyRepo_UpdateGroupIDByUserAndGroup_UsesTransactionAndPreservesSecon
 	client := testEntClient(t)
 	tx, err := client.Tx(ctx)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = tx.Rollback()
+	})
 	txCtx := dbent.NewTxContext(ctx, tx)
 
 	user, err := tx.Client().User.Create().
@@ -83,8 +86,9 @@ func TestAPIKeyRepo_UpdateGroupIDByUserAndGroup_UsesTransactionAndPreservesSecon
 		GroupID:  &oldGroup.ID,
 		GroupIDs: []int64{oldGroup.ID, secondaryGroup.ID},
 	}
+	txRepo := newAPIKeyRepositoryWithSQL(tx.Client(), tx)
+	require.NoError(t, txRepo.Create(txCtx, key))
 	repo := newAPIKeyRepositoryWithSQL(client, integrationDB)
-	require.NoError(t, repo.Create(txCtx, key))
 
 	affected, err := repo.UpdateGroupIDByUserAndGroup(txCtx, user.ID, oldGroup.ID, newGroup.ID)
 	require.NoError(t, err)
