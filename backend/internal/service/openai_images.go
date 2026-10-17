@@ -473,6 +473,17 @@ func IsGPTImageGenerationModel(model string) bool {
 	return strings.HasPrefix(model, "gpt-image-")
 }
 
+func openAIImageModelMappingPatternMatches(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	// Mapping keys may be wildcards. A gpt-image-* pattern is still an
+	// explicit declaration that this account owns an image-model route.
+	return strings.HasPrefix(model, "gpt-image-") ||
+		strings.HasPrefix(model, "grok-imagine")
+}
+
 func isGrokImageGenerationModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	return model == "grok-imagine" ||

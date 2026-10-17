@@ -238,6 +238,96 @@ func (s *OpenAIGatewayService) groupConfiguredCodexModelIDs(ctx context.Context,
 	return openAIConfiguredCodexModelIDsForGroup(accounts, group), nil
 }
 
+// BuildCodexModelsManifestForAPIKeyGroups builds a single Codex manifest for
+// multiple groups without widening the union through platform defaults. The
+// existing per-account metadata/capability builder remains the only source of
+// descriptor fields; duplicate slugs keep the first group's complete entry.
+func (s *OpenAIGatewayService) BuildCodexModelsManifestForAPIKeyGroups(
+	ctx context.Context,
+	groups []*Group,
+	platformOverride string,
+	modelIDs []string,
+) ([]byte, error) {
+	if s == nil || s.accountRepo == nil || len(groups) == 0 || len(modelIDs) == 0 {
+		return BuildCodexModelsManifest(nil)
+	}
+
+	seen := make(map[string]struct{}, len(modelIDs))
+	merged := make([]json.RawMessage, 0, len(modelIDs))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		catalogGroup := group
+		if strings.TrimSpace(platformOverride) != "" && group.Platform == PlatformComposite {
+			clone := *group
+			clone.Platform = strings.TrimSpace(platformOverride)
+			catalogGroup = &clone
+		}
+
+		accounts, _, err := loadCodexGroupCatalogAccounts(ctx, s.accountRepo, catalogGroup.ID)
+		if err != nil {
+			return nil, err
+		}
+		groupModels := make([]string, 0, len(modelIDs))
+		available := make(map[string]struct{})
+		for _, modelID := range modelIDsFromAvailableAccounts(accounts, catalogGroup.Platform) {
+			available[strings.ToLower(strings.TrimSpace(modelID))] = struct{}{}
+		}
+		for _, modelID := range modelIDs {
+			key := strings.ToLower(strings.TrimSpace(modelID))
+			if key == "" {
+				continue
+			}
+			if _, ok := available[key]; ok {
+				groupModels = append(groupModels, modelID)
+			}
+		}
+		if len(groupModels) == 0 {
+			continue
+		}
+
+		body, err := buildCodexModelsManifestForAccounts(
+			catalogGroup.Platform,
+			groupModels,
+			accounts,
+			catalogGroup,
+			nil,
+			true,
+		)
+		if err != nil {
+			return nil, err
+		}
+		var envelope struct {
+			Models []json.RawMessage `json:"models"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			return nil, err
+		}
+		for _, rawModel := range envelope.Models {
+			var descriptor struct {
+				Slug string `json:"slug"`
+			}
+			if err := json.Unmarshal(rawModel, &descriptor); err != nil {
+				return nil, err
+			}
+			key := strings.ToLower(strings.TrimSpace(descriptor.Slug))
+			if key == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, rawModel)
+		}
+	}
+
+	return json.Marshal(struct {
+		Models []json.RawMessage `json:"models"`
+	}{Models: merged})
+}
+
 // loadCodexGroupCatalogAccounts separates picker membership from capability
 // intersection. visible accounts are currently schedulable and decide which
 // public aliases appear. catalog accounts are persistently enabled group
@@ -845,6 +935,91 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 		compositeRoutes,
 		compositeRoutesAvailable,
 	)
+}
+
+// BuildCodexModelsManifestForAPIKeyGroups builds one manifest from the
+// effective catalogs of multiple groups. Each group's metadata is generated
+// by the existing group builder, then entries are merged by slug while keeping
+// the first complete descriptor. The caller supplies the already unioned and
+// filtered slugs, so this method never widens visibility through defaults.
+func (s *GatewayService) BuildCodexModelsManifestForAPIKeyGroups(
+	ctx context.Context,
+	groups []*Group,
+	platformOverride string,
+	modelIDs []string,
+) ([]byte, error) {
+	if s == nil || len(groups) == 0 || len(modelIDs) == 0 {
+		return BuildCodexModelsManifest(nil)
+	}
+
+	seen := make(map[string]struct{}, len(modelIDs))
+	merged := make([]json.RawMessage, 0, len(modelIDs))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		catalogGroup := group
+		if strings.TrimSpace(platformOverride) != "" && group.Platform == PlatformComposite {
+			clone := *group
+			clone.Platform = strings.TrimSpace(platformOverride)
+			catalogGroup = &clone
+		}
+
+		catalogModels, err := s.ModelsForAPIKeyGroup(ctx, catalogGroup)
+		if err != nil {
+			return nil, err
+		}
+		catalogModels = FilterCodexModelIDsForGroup(catalogModels, catalogGroup)
+		catalogSet := make(map[string]struct{}, len(catalogModels))
+		for _, modelID := range catalogModels {
+			catalogSet[strings.ToLower(strings.TrimSpace(modelID))] = struct{}{}
+		}
+		groupModelIDs := make([]string, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			key := strings.ToLower(strings.TrimSpace(modelID))
+			if key == "" {
+				continue
+			}
+			if _, ok := catalogSet[key]; ok {
+				groupModelIDs = append(groupModelIDs, modelID)
+			}
+		}
+		if len(groupModelIDs) == 0 {
+			continue
+		}
+
+		body, err := s.BuildCodexModelsManifestForGroup(ctx, catalogGroup, "", groupModelIDs)
+		if err != nil {
+			return nil, err
+		}
+		var envelope struct {
+			Models []json.RawMessage `json:"models"`
+		}
+		if err := json.Unmarshal(body, &envelope); err != nil {
+			return nil, err
+		}
+		for _, rawModel := range envelope.Models {
+			var descriptor struct {
+				Slug string `json:"slug"`
+			}
+			if err := json.Unmarshal(rawModel, &descriptor); err != nil {
+				return nil, err
+			}
+			key := strings.ToLower(strings.TrimSpace(descriptor.Slug))
+			if key == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, rawModel)
+		}
+	}
+
+	return json.Marshal(struct {
+		Models []json.RawMessage `json:"models"`
+	}{Models: merged})
 }
 
 func buildCodexModelsManifestForAccounts(

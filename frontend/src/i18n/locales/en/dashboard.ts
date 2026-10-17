@@ -136,6 +136,7 @@ export default {
     nameLabel: 'Name',
     namePlaceholder: 'My API Key',
     groupLabel: 'Group',
+    groupSelectionHint: 'Select multiple groups. This key routes each model to its matching group and shows duplicate models only once.',
     selectGroup: 'Select a group',
     statusLabel: 'Status',
     selectStatus: 'Select status',

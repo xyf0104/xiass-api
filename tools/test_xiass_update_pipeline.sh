@@ -419,16 +419,18 @@ done
     DEPLOY_DIR="$TEST_DIR/runtime-helper"
     mkdir -p "$DEPLOY_DIR"
     printf 'TEAM_CHILD_AUTOMATION_TOKEN=fixture-team\n' > "$DEPLOY_DIR/.env"
-    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$XIASS_RUNTIME_COMPOSE_FILES" > "$DEPLOY_DIR/received"' 'printf "%s\n" "$XIASS_RUNTIME_PROJECT_NAME" > "$DEPLOY_DIR/project"' 'exit 7' > "$DEPLOY_DIR/xiass-runtime-start.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$XIASS_RUNTIME_COMPOSE_FILES" > "$DEPLOY_DIR/received"' 'printf "%s\n" "$XIASS_RUNTIME_PROJECT_NAME" > "$DEPLOY_DIR/project"' 'printf "%s\n" "$XIASS_RUNTIME_TEAM_PROJECT_NAME" > "$DEPLOY_DIR/team-project"' 'exit 7' > "$DEPLOY_DIR/xiass-runtime-start.sh"
     chmod +x "$DEPLOY_DIR/xiass-runtime-start.sh"
     COMPOSE_FILES=("$DEPLOY_DIR/base.yml" "$DEPLOY_DIR/node.yml" "$DEPLOY_DIR/proxy.yml")
     COMPOSE_FILE="${COMPOSE_FILES[0]}"
     ACTUAL_COMPOSE_PROJECT_NAME=paired-primary
+    ACTUAL_TEAM_COMPOSE_PROJECT_NAME=xiass-api
     status=0
     start_runtime_stack true true || status=$?
     [ "$status" = 7 ] || fail 'runtime helper failure was swallowed'
     [ "$(cat "$DEPLOY_DIR/received")" = "$(printf '%s\n' "${COMPOSE_FILES[@]}")" ] || fail 'runtime helper did not receive every overlay'
     [ "$(cat "$DEPLOY_DIR/project")" = paired-primary ] || fail 'runtime helper did not receive running project identity'
+    [ "$(cat "$DEPLOY_DIR/team-project")" = xiass-api ] || fail 'runtime helper did not receive existing Team profile project identity'
     rm "$DEPLOY_DIR/xiass-runtime-start.sh"
     compose() { fail 'missing helper must not restart any core service after a hot update'; }
     wait_for_health() { return 0; }
@@ -444,6 +446,73 @@ done
     if update_full_backup_enabled; then fail 'process-level full backup opt-out was ignored'; fi
 )
 printf 'PASS: runtime helper propagation and backup policy\n'
+
+(
+    XIASS_UPDATE_LIB_ONLY=1 source "$SCRIPT"
+    DEPLOY_DIR="$TEST_DIR/team-project-discovery"
+    ACTUAL_COMPOSE_PROJECT_NAME=deploy
+    mkdir -p "$DEPLOY_DIR"
+    printf 'services: {}\n' > "$DEPLOY_DIR/docker-compose.local.yml"
+    container_exists() {
+        case "$1" in
+            xiass-api-team-child-browser|xiass-api-team-child-automation) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    container_compose_label() {
+        case "$2" in
+            com.docker.compose.project) printf 'xiass-api\n' ;;
+            com.docker.compose.service)
+                case "$1" in
+                    *-browser) printf 'team-child-browser\n' ;;
+                    *-automation) printf 'team-child-automation\n' ;;
+                esac
+                ;;
+            com.docker.compose.project.working_dir) printf '%s\n' "$DEPLOY_DIR" ;;
+            com.docker.compose.project.config_files) printf '%s\n' "$DEPLOY_DIR/docker-compose.local.yml" ;;
+            *) fail 'unexpected Team Compose label lookup' ;;
+        esac
+    }
+    discover_team_compose_project
+    [ "$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" = xiass-api ] \
+        || fail 'existing Team profile project was not preserved independently from the core project'
+    [ "$ACTUAL_COMPOSE_PROJECT_NAME" = deploy ] \
+        || fail 'Team profile discovery changed the core Compose project'
+)
+printf 'PASS: existing Team profile project discovery\n'
+
+assert_team_project_rejected() (
+    local scenario="$1" marker="$2"
+    XIASS_UPDATE_LIB_ONLY=1 source "$SCRIPT"
+    DEPLOY_DIR="$TEST_DIR/team-project-rejected-$scenario"
+    mkdir -p "$DEPLOY_DIR" "$TEST_DIR/other-deploy"
+    printf 'services: {}\n' > "$DEPLOY_DIR/docker-compose.local.yml"
+    container_exists() { [ "$1" = xiass-api-team-child-browser ]; }
+    container_compose_label() {
+        case "$2" in
+            com.docker.compose.project) printf 'xiass-api\n' ;;
+            com.docker.compose.service)
+                if [ "$scenario" = service ]; then printf 'xiass-api\n'; else printf 'team-child-browser\n'; fi
+                ;;
+            com.docker.compose.project.working_dir)
+                if [ "$scenario" = directory ]; then printf '%s\n' "$TEST_DIR/other-deploy"; else printf '%s\n' "$DEPLOY_DIR"; fi
+                ;;
+            com.docker.compose.project.config_files) printf '%s\n' "$DEPLOY_DIR/docker-compose.local.yml" ;;
+            *) fail 'unexpected rejected Team Compose label lookup' ;;
+        esac
+    }
+    discover_team_compose_project
+    : > "$marker"
+)
+
+for rejected_case in service directory; do
+    rejection_marker="$TEST_DIR/team-project-$rejected_case-mutated"
+    if assert_team_project_rejected "$rejected_case" "$rejection_marker" >/dev/null 2>&1; then
+        fail "invalid Team $rejected_case ownership was accepted"
+    fi
+    [ ! -e "$rejection_marker" ] || fail "invalid Team $rejected_case ownership reached mutation"
+done
+printf 'PASS: invalid Team profile ownership rejected before mutation\n'
 
 (
     XIASS_UPDATE_LIB_ONLY=1 source "$SCRIPT"

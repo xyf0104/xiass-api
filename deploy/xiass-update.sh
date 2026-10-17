@@ -19,6 +19,7 @@ COMPOSE_FILE=""
 ACTUAL_COMPOSE_FILE=""
 ACTUAL_COMPOSE_LABELS=""
 ACTUAL_COMPOSE_PROJECT_NAME=""
+ACTUAL_TEAM_COMPOSE_PROJECT_NAME=""
 ACTUAL_COMPOSE_FILES=()
 APP_CONTAINER=""
 POSTGRES_CONTAINER=""
@@ -140,6 +141,71 @@ ensure_team_child_runtime_config() {
 
 container_exists() {
     docker container inspect "$1" >/dev/null 2>&1
+}
+
+container_compose_label() {
+    docker inspect --type container --format "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null || true
+}
+
+canonical_directory() {
+    (cd "$1" 2>/dev/null && pwd -P)
+}
+
+discover_team_compose_project() {
+    local container expected_service project service working_dir config_labels
+    local deploy_directory config_file discovered_project=""
+    local -a team_config_files=()
+    deploy_directory=$(canonical_directory "$DEPLOY_DIR") \
+        || die "无法验证 XIASS 部署目录，未开始更新。"
+
+    while IFS='|' read -r container expected_service; do
+        container_exists "$container" || continue
+        project=$(container_compose_label "$container" com.docker.compose.project)
+        service=$(container_compose_label "$container" com.docker.compose.service)
+        working_dir=$(container_compose_label "$container" com.docker.compose.project.working_dir)
+        config_labels=$(container_compose_label "$container" com.docker.compose.project.config_files)
+        [ "$project" != "<no value>" ] || project=""
+        [ "$service" != "<no value>" ] || service=""
+        [ "$working_dir" != "<no value>" ] || working_dir=""
+        [ "$config_labels" != "<no value>" ] || config_labels=""
+
+        [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
+            || die "现有 Team 容器 ${container} 的 Compose 项目标记无效；为保护浏览器资料，未执行更新。"
+        [ "$service" = "$expected_service" ] \
+            || die "现有 Team 容器 ${container} 的 Compose 服务标记不匹配；为保护浏览器资料，未执行更新。"
+        [ "$(canonical_directory "$working_dir")" = "$deploy_directory" ] \
+            || die "现有 Team 容器 ${container} 不属于当前部署目录；为保护浏览器资料，未执行更新。"
+        [ -n "$config_labels" ] \
+            || die "现有 Team 容器 ${container} 缺少 Compose 配置标记；为保护浏览器资料，未执行更新。"
+
+        team_config_files=()
+        IFS=',' read -r -a team_config_files <<< "$config_labels"
+        for config_file in "${team_config_files[@]}"; do
+            [ -n "$config_file" ] || continue
+            if [ "${config_file#/}" = "$config_file" ]; then
+                config_file="$working_dir/$config_file"
+            fi
+            [ -f "$config_file" ] \
+                || die "现有 Team 容器 ${container} 的 Compose 配置不可读；为保护浏览器资料，未执行更新。"
+        done
+
+        if [ -n "$discovered_project" ] && [ "$discovered_project" != "$project" ]; then
+            die "现有 Team 浏览器与自动化容器属于不同 Compose 项目；为保护浏览器资料，未执行更新。"
+        fi
+        discovered_project="$project"
+    done <<'EOF'
+xiass-api-team-child-browser|team-child-browser
+xiass-api-team-child-automation|team-child-automation
+nowind-api-team-child-browser|team-child-browser
+nowind-api-team-child-automation|team-child-automation
+sub2api-team-child-browser|team-child-browser
+sub2api-team-child-automation|team-child-automation
+EOF
+
+    ACTUAL_TEAM_COMPOSE_PROJECT_NAME="$discovered_project"
+    if [ -n "$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" ]; then
+        log "沿用现有 Team 浏览器 Compose 项目：${ACTUAL_TEAM_COMPOSE_PROJECT_NAME}。"
+    fi
 }
 
 directory_has_entries() {
@@ -412,6 +478,7 @@ detect_runtime_layout() {
             fi
         done
     fi
+    discover_team_compose_project
     log "当前应用容器：${APP_CONTAINER:-未运行}；PostgreSQL 容器：${POSTGRES_CONTAINER:-未运行}；持久化模式：${PERSISTENCE_MODE}；实际 Compose：${ACTUAL_COMPOSE_FILE:-由挂载类型选择}"
 }
 
@@ -546,6 +613,7 @@ start_runtime_stack() {
         COMPOSE_BUILD_FILE="${COMPOSE_FILES[1]:-}" \
         XIASS_RUNTIME_COMPOSE_FILES="$(printf '%s\n' "${COMPOSE_FILES[@]}")" \
         XIASS_RUNTIME_PROJECT_NAME="$ACTUAL_COMPOSE_PROJECT_NAME" \
+        XIASS_RUNTIME_TEAM_PROJECT_NAME="$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" \
         PERSISTENCE_MODE="$PERSISTENCE_MODE" \
         BUILD_MODE="$(read_env_compat XIASS_BUILD_MODE NOWIND_BUILD_MODE)" \
         XIASS_RUNTIME_CORE_READY="$core_ready" \

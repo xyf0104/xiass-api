@@ -170,6 +170,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
 	bindRequestedReasoningEffort(c, body, reqModel)
+	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, reqModel, h.gatewayService, false)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if policyBody, changed, err := applyAnthropicReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
 		respondOpenAIReasoningEffortPolicyError(c, err, h.errorResponse)
@@ -237,7 +238,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
-	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	subscription := selectedAPIKeySubscription(c, apiKey)
 
 	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
@@ -1134,6 +1135,41 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
+	boundGroups := boundGroupsForAPIKey(apiKey)
+	if len(boundGroups) > 1 {
+		forcedPlatform := ""
+		if value, ok := middleware2.GetForcePlatformFromContext(c); ok {
+			forcedPlatform = strings.TrimSpace(value)
+		}
+		platform := boundGroups[0].Platform
+		if forcedPlatform != "" {
+			platform = forcedPlatform
+		}
+		availableModels, groups, err := unionAPIKeyGroupModels(
+			c.Request.Context(),
+			h.gatewayService,
+			boundGroups,
+			forcedPlatform,
+			func(models []string, group *service.Group) []string {
+				if group != nil && group.ModelAllowlistEnabled() {
+					return group.ModelAllowlist.FilterForListing(models)
+				}
+				return models
+			},
+		)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build model catalogue")
+			return
+		}
+		if len(groups) == 0 {
+			writeModelsList(c, platform, nil)
+			return
+		}
+		// Do not replace an empty multi-group catalog with platform defaults:
+		// that would advertise models no bound group can route.
+		writeModelsList(c, platform, availableModels)
+		return
+	}
 
 	var groupID *int64
 	var platform string
@@ -1208,6 +1244,42 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil || apiKey.Group == nil {
 		h.errorResponse(c, http.StatusUnauthorized, "invalid_request_error", "API key group is required")
+		return
+	}
+	boundGroups := boundGroupsForAPIKey(apiKey)
+	if len(boundGroups) > 1 {
+		forcedPlatform := ""
+		if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
+			forcedPlatform = strings.TrimSpace(value)
+		}
+		modelIDs, groups, err := unionAPIKeyGroupModels(
+			c.Request.Context(),
+			h.gatewayService,
+			boundGroups,
+			forcedPlatform,
+			func(models []string, group *service.Group) []string {
+				return service.FilterCodexModelIDsForGroup(models, group)
+			},
+		)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+			return
+		}
+		body, err := h.gatewayService.BuildCodexModelsManifestForAPIKeyGroups(
+			c.Request.Context(), groups, forcedPlatform, modelIDs,
+		)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+			return
+		}
+		etag := service.CodexModelsManifestETag(body)
+		c.Header("ETag", etag)
+		if service.CodexModelsManifestETagMatches(c.GetHeader("If-None-Match"), etag) {
+			c.Status(http.StatusNotModified)
+			c.Writer.WriteHeaderNow()
+			return
+		}
+		c.Data(http.StatusOK, "application/json", body)
 		return
 	}
 

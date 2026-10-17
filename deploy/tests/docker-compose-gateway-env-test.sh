@@ -43,20 +43,38 @@ do
     fi
   done < "$gateway_variables"
 
-  # Automatic disaster recovery was removed; shared node routing stays intact.
-  if grep -Eq '^[[:space:]]*-[[:space:]]*(REDIS_SENTINEL_|GATEWAY_EXECUTION_NODE_WITNESS_)' "$compose_file"; then
-    printf '%s must not restore retired Sentinel or witness configuration\n' "$compose_file" >&2
+  # Automatic witness-based disaster recovery remains retired.
+  if grep -Eq '^[[:space:]]*-[[:space:]]*GATEWAY_EXECUTION_NODE_WITNESS_' "$compose_file"; then
+    printf '%s must not restore retired witness configuration\n' "$compose_file" >&2
     exit 1
   fi
 
   for pair in \
+    'REDIS_DISCOVERY_MODE direct' \
     'JWT_REFRESH_TOKEN_MIGRATION_READINESS false'
   do
     key=${pair%% *}
     default=${pair#* }
     expected=$(printf '      - %s=${%s:-%s}' "$key" "$key" "$default")
-    if [ "$(grep -Fxc "$expected" "$compose_file" || true)" -ne 1 ]; then
-      printf '%s must pass %s with default %s\n' "$compose_file" "$key" "$default" >&2
+    expected_count=$(grep -Fxc "$expected" "$compose_file" || true)
+    key_count=$(grep -Ec "^[[:space:]]*-[[:space:]]*${key}([[:space:]]*=.*)?[[:space:]]*$" "$compose_file" || true)
+    if [ "$expected_count" -ne 1 ] || [ "$key_count" -ne 1 ]; then
+      printf '%s must pass %s with default %s exactly once\n' "$compose_file" "$key" "$default" >&2
+      exit 1
+    fi
+  done
+
+  for key in \
+    REDIS_SENTINEL_ADDRS \
+    REDIS_SENTINEL_MASTER_NAME \
+    REDIS_SENTINEL_USERNAME \
+    REDIS_SENTINEL_PASSWORD
+  do
+    expected=$(printf '      - %s=${%s:-}' "$key" "$key")
+    expected_count=$(grep -Fxc "$expected" "$compose_file" || true)
+    key_count=$(grep -Ec "^[[:space:]]*-[[:space:]]*${key}([[:space:]]*=.*)?[[:space:]]*$" "$compose_file" || true)
+    if [ "$expected_count" -ne 1 ] || [ "$key_count" -ne 1 ]; then
+      printf '%s must pass %s with an empty default exactly once\n' "$compose_file" "$key" >&2
       exit 1
     fi
   done

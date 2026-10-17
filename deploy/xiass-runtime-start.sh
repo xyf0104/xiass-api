@@ -15,6 +15,7 @@ TEAM_CHILD_BROWSER_ENABLED="${TEAM_CHILD_BROWSER_ENABLED:-}"
 SKIP_CORE_START="${XIASS_RUNTIME_SKIP_CORE_START:-false}"
 RUNTIME_COMPOSE_FILES=()
 RUNTIME_PROJECT_NAME="${XIASS_RUNTIME_PROJECT_NAME:-}"
+TEAM_RUNTIME_PROJECT_NAME="${XIASS_RUNTIME_TEAM_PROJECT_NAME:-${XIASS_RUNTIME_PROJECT_NAME:-}}"
 
 log() { printf '[XIASS] %s\n' "$*"; }
 warn() { printf '[XIASS] 警告：%s\n' "$*" >&2; }
@@ -72,7 +73,9 @@ resolve_compose() {
     fi
 }
 
-compose() {
+run_compose() {
+    local project_name="$1"
+    shift
     local args=(-f "$COMPOSE_FILE")
     if [ "${#RUNTIME_COMPOSE_FILES[@]}" -gt 0 ]; then
         args=()
@@ -84,14 +87,18 @@ compose() {
         args+=(-f "$COMPOSE_BUILD_FILE")
     fi
     args+=(--project-directory "$DEPLOY_DIR")
-    if [ -n "$RUNTIME_PROJECT_NAME" ]; then
-        args+=(--project-name "$RUNTIME_PROJECT_NAME")
+    if [ -n "$project_name" ]; then
+        args+=(--project-name "$project_name")
     fi
     "${COMPOSE[@]}" "${args[@]}" "$@"
 }
 
+compose() {
+    run_compose "$RUNTIME_PROJECT_NAME" "$@"
+}
+
 profile_compose() {
-    compose --profile team-browser "$@"
+    run_compose "$TEAM_RUNTIME_PROJECT_NAME" --profile team-browser "$@"
 }
 
 service_exists() {

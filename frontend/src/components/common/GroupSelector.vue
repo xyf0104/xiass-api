@@ -42,6 +42,11 @@
           :platform="group.platform"
           :subscription-type="group.subscription_type || undefined"
           :rate-multiplier="group.rate_multiplier == null ? undefined : group.rate_multiplier"
+          :user-rate-multiplier="userGroupRates[group.id]"
+          :peak-rate-enabled="group.peak_rate_enabled"
+          :peak-start="group.peak_start"
+          :peak-end="group.peak_end"
+          :peak-rate-multiplier="group.peak_rate_multiplier"
           class="min-w-0 flex-1"
         />
         <span class="shrink-0 text-xs text-gray-400">{{ group.account_count || 0 }}</span>
@@ -70,12 +75,14 @@ const authStore = useAuthStore()
 interface Props {
   modelValue: number[]
   groups: (Group & { account_count?: number })[]
+  userGroupRates?: Record<number, number>
   platform?: GroupPlatform // Optional platform filter
   mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
   searchable?: boolean | 'auto'
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  userGroupRates: () => ({}),
   searchable: 'auto'
 })
 const emit = defineEmits<{

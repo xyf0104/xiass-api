@@ -88,12 +88,27 @@ func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(
 		allowImages   bool
 		bridgeEnabled bool
 		responsesLite bool
+		modelMapping  map[string]any
 		wantInjected  bool
 	}{
 		{name: "disabled group skips injection", allowImages: false, bridgeEnabled: true, wantInjected: false},
 		{name: "enabled group skips injection by default", allowImages: true, bridgeEnabled: false, wantInjected: false},
 		{name: "enabled group injects image tool when bridge enabled", allowImages: true, bridgeEnabled: true, wantInjected: true},
 		{name: "responses lite skips hosted image bridge", allowImages: true, bridgeEnabled: true, responsesLite: true, wantInjected: false},
+		{
+			name:          "mapped API key without image model skips hosted image bridge",
+			allowImages:   true,
+			bridgeEnabled: true,
+			modelMapping:  map[string]any{"gpt-5.6-sol": "vendor-sol"},
+			wantInjected:  false,
+		},
+		{
+			name:          "mapped API key with image model keeps hosted image bridge",
+			allowImages:   true,
+			bridgeEnabled: true,
+			modelMapping:  map[string]any{"gpt-5.6-sol": "vendor-sol", "gpt-image-2": "gpt-image-2"},
+			wantInjected:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +127,9 @@ func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(
 				c.Request.Header.Set(responsesLiteHeader, "true")
 			}
 			account := newOpenAIImageGenerationControlTestAccount()
+			if tt.modelMapping != nil {
+				account.Credentials["model_mapping"] = tt.modelMapping
+			}
 
 			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.4","input":"write code","stream":false}`))
 
@@ -550,6 +568,19 @@ func TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence(t *te
 				},
 			},
 			want: true,
+		},
+		{
+			name:   "text-only API key cannot force-enable bridge",
+			global: true,
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-5.6-sol": "vendor-sol"},
+				},
+				Extra: map[string]any{featureKeyCodexImageGenerationBridge: true},
+			},
+			want: false,
 		},
 		{
 			name:   "non openai account extra is ignored",

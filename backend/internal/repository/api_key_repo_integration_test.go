@@ -54,6 +54,56 @@ func (s *APIKeyRepoSuite) TestCreate() {
 	s.Require().Equal("sk-create-test", got.Key)
 }
 
+func TestAPIKeyRepo_UpdateGroupIDByUserAndGroup_UsesTransactionAndPreservesSecondary(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	txCtx := dbent.NewTxContext(ctx, tx)
+
+	user, err := tx.Client().User.Create().
+		SetEmail(uniqueTestValue(t, "multi-group-tx") + "@example.com").
+		SetPasswordHash("test-password-hash").
+		SetStatus(service.StatusActive).
+		SetRole(service.RoleUser).
+		Save(txCtx)
+	require.NoError(t, err)
+	oldGroup, err := tx.Client().Group.Create().SetName(uniqueTestValue(t, "old-group")).SetStatus(service.StatusActive).Save(txCtx)
+	require.NoError(t, err)
+	secondaryGroup, err := tx.Client().Group.Create().SetName(uniqueTestValue(t, "secondary-group")).SetStatus(service.StatusActive).Save(txCtx)
+	require.NoError(t, err)
+	newGroup, err := tx.Client().Group.Create().SetName(uniqueTestValue(t, "new-group")).SetStatus(service.StatusActive).Save(txCtx)
+	require.NoError(t, err)
+
+	key := &service.APIKey{
+		UserID:   user.ID,
+		Key:      uniqueTestValue(t, "sk-multi-group-tx"),
+		Name:     "transactional multi-group",
+		Status:   service.StatusActive,
+		GroupID:  &oldGroup.ID,
+		GroupIDs: []int64{oldGroup.ID, secondaryGroup.ID},
+	}
+	repo := newAPIKeyRepositoryWithSQL(client, integrationDB)
+	require.NoError(t, repo.Create(txCtx, key))
+
+	affected, err := repo.UpdateGroupIDByUserAndGroup(txCtx, user.ID, oldGroup.ID, newGroup.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+	require.NoError(t, tx.Commit())
+
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(ctx, "DELETE FROM api_keys WHERE id = $1", key.ID)
+		_, _ = integrationDB.ExecContext(ctx, "DELETE FROM groups WHERE id IN ($1, $2, $3)", oldGroup.ID, secondaryGroup.ID, newGroup.ID)
+		_, _ = integrationDB.ExecContext(ctx, "DELETE FROM users WHERE id = $1", user.ID)
+	})
+
+	got, err := repo.GetByID(ctx, key.ID)
+	require.NoError(t, err)
+	require.Equal(t, []int64{newGroup.ID, secondaryGroup.ID}, got.GroupIDs)
+	require.NotNil(t, got.GroupID)
+	require.Equal(t, newGroup.ID, *got.GroupID)
+}
+
 func (s *APIKeyRepoSuite) TestGetByID_NotFound() {
 	_, err := s.repo.GetByID(s.ctx, 999999)
 	s.Require().Error(err, "expected error for non-existent ID")

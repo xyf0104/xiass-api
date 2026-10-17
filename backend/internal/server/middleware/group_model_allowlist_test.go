@@ -161,6 +161,42 @@ func TestGroupModelAllowlistJSONBodyAllowed(t *testing.T) {
 	}
 }
 
+func TestGroupModelAllowlistMultiGroupAcceptsSecondaryGroupModel(t *testing.T) {
+	primary := &service.Group{
+		ID:       1,
+		Platform: service.PlatformOpenAI,
+		Status:   service.StatusActive,
+		ModelAllowlist: service.GroupModelAllowlist{
+			Enabled: true,
+			Models:  []string{"gpt-5.6"},
+		},
+	}
+	secondary := &service.Group{
+		ID:       2,
+		Platform: service.PlatformOpenAI,
+		Status:   service.StatusActive,
+		ModelAllowlist: service.GroupModelAllowlist{
+			Enabled: true,
+			Models:  []string{"gpt-image-2"},
+		},
+	}
+	apiKey := &service.APIKey{
+		Group:    primary,
+		GroupID:  &primary.ID,
+		Groups:   []*service.Group{primary, secondary},
+		GroupIDs: []int64{primary.ID, secondary.ID},
+	}
+	router, calls := newGroupModelAllowlistTestRouter(apiKey, "/v1")
+
+	w := doJSON(t, router, http.MethodPost, "/v1/responses", `{"model":"gpt-image-2"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("secondary group model should pass the union allowlist, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected handler to run once, got %v", *calls)
+	}
+}
+
 func TestGroupModelAllowlistJSONBodyDeniedOpenAIFormat(t *testing.T) {
 	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "claude-sonnet-4.5"), "/v1")
 

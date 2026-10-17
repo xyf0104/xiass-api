@@ -44,6 +44,10 @@ func (APIKey) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		field.JSON("group_ids", []int64(nil)).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("Ordered API key group bindings; NULL keeps legacy group_id compatibility"),
 		field.String("status").
 			MaxLen(20).
 			Default(domain.StatusActive),

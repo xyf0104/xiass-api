@@ -36,7 +36,6 @@ func GroupModelAllowlist() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		allowlist := apiKey.Group.ModelAllowlist
 		if c.Request == nil {
 			c.Next()
 			return
@@ -72,7 +71,7 @@ func GroupModelAllowlist() gin.HandlerFunc {
 
 		blocked := ""
 		for _, candidate := range models {
-			if !allowlist.Allows(candidate) {
+			if !apiKeyAllowsModel(apiKey, candidate) {
 				blocked = candidate
 				break
 			}
@@ -87,6 +86,32 @@ func GroupModelAllowlist() gin.HandlerFunc {
 		groupModelAllowlistErrorWriter(c)(c, http.StatusNotFound, fmt.Sprintf("Model %q is not available for this group", blocked))
 		c.Abort()
 	}
+}
+
+// apiKeyAllowsModel keeps multi-group API keys usable when the requested model
+// belongs to a secondary group. A model is accepted when at least one active
+// bound group allows it; the request handler subsequently resolves the exact
+// group from its account catalog before billing and dispatch.
+func apiKeyAllowsModel(apiKey *service.APIKey, model string) bool {
+	if apiKey == nil {
+		return true
+	}
+	groups := apiKey.BoundGroups()
+	if len(groups) <= 1 {
+		return apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() || apiKey.Group.ModelAllowlist.Allows(model)
+	}
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		if strings.TrimSpace(group.Status) != "" && !group.IsActive() {
+			continue
+		}
+		if !group.ModelAllowlistEnabled() || group.ModelAllowlist.Allows(model) {
+			return true
+		}
+	}
+	return false
 }
 
 // isResponsesWebSocketRoute 判断当前请求是否命中 OpenAI Responses WebSocket

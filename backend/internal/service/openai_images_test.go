@@ -482,6 +482,60 @@ func TestAccountSupportsOpenAIImageCapability_EmptyRequirementDoesNotRejectGrok(
 	require.False(t, account.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
 }
 
+func TestAccountSupportsOpenAICodexImageGenerationBridge(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{
+			name: "explicit text-only API key mapping is not image-capable",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-5.6-sol": "vendor-sol"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "explicit image mapping is image-capable",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-image-2": "vendor-image"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "unmapped API key remains compatibility-allowed",
+			account: &Account{
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "sk-test"},
+			},
+			want: true,
+		},
+		{
+			name: "OAuth remains compatibility-allowed",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.account.SupportsOpenAICodexImageGenerationBridge())
+		})
+	}
+}
+
 func TestAccountSupportsOpenAIEndpointCapability(t *testing.T) {
 	t.Run("OpenAI APIKey 默认兼容 chat、embeddings 和 alpha search", func(t *testing.T) {
 		account := &Account{

@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 22 // v22: include complete group Codex, media, and routing policy
+const apiKeyAuthSnapshotVersion = 23 // v23: include ordered multi-group bindings in auth cache
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -340,6 +340,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		APIKeyID:    apiKey.ID,
 		UserID:      apiKey.UserID,
 		GroupID:     apiKey.GroupID,
+		GroupIDs:    apiKey.EffectiveGroupIDs(),
 		Name:        apiKey.Name,
 		Status:      apiKey.Status,
 		IPWhitelist: apiKey.IPWhitelist,
@@ -442,6 +443,19 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ProfitSafetyBuffer:              apiKey.Group.ProfitSafetyBuffer,
 		}
 	}
+	boundGroups := apiKey.BoundGroups()
+	if boundGroups != nil {
+		snapshot.Groups = make([]*APIKeyAuthGroupSnapshot, 0, len(boundGroups))
+	}
+	for _, g := range boundGroups {
+		if g == nil {
+			continue
+		}
+		snapshot.Groups = append(snapshot.Groups, apiKeyAuthGroupSnapshotFromService(g))
+	}
+	if snapshot.Group == nil && len(snapshot.Groups) > 0 {
+		snapshot.Group = snapshot.Groups[0]
+	}
 	return snapshot
 }
 
@@ -482,6 +496,10 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			RPMLimit:                   snapshot.User.RPMLimit,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
 		},
+	}
+	if snapshot.GroupIDs != nil {
+		apiKey.GroupIDs = make([]int64, len(snapshot.GroupIDs))
+		copy(apiKey.GroupIDs, snapshot.GroupIDs)
 	}
 	if snapshot.Group != nil {
 		apiKey.Group = &Group{
@@ -547,6 +565,34 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ProfitControlEnabled:            snapshot.Group.ProfitControlEnabled,
 			ProfitMinMargin:                 snapshot.Group.ProfitMinMargin,
 			ProfitSafetyBuffer:              snapshot.Group.ProfitSafetyBuffer,
+		}
+	}
+	if snapshot.Groups != nil {
+		apiKey.Groups = make([]*Group, 0, len(snapshot.Groups))
+	}
+	for _, groupSnapshot := range snapshot.Groups {
+		if groupSnapshot == nil || (apiKey.Group != nil && apiKey.Group.ID == groupSnapshot.ID) {
+			continue
+		}
+		apiKey.Groups = append(apiKey.Groups, apiKeyAuthGroupFromSnapshot(groupSnapshot))
+	}
+	if apiKey.Group != nil {
+		if len(apiKey.Groups) == 0 || apiKey.Groups[0].ID != apiKey.Group.ID {
+			apiKey.Groups = append([]*Group{apiKey.Group}, apiKey.Groups...)
+		}
+	}
+	if snapshot.GroupIDs != nil && len(snapshot.GroupIDs) == 0 {
+		apiKey.GroupID = nil
+		apiKey.Group = nil
+		apiKey.Groups = make([]*Group, 0)
+	}
+	if apiKey.GroupIDs == nil && apiKey.GroupID != nil {
+		apiKey.GroupIDs = []int64{*apiKey.GroupID}
+	}
+	if apiKey.GroupID == nil && len(apiKey.GroupIDs) > 0 {
+		apiKey.GroupID = apiKeyPrimaryGroupID(apiKey.GroupIDs)
+		if len(apiKey.Groups) > 0 {
+			apiKey.Group = apiKey.Groups[0]
 		}
 	}
 	s.compileAPIKeyIPRules(apiKey)

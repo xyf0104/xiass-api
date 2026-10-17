@@ -213,6 +213,13 @@ jobs:
       - name: Verify bounded service logs
         run: sh deploy/test-docker-compose-logging.sh
 
+      - name: Verify deployment configuration contracts
+        run: |
+          /bin/sh deploy/tests/docker-compose-security-test.sh
+          /bin/sh deploy/tests/docker-compose-gateway-env-test.sh
+          /bin/sh deploy/tests/docker-runtime-resources-test.sh
+          /bin/sh deploy/test-caddyfile-cache.sh
+
       - name: Test install GitHub authentication isolation
         run: bash deploy/tests/install-github-token-test.sh
 

@@ -34,13 +34,13 @@ WITH updated AS (
 			OR LEFT(LOWER(BTRIM(COALESCE(a.temp_unschedulable_reason, ''))), 10) = 'oauth_401:'
 			OR LOWER(BTRIM(COALESCE(a.temp_unschedulable_reason, ''))) LIKE 'oauth 401:%'
 			OR LOWER(BTRIM(COALESCE(a.temp_unschedulable_reason, ''))) LIKE 'authentication failed (401)%')
-		AND NOT (
+		AND (
 			a.extra -> $1 ->> 'last_initiator' = 'automatic'
 			AND a.extra -> $1 ->> 'auto_episode_key' = $3
 			AND (
 				a.extra -> $1 ->> 'last_result' IN ('success', 'failed', 'blocked', 'canceled', 'running')
 			)
-		)
+		) IS NOT TRUE
 	RETURNING a.id
 )
 INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)

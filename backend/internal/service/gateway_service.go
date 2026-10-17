@@ -21,7 +21,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/cespare/xxhash/v2"
 	gocache "github.com/patrickmn/go-cache"
@@ -1397,56 +1396,14 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		accounts = filtered
 	}
 
-	// Collect unique models from all accounts
-	modelSet := make(map[string]struct{})
-	hasAnyMapping := false
-	hasOpenAIPassthrough := false
-
-	for _, acc := range accounts {
-		// Ignore a passthrough account's stale mapping, but keep models explicitly
-		// supported by other accounts in the same group.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
-			hasOpenAIPassthrough = true
-			continue
-		}
-
-		mapping := acc.GetModelMapping()
-		if len(mapping) > 0 {
-			hasAnyMapping = true
-			modelIDs := make([]string, 0, len(mapping))
-			for model := range mapping {
-				modelIDs = append(modelIDs, model)
-			}
-			if acc.Platform == PlatformAntigravity {
-				modelIDs = publicAntigravityModelIDs(modelIDs)
-			}
-			for _, model := range modelIDs {
-				modelSet[model] = struct{}{}
-			}
-		}
-	}
-
-	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping {
+	models := modelIDsFromAvailableAccounts(accounts, platform)
+	if len(models) == 0 {
 		if !userScoped && s.modelsListCache != nil {
 			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
 		}
 		return nil
 	}
-
-	if hasOpenAIPassthrough {
-		for _, model := range openai.DefaultModelIDs() {
-			modelSet[model] = struct{}{}
-		}
-	}
-
-	// Convert to slice
-	models := make([]string, 0, len(modelSet))
-	for model := range modelSet {
-		models = append(models, model)
-	}
-	sort.Strings(models)
 
 	if !userScoped && s.modelsListCache != nil {
 		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)

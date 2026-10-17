@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
 
 const {
   listKeys,
+  createKey,
+  updateKey,
   getPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
@@ -18,6 +20,8 @@ const {
   nextStep,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
+  createKey: vi.fn(),
+  updateKey: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
@@ -58,8 +62,8 @@ const messages: Record<string, string> = {
 vi.mock('@/api', () => ({
   keysAPI: {
     list: listKeys,
-    create: vi.fn(),
-    update: vi.fn(),
+    create: createKey,
+    update: updateKey,
     delete: vi.fn(),
     toggleStatus: vi.fn(),
   },
@@ -170,8 +174,14 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div data-test="group-cell">
+          <slot name="cell-group" :value="row.group" :row="row" />
+        </div>
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
+        </div>
+        <div data-test="actions-cell">
+          <slot name="cell-actions" :row="row" />
         </div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
@@ -220,6 +230,36 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+const GroupBadgeStub = {
+  name: 'GroupBadge',
+  props: ['name', 'userRateMultiplier'],
+  template: '<span data-test="group-badge">{{ name }}</span>',
+}
+
+const GroupSelectorStub = defineComponent({
+  name: 'GroupSelector',
+  props: {
+    modelValue: { type: Array, required: true },
+    groups: { type: Array, required: true },
+    userGroupRates: { type: Object, default: () => ({}) },
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <div data-test="group-selector">
+      <div data-test="group-selector-order">{{ groups.map((group) => group.id).join(',') }}</div>
+      <button
+        v-for="group in groups"
+        :key="group.id"
+        type="button"
+        :data-group-id="group.id"
+        @click="$emit('update:modelValue', modelValue.includes(group.id) ? modelValue.filter((id) => id !== group.id) : [...modelValue, group.id])"
+      >
+        {{ group.name }}
+      </button>
+    </div>
+  `,
+})
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -236,7 +276,8 @@ const mountView = async () => {
         Icon: IconStub,
         UseKeyModal: true,
         EndpointPopover: true,
-        GroupBadge: true,
+        GroupBadge: GroupBadgeStub,
+        GroupSelector: GroupSelectorStub,
         GroupOptionItem: true,
         Teleport: true,
       },
@@ -266,6 +307,8 @@ describe('user KeysView column settings', () => {
     localStorage.clear()
 
     listKeys.mockReset()
+    createKey.mockReset()
+    updateKey.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
@@ -287,6 +330,8 @@ describe('user KeysView column settings', () => {
     getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
+    createKey.mockResolvedValue(createApiKey())
+    updateKey.mockResolvedValue(createApiKey())
     isCurrentStep.mockReturnValue(false)
   })
 
@@ -444,7 +489,7 @@ describe('user KeysView column settings', () => {
     )
   })
 
-  it('orders create-key groups by public status, platform, and effective rate', async () => {
+  it('orders the multi-select groups by public status, platform, and effective rate', async () => {
     getAvailableGroups.mockResolvedValue([
       { id: 1, name: 'Exclusive OpenAI', platform: 'openai', rate_multiplier: 0.01, is_exclusive: true },
       { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 0.1, is_exclusive: false },
@@ -458,12 +503,83 @@ describe('user KeysView column settings', () => {
     await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
     await nextTick()
 
-    const createGroupSelect = wrapper
-      .findAllComponents({ name: 'Select' })
-      .find((component) => component.attributes('data-tour') === 'key-form-group')
-    expect(createGroupSelect).toBeTruthy()
-    expect(
-      createGroupSelect!.props('options').map((option: { value: number }) => option.value),
-    ).toEqual([4, 3, 2, 5, 1])
+    expect(wrapper.get('[data-test="group-selector-order"]').text()).toBe('4,3,2,5,1')
+    expect(wrapper.findComponent({ name: 'GroupSelector' }).props('userGroupRates')).toEqual({ 3: 0.3, 4: 0.05 })
+  })
+
+  it('submits the selected groups in stable first-selection order when creating a key', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'OpenAI', platform: 'openai', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 0.1, is_exclusive: false },
+    ])
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('multi-group-key')
+    await wrapper.get('[data-group-id="2"]').trigger('click')
+    await wrapper.get('[data-group-id="1"]').trigger('click')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledWith(
+      'multi-group-key',
+      2,
+      [2, 1],
+      undefined,
+      [],
+      [],
+      0,
+      undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 },
+    )
+  })
+
+  it('hydrates and persists all selected groups when editing a key', async () => {
+    const groups = [
+      { id: 1, name: 'OpenAI', platform: 'openai', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 3, name: 'Gemini', platform: 'gemini', rate_multiplier: 0.1, is_exclusive: false },
+    ]
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1], groups: [groups[1], groups[0]] }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getAvailableGroups.mockResolvedValue(groups)
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await nextTick()
+    expect(wrapper.findComponent({ name: 'GroupSelector' }).props('modelValue')).toEqual([2, 1])
+
+    await wrapper.get('[data-group-id="3"]').trigger('click')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({
+      group_id: 2,
+      group_ids: [2, 1, 3],
+    }))
+  })
+
+  it('renders the ordered group badges and count for multi-group keys', async () => {
+    const groups = [
+      { id: 1, name: 'OpenAI', platform: 'openai', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 3, name: 'Gemini', platform: 'gemini', rate_multiplier: 0.1, is_exclusive: false },
+    ]
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1, 3], groups: [groups[1], groups[0], groups[2]] }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('[data-test="group-badge"]').map((badge) => badge.text())).toEqual(['Claude', 'OpenAI'])
+    expect(wrapper.get('[data-test="group-cell"]').text()).toContain('+1')
   })
 })

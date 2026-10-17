@@ -193,6 +193,7 @@ BUILD_MODE=image
 printf 'xiass runtime unchanged-image and failure-path tests passed.\n'
 
 (
+    XIASS_RUNTIME_START_LIB_ONLY=1 source "$SCRIPT"
     RUNTIME_COMPOSE_FILES=("/fixture/base.yml" "/fixture/node.yml" "/fixture/proxy.yml")
     COMPOSE_FILE="${RUNTIME_COMPOSE_FILES[0]}"
     DEPLOY_DIR=/fixture
@@ -205,6 +206,10 @@ printf 'xiass runtime unchanged-image and failure-path tests passed.\n'
     compose config --quiet
     grep -Fqx -- '-f /fixture/base.yml -f /fixture/node.yml -f /fixture/proxy.yml --project-directory /fixture --project-name paired-primary config --quiet' "$CALLS" \
         || fail 'runtime must retain the running Compose project and named-volume identity'
+    TEAM_RUNTIME_PROJECT_NAME=xiass-api
+    profile_compose config --quiet
+    grep -Fqx -- '-f /fixture/base.yml -f /fixture/node.yml -f /fixture/proxy.yml --project-directory /fixture --project-name xiass-api --profile team-browser config --quiet' "$CALLS" \
+        || fail 'Team profile must preserve its existing Compose project independently from the core project'
 )
 
 (

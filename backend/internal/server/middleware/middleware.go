@@ -22,6 +22,9 @@ const (
 	ContextKeyAPIKey ContextKey = "api_key"
 	// ContextKeySubscription 订阅上下文键
 	ContextKeySubscription ContextKey = "subscription"
+	// ContextKeyGroupSubscriptions stores active subscriptions keyed by group
+	// for multi-group API keys. The selected request group reads its own entry.
+	ContextKeyGroupSubscriptions ContextKey = "group_subscriptions"
 	// ContextKeyForcePlatform 强制平台（用于 /antigravity 路由）
 	ContextKeyForcePlatform ContextKey = "force_platform"
 	// ContextKeyOpsFallbackAPIKey 运维错误日志专用回退键。

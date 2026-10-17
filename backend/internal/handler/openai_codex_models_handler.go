@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -31,6 +32,40 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 	}
 	if apiKey.Group.Platform != service.PlatformOpenAI && apiKey.Group.Platform != service.PlatformComposite {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Codex models manifest is only available for OpenAI and Composite groups")
+		return
+	}
+	boundGroups := boundGroupsForAPIKey(apiKey)
+	if len(boundGroups) > 1 {
+		forcedPlatform := ""
+		if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
+			forcedPlatform = strings.TrimSpace(value)
+		}
+		modelIDs, groups, err := unionAPIKeyGroupModels(
+			c.Request.Context(),
+			h.gatewayService,
+			boundGroups,
+			forcedPlatform,
+			func(models []string, group *service.Group) []string {
+				return service.FilterCodexModelIDsForGroup(models, group)
+			},
+		)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+			return
+		}
+		body, err := h.gatewayService.BuildCodexModelsManifestForAPIKeyGroups(c.Request.Context(), groups, forcedPlatform, modelIDs)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+			return
+		}
+		etag := service.CodexModelsManifestETag(body)
+		c.Header("ETag", etag)
+		if service.CodexModelsManifestETagMatches(c.GetHeader("If-None-Match"), etag) {
+			c.Status(http.StatusNotModified)
+			c.Writer.WriteHeaderNow()
+			return
+		}
+		c.Data(http.StatusOK, "application/json", body)
 		return
 	}
 

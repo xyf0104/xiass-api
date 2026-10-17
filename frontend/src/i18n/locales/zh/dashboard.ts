@@ -136,6 +136,7 @@ export default {
     nameLabel: '名称',
     namePlaceholder: '我的 API 密钥',
     groupLabel: '分组',
+    groupSelectionHint: '可多选分组。同一个密钥会按请求模型自动走对应分组，重复模型只展示一次。',
     selectGroup: '选择分组',
     statusLabel: '状态',
     selectStatus: '选择状态',

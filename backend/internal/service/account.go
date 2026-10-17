@@ -2210,6 +2210,43 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 	}
 }
 
+// SupportsOpenAICodexImageGenerationBridge reports whether the account can
+// safely receive XIASS's hosted image_generation bridge tool on ordinary
+// Codex Responses requests.
+//
+// API-key accounts with an explicit model mapping are the one case where the
+// capability is knowable locally: if none of their mapped source or target
+// models is an image model, injecting the bridge makes an otherwise valid text
+// request ask the upstream group for an unsupported image capability. Accounts
+// without an explicit mapping remain allowed for compatibility because their
+// upstream capability is unknown, as do OAuth and passthrough accounts.
+func (a *Account) SupportsOpenAICodexImageGenerationBridge() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.IsOpenAIOAuth() || a.IsOpenAIPassthroughEnabled() {
+		return true
+	}
+	if a.Type != AccountTypeAPIKey {
+		// Preserve the legacy fail-open behavior for OAuth-like and older
+		// fixtures whose account type is omitted; the explicit mapping guard is
+		// only safe to apply to API-key accounts.
+		return true
+	}
+
+	mapping := a.GetModelMapping()
+	if len(mapping) == 0 {
+		return true
+	}
+	for sourceModel, targetModel := range mapping {
+		if openAIImageModelMappingPatternMatches(sourceModel) ||
+			openAIImageModelMappingPatternMatches(targetModel) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Account) GetChatGPTUserID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
