@@ -1644,6 +1644,15 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 				}
+				// See the event-loop branch above: a complete output item is
+				// sufficient to finish an image even when the final lifecycle
+				// event is lost with the upstream connection.
+				if !clientDisconnected && len(pendingResults) > 0 {
+					if finalizeErr := finalizePending(); finalizeErr == nil {
+						logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Recovered completed image output after upstream stream error")
+						return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+					}
+				}
 				if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
 					err = newOpenAIUpstreamStreamReadError(err)
 				}
@@ -1738,6 +1747,17 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 					return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+				}
+				// Some upstream Responses streams deliver the complete
+				// image_generation_call in response.output_item.done and then
+				// close the HTTP/2 stream before response.completed. The image
+				// is already complete in that case, so preserve it instead of
+				// discarding the result on the transport error.
+				if !clientDisconnected && len(pendingResults) > 0 {
+					if finalizeErr := finalizePending(); finalizeErr == nil {
+						logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Recovered completed image output after upstream stream error")
+						return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+					}
 				}
 				if shouldClassifyOpenAIUpstreamStreamReadError(ev.err, c.Request.Context()) {
 					ev.err = newOpenAIUpstreamStreamReadError(ev.err)

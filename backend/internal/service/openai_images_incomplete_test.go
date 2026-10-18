@@ -12,6 +12,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type imageStreamErrorReader struct {
+	data []byte
+	err  error
+}
+
+func (r *imageStreamErrorReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+func (r *imageStreamErrorReader) Close() error { return nil }
+
 // response.incomplete（生成超时/截断）应被识别为可重试的 502 上游错误，触发 failover。
 func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
@@ -216,6 +232,41 @@ func TestImagesOAuthStreaming_TextFallbackReturnsCapabilityError(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "event: error") {
 		t.Fatal("retryable text fallback must remain unflushed for failover")
+	}
+}
+
+func TestImagesOAuthStreaming_RecoversCompletedImageBeforeUpstreamStreamError(t *testing.T) {
+	upstreamSSE := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"response\":{\"created_at\":1710000006,\"tools\":[{\"type\":\"image_generation\",\"output_format\":\"png\"}]}}\n\n" +
+		"event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ig_recovered\",\"type\":\"image_generation_call\",\"status\":\"completed\",\"result\":\"aGVsbG8=\",\"output_format\":\"png\"}}\n\n"
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body: &imageStreamErrorReader{
+			data: []byte(upstreamSSE),
+			err:  errors.New("http2: client connection lost"),
+		},
+	}
+
+	svc := &OpenAIGatewayService{}
+	_, imageCount, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+	if err != nil {
+		t.Fatalf("a complete output item should recover from a lost final lifecycle event: %v", err)
+	}
+	if imageCount != 1 {
+		t.Fatalf("expected one recovered image, got %d", imageCount)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: image_generation.completed") {
+		t.Fatalf("expected normalized completed event, got %q", body)
+	}
+	if !strings.Contains(body, `"b64_json":"aGVsbG8="`) {
+		t.Fatalf("expected recovered image payload, got %q", body)
 	}
 }
 

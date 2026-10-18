@@ -364,6 +364,48 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			imageOutputSizes: imageCounter.Sizes(),
 		}
 	}
+	recoverCompletedImage := func() bool {
+		if sawTerminalEvent || sawFailedEvent || clientDisconnected || modelMismatchSuppressed || len(streamImageOutputs) == 0 {
+			return false
+		}
+		if stageFirstOutput && eventInProgress {
+			completeGuardedEvent(true)
+		}
+		if eventInProgress {
+			if _, err := writePendingString("\n"); err != nil {
+				clientDisconnected = true
+				return false
+			}
+			eventInProgress = false
+		}
+		model := originalModel
+		if strings.TrimSpace(model) == "" {
+			model = mappedModel
+		}
+		payload, ok := buildRecoveredOpenAIResponsesCompletedEvent(responseID, model, usage, streamDoneItems, streamImageOutputs)
+		if !ok {
+			return false
+		}
+		if !clientOutputStarted {
+			applyAttemptResponseHeaders()
+		}
+		if _, err := writePendingString("event: response.completed\n"); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		if _, err := writePendingString("data: " + string(payload) + "\n\n"); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		if err := flushBuffered(); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		clientOutputStarted = true
+		lastDownstreamWriteAt = time.Now()
+		sawTerminalEvent = true
+		return true
+	}
 	flushPending := func(disconnectMessage string) {
 		if clientDisconnected || pendingBytes() == 0 {
 			return
@@ -380,6 +422,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if stageFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
+		}
+		if recoverCompletedImage() {
+			s.clearOpenAIProxyStreamDisconnect(account)
 		}
 		if sawTerminalEvent && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
@@ -448,6 +493,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
 			sendErrorEvent("response_too_large", "Upstream response exceeded the size limit")
 			return resultWithUsage(), scanErr, true
+		}
+		if recoverCompletedImage() {
+			s.clearOpenAIProxyStreamDisconnect(account)
+			return resultWithUsage(), nil, true
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
 			msg := "OpenAI stream disconnected before completion"
@@ -1853,6 +1902,56 @@ func (r *responsesStreamOutputItems) BuildOutput() ([]byte, bool) {
 		return nil, false
 	}
 	return encoded, true
+}
+
+// buildRecoveredOpenAIResponsesCompletedEvent creates a terminal Responses
+// event when an image output item is complete but the upstream connection ends
+// before response.completed arrives. The image item is already the authoritative
+// output observed on the wire; this only supplies the missing terminal frame.
+func buildRecoveredOpenAIResponsesCompletedEvent(
+	responseID string,
+	model string,
+	usage *OpenAIUsage,
+	doneItems *responsesStreamOutputItems,
+	imageOutputs []json.RawMessage,
+) ([]byte, bool) {
+	if len(imageOutputs) == 0 {
+		return nil, false
+	}
+	outputJSON, ok := doneItems.BuildOutput()
+	if !ok {
+		outputJSON, ok = buildResponsesOutputJSON(nil, imageOutputs)
+	}
+	if !ok || len(outputJSON) == 0 {
+		return nil, false
+	}
+
+	response := map[string]any{
+		"object": "response",
+		"status": "completed",
+		"output": json.RawMessage(outputJSON),
+	}
+	if responseID = strings.TrimSpace(responseID); responseID != "" {
+		response["id"] = responseID
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		response["model"] = model
+	}
+	if usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		response["usage"] = map[string]int{
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"total_tokens":  usage.InputTokens + usage.OutputTokens,
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":     "response.completed",
+		"response": response,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return payload, true
 }
 
 func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.BufferedResponseAccumulator, doneItems *responsesStreamOutputItems, imageOutputs []json.RawMessage) ([]byte, bool) {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,6 +77,39 @@ func TestResponseFidelityAudit_SSEEventNamePreservesOutput(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "kept text", "valid semantic output must not be discarded as pre-output failure")
 	require.NotNil(t, result)
 	assert.Equal(t, 2, result.usage.OutputTokens)
+}
+
+func TestResponseFidelityAudit_RecoverCompletedImageBeforeStreamError(t *testing.T) {
+	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_image_recover\",\"model\":\"gpt-5.6-sol\"}}\n\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ig_recover\",\"type\":\"image_generation_call\",\"status\":\"generating\",\"result\":\"dGVzdA==\",\"output_format\":\"png\"}}\n\n"
+
+	for _, passthrough := range []bool{false, true} {
+		name := "native"
+		if passthrough {
+			name = "passthrough"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, rec := fidelityAuditContext(true)
+			resp := fidelityAuditResponse(&openAIStreamReadThenErrorCloser{
+				reader: strings.NewReader(body),
+				err:    errors.New("http2: client connection lost"),
+			})
+			svc := fidelityAuditHTTPService()
+			if passthrough {
+				result, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, fidelityAuditAccount(), time.Now(), "gpt-5.6-sol", "gpt-5.6-sol")
+				require.NoError(t, err)
+				require.NotNil(t, result)
+			} else {
+				result, err := svc.handleStreamingResponse(context.Background(), resp, c, fidelityAuditAccount(), time.Now(), "gpt-5.6-sol", "gpt-5.6-sol")
+				require.NoError(t, err)
+				require.NotNil(t, result)
+			}
+			responseBody := rec.Body.String()
+			require.Contains(t, responseBody, "event: response.completed")
+			require.Contains(t, responseBody, `"type":"image_generation_call"`)
+			require.Contains(t, responseBody, `"result":"dGVzdA=="`)
+		})
+	}
 }
 
 func TestResponseFidelityAudit_CompletedDoesNotBecomeIdleTimeout(t *testing.T) {

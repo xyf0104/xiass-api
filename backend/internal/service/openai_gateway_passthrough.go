@@ -1746,6 +1746,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
+	streamDoneItems := newResponsesStreamOutputItems()
+	streamImageOutputs := make([]json.RawMessage, 0, 1)
+	streamSeenImages := make(map[string]struct{})
 	var firstTokenMs *int
 	responseID := ""
 	ttftMode := s.openAITTFTMode(ctx)
@@ -1804,6 +1807,40 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			imageOutputSizes: imageCounter.Sizes(),
 		}
 	}
+	recoverCompletedImage := func() bool {
+		if sawTerminalEvent || sawFailedEvent || clientDisconnected || modelMismatchSuppressed || len(streamImageOutputs) == 0 {
+			return false
+		}
+		if len(pendingLines) > 0 && !writePendingLines() {
+			return false
+		}
+		flushPendingOutput()
+		model := originalModel
+		if strings.TrimSpace(model) == "" {
+			model = mappedModel
+		}
+		payload, ok := buildRecoveredOpenAIResponsesCompletedEvent(responseID, model, usage, streamDoneItems, streamImageOutputs)
+		if !ok {
+			return false
+		}
+		commitTurnState()
+		if _, err := fmt.Fprintln(w, "event: response.completed"); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		if _, err := fmt.Fprintln(w, "data: "+string(payload)); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			clientDisconnected = true
+			return false
+		}
+		flusher.Flush()
+		clientOutputStarted = true
+		sawTerminalEvent = true
+		return true
+	}
 
 	for documentScanner.Scan() {
 		line := documentScanner.Text()
@@ -1853,6 +1890,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					line = "data: " + string(restoredData)
 				}
 			}
+			if imageOutput, ok := extractImageGenerationOutputFromSSEData(dataBytes, streamSeenImages); ok {
+				streamImageOutputs = append(streamImageOutputs, imageOutput)
+			}
+			streamDoneItems.Observe(dataBytes)
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -1995,6 +2036,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 	if err := documentScanner.Err(); err != nil {
+		if recoverCompletedImage() {
+			s.clearOpenAIProxyStreamDisconnect(account)
+			return resultWithUsage(), nil
+		}
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil
@@ -2031,6 +2076,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	if sawFailedEvent {
 		return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
+	}
+	if recoverCompletedImage() {
+		s.clearOpenAIProxyStreamDisconnect(account)
+		return resultWithUsage(), nil
 	}
 	if !clientDisconnected && !sawDone && !sawTerminalEvent && ctx.Err() == nil {
 		logger.FromContext(ctx).With(
