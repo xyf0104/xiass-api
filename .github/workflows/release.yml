@@ -204,7 +204,9 @@ jobs:
         working-directory: deploy/team-child-automation
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          # Ubuntu 26 runners are not supported by Playwright 1.55.1's apt dependency installer.
+          # The runner already provides the shared libraries; download the pinned browser only.
+          npx playwright install chromium
           npm test
 
       - name: Test install download integrity

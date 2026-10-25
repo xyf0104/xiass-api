@@ -76,10 +76,10 @@ func TestUsageEgressUsesSelectedBuiltinNodeNotAccountOwner(t *testing.T) {
 	egress := newUsageEgress(account, account.requestProxyURL(), true)
 	require.Equal(t, "api2", egress.ExecutionNodeID)
 	require.Equal(t, executionNodeBuiltinProxyNamePrefix+"api2", egress.ProxyName)
-	account.RequestProxy.Name = executionNodeBuiltinProxyNamePrefix + "api.xiass.com"
-	account.RequestProxy.Username = "api.xiass.com"
+	account.RequestProxy.Name = executionNodeBuiltinProxyNamePrefix + "api.example.invalid"
+	account.RequestProxy.Username = "api.example.invalid"
 	egress = newUsageEgress(account, account.requestProxyURL(), true)
-	require.Equal(t, executionNodeBuiltinProxyNamePrefix+"api.xiass.com", egress.ProxyName)
+	require.Equal(t, executionNodeBuiltinProxyNamePrefix+"api.example.invalid", egress.ProxyName)
 	account.RequestProxy = nil
 	require.Empty(t, newUsageEgress(account, "", true).ExecutionNodeID)
 }
