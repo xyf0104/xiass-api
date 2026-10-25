@@ -190,17 +190,6 @@ func (a *Account) modelRateLimitResetAt(scope string) *time.Time {
 	return &resetAt
 }
 
-// modelRateLimitReason 返回指定 scope 冷却记录中的原因；没有记录时为空。
-func (a *Account) modelRateLimitReason(scope string) string {
-	if a == nil || a.Extra == nil {
-		return ""
-	}
-	rawLimits, _ := a.Extra[modelRateLimitsKey].(map[string]any)
-	rawLimit, _ := rawLimits[scope].(map[string]any)
-	reason, _ := rawLimit["reason"].(string)
-	return reason
-}
-
 // setAccountModelRateLimitSnapshot 把模型级限流写进本账号对象的 Extra 快照。
 // 写时复制：Extra 与其中的 model_rate_limits 可能与调度快照母本及其它副本共享，
 // 这里只读取旧 map，写入新复制的 map 后替换 account.Extra，不修改任何已有 map。

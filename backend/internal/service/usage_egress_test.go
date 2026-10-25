@@ -46,20 +46,22 @@ func TestUsageEgressFreezesSelectedMultiProxyAndFinalAttempt(t *testing.T) {
 func TestUsageEgressDoesNotReuseOtherAccountOrUnknownWSRoute(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	var nilParent context.Context
 	first := &Account{ID: 1, Platform: PlatformOpenAI, RequestProxy: &Proxy{ID: 4, Name: "first", Protocol: "http", Host: "proxy.test", Port: 3128}}
 	freezeOpenAIHTTPUpstreamProxy(c, first, first.requestProxyURL())
 	second := &Account{ID: 2, Platform: PlatformOpenAI}
-	require.Equal(t, "direct", UsageEgressFromContext(UsageEgressContext(nil, c, second)).Route)
+	require.Equal(t, "direct", UsageEgressFromContext(UsageEgressContext(nilParent, c, second)).Route)
 	freezeOpenAIWSUpstreamProxy(c, second, "")
-	require.Nil(t, UsageEgressFromContext(UsageEgressContext(nil, c, second)))
+	require.Nil(t, UsageEgressFromContext(UsageEgressContext(nilParent, c, second)))
 	freezeOpenAIHTTPUpstreamProxy(c, second, "")
-	require.Equal(t, "direct", UsageEgressFromContext(UsageEgressContext(nil, c, second)).Route)
+	require.Equal(t, "direct", UsageEgressFromContext(UsageEgressContext(nilParent, c, second)).Route)
 	require.Nil(t, UsageEgressFromContext(context.Background()))
 }
 
 func TestUsageEgressCopiesScalarContextAndRejectsUnsafeAddress(t *testing.T) {
 	account := &Account{ID: 9, RequestProxy: &Proxy{ID: 7, Name: "password=secret", Protocol: "http", Host: "user:password@host.test", Port: 3128}}
-	ctx := UsageEgressContext(nil, nil, account)
+	var nilParent context.Context
+	ctx := UsageEgressContext(nilParent, nil, account)
 	copy := CopyUsageEgressContext(ctx, context.Background())
 	account.RequestProxy.ID = 100
 	route := UsageEgressFromContext(copy)

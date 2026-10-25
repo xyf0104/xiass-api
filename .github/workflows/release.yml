@@ -174,7 +174,10 @@ jobs:
         working-directory: tools/xiass-proxy-agent
 
   test-deploy-scripts:
-    runs-on: ubuntu-latest
+    # Playwright 1.55.1 does not support Ubuntu 26.04's dependency/runtime image.
+    # Keep this browser-backed job on a supported runner so the real Chromium
+    # fixtures continue to execute instead of silently becoming skipped tests.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -204,9 +207,7 @@ jobs:
         working-directory: deploy/team-child-automation
         run: |
           npm ci --ignore-scripts
-          # Ubuntu 26 runners are not supported by Playwright 1.55.1's apt dependency installer.
-          # The runner already provides the shared libraries; download the pinned browser only.
-          npx playwright install chromium
+          npx playwright install --with-deps chromium
           npm test
 
       - name: Test install download integrity

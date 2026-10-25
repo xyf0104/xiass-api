@@ -20,7 +20,7 @@ func TestProxyLatencyCacheHonorsShortLookupDeadlineWithStalledRedis(t *testing.T
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = io.Copy(io.Discard, conn)
 	}()
 	client := redis.NewClient(&redis.Options{

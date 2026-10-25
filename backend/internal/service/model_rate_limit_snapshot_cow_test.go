@@ -50,7 +50,6 @@ func TestSetAccountModelRateLimitSnapshot_CopyOnWrite(t *testing.T) {
 		"rate_limit_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339),
 		"reason":              "threshold",
 	}, newLimits[anthropicFableRateLimitKey])
-	require.Equal(t, "threshold", account.modelRateLimitReason(anthropicFableRateLimitKey))
 	require.True(t, account.isModelRateLimitedWithContext(ctx, "claude-fable-5"))
 	require.True(t, account.isModelRateLimitedWithContext(ctx, "claude-opus-5"))
 	require.False(t, account.isModelRateLimitedWithContext(ctx, "claude-sonnet-5"))
@@ -63,7 +62,6 @@ func TestSetAccountModelRateLimitSnapshot_InitializesMissingOrInvalidLimits(t *t
 	empty := &Account{Platform: PlatformAnthropic}
 	setAccountModelRateLimitSnapshot(empty, "claude-opus-5", now.Add(time.Hour), "", now)
 	require.True(t, empty.isModelRateLimitedWithContext(ctx, "claude-opus-5"))
-	require.Empty(t, empty.modelRateLimitReason("claude-opus-5"))
 
 	invalidExtra := map[string]any{modelRateLimitsKey: "corrupted", "keep": true}
 	invalid := &Account{Platform: PlatformAnthropic, Extra: invalidExtra}
