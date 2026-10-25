@@ -638,6 +638,19 @@ urlFallbackLoop:
 				// A failed compatibility probe must not replace the original prod
 				// endpoint response or enter account/model error handling.
 				if endpointExhaustionResponse != nil {
+					if !p.readOnlyProbe && p.account != nil && p.account.Platform == PlatformAntigravity &&
+						resp.StatusCode == http.StatusTooManyRequests && isBareAntigravityEndpointExhaustion(respBody) &&
+						strings.TrimSpace(p.requestedModel) != "" {
+						logger.LegacyPrintf("service.antigravity_gateway", "%s bare endpoint exhaustion after fallback; switching account=%d model=%s",
+							p.prefix, p.account.ID, p.requestedModel)
+						_ = resp.Body.Close()
+						_ = endpointExhaustionResponse.Body.Close()
+						return nil, &AntigravityAccountSwitchError{
+							OriginalAccountID: p.account.ID,
+							RateLimitedModel:  p.requestedModel,
+							IsStickySession:   p.isStickySession,
+						}
+					}
 					_ = resp.Body.Close()
 					resp = endpointExhaustionResponse
 					break urlFallbackLoop
@@ -664,6 +677,16 @@ urlFallbackLoop:
 				// This exact response is an endpoint compatibility failure, not an
 				// account/model quota signal. Return it without persistent cooldowns.
 				if resp.StatusCode == http.StatusTooManyRequests && isBareAntigravityEndpointExhaustion(respBody) {
+					if !p.readOnlyProbe && p.account != nil && p.account.Platform == PlatformAntigravity &&
+						strings.TrimSpace(p.requestedModel) != "" {
+						logger.LegacyPrintf("service.antigravity_gateway", "%s bare endpoint exhaustion; switching account=%d model=%s",
+							p.prefix, p.account.ID, p.requestedModel)
+						return nil, &AntigravityAccountSwitchError{
+							OriginalAccountID: p.account.ID,
+							RateLimitedModel:  p.requestedModel,
+							IsStickySession:   p.isStickySession,
+						}
+					}
 					break urlFallbackLoop
 				}
 
@@ -914,10 +937,12 @@ func sleepAntigravityBackoffWithContext(ctx context.Context, attempt int) bool {
 	}
 }
 
-// isSingleAccountRetry 检查 context 中是否设置了单账号退避重试标记
+// isSingleAccountRetry 检查是否处于单账号退避重试模式：显式标记优先，否则使用请求挂载的延迟判定。
 func isSingleAccountRetry(ctx context.Context) bool {
-	v, _ := SingleAccountRetryFromContext(ctx)
-	return v
+	if v, ok := SingleAccountRetryFromContext(ctx); ok {
+		return v
+	}
+	return singleAccountRetryProbeResult(ctx)
 }
 
 // setModelRateLimitByModelName 使用官方模型 ID 设置模型级限流

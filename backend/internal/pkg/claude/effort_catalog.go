@@ -19,12 +19,15 @@ var effortFamilies = []struct {
 	{family: "claude-mythos-5", levels: effortLowMediumHighXHighMax},
 	{family: "claude-fable-5", levels: effortLowMediumHighXHighMax},
 	{family: "claude-sonnet-4-6", levels: effortLowMediumHighMax},
+	{family: "claude-sonnet-5-5", levels: effortLowMediumHighXHighMax},
 	{family: "claude-sonnet-5", levels: effortLowMediumHighXHighMax},
 	{family: "claude-opus-4-8", levels: effortLowMediumHighXHighMax},
 	{family: "claude-opus-4-7", levels: effortLowMediumHighXHighMax},
 	{family: "claude-opus-4-6", levels: effortLowMediumHighMax},
 	{family: "claude-opus-4-5", levels: effortLowMediumHigh},
 	{family: "claude-opus-5", levels: effortLowMediumHighXHighMax},
+	{family: "claude-opus-5-5", levels: effortLowMediumHighXHighMax},
+	{family: "claude-haiku-5-5", levels: effortLowMediumHighXHighMax},
 }
 
 // EffortLevelsForModel returns the output_config.effort values accepted by a
@@ -39,6 +42,21 @@ func EffortLevelsForModel(model string) []string {
 	return nil
 }
 
+// IsOpus55 identifies the fixed Opus 5.5 model after provider normalization.
+func IsOpus55(model string) bool {
+	return normalizeEffortModelID(model) == "claude-opus-5-5"
+}
+
+// IsSonnet55 identifies the fixed Sonnet 5.5 model after provider normalization.
+func IsSonnet55(model string) bool {
+	return normalizeEffortModelID(model) == "claude-sonnet-5-5"
+}
+
+// IsHaiku55 identifies the fixed Haiku 5.5 model after provider normalization.
+func IsHaiku55(model string) bool {
+	return normalizeEffortModelID(model) == "claude-haiku-5-5"
+}
+
 func normalizeEffortModelID(model string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	id = strings.TrimPrefix(id, "models/")
@@ -49,6 +67,12 @@ func normalizeEffortModelID(model string) string {
 	id = strings.TrimSuffix(id, "-thinking")
 	if id == "claude-opus-5.5" {
 		id = "claude-opus-5-5"
+	}
+	if id == "claude-sonnet-5.5" {
+		id = "claude-sonnet-5-5"
+	}
+	if id == "claude-haiku-5.5" {
+		id = "claude-haiku-5-5"
 	}
 	if mapped, ok := ModelIDReverseOverrides[id]; ok {
 		id = mapped

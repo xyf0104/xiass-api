@@ -16,6 +16,16 @@ const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'Deleted',
   'admin.accounts.executionNodeLocal': 'Local',
   'admin.accounts.columns.executionNodeHint': 'Account egress node',
+  'admin.usage.egressLabel': 'Egress',
+  'admin.usage.egressDirect': 'Direct',
+  'admin.usage.egressProxy': 'Proxy',
+  'admin.usage.egressNotRecorded': 'Not recorded',
+  'admin.usage.egressIpUnprobed': 'IP not probed',
+  'admin.usage.egressPublicIp': 'Public IP',
+  'admin.usage.egressProxyName': 'Proxy name',
+  'admin.usage.egressProxyAddress': 'Proxy address',
+  'admin.usage.egressExecutionNode': 'Execution node',
+  'admin.usage.egressIpObservedAt': 'Last IP probe',
   'usage.costDetails': 'Cost Breakdown',
   'admin.usage.inputCost': 'Input Cost',
   'admin.usage.outputCost': 'Output Cost',
@@ -196,6 +206,188 @@ describe('admin UsageTable execution-node badges', () => {
     expect(row.get('[title="Account egress node"]').text()).toContain('Local')
     expect(row.get('[title="号池：沐念云"]').text()).toBe('沐念云')
     expect(row.get('[title="号池：沐念云"]').classes()).not.toContain('mt-1')
+  })
+})
+
+describe('admin UsageTable per-request egress snapshot', () => {
+  const AccountCellDataTableStub = {
+    props: ['data'],
+    template: `
+      <div>
+        <div v-for="row in data" :key="row.request_id">
+          <slot name="cell-account" :row="row" :value="row.account?.name" />
+        </div>
+      </div>
+    `,
+  }
+
+  const mountAccountRows = (data: Record<string, unknown>[], showAccountBilling = true) => mount(UsageTable, {
+    props: {
+      data: data as any,
+      columns: [{ key: 'account', label: 'Account' }],
+      showAccountBilling,
+    },
+    global: {
+      stubs: {
+        DataTable: AccountCellDataTableStub,
+        Icon: { template: '<i />' },
+      },
+    },
+  })
+
+  it.each([
+    {
+      name: 'proxy IPv4',
+      requestId: 'proxy-ipv4',
+      egress: {
+        route: 'proxy',
+        proxy_id: 7,
+        proxy_name: 'Tokyo exit',
+        proxy_address: '10.0.0.8:1080',
+        ip_address: '203.0.113.8',
+        ip_observed_at: '2026-10-24T08:30:00Z',
+        execution_node_id: 'api2',
+      },
+      display: ['203.0.113.8', 'Tokyo exit'],
+      title: ['Public IP: 203.0.113.8', 'Proxy address: 10.0.0.8:1080', 'Execution node: api2', 'Last IP probe:'],
+    },
+    {
+      name: 'proxy IPv6',
+      requestId: 'proxy-ipv6',
+      egress: {
+        route: 'proxy',
+        proxy_name: 'IPv6 exit',
+        ip_address: '2001:db8:abcd::19',
+      },
+      display: ['2001:db8:abcd::19', 'IPv6 exit'],
+      title: ['Public IP: 2001:db8:abcd::19'],
+    },
+    {
+      name: 'direct IPv4',
+      requestId: 'direct-ipv4',
+      egress: {
+        route: 'direct',
+        ip_address: '198.51.100.44',
+        execution_node_id: 'api',
+      },
+      display: ['Direct', '198.51.100.44'],
+      title: ['Egress: Direct', 'Public IP: 198.51.100.44', 'Execution node: api'],
+    },
+    {
+      name: 'direct IPv6',
+      requestId: 'direct-ipv6',
+      egress: {
+        route: 'direct',
+        ip_address: '2001:db8::42',
+      },
+      display: ['Direct', '2001:db8::42'],
+      title: ['Public IP: 2001:db8::42'],
+    },
+  ])('renders the persisted $name snapshot', ({ requestId, egress, display, title }) => {
+    const wrapper = mountAccountRows([{
+      ...baseImageRow,
+      request_id: requestId,
+      account: { id: 12, name: 'Account 12' },
+      egress,
+    }])
+
+    const line = wrapper.get(`[data-testid="account-egress"][data-request-id="${requestId}"]`)
+    for (const value of display) expect(line.text()).toContain(value)
+    for (const value of title) expect(line.attributes('title')).toContain(value)
+    expect(line.classes()).toContain('min-w-0')
+    expect(line.classes()).toContain('overflow-hidden')
+    expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
+  })
+
+  it('shows the selected proxy identity without presenting its listener as a public IP', () => {
+    const wrapper = mountAccountRows([{
+      ...baseImageRow,
+      request_id: 'proxy-unprobed',
+      account: { id: 12, name: 'Account 12' },
+      egress: {
+        route: 'proxy',
+        proxy_name: '<b>Private listener</b>',
+        proxy_address: '[fd00::12]:1080',
+        execution_node_id: 'api3',
+      },
+    }])
+
+    const line = wrapper.get('[data-request-id="proxy-unprobed"]')
+    expect(line.text()).toContain('<b>Private listener</b>')
+    expect(line.text()).not.toContain('IP not probed')
+    expect(line.attributes('title')).toContain('Public IP: IP not probed')
+    expect(line.attributes('title')).toContain('Proxy address: [fd00::12]:1080')
+    expect(line.find('b').exists()).toBe(false)
+  })
+
+  it('shows an unobtrusive historical marker instead of inferring current account egress', () => {
+    const wrapper = mountAccountRows([{
+      ...baseImageRow,
+      request_id: 'historical',
+      account: { id: 12, name: 'Current proxy account', execution_node_id: 'api9' },
+    }])
+
+    const line = wrapper.get('[data-request-id="historical"]')
+    expect(line.text()).toContain('Not recorded')
+    expect(line.text()).not.toContain('api9')
+    expect(line.classes()).toContain('text-gray-400')
+  })
+
+  it('does not expose admin egress snapshots in regular-user table mode', () => {
+    const wrapper = mountAccountRows([{
+      ...baseImageRow,
+      request_id: 'user-mode',
+      account: { id: 12, name: 'Account 12' },
+      egress: { route: 'direct', ip_address: '198.51.100.9' },
+    }], false)
+
+    expect(wrapper.find('[data-testid="account-egress"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('198.51.100.9')
+  })
+
+  it('renders the same compact egress line inside the mobile account field', () => {
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    try {
+      const wrapper = mount(UsageTable, {
+        props: {
+          data: [{
+            ...baseImageRow,
+            request_id: 'mobile-proxy-ipv6',
+            account: { id: 12, name: 'Mobile account' },
+            egress: {
+              route: 'proxy',
+              proxy_name: 'Mobile IPv6 exit',
+              ip_address: '2001:db8:1234:5678::99',
+            },
+          }] as any,
+          columns: [{ key: 'account', label: 'Account' }],
+        },
+        global: {
+          stubs: {
+            Icon: { template: '<i />' },
+          },
+        },
+      })
+
+      const field = wrapper.get('[data-field="account"]')
+      const line = field.get('[data-testid="account-egress"]')
+      expect(line.text()).toContain('2001:db8:1234:5678::99')
+      expect(line.text()).toContain('Mobile IPv6 exit')
+      expect(line.classes()).toContain('max-w-full')
+      expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
+    } finally {
+      matchMedia.mockRestore()
+    }
   })
 })
 
@@ -757,6 +949,38 @@ describe('admin UsageTable deleted-user badge', () => {
   })
 })
 
+describe('admin UsageTable cache hit rate', () => {
+  it.each([
+    { input: 170, creation: 0, read: 1700, expected: '90.9%' },
+    { input: 170, creation: 170, read: 1700, expected: '83.3%' },
+    { input: 170, creation: 0, read: 0, expected: '0.0%' },
+    { input: 0, creation: 0, read: 0, expected: '-' },
+  ])('shows $expected beside cache reads for $input input / $creation creation / $read read, excluding output', ({ input, creation, read, expected }) => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-cache-hit-rate', model: 'gpt-5.4', actual_cost: 0, total_cost: 0,
+          input_tokens: input, cache_creation_tokens: creation, cache_read_tokens: read, output_tokens: 13,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    const tokens = wrapper.get('[data-testid="tokens-cell"]')
+    const cacheRead = tokens.get('[data-testid="cache-read-tokens"]')
+    const hitRate = tokens.get('[data-testid="cache-hit-rate"]')
+    expect(cacheRead.text()).toBe(read > 0 ? '1.7K' : '0')
+    expect(hitRate.text()).toBe(expected)
+    expect(cacheRead.element.nextElementSibling).toBe(hitRate.element)
+    expect(cacheRead.element.parentElement?.classList.contains('inline-flex')).toBe(true)
+    expect(hitRate.classes()).toEqual(expect.arrayContaining(['text-emerald-600', 'dark:text-emerald-400']))
+  })
+})
+
 describe('admin UsageTable output token speed', () => {
   it('shows streamed output speed and an explicit non-stream fallback label', () => {
     const wrapper = mount(UsageTable, {
@@ -789,5 +1013,8 @@ describe('admin UsageTable output token speed', () => {
     expect(speedRows[1].text()).toContain('60.00 t/s')
     expect(speedRows[1].text()).toContain('non-stream')
     expect(speedRows[2].text()).toContain('-')
+    for (const speed of speedRows) {
+      expect(speed.classes()).toEqual(expect.arrayContaining(['text-violet-600', 'dark:text-violet-400']))
+    }
   })
 })

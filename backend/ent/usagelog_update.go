@@ -4,11 +4,13 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
@@ -947,6 +949,24 @@ func (_u *UsageLogUpdate) SetNillableCacheTTLOverridden(v *bool) *UsageLogUpdate
 	return _u
 }
 
+// SetEgress sets the "egress" field.
+func (_u *UsageLogUpdate) SetEgress(v jsontext.Value) *UsageLogUpdate {
+	_u.mutation.SetEgress(v)
+	return _u
+}
+
+// AppendEgress appends value to the "egress" field.
+func (_u *UsageLogUpdate) AppendEgress(v jsontext.Value) *UsageLogUpdate {
+	_u.mutation.AppendEgress(v)
+	return _u
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (_u *UsageLogUpdate) ClearEgress() *UsageLogUpdate {
+	_u.mutation.ClearEgress()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *UsageLogUpdate) SetUser(v *User) *UsageLogUpdate {
 	return _u.SetUserID(v.ID)
@@ -1380,6 +1400,17 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.CacheTTLOverridden(); ok {
 		_spec.SetField(usagelog.FieldCacheTTLOverridden, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Egress(); ok {
+		_spec.SetField(usagelog.FieldEgress, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedEgress(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, usagelog.FieldEgress, value)
+		})
+	}
+	if _u.mutation.EgressCleared() {
+		_spec.ClearField(usagelog.FieldEgress, field.TypeJSON)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2461,6 +2492,24 @@ func (_u *UsageLogUpdateOne) SetNillableCacheTTLOverridden(v *bool) *UsageLogUpd
 	return _u
 }
 
+// SetEgress sets the "egress" field.
+func (_u *UsageLogUpdateOne) SetEgress(v jsontext.Value) *UsageLogUpdateOne {
+	_u.mutation.SetEgress(v)
+	return _u
+}
+
+// AppendEgress appends value to the "egress" field.
+func (_u *UsageLogUpdateOne) AppendEgress(v jsontext.Value) *UsageLogUpdateOne {
+	_u.mutation.AppendEgress(v)
+	return _u
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (_u *UsageLogUpdateOne) ClearEgress() *UsageLogUpdateOne {
+	_u.mutation.ClearEgress()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *UsageLogUpdateOne) SetUser(v *User) *UsageLogUpdateOne {
 	return _u.SetUserID(v.ID)
@@ -2924,6 +2973,17 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.CacheTTLOverridden(); ok {
 		_spec.SetField(usagelog.FieldCacheTTLOverridden, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Egress(); ok {
+		_spec.SetField(usagelog.FieldEgress, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedEgress(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, usagelog.FieldEgress, value)
+		})
+	}
+	if _u.mutation.EgressCleared() {
+		_spec.ClearField(usagelog.FieldEgress, field.TypeJSON)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +36,69 @@ func configureOpenAIReauthorizationProxy(t *testing.T, f *batchOAuthFixture, pro
 	t.Helper()
 	f.h.openaiOAuthService = service.NewOpenAIOAuthService(&openAIReauthorizationProxyRepo{proxy: &proxy}, f.client)
 	t.Cleanup(f.h.openaiOAuthService.Stop)
+}
+
+type openAIReauthorizationSidecarStub struct {
+	getStatusCode int
+	getStatus     string
+	getStage      string
+	getReason     string
+	getCalls      atomic.Int32
+	postCalls     atomic.Int32
+}
+
+func configureOpenAIReauthorizationSidecar(t *testing.T, stub *openAIReauthorizationSidecarStub) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-XIASS-Team-Child-Token") != "batch-test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/batch-oauth/tasks" {
+			stub.postCalls.Add(1)
+			var payload struct {
+				TaskID  string `json:"task_id"`
+				OwnerID int64  `json:"owner_id"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": payload.TaskID, "owner_id": payload.OwnerID, "status": "running", "stage": "login",
+			})
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		stub.getCalls.Add(1)
+		if stub.getStatusCode != 0 && stub.getStatusCode != http.StatusOK {
+			http.Error(w, "private-sidecar-detail", stub.getStatusCode)
+			return
+		}
+		ownerID, err := strconv.ParseInt(r.URL.Query().Get("owner_id"), 10, 64)
+		require.NoError(t, err)
+		id := strings.TrimPrefix(r.URL.Path, "/batch-oauth/tasks/")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": id, "owner_id": ownerID, "status": stub.getStatus, "stage": stub.getStage, "reason": stub.getReason,
+		})
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("TEAM_CHILD_AUTOMATION_URL", server.URL)
+}
+
+func seedForeignOpenAIReauthorizationTask(t *testing.T, f *batchOAuthFixture, id string) *batchOAuthTask {
+	t.Helper()
+	now := time.Now().UTC()
+	task := &batchOAuthTask{
+		ID: id, Mode: batchOAuthModeReauthorization, Email: "owner@example.test", TargetAccountID: 448,
+		ownerID: 999, sidecarID: id, Status: "running", Stage: "login", CreatedAt: now.Add(-time.Minute),
+		ExpiresAt: now.Add(20 * time.Minute), ReauthorizationNumber: 1, reauthStateEvent: id + ":running",
+	}
+	task.snapshotJSONLocked()
+	f.h.batchOAuthStore.mu.Lock()
+	f.h.batchOAuthStore.tasks[id] = task
+	f.h.batchOAuthStore.mu.Unlock()
+	return task
 }
 
 func (i *openAIReauthorizationInvalidator) InvalidateToken(_ context.Context, account *service.Account) error {
@@ -494,6 +559,241 @@ func TestOpenAIReauthorizationRepeatedStartReturnsExistingTask(t *testing.T) {
 	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
 	require.Contains(t, second.Body.String(), `"task_id":"`+firstEnvelope.Data.ID+`"`)
 	require.Equal(t, int32(1), f.sidecarCalls.Load())
+}
+
+func TestOpenAIReauthorizationForeignTerminalTaskCanBeReplaced(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	r := openAIReauthorizationRouter(f.h, 42)
+
+	first := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var firstEnvelope struct {
+		Data struct {
+			ID string `json:"task_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstEnvelope))
+	oldTask := f.h.batchOAuthStore.tasks[firstEnvelope.Data.ID]
+	require.NotNil(t, oldTask)
+	oldTask.mu.Lock()
+	oldTask.ownerID = 999
+	oldTask.Status, oldTask.Stage, oldTask.Reason = "failed", "failed", "automation_start_failed"
+	oldTask.markFinishedIfTerminal()
+	oldTask.mu.Unlock()
+
+	second := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	var secondEnvelope struct {
+		Data struct {
+			ID string `json:"task_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &secondEnvelope))
+	require.NotEqual(t, firstEnvelope.Data.ID, secondEnvelope.Data.ID)
+	_, oldStillPresent := f.h.batchOAuthStore.tasks[firstEnvelope.Data.ID]
+	require.False(t, oldStillPresent)
+	require.Contains(t, f.h.batchOAuthStore.tasks, secondEnvelope.Data.ID)
+	require.Equal(t, int32(2), f.sidecarCalls.Load())
+	require.Equal(t, 3, f.admin.openAIReauthorizationState.calls)
+}
+
+func TestOpenAIReauthorizationPersistedAutomaticTerminalTaskCanBeReplaced(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	account := reauthorizationAccount(448)
+	now := time.Now().UTC()
+	automaticState := service.OpenAIReauthorizationStateFromAccount(account)
+	automaticState.AttemptCount = 1
+	automaticState.LastResult = service.OpenAIReauthorizationResultFailed
+	automaticState.LastReason = "task_expired"
+	automaticState.LastInitiator = service.OpenAIReauthorizationInitiatorAutomatic
+	automaticState.LastResultAt = &now
+	automaticState.AutoFinishedAt = &now
+	automaticState.LastEventKey = "auto-claim:failed:task_expired"
+	automaticState.Normalize()
+	account.Extra[service.OpenAIReauthorizationStateExtraKey] = automaticState
+	f.admin.getAccountResult = account
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	oldTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-automatic-terminal")
+	oldTask.mu.Lock()
+	oldTask.Status, oldTask.Stage, oldTask.Reason = "failed", "failed", "task_expired"
+	oldTask.reauthStateEvent = "auto-claim:running"
+	oldTask.markFinishedIfTerminal()
+	oldTask.mu.Unlock()
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+	require.NotContains(t, f.h.batchOAuthStore.tasks, oldTask.ID)
+	require.Zero(t, sidecar.getCalls.Load())
+	require.Equal(t, int32(1), sidecar.postCalls.Load())
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.calls, "only the replacement manual start should update history")
+	require.Equal(t, service.OpenAIReauthorizationInitiatorManual, f.admin.openAIReauthorizationState.last.LastInitiator)
+}
+
+func TestOpenAIReauthorizationForeignStaleSidecarTaskCanBeReplaced(t *testing.T) {
+	tests := []struct {
+		name           string
+		statusCode     int
+		status         string
+		stage          string
+		reason         string
+		wantTaskStatus string
+		wantTaskReason string
+	}{
+		{name: "missing", statusCode: http.StatusNotFound, wantTaskStatus: "failed", wantTaskReason: "task_expired"},
+		{name: "terminal", status: "failed", stage: "failed", reason: "navigation_timeout", wantTaskStatus: "failed", wantTaskReason: "navigation_timeout"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBatchOAuthFixture(t)
+			t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+			f.admin.getAccountResult = reauthorizationAccount(448)
+			proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+			f.admin.proxies = []service.Proxy{proxy}
+			configureOpenAIReauthorizationProxy(t, f, proxy)
+			sidecar := &openAIReauthorizationSidecarStub{
+				getStatusCode: tc.statusCode, getStatus: tc.status, getStage: tc.stage, getReason: tc.reason,
+			}
+			configureOpenAIReauthorizationSidecar(t, sidecar)
+			oldTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-stale-"+tc.name)
+
+			result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+			require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+			require.Equal(t, int32(1), sidecar.getCalls.Load())
+			require.Equal(t, int32(1), sidecar.postCalls.Load())
+			require.NotContains(t, f.h.batchOAuthStore.tasks, oldTask.ID)
+			require.Equal(t, tc.wantTaskStatus, oldTask.Status)
+			require.Equal(t, tc.wantTaskReason, oldTask.Reason)
+			require.NotNil(t, oldTask.FinishedAt)
+			require.Equal(t, 2, f.admin.openAIReauthorizationState.calls)
+		})
+	}
+}
+
+func TestOpenAIReauthorizationForeignTerminalHistoryFailureKeepsTask(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	f.admin.openAIReauthorizationState.err = errors.New("history write failed")
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	oldTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-terminal-history-failure")
+	oldTask.mu.Lock()
+	oldTask.Status, oldTask.Stage, oldTask.Reason = "failed", "failed", "navigation_timeout"
+	oldTask.markFinishedIfTerminal()
+	oldTask.mu.Unlock()
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusServiceUnavailable, result.Code, result.Body.String())
+	require.Contains(t, result.Body.String(), "历史无法保存")
+	require.NotContains(t, result.Body.String(), "history write failed")
+	require.Same(t, oldTask, f.h.batchOAuthStore.tasks[oldTask.ID])
+	require.Zero(t, sidecar.getCalls.Load())
+	require.Zero(t, sidecar.postCalls.Load())
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.calls)
+}
+
+func TestOpenAIReauthorizationForeignSidecarBlockIsRevalidatedBeforeRestart(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{
+		getStatus: "failed", getStage: "failed", getReason: "account_deleted_or_disabled",
+	}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	oldTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-sidecar-blocked")
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, result.Code, result.Body.String())
+	require.Contains(t, result.Body.String(), "不能重新授权")
+	require.NotContains(t, f.h.batchOAuthStore.tasks, oldTask.ID)
+	require.Equal(t, int32(1), sidecar.getCalls.Load())
+	require.Zero(t, sidecar.postCalls.Load())
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.calls)
+	require.Equal(t, service.OpenAIReauthorizationResultBlocked, f.admin.openAIReauthorizationState.last.LastResult)
+}
+
+func TestOpenAIReauthorizationForeignSuccessIsRevalidatedBeforeRestart(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	oldTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-completed")
+	oldTask.mu.Lock()
+	oldTask.Status, oldTask.Stage, oldTask.Reason, oldTask.AccountID = "completed", "completed", "", 448
+	oldTask.markFinishedIfTerminal()
+	oldTask.mu.Unlock()
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, result.Code, result.Body.String())
+	require.Contains(t, result.Body.String(), "高风险二次确认")
+	require.NotContains(t, f.h.batchOAuthStore.tasks, oldTask.ID)
+	require.Zero(t, sidecar.getCalls.Load())
+	require.Zero(t, sidecar.postCalls.Load())
+	require.Equal(t, 1, f.admin.openAIReauthorizationState.calls)
+	require.Equal(t, service.OpenAIReauthorizationResultSuccess, f.admin.openAIReauthorizationState.last.LastResult)
+}
+
+func TestOpenAIReauthorizationForeignRunningTaskStillConflicts(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{getStatus: "running", getStage: "login"}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	runningTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-running")
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, result.Code, result.Body.String())
+	require.Contains(t, result.Body.String(), "already has an authorization task")
+	require.Equal(t, int32(1), sidecar.getCalls.Load())
+	require.Zero(t, sidecar.postCalls.Load())
+	require.Same(t, runningTask, f.h.batchOAuthStore.tasks[runningTask.ID])
+	require.Equal(t, "running", runningTask.Status)
+	require.Zero(t, f.admin.openAIReauthorizationState.calls)
+}
+
+func TestOpenAIReauthorizationForeignTaskStatusReadFailureStillConflicts(t *testing.T) {
+	f := newBatchOAuthFixture(t)
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+	f.admin.getAccountResult = reauthorizationAccount(448)
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
+	sidecar := &openAIReauthorizationSidecarStub{getStatusCode: http.StatusInternalServerError}
+	configureOpenAIReauthorizationSidecar(t, sidecar)
+	runningTask := seedForeignOpenAIReauthorizationTask(t, f, "foreign-unreadable")
+
+	result := batchOAuthRequest(openAIReauthorizationRouter(f.h, 42), http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
+	require.Equal(t, http.StatusConflict, result.Code, result.Body.String())
+	require.Contains(t, result.Body.String(), "already has an authorization task")
+	require.NotContains(t, result.Body.String(), "private-sidecar-detail")
+	require.Equal(t, int32(1), sidecar.getCalls.Load())
+	require.Zero(t, sidecar.postCalls.Load())
+	require.Same(t, runningTask, f.h.batchOAuthStore.tasks[runningTask.ID])
+	require.Equal(t, "running", runningTask.Status)
+	require.Zero(t, f.admin.openAIReauthorizationState.calls)
 }
 
 func TestOpenAIReauthorizationUnknownBlockedTaskCanRetry(t *testing.T) {

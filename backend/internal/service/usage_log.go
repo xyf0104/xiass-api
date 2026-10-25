@@ -101,6 +101,18 @@ func ApplyLegacyRequestFields(requestType RequestType, fallbackStream bool, fall
 	}
 }
 
+type UsageEgress struct {
+	Route           string     `json:"route"`
+	ProxyID         int64      `json:"proxy_id,omitempty"`
+	ProxyName       string     `json:"proxy_name,omitempty"`
+	ProxyAddress    string     `json:"proxy_address,omitempty"`
+	IPAddress       string     `json:"ip_address,omitempty"`
+	IPObservedAt    *time.Time `json:"ip_observed_at,omitempty"`
+	ExecutionNodeID string     `json:"execution_node_id,omitempty"`
+	ProxyUpdatedAt  time.Time  `json:"-"`
+	CapturedAt      time.Time  `json:"-"`
+}
+
 type UsageLog struct {
 	ID        int64
 	UserID    int64
@@ -190,6 +202,7 @@ type UsageLog struct {
 	// extra.upstream_request_id_header 指定的头；账户未指定头名、WS 轮次
 	// 与上游没有该头的路径为 nil。
 	UpstreamRequestID *string
+	Egress            *UsageEgress
 
 	// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
 	CacheTTLOverridden bool

@@ -28,6 +28,10 @@ type openAIReauthorizationLoginMaterial struct {
 	EmailCodeToken string
 }
 
+const openAIReauthorizationConflictRefreshTimeout = 5 * time.Second
+
+var errOpenAIReauthorizationTerminalHistory = errors.New("terminal reauthorization history could not be saved")
+
 func cloneBatchOAuthInt64(value *int64) *int64 {
 	if value == nil {
 		return nil
@@ -128,6 +132,40 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	}, proxy, nil
 }
 
+// refreshForeignOpenAIReauthorizationTask is called with task.mu held and the
+// global task-store mutex released. A failed status read is deliberately not
+// enough to take ownership from another principal.
+func (h *OpenAIOAuthHandler) refreshForeignOpenAIReauthorizationTask(ctx context.Context, task *batchOAuthTask) (bool, error) {
+	if !task.terminal() {
+		refreshCtx, cancel := context.WithTimeout(ctx, openAIReauthorizationConflictRefreshTimeout)
+		_, err := task.refresh(refreshCtx)
+		cancel()
+		if err != nil {
+			return false, err
+		}
+	}
+	task.markFinishedIfTerminal()
+	task.snapshotJSONLocked()
+	if !task.terminal() {
+		return false, nil
+	}
+
+	// Manual tasks use their task ID as the history-event prefix. Automatic
+	// tasks use a separate claim ID and persist through the automatic CAS path;
+	// rewriting those here would incorrectly change the initiator to manual.
+	if strings.HasPrefix(task.reauthStateEvent, task.ID+":") {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIReauthorizationConflictRefreshTimeout)
+		persistErr := h.persistOpenAIReauthorizationTaskState(persistCtx, task)
+		cancel()
+		if persistErr != nil {
+			h.revokeTerminalBatchSession(task)
+			return true, errors.Join(errOpenAIReauthorizationTerminalHistory, persistErr)
+		}
+	}
+	h.revokeTerminalBatchSession(task)
+	return true, nil
+}
+
 func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	owner, ok := batchOAuthAuth(c)
 	if !ok {
@@ -166,32 +204,93 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	}
 
 	store := h.batchOAuthStore
-	store.mu.Lock()
-	for taskID, task := range store.tasks {
-		if !task.matchesMode(batchOAuthModeReauthorization) || task.TargetAccountID != req.AccountID {
-			continue
+	revalidateStart := false
+	for {
+		if revalidateStart {
+			account, login, proxy, err = h.openAIReauthorizationLogin(c.Request.Context(), req.AccountID, browserMode)
+			if err != nil {
+				response.Error(c, http.StatusConflict, err.Error())
+				return
+			}
+			state, authorizationNumber, err = h.validateOpenAIReauthorizationStart(
+				c.Request.Context(), account, req.openAIReauthorizationAuthorizationRequest, time.Now().UTC(),
+			)
+			if err != nil {
+				response.Error(c, http.StatusConflict, err.Error())
+				return
+			}
+			revalidateStart = false
 		}
-		if !task.mu.TryLock() {
+		store.mu.Lock()
+		restartScan := false
+		for taskID, task := range store.tasks {
+			if !task.matchesMode(batchOAuthModeReauthorization) || task.TargetAccountID != req.AccountID {
+				continue
+			}
+			if !task.mu.TryLock() {
+				store.mu.Unlock()
+				response.Error(c, http.StatusConflict, "The reauthorization task is busy")
+				return
+			}
+			if task.ownerID != owner {
+				// Automatic reauthorization can use the account ID (or an
+				// AdsPower admin ID) as its owner. Release the global store lock
+				// before checking the sidecar or persisting terminal history.
+				store.mu.Unlock()
+				terminal, refreshErr := h.refreshForeignOpenAIReauthorizationTask(c.Request.Context(), task)
+				task.mu.Unlock()
+				if errors.Is(refreshErr, errOpenAIReauthorizationTerminalHistory) {
+					response.Error(c, http.StatusServiceUnavailable, "401 重新授权历史无法保存，为避免重复授权已停止本次操作")
+					return
+				}
+				if refreshErr != nil || !terminal {
+					response.Error(c, http.StatusConflict, "This account already has an authorization task")
+					return
+				}
+
+				// Revalidate the pointer and terminal state after reacquiring locks;
+				// another request may have removed or restarted the task meanwhile.
+				store.mu.Lock()
+				current := store.tasks[taskID]
+				if current != task {
+					store.mu.Unlock()
+					restartScan = true
+					break
+				}
+				if !task.mu.TryLock() {
+					store.mu.Unlock()
+					response.Error(c, http.StatusConflict, "The reauthorization task is busy")
+					return
+				}
+				if !task.terminal() {
+					task.mu.Unlock()
+					store.mu.Unlock()
+					response.Error(c, http.StatusConflict, "This account already has an authorization task")
+					return
+				}
+				task.clearLoginCredentials()
+				delete(store.tasks, taskID)
+				task.mu.Unlock()
+				store.mu.Unlock()
+				restartScan = true
+				revalidateStart = true
+				break
+			}
+			if task.Status == "completed" && openAIAccountNeedsReauthorization(account) {
+				task.clearLoginCredentials()
+				delete(store.tasks, taskID)
+				task.mu.Unlock()
+				continue
+			}
 			store.mu.Unlock()
-			response.Error(c, http.StatusConflict, "The reauthorization task is busy")
+			response.Success(c, task)
+			task.mu.Unlock()
 			return
 		}
-		if task.ownerID != owner {
-			task.mu.Unlock()
-			store.mu.Unlock()
-			response.Error(c, http.StatusConflict, "This account already has an authorization task")
-			return
-		}
-		if task.Status == "completed" && openAIAccountNeedsReauthorization(account) {
-			task.clearLoginCredentials()
-			delete(store.tasks, taskID)
-			task.mu.Unlock()
+		if restartScan {
 			continue
 		}
-		store.mu.Unlock()
-		response.Success(c, task)
-		task.mu.Unlock()
-		return
+		break
 	}
 	if !store.hasCapacityLocked(nil) || len(store.tasks) >= 1000 {
 		store.mu.Unlock()

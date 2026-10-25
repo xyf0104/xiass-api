@@ -709,6 +709,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		status := c.Writer.Status()
+		if status == statusClientClosedRequest && errors.Is(c.Request.Context().Err(), context.Canceled) {
+			return
+		}
 		if status < 400 {
 			// A marked in-band error is a visible request failure even though the
 			// wire status is 2xx. Non-request-scoped errors already own the upstream

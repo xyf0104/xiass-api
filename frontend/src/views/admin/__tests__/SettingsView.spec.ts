@@ -1327,6 +1327,11 @@ describe("admin SettingsView payment visible method controls", () => {
       '[data-testid="grok-default-base-url-mode"]',
     );
     expect((modelInput.element as HTMLInputElement).value).toBe("grok-4.1-fast");
+    expect(
+      wrapper
+        .findAll('#grok-default-text-model-options option')
+        .map((option) => option.attributes('value')),
+    ).toEqual(["grok-4.7", "grok-4.5", "grok-4.1-fast", "grok-4"]);
     expect((mappingToggle.element as HTMLInputElement).checked).toBe(true);
     expect((baseURLMode.element as HTMLSelectElement).value).toBe("us-west-2");
 

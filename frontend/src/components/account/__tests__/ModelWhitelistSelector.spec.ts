@@ -174,6 +174,28 @@ describe('ModelWhitelistSelector', () => {
     expect(copyToClipboard).not.toHaveBeenCalled()
   })
 
+  it('offers Grok 4.7 in the Grok model selector', async () => {
+    const selector = mountSelector({ platform: 'grok' })
+    const dropdown = await openDropdown(selector)
+    const search = dropdown?.querySelector<HTMLInputElement>('input')
+
+    if (!search) throw new Error('Search input not found')
+    search.value = 'grok-4.7'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    const rows = document.body.querySelectorAll('[data-testid="model-option"]')
+    expect(rows).toHaveLength(1)
+
+    const selectButton = findModelRow('grok-4.7').querySelector<HTMLButtonElement>(
+      '[data-testid="select-model"]'
+    )
+    selectButton?.click()
+    await nextTick()
+
+    expect(selector.emitted('update:modelValue')).toEqual([[['grok-4.7']]])
+  })
+
   it('Antigravity 上游同步把内部 3.7/3.8 模型转换成各自三档外部模型', async () => {
     vi.spyOn(accountsAPI, 'syncUpstreamModels').mockResolvedValue({
       models: [

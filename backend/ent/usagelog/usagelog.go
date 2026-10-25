@@ -108,6 +108,8 @@ const (
 	FieldCacheTTLOverridden = "cache_ttl_overridden"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
+	// FieldEgress holds the string denoting the egress field in the database.
+	FieldEgress = "egress"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeAPIKey holds the string denoting the api_key edge name in mutations.
@@ -207,6 +209,7 @@ var Columns = []string{
 	FieldVideoDurationSeconds,
 	FieldCacheTTLOverridden,
 	FieldCreatedAt,
+	FieldEgress,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

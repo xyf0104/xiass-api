@@ -34,6 +34,7 @@ function pricing(
     output_price: null,
     cache_write_price: null,
     cache_read_price: null,
+    image_input_price: null,
     image_output_price: null,
     per_request_price: null,
     intervals: [],
@@ -104,10 +105,206 @@ function grokChannelFixture(): UserAvailableChannel[] {
   }]
 }
 
+function multiChannelFixture(): UserAvailableChannel[] {
+  const baseGroup = {
+    ...grokChannelFixture()[0]!.platforms[0]!.groups[0]!,
+    platform: 'openai',
+    description: ''
+  }
+
+  return [
+    {
+      name: 'First Channel',
+      description: '',
+      platforms: [{
+        platform: 'openai',
+        groups: [
+          { ...baseGroup, id: 12, name: 'Private Standard', rate_multiplier: 0.1, is_exclusive: true },
+          { ...baseGroup, id: 11, name: 'Standard', rate_multiplier: 2 }
+        ],
+        supported_models: [
+          {
+            name: 'gpt-shared',
+            platform: 'openai',
+            pricing: pricing({
+              input_price: 1e-6, output_price: 2e-6,
+              cache_write_price: 3e-6, cache_read_price: 4e-6
+            })
+          },
+          {
+            name: 'gpt-first-only',
+            platform: 'openai',
+            pricing: pricing({ input_price: 1e-6, output_price: 2e-6 })
+          }
+        ]
+      }]
+    },
+    {
+      name: 'Second Channel',
+      description: '',
+      platforms: [
+        {
+          platform: 'anthropic',
+          groups: [{ ...baseGroup, id: 31, name: 'Claude Public', platform: 'anthropic', rate_multiplier: 3 }],
+          supported_models: [{
+            name: 'claude-other-platform',
+            platform: 'anthropic',
+            pricing: pricing({ input_price: 2e-6, output_price: 4e-6 })
+          }]
+        },
+        {
+          platform: 'openai',
+          groups: [
+            { ...baseGroup, id: 22, name: 'Private Pro Max', rate_multiplier: 0.2, is_exclusive: true },
+            { ...baseGroup, id: 21, name: 'Pro Max 500x', rate_multiplier: 500 }
+          ],
+          supported_models: [
+            {
+              name: 'gpt-shared',
+              platform: 'openai',
+              pricing: pricing({
+                input_price: 5e-6, output_price: 7e-6,
+                cache_write_price: 11e-6, cache_read_price: 13e-6
+              })
+            },
+            {
+              name: 'gpt-second-only',
+              platform: 'openai',
+              pricing: pricing({ input_price: 17e-6, output_price: 19e-6 })
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
 describe('PricingView', () => {
   beforeEach(() => {
     getPricing.mockReset()
     getUserGroupRates.mockReset().mockResolvedValue({})
+  })
+
+  it('shows every group across same-platform channels and selects the second channel model list', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    const wrapper = mount(PricingView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: { template: '<span />' },
+          PlatformBrandIcon: { template: '<span />' }
+        }
+      }
+    })
+
+    try {
+      await flushPromises()
+
+      const groups = wrapper.findAll('button.group')
+      expect(groups.map(group => group.get('span').text())).toEqual([
+        'Standard', 'Pro Max 500x', 'Private Standard', 'Private Pro Max'
+      ])
+      expect(wrapper.findAll('tbody tr').map(row => row.get('td').text())).toEqual([
+        'gpt-shared', 'gpt-first-only'
+      ])
+
+      await groups.find(group => group.get('span').text() === 'Pro Max 500x')!.trigger('click')
+
+      expect(wrapper.findAll('tbody tr').map(row => row.get('td').text())).toEqual([
+        'gpt-shared', 'gpt-second-only'
+      ])
+      expect(wrapper.get('[data-test="price-gpt-second-only-input"] span').text()).toBe('¥8500')
+      expect(wrapper.get('[data-test="price-gpt-second-only-output"] span').text()).toBe('¥9500')
+      expect(wrapper.find('[data-test="price-gpt-first-only-input"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="price-claude-other-platform-input"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('switches same-name model prices with the owning channel in both directions', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    const wrapper = mount(PricingView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: { template: '<span />' },
+          PlatformBrandIcon: { template: '<span />' }
+        }
+      }
+    })
+
+    try {
+      await flushPromises()
+
+      const displayedPrices = () => ['input', 'output', 'cache-write', 'cache-read'].map(field =>
+        wrapper.get(`[data-test="price-gpt-shared-${field}"] span`).text()
+      )
+      expect(displayedPrices()).toEqual(['¥2', '¥4', '¥6', '¥8'])
+
+      const groups = wrapper.findAll('button.group')
+      await groups.find(group => group.get('span').text() === 'Pro Max 500x')!.trigger('click')
+      expect(wrapper.findAll('[data-test="price-gpt-shared-input"]')).toHaveLength(1)
+      expect(displayedPrices()).toEqual(['¥2500', '¥3500', '¥5500', '¥6500'])
+
+      await groups.find(group => group.get('span').text() === 'Standard')!.trigger('click')
+      expect(displayedPrices()).toEqual(['¥2', '¥4', '¥6', '¥8'])
+
+      await wrapper.findAll('button').find(button => button.text() === '官方价格')!.trigger('click')
+      expect(displayedPrices()).toEqual(['¥7', '¥14', '¥21', '¥28'])
+      await groups.find(group => group.get('span').text() === 'Pro Max 500x')!.trigger('click')
+      expect(displayedPrices()).toEqual(['¥35', '¥49', '¥77', '¥91'])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('orders public before exclusive groups by user rate and clears old groups on platform changes', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    getUserGroupRates.mockResolvedValue({ 11: 4, 21: 0.5, 12: 0.3, 22: 0.05 })
+    const wrapper = mount(PricingView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: { template: '<span />' },
+          PlatformBrandIcon: { template: '<span />' }
+        }
+      }
+    })
+
+    try {
+      await flushPromises()
+
+      const groupNames = () => wrapper.findAll('button.group').map(group => group.get('span').text())
+      const expectedOrder = ['Pro Max 500x', 'Standard', 'Private Pro Max', 'Private Standard']
+      expect(groupNames()).toEqual(expectedOrder)
+      expect(wrapper.get('[data-test="price-gpt-shared-input"] span').text()).toBe('¥2.50')
+
+      await wrapper.findAll('button.group').find(group => group.get('span').text() === 'Standard')!.trigger('click')
+      expect(wrapper.get('[data-test="price-gpt-shared-input"] span').text()).toBe('¥4')
+      await wrapper.get('[data-test="platform-anthropic"]').trigger('click')
+
+      expect(groupNames()).toEqual(['Claude Public'])
+      expect(wrapper.findAll('tbody tr').map(row => row.get('td').text())).toEqual(['claude-other-platform'])
+      expect(wrapper.get('[data-test="price-claude-other-platform-input"] span').text()).toBe('¥6')
+      expect(wrapper.find('[data-test="price-gpt-shared-input"]').exists()).toBe(false)
+
+      await wrapper.get('[data-test="platform-gemini"]').trigger('click')
+      expect(groupNames()).toEqual([])
+      expect(wrapper.find('table').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Claude Public')
+      expect(wrapper.text()).not.toContain('Pro Max 500x')
+
+      await wrapper.get('[data-test="platform-openai"]').trigger('click')
+      expect(groupNames()).toEqual(expectedOrder)
+      expect(wrapper.findAll('tbody tr').map(row => row.get('td').text())).toEqual([
+        'gpt-shared', 'gpt-second-only'
+      ])
+      expect(wrapper.get('[data-test="price-gpt-shared-input"] span').text()).toBe('¥2.50')
+      expect(wrapper.text()).not.toContain('Claude Public')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('keeps the compact token columns and renders all Grok price types in CNY', async () => {
@@ -261,5 +458,57 @@ describe('PricingView', () => {
 
 	wrapper.unmount()
 	vi.useRealTimers()
+  })
+
+  it.each(['explicit', 'multipliers', 'explicit-with-multipliers'])('shows %s context-tier final prices without applying group multiplier', async (mode) => {
+    const channels = grokChannelFixture()
+    const group = channels[0]!.platforms[0]!.groups[0]!
+    group.model_pricing = [{
+      models: ['grok-4'],
+      billing_mode: 'token',
+      price_mode: 'final',
+      input_price: 2e-6,
+      output_price: 10e-6,
+      cache_write_price: 2.5e-6,
+      cache_read_price: 0.2e-6,
+      intervals: [{
+        min_tokens: 272_000,
+        max_tokens: null,
+        tier_label: '超过272K',
+        input_price: 4e-6,
+        output_price: 15e-6,
+        cache_write_price: 5e-6,
+        cache_read_price: 0.4e-6,
+        per_request_price: null
+      }]
+    }]
+    if (mode === 'multipliers') {
+      Object.assign(group.model_pricing[0]!.intervals![0]!, {
+        input_price: null, output_price: null, cache_write_price: null, cache_read_price: null,
+        input_multiplier: 2, output_multiplier: 1.5, cache_write_multiplier: 2, cache_read_multiplier: 2
+      })
+    } else if (mode === 'explicit-with-multipliers') {
+      Object.assign(group.model_pricing[0]!.intervals![0]!, {
+        input_multiplier: 9, output_multiplier: 9
+      })
+    }
+    getPricing.mockResolvedValue(channels)
+
+    const wrapper = mount(PricingView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: { template: '<span />' },
+          PlatformBrandIcon: { template: '<span />' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="price-grok-4-input"]').text()).toContain('¥2')
+    expect(wrapper.get('[data-test="price-grok-4-final-interval-0-input_price"]').text()).toContain('¥4')
+    expect(wrapper.get('[data-test="price-grok-4-final-interval-0-output_price"]').text()).toContain('¥15')
+
+    wrapper.unmount()
   })
 })

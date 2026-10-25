@@ -3,6 +3,8 @@ package openai
 
 import (
 	_ "embed"
+	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -19,6 +21,7 @@ type Model struct {
 // DefaultModels OpenAI models list
 var DefaultModels = []Model{
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
+	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
@@ -41,6 +44,7 @@ var DefaultModels = []Model{
 
 var defaultAccountTestModelIDs = []string{
 	"gpt-5.6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-sol",
 	"gpt-6-astra",
 	"gpt-6-luna",
@@ -111,6 +115,12 @@ var instructionsGPT55 string
 //go:embed instructions_gpt6_astra.txt
 var instructionsGPT6Astra string
 
+// CodexGPT61SolMetadata is the official Codex descriptor used to complete
+// the client model manifest without replacing XIASS routing metadata.
+//
+//go:embed codex_gpt61_sol.json
+var CodexGPT61SolMetadata []byte
+
 // latestCodexInstructions 返回当前已知最新版本的 Codex base instructions，
 // 当前为 GPT-5.5；若 5.5 prompt 意外为空则回退到 DefaultInstructions 保证非空。
 func latestCodexInstructions() string {
@@ -132,6 +142,16 @@ func latestCodexInstructions() string {
 func CodexBaseInstructionsForModel(model string) string {
 	m := CanonicalizeOpenAIModelAliasSpelling(model)
 	switch {
+	case IsGPT61SolModelSpelling(m):
+		var metadata struct {
+			ModelMessages struct {
+				InstructionsTemplate string `json:"instructions_template"`
+			} `json:"model_messages"`
+		}
+		if err := json.Unmarshal(CodexGPT61SolMetadata, &metadata); err != nil {
+			panic(err)
+		}
+		return metadata.ModelMessages.InstructionsTemplate
 	case m == "gpt-6" || m == "gpt-6-sol" || m == "gpt-6-astra" || m == "gpt-6-luna" ||
 		strings.HasPrefix(m, "gpt-6-sol-") || strings.HasPrefix(m, "gpt-6-astra-") || strings.HasPrefix(m, "gpt-6-luna-"):
 		if strings.TrimSpace(instructionsGPT6Astra) != "" {
@@ -185,4 +205,35 @@ func CanonicalizeOpenAIModelAliasSpelling(model string) string {
 		normalized = strings.ReplaceAll(normalized, replacement.from, replacement.to)
 	}
 	return normalized
+}
+
+// IsGPT61SolModelSpelling recognizes the published model and local effort
+// spellings. Invalid suffixes remain false so they cannot silently route.
+func IsGPT61SolModelSpelling(model string) bool {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	if canonical == "gpt-6.1-sol" {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(canonical, "gpt-6.1-sol-")
+	if !ok {
+		return false
+	}
+	switch suffix {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateGPT61SolReasoningEffort rejects disabled reasoning instead of
+// silently escalating the request on compatibility paths.
+func ValidateGPT61SolReasoningEffort(model, effort string) error {
+	if IsGPT61SolModelSpelling(model) {
+		switch strings.ToLower(strings.TrimSpace(effort)) {
+		case "none", "minimal":
+			return fmt.Errorf("gpt-6.1-sol does not support reasoning effort %q; use low, medium, high, xhigh or max", effort)
+		}
+	}
+	return nil
 }

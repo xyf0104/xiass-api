@@ -72,6 +72,23 @@ describe('UseKeyModal', () => {
       baseURL: 'https://example.com/v1',
       apiKey: 'sk-grok-test'
     })
+    expect(parsed.provider.grok.models['grok-4.7']).toEqual({
+      name: 'Grok 4.7',
+      modalities: {
+        input: ['text', 'image'],
+        output: ['text']
+      },
+      options: {
+        reasoningEffort: 'high'
+      },
+      variants: {
+        low: { reasoningEffort: 'low' },
+        medium: { reasoningEffort: 'medium' },
+        high: { reasoningEffort: 'high' },
+        xhigh: { reasoningEffort: 'xhigh' }
+      }
+    })
+    expect(parsed.provider.grok.models['grok-4.7'].limit).toBeUndefined()
     expect(parsed.provider.grok.models['grok-4.5']).toBeDefined()
     expect(parsed.provider.grok.models['grok-build-0.1']).toBeDefined()
     expect(parsed.provider.grok.models['grok-composer-2.5-fast']).toBeDefined()
@@ -338,6 +355,126 @@ describe('UseKeyModal', () => {
     expect(models['gpt-6-astra'].name).toBe('GPT-6 Astra')
     expect(models['gpt-6-sol'].name).toBe('GPT-6 Sol')
     expect(models['gpt-6-luna'].name).toBe('GPT-6 Luna')
+  })
+
+  it('exports Claude 5.5 models on the Anthropic provider', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-claude-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'anthropic'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await nextTick()
+
+    const models = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+      expect(models[model]).toBeDefined()
+      expect(models[model].limit).toEqual({ context: 1000000, output: 128000 })
+      expect(models[model].options.thinking).toEqual({ type: 'adaptive' })
+      expect(models[model].variants).toHaveProperty('xhigh')
+    }
+  })
+
+  it('exports Gemini 4 Argon tiers for Antigravity Gemini', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-antigravity-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'antigravity'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await nextTick()
+
+    const geminiConfig = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('"antigravity-gemini"'))
+    expect(geminiConfig).toBeDefined()
+    const models = JSON.parse(geminiConfig!).provider['antigravity-gemini'].models
+    expect(models['gemini-4-argon-high'].options.thinking).toEqual({ budgetTokens: -1, type: 'enabled' })
+    expect(models['gemini-4-argon-medium'].options.thinking).toEqual({ budgetTokens: 4000, type: 'enabled' })
+    expect(models['gemini-4-argon-low'].options.thinking).toEqual({ budgetTokens: 1000, type: 'enabled' })
+  })
+
+  it('provides DeepSeek V4 models for OpenCode and Codex', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-deepseek-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'deepseek'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await nextTick()
+
+    const openCode = JSON.parse(wrapper.find('pre code').text())
+    expect(openCode.provider.deepseek.npm).toBe('@ai-sdk/openai-compatible')
+    for (const model of ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      expect(openCode.provider.deepseek.models[model]).toBeDefined()
+    }
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+    const codexConfig = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('[model_providers.DeepSeek]'))
+    expect(codexConfig).toBeDefined()
+    expect(codexConfig).toContain('model = "deepseek-v4-pro"')
+    expect(codexConfig).toContain('base_url = "https://example.com/v1"')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {

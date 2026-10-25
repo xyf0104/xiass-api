@@ -45,6 +45,26 @@ describe('useModelWhitelist', () => {
 	]))
   })
 
+  it('合并的新模型在平台白名单中只出现一次', () => {
+    const expectations: Array<[string, string[]]> = [
+      ['openai', ['gpt-6.1-sol']],
+      ['antigravity', ['gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low']],
+      ['claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
+      ['deepseek', ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']],
+    ]
+
+    for (const [platform, expectedModels] of expectations) {
+      const models = getModelsByPlatform(platform)
+      expect(new Set(models).size).toBe(models.length)
+      for (const model of expectedModels) {
+        expect(models.filter((candidate) => candidate === model)).toHaveLength(1)
+      }
+    }
+
+    const allModelValues = allModels.map((model) => model.value)
+    expect(new Set(allModelValues).size).toBe(allModelValues.length)
+  })
+
   it('OpenAI OAuth 默认支持 Luna，上游 API Key 需同步或显式选择后才声明支持', () => {
     expect(getDefaultSelectedModelsByPlatform('openai', 'oauth')).toContain('gpt-5.6-luna')
     expect(getDefaultSelectedModelsByPlatform('openai', 'apikey')).not.toContain('gpt-5.6-luna')
@@ -81,12 +101,18 @@ describe('useModelWhitelist', () => {
     expect(getModelsByPlatform('antigravity')).not.toContain('claude-opus-4-8')
   })
 
-  it('xAI 模型列表包含 Grok 4.5 官方模型和别名', () => {
+  it('xAI 模型列表包含 Grok 4.7、旧默认模型和别名', () => {
     const models = getModelsByPlatform('grok')
+    const presets = getPresetMappingsByPlatform('grok')
 
+    expect(models).toContain('grok-4.7')
     expect(models).toContain('grok-4.5')
     expect(models).toContain('grok-4.5-latest')
     expect(models).toContain('grok-build-latest')
+    expect(presets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'grok-4.7', to: 'grok-4.7' })
+    ]))
+    expect(allModels.map((model) => model.value)).toContain('grok-4.7')
   })
 
   it('combined 模式支持 Grok 4.5 官方别名映射', () => {

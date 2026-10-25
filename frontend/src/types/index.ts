@@ -1000,6 +1000,7 @@ export interface Proxy {
 
 export interface ProxySubscriptionSource {
   allow_insecure_tls?: boolean
+  client_ref?: string
   id: string
   name?: string
   url?: string
@@ -2032,6 +2033,17 @@ export interface UsageLogAccountSummary {
 	execution_node_id?: string
 }
 
+export interface AdminUsageLogEgress {
+  route: 'proxy' | 'direct'
+  proxy_id?: number
+  proxy_name?: string
+  /** Safe host:port snapshot without proxy credentials. */
+  proxy_address?: string
+  ip_address?: string
+  ip_observed_at?: string
+  execution_node_id?: string
+}
+
 export interface AdminUsageLog extends UsageLog {
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
@@ -2050,6 +2062,9 @@ export interface AdminUsageLog extends UsageLog {
 
   // 最小账号信息（仅管理员接口返回）
   account?: UsageLogAccountSummary
+
+  // 请求实际使用的出口快照（仅管理员接口返回）
+  egress?: AdminUsageLogEgress | null
 }
 
 export interface UsageCleanupFilters {

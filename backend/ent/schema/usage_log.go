@@ -2,6 +2,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	"entgo.io/ent"
@@ -140,7 +141,6 @@ func (UsageLog) Fields() []ent.Field {
 			MaxLen(45). // 支持 IPv6
 			Optional().
 			Nillable(),
-
 		// 图片生成字段（仅 gemini-3-pro-image 等图片模型使用）
 		field.Int("image_count").
 			Default(0),
@@ -186,6 +186,9 @@ func (UsageLog) Fields() []ent.Field {
 			Default(time.Now).
 			Immutable().
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
+		field.JSON("egress", json.RawMessage{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 	}
 }
 

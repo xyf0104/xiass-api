@@ -77,8 +77,11 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
 		// Group token cards only override flat/base prices. Their interval ladder
 		// is intentionally discarded so XIASS keeps the existing official long-
-		// context pricing behavior behind the explicit group switch.
-		if groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken {
+		// context pricing behavior behind the explicit group switch. Final-price
+		// cards are the exception: their intervals are user-price tiers and are
+		// applied after account-cost calculation.
+		if (groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken) &&
+			groupPricing.PriceMode != PriceModeFinal {
 			stripped := groupPricing.Clone()
 			stripped.Intervals = nil
 			groupPricing = &stripped

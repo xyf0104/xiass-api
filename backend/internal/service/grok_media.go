@@ -354,13 +354,16 @@ func (s *OpenAIGatewayService) SelectGrokMediaVideoRequestAccount(
 // GrokVideoPendingBilling keeps create-time fields that the asynchronous
 // status response can omit, especially resolution and the original model.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
-	VideoResolution      string `json:"video_resolution,omitempty"`
-	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
-	OriginalModel        string `json:"original_model,omitempty"`
-	CreatedAt            string `json:"created_at,omitempty"`
+	Model                string       `json:"model"`
+	BillingModel         string       `json:"billing_model,omitempty"`
+	UpstreamModel        string       `json:"upstream_model,omitempty"`
+	VideoResolution      string       `json:"video_resolution,omitempty"`
+	VideoDurationSeconds int          `json:"video_duration_seconds,omitempty"`
+	OriginalModel        string       `json:"original_model,omitempty"`
+	CreatedAt            string       `json:"created_at,omitempty"`
+	Egress               *UsageEgress `json:"egress,omitempty"`
+	EgressProxyUpdatedAt *time.Time   `json:"egress_proxy_updated_at,omitempty"`
+	EgressCapturedAt     *time.Time   `json:"egress_captured_at,omitempty"`
 }
 
 func GrokVideoPendingCreatedAtNow() string {
@@ -428,6 +431,17 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	} else {
 		pending.CreatedAt = strings.TrimSpace(pending.CreatedAt)
 	}
+	pending.Egress = cloneUsageEgress(pending.Egress)
+	if pending.Egress != nil {
+		if !pending.Egress.ProxyUpdatedAt.IsZero() {
+			proxyUpdatedAt := pending.Egress.ProxyUpdatedAt
+			pending.EgressProxyUpdatedAt = &proxyUpdatedAt
+		}
+		if !pending.Egress.CapturedAt.IsZero() {
+			capturedAt := pending.Egress.CapturedAt
+			pending.EgressCapturedAt = &capturedAt
+		}
+	}
 	payload, err := json.Marshal(pending)
 	if err != nil {
 		return err
@@ -454,6 +468,15 @@ func (s *OpenAIGatewayService) LoadGrokVideoPendingBilling(
 	var pending GrokVideoPendingBilling
 	if err := json.Unmarshal(payload, &pending); err != nil {
 		return nil, err
+	}
+	pending.Egress = cloneUsageEgress(pending.Egress)
+	if pending.Egress != nil {
+		if pending.EgressProxyUpdatedAt != nil {
+			pending.Egress.ProxyUpdatedAt = *pending.EgressProxyUpdatedAt
+		}
+		if pending.EgressCapturedAt != nil {
+			pending.Egress.CapturedAt = *pending.EgressCapturedAt
+		}
 	}
 	return &pending, nil
 }
@@ -584,6 +607,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		proxyURL = account.requestProxyURL()
 	}
 	upstreamStart := time.Now()
+	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
@@ -675,6 +699,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		proxyURL = account.requestProxyURL()
 	}
 	upstreamStart := time.Now()
+	freezeOpenAIHTTPUpstreamProxy(c, account, proxyURL)
 	statusResp, err := s.httpUpstream.Do(statusReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())

@@ -186,9 +186,10 @@ func appendExecutionNodeUsageLogWhereCondition(
 }
 
 type usageLogRepository struct {
-	client *dbent.Client
-	sql    sqlExecutor
-	db     *sql.DB
+	client            *dbent.Client
+	sql               sqlExecutor
+	db                *sql.DB
+	proxyLatencyCache service.ProxyLatencyCache
 
 	createBatchOnce     sync.Once
 	createBatchCh       chan usageLogCreateRequest
@@ -199,6 +200,12 @@ type usageLogRepository struct {
 
 func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {
 	return newUsageLogRepositoryWithSQL(client, sqlDB)
+}
+
+func NewUsageLogRepositoryWithEgress(client *dbent.Client, sqlDB *sql.DB, proxyLatencyCache service.ProxyLatencyCache) service.UsageLogRepository {
+	repo := newUsageLogRepositoryWithSQL(client, sqlDB)
+	repo.proxyLatencyCache = proxyLatencyCache
+	return repo
 }
 
 func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usageLogRepository {

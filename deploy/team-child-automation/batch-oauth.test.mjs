@@ -7,6 +7,11 @@ import { BatchOAuthRunner, BATCH_OAUTH_REASONS, generateTOTP } from './batch-oau
 const SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
 const callback = (state, base = 'http://localhost:1455/auth/callback') => `${base}?code=test-code&state=${state}`
 const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(setImmediate) }
+async function advanceClock(clock, milliseconds, interval = 250) {
+  for (let elapsed = 0; elapsed < milliseconds; elapsed += interval) {
+    await clock.advance(Math.min(interval, milliseconds - elapsed))
+  }
+}
 function deferred() {
   let resolve, reject
   const promise = new Promise((yes, no) => { resolve = yes; reject = no })
@@ -261,6 +266,45 @@ test('authenticator-only login and workspace capture callback request before nav
   await h.clock.advance(15 * 60_000)
   assert.throws(() => h.runner.get('totp', 1), /not_found/)
   assert.equal(h.clock.timers.size, 0)
+})
+
+test('stuck authenticator challenge retries once with a fresh time-step code', async () => {
+  const h = harness([{ afterPassword: 'totp', afterTOTP: 'totp' }], { helpers: {
+    async fillVerificationCode(page, value) {
+      page.calls.push(['totp', value])
+      if (page.calls.filter(([kind]) => kind === 'totp').length === 2) page.kind = 'workspace'
+    }
+  } })
+  await h.runner.start(body('totp-retry', 1, { totp_secret: SECRET }))
+  await flush()
+  assert.equal(h.runner.get('totp-retry', 1).stage, 'totp')
+  assert.equal(h.contexts[0].page.calls.filter(([kind]) => kind === 'totp').length, 1)
+
+  await advanceClock(h.clock, 6_000)
+  await flush()
+  const result = h.runner.get('totp-retry', 1)
+  const codes = h.contexts[0].page.calls.filter(([kind]) => kind === 'totp').map(([, code]) => code)
+  assert.equal(result.status, 'completed')
+  assert.equal(codes.length, 2)
+  assert.notEqual(codes[0], codes[1])
+  await stopAll(h, [['totp-retry', 1]])
+})
+
+test('stuck authenticator challenge fails promptly after one bounded retry', async () => {
+  const h = harness([{ afterPassword: 'totp', afterTOTP: 'totp' }])
+  await h.runner.start(body('totp-fail-fast', 1, { totp_secret: SECRET }))
+  await flush()
+  await advanceClock(h.clock, 6_000)
+  await flush()
+  assert.equal(h.runner.get('totp-fail-fast', 1).status, 'running')
+
+  await advanceClock(h.clock, 5_000)
+  await flush()
+  const result = h.runner.get('totp-fail-fast', 1)
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason, 'invalid_totp')
+  assert.equal(h.contexts[0].page.calls.filter(([kind]) => kind === 'totp').length, 2)
+  await stopAll(h, [['totp-fail-fast', 1]])
 })
 
 test('email-code login is separate from password login and completes with a fresh mailbox code', async () => {
@@ -707,13 +751,16 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     ['Incorrect email address or password', false, 'invalid_credentials'],
     ['Your account has been deactivated', false, 'account_deleted_or_disabled'],
     ['Your account is disabled', false, 'account_deleted_or_disabled'],
+    ['Authentication Error You do not have an account because it has been deleted or deactivated. If you believe this was an error, please contact us through our help center at help.openai.com.', false, 'account_deleted_or_disabled'],
     ['Your account is restricted', false, 'account_blocked'],
     ['Your account is limited', false, 'account_blocked'],
     ['当前账号受到限制', false, 'account_blocked'],
     ['Verify you are human CAPTCHA', false, 'captcha'],
     ['Oops, an error occurred! Route Error (400 Invalid content type: text/html; charset=UTF-8)', false, 'openai_route_error'],
     ['Authentication Error Your sign-in session is no longer valid. error_code: invalid_state', false, 'oauth_session_expired'],
+    ['Authentication Error Unable to complete your sign-in. Try again.', false, 'manual_challenge'],
     ['Too many requests. Try later.', false, 'unknown'],
+    ['Your authenticator is disabled. Enable it in account settings.', false, 'unknown'],
     ['Log in. Do not have an account? Create an account.', false, 'unknown']
   ]
   for (const [text, code, expected] of cases) await t.test(expected, async () => {
@@ -729,11 +776,40 @@ test('default inspector recognizes authenticator vs email OTP and explicit ban, 
     h.contexts[0].page.locator = () => empty
     await flush()
     const result = h.runner.get('task-1', 1)
-    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', account_deleted_or_disabled: 'account_deleted_or_disabled', captcha: 'captcha_required', openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }
+    const reasons = { totp: 'authenticator_required', email_code: 'email_code_required', invalid_credentials: 'invalid_credentials', account_blocked: 'account_blocked', account_deleted_or_disabled: 'account_deleted_or_disabled', captcha: 'captcha_required', openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired', manual_challenge: 'manual_challenge' }
     assert.equal(result.reason, reasons[expected] || '')
     const retryable = ['openai_route_error', 'oauth_session_expired'].includes(expected)
     assert.equal(result.status, expected === 'unknown' ? 'running' : retryable ? 'failed' : 'blocked')
     await h.runner.cancel('task-1', 1)
     await flush()
+  })
+})
+
+test('account rejection after TOTP ends both creation and reauthorization without waiting for expiry', async (t) => {
+  for (const mode of ['create', 'reauthorization']) await t.test(mode, async () => {
+    const progress = []
+    const h = harness([{ afterPassword: 'totp', afterTOTP: 'rejected' }], { helpers: {
+      inspectPage: undefined,
+      oauthBody: async page => page.kind === 'totp'
+        ? 'Enter the code from your authenticator app'
+        : page.kind === 'rejected'
+          ? 'Authentication Error You do not have an account because it has been deleted or deactivated. Try again'
+          : 'Log in',
+      verificationInputs: async page => page.kind === 'totp' ? [{}] : [],
+      firstVisibleInput: async (page, matcher) => ['email', 'password'].includes(page.kind) && matcher(page.kind) ? {} : null,
+      firstVisibleRole: async () => null,
+      onProgress: event => progress.push(event)
+    } })
+    await h.runner.start(body('rejected-after-totp', 1, { workflow_mode: mode, totp_secret: SECRET }))
+    h.contexts[0].page.locator = () => ({ count: async () => 0 })
+    await flush()
+    const result = h.runner.get('rejected-after-totp', 1)
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.reason, 'account_deleted_or_disabled')
+    assert.ok(progress.some(event => event.stage === 'totp' && event.status === 'running'))
+    assert.equal(progress.at(-1).reason, 'account_deleted_or_disabled')
+    assert.equal(h.contexts[0].page.calls.filter(([kind]) => kind === 'totp').length, 1)
+    assert.equal(h.contexts[0].closed, true)
+    assert.equal(h.clock.time, 59_000, 'must not wait for a retry or the 15-minute task expiry')
   })
 })

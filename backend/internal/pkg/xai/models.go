@@ -1,6 +1,22 @@
 package xai
 
-import "strings"
+import (
+	"strings"
+	"sync/atomic"
+)
+
+// runtimeMappingVersion lets account-level model mapping caches invalidate
+// when process-wide mapping defaults are extended in future releases.
+var runtimeMappingVersion atomic.Uint64
+
+func init() {
+	runtimeMappingVersion.Store(1)
+}
+
+// RuntimeModelMappingVersion returns the current process-wide mapping version.
+func RuntimeModelMappingVersion() uint64 {
+	return runtimeMappingVersion.Load()
+}
 
 // Model describes an xAI model in OpenAI-compatible /models shape.
 type Model struct {
@@ -22,6 +38,7 @@ const (
 )
 
 var defaultModels = []Model{
+	{ID: "grok-4.7", Object: "model", OwnedBy: "xai", DisplayName: "Grok 4.7"},
 	{ID: "grok-4.5", Object: "model", OwnedBy: "xai", DisplayName: "Grok 4.5"},
 	{ID: "grok-4.3", Object: "model", OwnedBy: "xai", DisplayName: "Grok 4.3"},
 	{ID: "grok-build-0.1", Object: "model", OwnedBy: "xai", DisplayName: "Grok Build 0.1"},
@@ -43,6 +60,8 @@ var defaultModels = []Model{
 var grokTextResponsesModelAliases = map[string]string{
 	"grok":                         DefaultTextModel,
 	"grok-latest":                  DefaultTextModel,
+	"grok-4.7":                     "grok-4.7",
+	"grok-4.7-latest":              "grok-4.7",
 	"grok-4.6":                     "grok-4.6",
 	"grok-4.6-latest":              "grok-4.6",
 	"grok-4.5":                     DefaultTextModel,
@@ -88,6 +107,7 @@ func DefaultModelMapping() map[string]string {
 	}
 	mapping["grok"] = "grok-4.5"
 	mapping["grok-latest"] = "grok-4.5"
+	mapping["grok-4.7-latest"] = "grok-4.7"
 	mapping["grok-4.5-latest"] = "grok-4.5"
 	mapping["grok-build"] = "grok-build-0.1"
 	mapping["grok-build-latest"] = "grok-4.5"

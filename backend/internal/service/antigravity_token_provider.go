@@ -161,14 +161,7 @@ func (p *AntigravityTokenProvider) GetAccessToken(ctx context.Context, account *
 	if !readOnlyProbe && strings.TrimSpace(account.GetCredential("project_id")) == "" && p.antigravityOAuthService != nil {
 		if p.shouldAttemptBackfill(account.ID) {
 			p.markBackfillAttempted(account.ID)
-			if projectID, err := p.antigravityOAuthService.FillProjectID(ctx, account, accessToken); err == nil && projectID != "" {
-				if _, updateErr := p.persistProjectIDIfUnchanged(ctx, account, projectID); updateErr != nil {
-					slog.Warn("antigravity_project_id_backfill_persist_failed",
-						"account_id", account.ID,
-						"error", updateErr,
-					)
-				}
-			}
+			_, _ = p.ResolveProjectID(ctx, account, accessToken, true)
 		}
 	}
 
@@ -199,6 +192,43 @@ func (p *AntigravityTokenProvider) GetAccessToken(ctx context.Context, account *
 	}
 
 	return accessToken, nil
+}
+
+// ResolveProjectID resolves the Code Assist project for an Antigravity OAuth
+// account when the credential snapshot does not contain one yet. A read-only
+// administrator probe may call this explicitly with persist=false so the
+// resolved project is used for that request without changing account state.
+// Normal traffic and an explicit account test use persist=true to repair the
+// account once the upstream has supplied a valid project.
+func (p *AntigravityTokenProvider) ResolveProjectID(ctx context.Context, account *Account, accessToken string, persist bool) (string, error) {
+	if p == nil || account == nil {
+		return "", errors.New("antigravity account is nil")
+	}
+	if projectID := strings.TrimSpace(account.GetCredential("project_id")); projectID != "" {
+		return projectID, nil
+	}
+	if p.antigravityOAuthService == nil {
+		return "", errors.New("antigravity oauth service not configured")
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return "", errors.New("antigravity access token is empty")
+	}
+	projectID, err := p.antigravityOAuthService.FillProjectID(ctx, account, accessToken)
+	if err != nil || strings.TrimSpace(projectID) == "" {
+		if err == nil {
+			err = errors.New("upstream did not return project_id")
+		}
+		return "", err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if !persist {
+		return projectID, nil
+	}
+	if _, err := p.persistProjectIDIfUnchanged(ctx, account, projectID); err != nil {
+		return "", err
+	}
+	return projectID, nil
 }
 
 func (p *AntigravityTokenProvider) persistProjectIDIfUnchanged(ctx context.Context, account *Account, projectID string) (bool, error) {

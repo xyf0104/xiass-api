@@ -270,7 +270,7 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 		}
 	}
 
-	projectID, err := resolveAntigravityProjectID(account)
+	projectID, err := s.resolveRequestProjectID(ctx, account, accessToken)
 	if err != nil {
 		_ = s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err

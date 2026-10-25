@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -637,6 +638,12 @@ func (_c *UsageLogCreate) SetNillableCreatedAt(v *time.Time) *UsageLogCreate {
 	return _c
 }
 
+// SetEgress sets the "egress" field.
+func (_c *UsageLogCreate) SetEgress(v jsontext.Value) *UsageLogCreate {
+	_c.mutation.SetEgress(v)
+	return _c
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_c *UsageLogCreate) SetUser(v *User) *UsageLogCreate {
 	return _c.SetUserID(v.ID)
@@ -1134,6 +1141,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
+	}
+	if value, ok := _c.mutation.Egress(); ok {
+		_spec.SetField(usagelog.FieldEgress, field.TypeJSON, value)
+		_node.Egress = value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -2079,6 +2090,24 @@ func (u *UsageLogUpsert) SetCacheTTLOverridden(v bool) *UsageLogUpsert {
 // UpdateCacheTTLOverridden sets the "cache_ttl_overridden" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateCacheTTLOverridden() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldCacheTTLOverridden)
+	return u
+}
+
+// SetEgress sets the "egress" field.
+func (u *UsageLogUpsert) SetEgress(v jsontext.Value) *UsageLogUpsert {
+	u.Set(usagelog.FieldEgress, v)
+	return u
+}
+
+// UpdateEgress sets the "egress" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateEgress() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldEgress)
+	return u
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (u *UsageLogUpsert) ClearEgress() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldEgress)
 	return u
 }
 
@@ -3069,6 +3098,27 @@ func (u *UsageLogUpsertOne) SetCacheTTLOverridden(v bool) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateCacheTTLOverridden() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheTTLOverridden()
+	})
+}
+
+// SetEgress sets the "egress" field.
+func (u *UsageLogUpsertOne) SetEgress(v jsontext.Value) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetEgress(v)
+	})
+}
+
+// UpdateEgress sets the "egress" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateEgress() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateEgress()
+	})
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (u *UsageLogUpsertOne) ClearEgress() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearEgress()
 	})
 }
 
@@ -4225,6 +4275,27 @@ func (u *UsageLogUpsertBulk) SetCacheTTLOverridden(v bool) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateCacheTTLOverridden() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheTTLOverridden()
+	})
+}
+
+// SetEgress sets the "egress" field.
+func (u *UsageLogUpsertBulk) SetEgress(v jsontext.Value) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetEgress(v)
+	})
+}
+
+// UpdateEgress sets the "egress" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateEgress() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateEgress()
+	})
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (u *UsageLogUpsertBulk) ClearEgress() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearEgress()
 	})
 }
 

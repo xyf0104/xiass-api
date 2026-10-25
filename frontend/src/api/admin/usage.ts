@@ -93,6 +93,16 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   status_code?: number | null
 }
 
+export interface AdminUsageListOptions {
+  signal?: AbortSignal
+  /**
+   * Usage rows are frequently revisited immediately after a request finishes.
+   * A per-request cache key prevents a browser/proxy cached response with an
+   * older row shape from hiding the cache fields until a hard refresh.
+   */
+  bypassCache?: boolean
+}
+
 // ==================== API Functions ====================
 
 /**
@@ -102,11 +112,14 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
  */
 export async function list(
   params: AdminUsageQueryParams,
-  options?: { signal?: AbortSignal }
+  options?: AdminUsageListOptions
 ): Promise<PaginatedResponse<AdminUsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<AdminUsageLog>>('/admin/usage', {
-    params,
-    signal: options?.signal
+    params: options?.bypassCache
+      ? { ...params, _usage_view_cache_bust: Date.now() }
+      : params,
+    signal: options?.signal,
+    headers: options?.bypassCache ? { 'Cache-Control': 'no-cache, no-store' } : undefined,
   })
   return data
 }

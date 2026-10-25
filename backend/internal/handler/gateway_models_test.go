@@ -269,6 +269,26 @@ func findGatewayModelForTest(models []gatewayModelItemForTest, id string) *gatew
 	return nil
 }
 
+func TestWriteGrokModelsListAdvertisesGrok47ReasoningEfforts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	writeGrokModelsList(c, []string{"grok-4.7", "grok-4.7-latest"})
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Data, 2)
+	for _, model := range got.Data {
+		require.True(t, model.SupportsReasoningEffort)
+		require.Equal(t, "high", model.ReasoningEffort)
+		require.Equal(t, []gatewayReasoningEffortOptionForTest{
+			{Value: "low", Label: "Low"},
+			{Value: "medium", Label: "Medium"},
+			{Value: "high", Label: "High", Default: true},
+			{Value: "xhigh", Label: "xHigh"},
+		}, model.ReasoningEfforts)
+	}
+}
+
 func TestGatewayModels_GeminiGroupFiltersMappedModelsByPlatform(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

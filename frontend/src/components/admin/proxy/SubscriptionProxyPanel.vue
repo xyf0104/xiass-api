@@ -214,6 +214,7 @@ const updatedAt = ref('')
 const lastError = ref('')
 const previewID = ref('')
 const previewSignature = ref('')
+const savedSourceSignature = ref('')
 const hadPreview = ref(false)
 const showDestructiveApply = ref(false)
 const pendingTLSSourceKey = ref('')
@@ -246,7 +247,16 @@ function makeSource(kind: SourceKind, name = '', value = ''): SourceForm {
 }
 function splitList(value: string): string[] { return [...new Set(value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean))] }
 function sourcePayload(): ProxySubscriptionSource[] {
-  return sources.map((source, index) => ({ id: source.id.trim(), name: source.name.trim() || t('admin.proxies.subscriptions.defaultName', { index: index + 1 }), url: source.kind === 'url' ? source.url.trim() : undefined, input: source.kind === 'input' ? source.input.trim() : undefined, user_agent: source.userAgent.trim(), include_protocols: splitList(source.protocols), exclude_keywords: splitList(source.excludes), allow_insecure_tls: source.allowInsecureTLS }))
+  return sources.map((source, index) => ({ client_ref: source.key, id: source.id.trim(), name: source.name.trim() || t('admin.proxies.subscriptions.defaultName', { index: index + 1 }), url: source.kind === 'url' ? source.url.trim() : undefined, input: source.kind === 'input' ? source.input.trim() : undefined, user_agent: source.userAgent.trim(), include_protocols: splitList(source.protocols), exclude_keywords: splitList(source.excludes), allow_insecure_tls: source.allowInsecureTLS }))
+}
+function sourceDraftSignature(payload: ProxySubscriptionSource[]): string {
+  return JSON.stringify(payload.map(({ client_ref: _clientRef, ...source }) => source))
+}
+function sourceMetadataSignature(payload: ProxySubscriptionSource[]): string {
+  return JSON.stringify(payload.map(({ client_ref: _clientRef, url: _url, input: _input, ...source }) => source))
+}
+function overviewMetadataSignature(overview: ProxySubscriptionOverview): string {
+  return sourceMetadataSignature(overview.sources.map(source => ({ id: source.id, name: source.name, user_agent: source.user_agent || '', include_protocols: source.include_protocols || [], exclude_keywords: source.exclude_keywords || [], allow_insecure_tls: source.allow_insecure_tls === true })))
 }
 function updateStatus(overview: ProxySubscriptionOverview) { agentAvailable.value = overview.agent_available; updatedAt.value = overview.updated_at || ''; lastError.value = overview.last_error || '' }
 function replaceSelection(nextNodes: ProxySubscriptionNode[], fallback?: Set<string>) {
@@ -260,12 +270,17 @@ function loadOverview(overview: ProxySubscriptionOverview) {
   replaceSelection(nodes.value)
   updateStatus(overview)
   previewID.value = ''; previewSignature.value = ''; hadPreview.value = false
+  savedSourceSignature.value = sourceDraftSignature(sourcePayload())
 }
 function loadPreview(overview: ProxySubscriptionOverview, submitted: ProxySubscriptionSource[]) {
   const previous = [...sources]
-  sources.splice(0, sources.length, ...overview.sources.map((source, index) => {
-    const draft = previous[index]
-    return { key: draft?.key || source.id || newKey(), id: source.id, name: source.name || draft?.name || '', kind: source.source_kind === 'input' ? 'input' : draft?.kind || 'url', url: submitted[index]?.url || '', input: submitted[index]?.input || '', maskedURL: source.url || draft?.maskedURL || '', configured: source.configured === true, userAgent: source.user_agent || draft?.userAgent || '', protocols: (source.include_protocols || []).join(', '), excludes: (source.exclude_keywords || []).join(', '), allowInsecureTLS: source.allow_insecure_tls === true }
+  const previousByKey = new Map(previous.map(source => [source.key, source]))
+  const previousByID = new Map(previous.filter(source => source.id).map(source => [source.id, source]))
+  const submittedByRef = new Map(submitted.filter(source => source.client_ref).map(source => [source.client_ref!, source]))
+  sources.splice(0, sources.length, ...overview.sources.map(source => {
+    const draft = (source.client_ref && previousByKey.get(source.client_ref)) || previousByID.get(source.id)
+    const submittedSource = source.client_ref ? submittedByRef.get(source.client_ref) : undefined
+    return { key: draft?.key || source.client_ref || source.id || newKey(), id: source.id, name: source.name || draft?.name || '', kind: source.source_kind === 'input' ? 'input' : draft?.kind || 'url', url: submittedSource?.url || draft?.url || '', input: submittedSource?.input || draft?.input || '', maskedURL: source.url || draft?.maskedURL || '', configured: source.configured === true, userAgent: source.user_agent || draft?.userAgent || '', protocols: (source.include_protocols || []).join(', '), excludes: (source.exclude_keywords || []).join(', '), allowInsecureTLS: source.allow_insecure_tls === true }
   }))
   nodes.value = overview.nodes || []
   replaceSelection(nodes.value)
@@ -364,7 +379,23 @@ async function refresh() {
   refreshing.value = true
   invalidatePreview()
   try { const overview = await adminAPI.proxies.refreshSubscriptions(); nodes.value = overview.nodes || []; replaceSelection(nodes.value, draftSelection.size > 0 ? draftSelection : undefined); updateStatus(overview); appStore.showSuccess(t('admin.proxies.subscriptions.refreshSuccess')); emit('changed') }
-  catch (error: any) { appStore.showError(subscriptionError(error, 'admin.proxies.subscriptions.refreshFailed')) }
+  catch (error: any) {
+    let saved: ProxySubscriptionOverview | undefined
+    try {
+      saved = await adminAPI.proxies.getSubscriptions()
+      updateStatus(saved)
+    } catch { /* retain the already visible nodes and draft state */ }
+    if ((error?.reason || error?.code) === 'PROXY_NODE_MISSING' && saved && sourceMetadataSignature(sourcePayload()) === overviewMetadataSignature(saved) && savedSourceSignature.value === sourceDraftSignature(sourcePayload())) {
+      try {
+        const submitted = sourcePayload()
+        const overview = await adminAPI.proxies.previewSubscriptions(submitted)
+        const refreshError = saved.last_error || subscriptionError(error, 'admin.proxies.subscriptions.refreshFailed')
+        loadPreview(overview, submitted)
+        lastError.value = refreshError
+      } catch { /* keep the saved overview and require an explicit preview retry */ }
+    }
+    appStore.showError(subscriptionError(error, 'admin.proxies.subscriptions.refreshFailed'))
+  }
   finally { refreshing.value = false }
 }
 

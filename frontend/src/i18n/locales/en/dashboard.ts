@@ -206,6 +206,12 @@ export default {
         claudeNote: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
         geminiNote: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
       },
+      deepseek: {
+        description: 'Configure Claude Code, Codex, or OpenCode through the current DeepSeek group.',
+        codexDescription: 'Configure Codex with API key authentication through the current DeepSeek group.',
+        codexConfigTomlHint: 'Make sure the following content is at the beginning of config.toml. Restart Codex after saving so the DeepSeek V4 configuration takes effect.',
+        codexNote: 'Make sure the config directory exists. macOS/Linux users can run mkdir -p ~/.codex to create it.',
+      },
       gemini: {
         description: 'Add the following environment variables to your terminal profile or run directly in terminal to configure Gemini CLI access.',
         modelComment: 'If you have Gemini 3 access, you can use: gemini-3-pro-preview',

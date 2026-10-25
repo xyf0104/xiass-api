@@ -843,7 +843,28 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 		AccountRateMultiplier:   l.AccountRateMultiplier,
 		AccountStatsCost:        l.AccountStatsCost,
 		IPAddress:               l.IPAddress,
+		Egress:                  usageEgressFromService(l.Egress),
 		Account:                 AccountSummaryFromService(l.Account),
+	}
+}
+
+func usageEgressFromService(egress *service.UsageEgress) *UsageEgress {
+	if egress == nil {
+		return nil
+	}
+	var observedAt *time.Time
+	if egress.IPObservedAt != nil {
+		value := *egress.IPObservedAt
+		observedAt = &value
+	}
+	return &UsageEgress{
+		Route:           egress.Route,
+		ProxyID:         egress.ProxyID,
+		ProxyName:       egress.ProxyName,
+		ProxyAddress:    egress.ProxyAddress,
+		IPAddress:       egress.IPAddress,
+		IPObservedAt:    observedAt,
+		ExecutionNodeID: egress.ExecutionNodeID,
 	}
 }
 

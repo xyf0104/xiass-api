@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -159,6 +160,49 @@ func TestUsageLogFromService_UsesRequestedModelAndKeepsUpstreamAdminOnly(t *test
 	require.Contains(t, string(adminJSON), `"upstream_model":"claude-sonnet-4-20250514"`)
 	require.Contains(t, string(adminJSON), `"upstream_response_model":"claude-sonnet-4-20250513"`)
 	require.Contains(t, string(adminJSON), `"upstream_model_mismatch":true`)
+}
+
+func TestUsageLogFromService_ExposesEgressToAdminsOnlyAndCopiesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	observedAt := time.Date(2026, 10, 24, 8, 30, 0, 0, time.UTC)
+	log := &service.UsageLog{
+		RequestID: "req_egress",
+		Model:     "gpt-5.6-luna",
+		Egress: &service.UsageEgress{
+			Route:           "proxy",
+			ProxyID:         17,
+			ProxyName:       "edge-a",
+			ProxyAddress:    "proxy.example:1080",
+			IPAddress:       "203.0.113.17",
+			IPObservedAt:    &observedAt,
+			ExecutionNodeID: "node-a",
+			ProxyUpdatedAt:  observedAt.Add(-time.Minute),
+			CapturedAt:      observedAt.Add(time.Minute),
+		},
+	}
+
+	userJSON, err := json.Marshal(UsageLogFromService(log))
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), `"egress"`)
+	require.NotContains(t, string(userJSON), "proxy.example:1080")
+
+	adminDTO := UsageLogFromServiceAdmin(log)
+	require.NotNil(t, adminDTO.Egress)
+	require.Equal(t, "proxy", adminDTO.Egress.Route)
+	require.Equal(t, int64(17), adminDTO.Egress.ProxyID)
+	require.Equal(t, observedAt, *adminDTO.Egress.IPObservedAt)
+	adminDTO.Egress.ProxyName = "changed"
+	*adminDTO.Egress.IPObservedAt = observedAt.Add(time.Hour)
+	require.Equal(t, "edge-a", log.Egress.ProxyName)
+	require.Equal(t, observedAt, *log.Egress.IPObservedAt)
+
+	adminJSON, err := json.Marshal(adminDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"egress":{"route":"proxy"`)
+	require.Contains(t, string(adminJSON), `"proxy_address":"proxy.example:1080"`)
+	require.NotContains(t, string(adminJSON), "proxy_updated_at")
+	require.NotContains(t, string(adminJSON), "captured_at")
 }
 
 func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *testing.T) {

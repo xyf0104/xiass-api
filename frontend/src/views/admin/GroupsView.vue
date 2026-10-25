@@ -1577,7 +1577,8 @@
               :entry="entry"
               :platform="createForm.platform"
               allow-final-price-mode
-              hide-token-intervals
+              :enable-tier-multipliers="entry.price_mode === 'final'"
+              :hide-token-intervals="entry.price_mode !== 'final'"
               @update="createForm.model_pricing[index] = $event"
               @remove="createForm.model_pricing.splice(index, 1)"
             />
@@ -3464,7 +3465,8 @@
               :entry="entry"
               :platform="editForm.platform"
               allow-final-price-mode
-              hide-token-intervals
+              :enable-tier-multipliers="entry.price_mode === 'final'"
+              :hide-token-intervals="entry.price_mode !== 'final'"
               @update="editForm.model_pricing[index] = $event"
               @remove="editForm.model_pricing.splice(index, 1)"
             />
@@ -5097,7 +5099,9 @@ const groupPricingToAPI = (
         per_request_price: toNullableNumber(entry.per_request_price),
         intervals:
           entry.billing_mode === "token"
-            ? []
+            ? entry.price_mode === "final"
+              ? formIntervalsToAPI(entry.intervals || [])
+              : []
             : formIntervalsToAPI(entry.intervals || []),
       };
       return groupPricing;

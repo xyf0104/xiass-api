@@ -85,6 +85,27 @@ func TestToUserSupportedModels_NilAllowedPlatformsKeepsAll(t *testing.T) {
 	require.Len(t, toUserSupportedModels(src, nil), 2)
 }
 
+func TestToUserGroupModelPricing_ExposesResolvedFinalTiersOnly(t *testing.T) {
+	baseInput, baseOutput, inputMultiplier, outputMultiplier := 1e-6, 4e-6, 2.0, 1.5
+	base := service.PriceModeBase
+	final := service.PriceModeFinal
+	got := toUserGroupModelPricing([]service.ChannelModelPricing{
+		{
+			Models: []string{"gpt-6-astra"}, PriceMode: final,
+			InputPrice: &baseInput, OutputPrice: &baseOutput,
+			Intervals: []service.PricingInterval{{
+				MinTokens: 272_000, InputMultiplier: &inputMultiplier, OutputMultiplier: &outputMultiplier,
+			}},
+		},
+		{Models: []string{"gpt-*"}, PriceMode: base, Intervals: []service.PricingInterval{{MinTokens: 272_000}}},
+	})
+	require.Len(t, got, 2)
+	require.Len(t, got[0].Intervals, 1)
+	require.InDelta(t, 2e-6, *got[0].Intervals[0].InputPrice, 1e-15)
+	require.InDelta(t, 6e-6, *got[0].Intervals[0].OutputPrice, 1e-15)
+	require.Empty(t, got[1].Intervals)
+}
+
 func TestUserAvailableChannel_FieldWhitelist(t *testing.T) {
 	// 通过序列化 userAvailableChannel 结构体验证响应形状：
 	// 只有 name / description / platforms；不含管理端字段。

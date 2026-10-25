@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -72,6 +74,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
 	if account.IsGrok() {
 		upstreamModel = s.resolveGrokTextModel(ctx, account, billingModel)
 	}
@@ -80,6 +86,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		// Resolve before image bridging or other body rewrites so the fallback is
 		// anchored to the client's stable conversation prefix.
 		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
+	}
+	if openai.IsGPT61SolModelSpelling(upstreamModel) && (len(gjson.GetBytes(body, "tools").Array()) > 0 || len(gjson.GetBytes(body, "functions").Array()) > 0) {
+		err := fmt.Errorf("gpt-6.1-sol requires Responses for tool calls; this account only supports Chat Completions")
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
 	}
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
@@ -340,6 +351,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
+					normalizeGrokChatUsage(account, gjson.Get(payload, "usage"), u)
 					usage = *u
 				}
 				if firstTokenMs == nil && !usageOnlyChunk {
@@ -496,6 +508,34 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 	return &u
 }
 
+// Grok Chat may report reasoning separately from completion_tokens. Only
+// reconcile internal billing usage when total_tokens proves that exact gap.
+func normalizeGrokChatUsage(account *Account, raw gjson.Result, usage *OpenAIUsage) {
+	if account == nil || account.Platform != PlatformGrok || usage == nil || !raw.IsObject() || !gjson.Valid(raw.Raw) {
+		return
+	}
+	readCount := func(path string) (int, bool) {
+		value := raw.Get(path)
+		if value.Type != gjson.Number {
+			return 0, false
+		}
+		count, err := strconv.ParseInt(value.Raw, 10, strconv.IntSize)
+		return int(count), err == nil && count >= 0
+	}
+	prompt, promptOK := readCount("prompt_tokens")
+	completion, completionOK := readCount("completion_tokens")
+	total, totalOK := readCount("total_tokens")
+	reasoning, reasoningOK := readCount("completion_tokens_details.reasoning_tokens")
+	if !promptOK || !completionOK || !totalOK || !reasoningOK || reasoning <= 0 || usage.OutputTokens != completion {
+		return
+	}
+	// Subtract ordered nonnegative counts to avoid overflow from summing them.
+	if total < prompt || total-prompt < completion || total-prompt-completion != reasoning {
+		return
+	}
+	usage.OutputTokens = total - prompt
+}
+
 // bufferRawChatCompletions 透传上游 CC 非流式 JSON 响应。
 func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c *gin.Context,
@@ -525,6 +565,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 
 	var usage OpenAIUsage
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
+		normalizeGrokChatUsage(account, gjson.GetBytes(respBody, "usage"), &parsedUsage)
 		usage = parsedUsage
 	}
 	result := &OpenAIForwardResult{

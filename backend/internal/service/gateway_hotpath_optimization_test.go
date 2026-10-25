@@ -723,7 +723,7 @@ func TestGetAvailableModels_HidesAntigravityGemini37InternalRoutes(t *testing.T)
 
 func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 	groupID := int64(10)
-	mixedModels := append(openai.DefaultModelIDs(), "configured-model", "gpt-6.1-sol")
+	mixedModels := append(openai.DefaultModelIDs(), "configured-model")
 	sort.Strings(mixedModels)
 
 	tests := []struct {

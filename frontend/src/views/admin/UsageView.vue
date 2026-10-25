@@ -264,6 +264,7 @@ const upstreamEndpointStats = ref<EndpointStat[]>([])
 const endpointPathStats = ref<EndpointStat[]>([])
 const endpointStatsLoading = ref(false)
 let abortController: AbortController | null = null; let exportAbortController: AbortController | null = null
+let logsReqSeq = 0
 let chartReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
@@ -422,14 +423,32 @@ const buildUsageListParams = (
   }
 }
 
+const finiteUsageNumber = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+const normalizeUsageLog = (log: AdminUsageLog): AdminUsageLog => ({
+  ...log,
+  input_tokens: finiteUsageNumber(log.input_tokens),
+  output_tokens: finiteUsageNumber(log.output_tokens),
+  cache_creation_tokens: finiteUsageNumber(log.cache_creation_tokens),
+  cache_read_tokens: finiteUsageNumber(log.cache_read_tokens),
+  cache_creation_5m_tokens: finiteUsageNumber(log.cache_creation_5m_tokens),
+  cache_creation_1h_tokens: finiteUsageNumber(log.cache_creation_1h_tokens),
+  cache_ttl_overridden: Boolean(log.cache_ttl_overridden),
+})
+
 const loadLogs = async () => {
+  const seq = ++logsReqSeq
   abortController?.abort(); const c = new AbortController(); abortController = c; loading.value = true
   try {
     const res = await adminAPI.usage.list(
       buildUsageListParams(pagination.page, pagination.page_size, false),
-      { signal: c.signal }
+      { signal: c.signal, bypassCache: true }
     )
-    if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
+    if (!c.signal.aborted && seq === logsReqSeq) {
+      usageLogs.value = (res.items || []).map(normalizeUsageLog)
+      pagination.total = res.total
+    }
   } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
 }
 const loadStats = async (force = false) => {
@@ -639,7 +658,7 @@ const exportToExcel = async () => {
     while (true) {
       const res = await adminUsageAPI.list(
         buildUsageListParams(p, 100, true),
-        { signal: c.signal }
+        { signal: c.signal, bypassCache: true }
       )
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
       const rows = (res.items || []).map((log: AdminUsageLog) => [

@@ -86,17 +86,17 @@ type userAvailableGroup struct {
 	ModelPricing         []userGroupModelPricing `json:"model_pricing,omitempty"`
 }
 
-// userGroupModelPricing exposes only the final user-price fields needed by
-// the public pricing page. Internal IDs, intervals and account-cost controls
-// remain administrator-only.
+// userGroupModelPricing exposes final user prices and their public context
+// tiers. Internal IDs and account-cost controls remain administrator-only.
 type userGroupModelPricing struct {
-	Models          []string `json:"models"`
-	BillingMode     string   `json:"billing_mode"`
-	PriceMode       string   `json:"price_mode"`
-	InputPrice      *float64 `json:"input_price"`
-	OutputPrice     *float64 `json:"output_price"`
-	CacheWritePrice *float64 `json:"cache_write_price"`
-	CacheReadPrice  *float64 `json:"cache_read_price"`
+	Models          []string                 `json:"models"`
+	BillingMode     string                   `json:"billing_mode"`
+	PriceMode       string                   `json:"price_mode"`
+	InputPrice      *float64                 `json:"input_price"`
+	OutputPrice     *float64                 `json:"output_price"`
+	CacheWritePrice *float64                 `json:"cache_write_price"`
+	CacheReadPrice  *float64                 `json:"cache_read_price"`
+	Intervals       []userPricingIntervalDTO `json:"intervals,omitempty"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
@@ -350,6 +350,32 @@ func toUserGroupModelPricing(pricing []service.ChannelModelPricing) []userGroupM
 			entry.OutputPrice = p.OutputPrice
 			entry.CacheWritePrice = p.CacheWritePrice
 			entry.CacheReadPrice = p.CacheReadPrice
+			for _, interval := range p.Intervals {
+				resolveTier := func(base, override, multiplier *float64) *float64 {
+					if override != nil {
+						return override
+					}
+					if base == nil || multiplier == nil {
+						return nil
+					}
+					value := *base * *multiplier
+					return &value
+				}
+				entry.Intervals = append(entry.Intervals, userPricingIntervalDTO{
+					MinTokens: interval.MinTokens,
+					MaxTokens: interval.MaxTokens,
+					TierLabel: interval.TierLabel,
+					InputPrice: resolveTier(p.InputPrice, interval.InputPrice,
+						interval.InputMultiplier),
+					OutputPrice: resolveTier(p.OutputPrice, interval.OutputPrice,
+						interval.OutputMultiplier),
+					CacheWritePrice: resolveTier(p.CacheWritePrice, interval.CacheWritePrice,
+						interval.CacheWriteMultiplier),
+					CacheWrite1hPrice: interval.CacheWrite1hPrice,
+					CacheReadPrice: resolveTier(p.CacheReadPrice, interval.CacheReadPrice,
+						interval.CacheReadMultiplier),
+				})
+			}
 		}
 		out = append(out, entry)
 	}

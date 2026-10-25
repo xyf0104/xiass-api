@@ -2500,6 +2500,16 @@ func CreatedAtLTE(v time.Time) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCreatedAt, v))
 }
 
+// EgressIsNil applies the IsNil predicate on the "egress" field.
+func EgressIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldEgress))
+}
+
+// EgressNotNil applies the NotNil predicate on the "egress" field.
+func EgressNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldEgress))
+}
+
 // HasUser applies the HasEdge predicate on the "user" edge.
 func HasUser() predicate.UsageLog {
 	return predicate.UsageLog(func(s *sql.Selector) {

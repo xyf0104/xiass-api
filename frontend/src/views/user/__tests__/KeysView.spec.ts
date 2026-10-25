@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
 
@@ -278,7 +279,6 @@ const mountView = async () => {
         EndpointPopover: true,
         GroupBadge: GroupBadgeStub,
         GroupSelector: GroupSelectorStub,
-        GroupOptionItem: true,
         Teleport: true,
       },
     },
@@ -487,6 +487,78 @@ describe('user KeysView column settings', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it('renders real group menu names and rates and searches names and descriptions', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'OpenAI Standard', description: 'General requests', platform: 'openai', rate_multiplier: 1, is_exclusive: false },
+      { id: 2, name: 'Claude Premium', description: 'Long context access', platform: 'anthropic', rate_multiplier: 1.5, is_exclusive: false },
+    ])
+    getUserGroupRates.mockResolvedValue({ 2: 0.25 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="group-cell"] button').trigger('click')
+
+    const options = wrapper.findAllComponents(GroupOptionItem)
+    expect(options).toHaveLength(2)
+    expect(options[0].text()).toContain('OpenAI Standard')
+    expect(options[0].text()).toContain('1x')
+    expect(options[1].text()).toContain('Claude Premium')
+    expect(options[1].text()).toContain('1.5x')
+    expect(options[1].text()).toContain('0.25x')
+
+    const search = wrapper.get('input[placeholder="keys.searchGroup"]')
+    await search.setValue('  cLaUdE  ')
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(1)
+    expect(wrapper.getComponent(GroupOptionItem).text()).toContain('Claude Premium')
+
+    await search.setValue('GENERAL REQUESTS')
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(1)
+    expect(wrapper.getComponent(GroupOptionItem).text()).toContain('OpenAI Standard')
+
+    await search.setValue('missing-group')
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(0)
+    expect(wrapper.text()).toContain('keys.noGroupFound')
+
+    await search.setValue('')
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(2)
+    expect(updateKey).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('updates the key when selecting a different group from the real menu', async () => {
+    const groups = [
+      { id: 1, name: 'OpenAI Standard', platform: 'openai', rate_multiplier: 1, is_exclusive: false },
+      { id: 2, name: 'Claude Premium', platform: 'anthropic', rate_multiplier: 1.5, is_exclusive: false },
+    ]
+    getAvailableGroups.mockResolvedValue(groups)
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), group_id: 1, group_ids: [1], group: groups[0], groups: [groups[0]] }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="group-cell"] button').trigger('click')
+    await wrapper.get('input[placeholder="keys.searchGroup"]').setValue('OpenAI Standard')
+    await wrapper.getComponent(GroupOptionItem).trigger('click')
+    await flushPromises()
+    expect(updateKey).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="group-cell"] button').trigger('click')
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(2)
+    await wrapper.get('input[placeholder="keys.searchGroup"]').setValue('Claude Premium')
+    await wrapper.getComponent(GroupOptionItem).trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledExactlyOnceWith(1, { group_id: 2 })
+    expect(listKeys).toHaveBeenCalledTimes(2)
+    expect(showSuccess).toHaveBeenCalledWith('keys.groupChangedSuccess')
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.find('input[placeholder="keys.searchGroup"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 
   it('orders the multi-select groups by public status, platform, and effective rate', async () => {

@@ -103,6 +103,7 @@ const (
 	AntigravityGemini36FlashMediumModel = "gemini-3.6-flash-medium"
 	AntigravityGemini37FlashTieredModel = "gemini-3.7-flash-tiered"
 	AntigravityGemini38FlashTieredModel = "gemini-3.8-flash-tiered"
+	AntigravityGemini4ArgonModel        = "gemini-4-argon"
 )
 
 // DefaultAntigravityModelMapping 是 Antigravity 平台的默认模型映射
@@ -121,6 +122,13 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"claude-sonnet-4-6-thinking": "claude-sonnet-4-6",
 	"claude-sonnet-4-5":          "claude-sonnet-4-5",
 	"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+	// Antigravity Claude 5.5 reasoning tiers are priced by their base family.
+	"claude-opus-5-5-high":     "claude-opus-5-5-high",
+	"claude-opus-5-5-medium":   "claude-opus-5-5-medium",
+	"claude-opus-5-5-low":      "claude-opus-5-5-low",
+	"claude-sonnet-5-5-high":   "claude-sonnet-5-5-high",
+	"claude-sonnet-5-5-medium": "claude-sonnet-5-5-medium",
+	"claude-sonnet-5-5-low":    "claude-sonnet-5-5-low",
 	// Claude 详细版本 ID 映射
 	"claude-opus-4-5-20251101":   "claude-opus-4-6-thinking", // 迁移旧模型
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
@@ -170,6 +178,11 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-3.8-flash-high":   "gemini-3.8-flash-high",
 	"gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
 	"gemini-3.8-flash-low":    "gemini-3.8-flash-low",
+	// Gemini 4 Argon exposes explicit reasoning tiers; the base alias defaults to high.
+	"gemini-4-argon":        "gemini-4-argon-high",
+	"gemini-4-argon-high":   "gemini-4-argon-high",
+	"gemini-4-argon-medium": "gemini-4-argon-medium",
+	"gemini-4-argon-low":    "gemini-4-argon-low",
 	// Gemini 3 image 兼容映射（向 3.1 image 迁移）
 	"gemini-3-pro-image":         "gemini-3.1-flash-image",
 	"gemini-3-pro-image-preview": "gemini-3.1-flash-image",

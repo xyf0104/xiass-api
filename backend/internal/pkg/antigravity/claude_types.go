@@ -154,6 +154,12 @@ type modelDef struct {
 // Antigravity 支持的 Claude 模型（经服务器测试验证可用）
 var claudeModels = []modelDef{
 	{ID: "claude-fable-5-1", DisplayName: "Claude Fable 5.1", CreatedAt: "2026-09-01T00:00:00Z"},
+	{ID: "claude-opus-5-5-high", DisplayName: "Claude Opus 5.5 (High)", CreatedAt: "2026-09-22T00:00:00Z", IsReasoning: true},
+	{ID: "claude-opus-5-5-medium", DisplayName: "Claude Opus 5.5 (Medium)", CreatedAt: "2026-09-22T00:00:00Z", IsReasoning: true},
+	{ID: "claude-opus-5-5-low", DisplayName: "Claude Opus 5.5 (Low)", CreatedAt: "2026-09-22T00:00:00Z", IsReasoning: true},
+	{ID: "claude-sonnet-5-5-high", DisplayName: "Claude Sonnet 5.5 (High)", CreatedAt: "2026-09-28T00:00:00Z", IsReasoning: true},
+	{ID: "claude-sonnet-5-5-medium", DisplayName: "Claude Sonnet 5.5 (Medium)", CreatedAt: "2026-09-28T00:00:00Z", IsReasoning: true},
+	{ID: "claude-sonnet-5-5-low", DisplayName: "Claude Sonnet 5.5 (Low)", CreatedAt: "2026-09-28T00:00:00Z", IsReasoning: true},
 	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 (Thinking)", CreatedAt: "2026-02-05T00:00:00Z"},
 	{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6 (Thinking)", CreatedAt: "2026-08-18T00:00:00Z", IsReasoning: true},
 }
@@ -180,6 +186,9 @@ var geminiModels = []modelDef{
 	{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash High", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash Medium", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.8-flash-low", DisplayName: "Gemini 3.8 Flash Low", CreatedAt: "2026-09-02T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-argon-high", DisplayName: "Gemini 4 Argon (High)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-argon-medium", DisplayName: "Gemini 4 Argon (Medium)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-argon-low", DisplayName: "Gemini 4 Argon (Low)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash Medium", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash Low", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},

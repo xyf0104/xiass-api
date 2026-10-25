@@ -60,6 +60,56 @@ func TestCalculateCostUnified_FinalGroupPricingUsesRMBDirectlyAndKeepsAccountCos
 	require.InDelta(t, 2.0, cost.ActualCost, 1e-9)
 }
 
+func TestCalculateCostUnified_FinalGroupPricingAppliesContextTierWithoutChangingAccountCost(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	inputPrice, outputPrice := 2e-6, 10e-6
+	cacheWritePrice, cacheReadPrice := 2.5e-6, 0.2e-6
+	inputMultiplier, outputMultiplier := 2.0, 1.5
+	cacheWriteMultiplier, cacheReadMultiplier := 2.0, 2.0
+	interval := PricingInterval{
+		MinTokens: 272_000, MaxTokens: nil,
+		InputMultiplier: &inputMultiplier, OutputMultiplier: &outputMultiplier,
+		CacheWriteMultiplier: &cacheWriteMultiplier, CacheReadMultiplier: &cacheReadMultiplier,
+	}
+	group := &Group{ID: 994, Platform: PlatformOpenAI, LongContextPricingEnabled: true, ModelPricing: []ChannelModelPricing{{
+		Models: []string{"claude-sonnet-4"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal,
+		InputPrice: &inputPrice, OutputPrice: &outputPrice,
+		CacheWritePrice: &cacheWritePrice, CacheReadPrice: &cacheReadPrice,
+		Intervals: []PricingInterval{interval},
+	}}}
+	tokens := UsageTokens{
+		InputTokens: 272_001, OutputTokens: 100,
+		CacheCreationTokens: 100, CacheReadTokens: 100,
+	}
+	withTier, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", Group: group,
+		Tokens: tokens, RateMultiplier: 9, Resolver: resolver,
+	})
+	require.NoError(t, err)
+
+	groupWithoutFinalTier := *group
+	groupWithoutFinalTier.ModelPricing = []ChannelModelPricing{group.ModelPricing[0].Clone()}
+	groupWithoutFinalTier.ModelPricing[0].Intervals = nil
+	withoutTier, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", Group: &groupWithoutFinalTier,
+		Tokens: tokens, RateMultiplier: 9, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, withoutTier.TotalCost, withTier.TotalCost, 1e-12)
+	require.InDelta(t, 272_001*inputPrice*2+100*outputPrice*1.5+
+		100*cacheWritePrice*2+100*cacheReadPrice*2, withTier.ActualCost, 1e-9)
+
+	// The tier is left-open: exactly 272K stays on the base final price.
+	boundaryTokens := UsageTokens{InputTokens: 272_000}
+	boundary, err := bs.CalculateCostUnified(CostInput{
+		Ctx: context.Background(), Model: "claude-sonnet-4", Group: group,
+		Tokens: boundaryTokens, RateMultiplier: 9, Resolver: resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 272_000*inputPrice, boundary.ActualCost, 1e-9)
+}
+
 func TestCalculateCostUnified_FinalGroupPricingNilInheritsZeroIsFreeAndKeepsImageCacheLegacy(t *testing.T) {
 	bs := newTestBillingService()
 	resolver := NewModelPricingResolver(nil, bs)

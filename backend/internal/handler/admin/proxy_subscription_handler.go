@@ -95,6 +95,7 @@ func (h *ProxyHandler) RefreshSubscriptions(c *gin.Context) {
 
 func normalizeSubscriptionRequestSources(sources []service.ProxySubscriptionSource) []service.ProxySubscriptionSource {
 	for index := range sources {
+		sources[index].ClientRef = strings.TrimSpace(sources[index].ClientRef)
 		sources[index].ID = strings.TrimSpace(sources[index].ID)
 		sources[index].Name = strings.TrimSpace(sources[index].Name)
 		sources[index].URL = strings.TrimSpace(sources[index].URL)

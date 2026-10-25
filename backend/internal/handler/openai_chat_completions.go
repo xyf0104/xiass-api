@@ -289,7 +289,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.gatewayService.ObserveOpenAIModelRotation(c.Request.Context(), apiKey, account, forwardModel, res)
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTask(service.UsageEgressContext(c.Request.Context(), c, account), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,

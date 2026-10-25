@@ -40,6 +40,8 @@ func normalizeKnownOpenAICodexModel(model string) string {
 	switch {
 	case isOpenAIGPT6AstraModel(normalized):
 		return "gpt-6-astra"
+	case openai.IsGPT61SolModelSpelling(normalized):
+		return "gpt-6.1-sol"
 	case isOpenAIGPT6SolModel(normalized):
 		return "gpt-6-sol"
 	case isOpenAIGPT6LunaModel(normalized):
@@ -103,7 +105,7 @@ func isOpenAIGPT6LunaModel(model string) bool {
 }
 
 func isOpenAIGPT6Model(model string) bool {
-	return isOpenAIGPT6AstraModel(model) || isOpenAIGPT6SolModel(model) || isOpenAIGPT6LunaModel(model)
+	return isOpenAIGPT6AstraModel(model) || isOpenAIGPT6SolModel(model) || isOpenAIGPT6LunaModel(model) || openai.IsGPT61SolModelSpelling(model)
 }
 
 // isOpenAIGPT56Model 判断是否 GPT-5.6 系列模型；入参可为原始模型名

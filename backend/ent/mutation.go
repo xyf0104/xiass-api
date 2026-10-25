@@ -44843,6 +44843,8 @@ type UsageLogMutation struct {
 	addvideo_duration_seconds    *int
 	cache_ttl_overridden         *bool
 	created_at                   *time.Time
+	egress                       *jsontext.Value
+	appendegress                 jsontext.Value
 	clearedFields                map[string]struct{}
 	user                         *int64
 	cleareduser                  bool
@@ -47360,6 +47362,71 @@ func (m *UsageLogMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
+// SetEgress sets the "egress" field.
+func (m *UsageLogMutation) SetEgress(j jsontext.Value) {
+	m.egress = &j
+	m.appendegress = nil
+}
+
+// Egress returns the value of the "egress" field in the mutation.
+func (m *UsageLogMutation) Egress() (r jsontext.Value, exists bool) {
+	v := m.egress
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEgress returns the old "egress" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldEgress(ctx context.Context) (v jsontext.Value, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEgress is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEgress requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEgress: %w", err)
+	}
+	return oldValue.Egress, nil
+}
+
+// AppendEgress adds j to the "egress" field.
+func (m *UsageLogMutation) AppendEgress(j jsontext.Value) {
+	m.appendegress = append(m.appendegress, j...)
+}
+
+// AppendedEgress returns the list of values that were appended to the "egress" field in this mutation.
+func (m *UsageLogMutation) AppendedEgress() (jsontext.Value, bool) {
+	if len(m.appendegress) == 0 {
+		return nil, false
+	}
+	return m.appendegress, true
+}
+
+// ClearEgress clears the value of the "egress" field.
+func (m *UsageLogMutation) ClearEgress() {
+	m.egress = nil
+	m.appendegress = nil
+	m.clearedFields[usagelog.FieldEgress] = struct{}{}
+}
+
+// EgressCleared returns if the "egress" field was cleared in this mutation.
+func (m *UsageLogMutation) EgressCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldEgress]
+	return ok
+}
+
+// ResetEgress resets all changes to the "egress" field.
+func (m *UsageLogMutation) ResetEgress() {
+	m.egress = nil
+	m.appendegress = nil
+	delete(m.clearedFields, usagelog.FieldEgress)
+}
+
 // ClearUser clears the "user" edge to the User entity.
 func (m *UsageLogMutation) ClearUser() {
 	m.cleareduser = true
@@ -47529,7 +47596,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 48)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47671,6 +47738,9 @@ func (m *UsageLogMutation) Fields() []string {
 	if m.created_at != nil {
 		fields = append(fields, usagelog.FieldCreatedAt)
 	}
+	if m.egress != nil {
+		fields = append(fields, usagelog.FieldEgress)
+	}
 	return fields
 }
 
@@ -47773,6 +47843,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheTTLOverridden()
 	case usagelog.FieldCreatedAt:
 		return m.CreatedAt()
+	case usagelog.FieldEgress:
+		return m.Egress()
 	}
 	return nil, false
 }
@@ -47876,6 +47948,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheTTLOverridden(ctx)
 	case usagelog.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
+	case usagelog.FieldEgress:
+		return m.OldEgress(ctx)
 	}
 	return nil, fmt.Errorf("unknown UsageLog field %s", name)
 }
@@ -48213,6 +48287,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
+		return nil
+	case usagelog.FieldEgress:
+		v, ok := value.(jsontext.Value)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEgress(v)
 		return nil
 	}
 	return fmt.Errorf("unknown UsageLog field %s", name)
@@ -48565,6 +48646,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldVideoDurationSeconds) {
 		fields = append(fields, usagelog.FieldVideoDurationSeconds)
 	}
+	if m.FieldCleared(usagelog.FieldEgress) {
+		fields = append(fields, usagelog.FieldEgress)
+	}
 	return fields
 }
 
@@ -48644,6 +48728,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldVideoDurationSeconds:
 		m.ClearVideoDurationSeconds()
+		return nil
+	case usagelog.FieldEgress:
+		m.ClearEgress()
 		return nil
 	}
 	return fmt.Errorf("unknown UsageLog nullable field %s", name)
@@ -48793,6 +48880,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCreatedAt:
 		m.ResetCreatedAt()
+		return nil
+	case usagelog.FieldEgress:
+		m.ResetEgress()
 		return nil
 	}
 	return fmt.Errorf("unknown UsageLog field %s", name)

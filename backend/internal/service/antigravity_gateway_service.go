@@ -319,6 +319,20 @@ func resolveAntigravityProjectID(account *Account) (string, error) {
 	return "", errAntigravityProjectIDRequired
 }
 
+func (s *AntigravityGatewayService) resolveRequestProjectID(ctx context.Context, account *Account, accessToken string) (string, error) {
+	if projectID, err := resolveAntigravityProjectID(account); err == nil {
+		return projectID, nil
+	}
+	if s == nil || s.tokenProvider == nil {
+		return "", errAntigravityProjectIDRequired
+	}
+	projectID, err := s.tokenProvider.ResolveProjectID(ctx, account, accessToken, true)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errAntigravityProjectIDRequired, err)
+	}
+	return projectID, nil
+}
+
 // applyThinkingModelSuffix 根据 thinking 配置调整模型名
 // 当映射结果是 claude-sonnet-4-5 且请求开启了 thinking 时，改为 claude-sonnet-4-5-thinking
 func applyThinkingModelSuffix(mappedModel string, thinkingEnabled bool) string {
@@ -360,7 +374,10 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 
 	projectID, err := resolveAntigravityProjectID(account)
 	if err != nil {
-		return nil, err
+		projectID, err = s.tokenProvider.ResolveProjectID(ctx, account, accessToken, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 模型映射

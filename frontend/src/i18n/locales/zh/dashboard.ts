@@ -209,6 +209,12 @@ export default {
         geminiNote:
           '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。'
       },
+      deepseek: {
+        description: '通过当前 DeepSeek 分组配置 Claude Code、Codex 或 OpenCode。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 DeepSeek 分组发送请求。',
+        codexConfigTomlHint: '请确保以下内容位于 config.toml 文件的开头部分。保存后重启 Codex 使 DeepSeek V4 配置生效。',
+        codexNote: '请确保配置目录存在。macOS/Linux 用户可运行 mkdir -p ~/.codex 创建目录。'
+      },
       gemini: {
         description:
           '将以下环境变量添加到您的终端配置文件或直接在终端中运行，以配置 Gemini CLI 访问。',

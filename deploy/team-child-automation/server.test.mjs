@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
+import { BatchOAuthRunner } from './batch-oauth.mjs'
 
 process.env.NODE_ENV = 'test'
 process.env.TEAM_CHILD_AUTOMATION_TOKEN = 'unit-test-team-child-token'
@@ -248,6 +251,18 @@ describe('Team child OAuth automation state', () => {
       body: 'Your account has been deactivated'
     }), workflow)).kind, 'account_deleted_or_disabled')
     assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/mfa-challenge',
+      body: 'Authentication Error You do not have an account because it has been deleted or deactivated. If you believe this was an error, please contact us through our help center at help.openai.com. Try again Diagnostics'
+    }), workflow)).kind, 'account_deleted_or_disabled')
+    assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/mfa-challenge',
+      body: 'Authentication Error We could not complete authentication. Try again Diagnostics'
+    }), workflow)).kind, 'authentication_error')
+    assert.equal((await reauthorizationNextState(page({
+      url: 'https://auth.openai.com/mfa-challenge',
+      body: 'Authentication Error JavaScript is disabled in this browser. Try again Diagnostics'
+    }), workflow)).kind, 'authentication_error')
+    assert.equal((await reauthorizationNextState(page({
       url: 'https://auth.openai.com/log-in/password',
       inputs: [input({ type: 'text', placeholder: 'Email address', editable: false })]
     }), workflow)).kind, 'unknown')
@@ -267,6 +282,14 @@ describe('Team child OAuth automation state', () => {
     assert.equal((await reauthorizationNextState(page({
       url: 'https://accounts.google.com/signin'
     }), workflow)).kind, 'external_provider')
+  })
+
+  it('stops reauthorization on a generic OpenAI Authentication Error', async () => {
+    const workflow = createReauthorizationWorkflow(319, 'child@example.test', '', authURL, 'oauth-session-abcdefghijklmnop')
+    await assert.rejects(
+      advanceOAuthReauthorization(workflow, {}, { kind: 'authentication_error' }),
+      /Authentication Error.*Diagnostics.*重新授权/
+    )
   })
 
   it('waits for the submitted login node to leave the old hydrated form', async () => {
@@ -805,28 +828,134 @@ describe('Team child OAuth automation state', () => {
     assert.deepEqual(clicked, ['Send invites'])
   })
 
-  it('fills an OAuth verification code against the current browser page', async () => {
-    const observed = { code: '', clicked: 0 }
-    const input = {
-      isVisible: async () => true,
-      fill: async (value) => { observed.code = value }
+  it('submits an OAuth verification code with every supported verification button label', async () => {
+    for (const label of ['Continue', 'Next', 'Verify', '验证', '確認', '确认']) {
+      const observed = { code: '', clicked: 0 }
+      const input = {
+        isVisible: async () => true,
+        fill: async (value) => { observed.code = value }
+      }
+      const button = {
+        isVisible: async () => true,
+        click: async () => { observed.clicked += 1 }
+      }
+      const collection = (items) => ({
+        count: async () => items.length,
+        nth: (index) => items[index]
+      })
+      const page = {
+        locator: (selector) => collection(selector.includes('one-time-code') ? [input] : []),
+        getByRole: (role, options) => collection(role === 'button' && options.name.test(label) ? [button] : [])
+      }
+
+      await fillVerificationCode(page, '123456')
+      assert.equal(observed.code, '123456')
+      assert.equal(observed.clicked, 1)
     }
-    const button = {
-      isVisible: async () => true,
-      click: async () => { observed.clicked += 1 }
+  })
+
+  it('presses Enter only while the verification form is still present', async () => {
+    for (const autoSubmit of [false, true]) {
+      const observed = { code: '', enterPresses: 0 }
+      let inputsVisible = true
+      const input = {
+        isVisible: async () => inputsVisible,
+        fill: async (value) => {
+          observed.code = value
+          if (autoSubmit) inputsVisible = false
+        },
+        press: async (key) => {
+          assert.equal(key, 'Enter')
+          observed.enterPresses += 1
+          inputsVisible = false
+        }
+      }
+      const collection = (items) => ({
+        count: async () => items.length,
+        nth: (index) => items[index]
+      })
+      const page = {
+        locator: (selector) => collection(selector.includes('one-time-code') && inputsVisible ? [input] : []),
+        getByRole: () => collection([])
+      }
+
+      await fillVerificationCode(page, '123456')
+      assert.equal(observed.code, '123456')
+      assert.equal(observed.enterPresses, autoSubmit ? 0 : 1)
     }
+  })
+
+  it('advances the batch runner when the production verification helper is injected', async () => {
+    const observed = { code: '', enterPresses: 0, closes: 0 }
     const collection = (items) => ({
       count: async () => items.length,
       nth: (index) => items[index]
     })
-    const page = {
-      locator: (selector) => collection(selector.includes('one-time-code') ? [input] : []),
-      getByRole: (role, options) => collection(role === 'button' && options.name.test('Continue') ? [button] : [])
+    class Page extends EventEmitter {
+      kind = 'email'
+      location = 'about:blank'
+      frame = {}
+      url() { return this.location }
+      mainFrame() { return this.frame }
+      setDefaultTimeout() {}
+      async goto(value) { this.location = value }
+      locator(selector) {
+        if (!selector.includes('one-time-code') || this.kind !== 'totp') return collection([])
+        return collection([{
+          isVisible: async () => true,
+          fill: async (value) => { observed.code = value },
+          press: async (key) => {
+            assert.equal(key, 'Enter')
+            observed.enterPresses += 1
+            this.kind = 'workspace'
+          }
+        }])
+      }
+      getByRole() { return collection([]) }
+    }
+    const page = new Page()
+    const runner = new BatchOAuthRunner({
+      validateAuthURL: value => value,
+      browser: {
+        async newContext() {
+          return {
+            newPage: async () => page,
+            close: async () => { observed.closes += 1 }
+          }
+        }
+      },
+      helpers: {
+        stepDelayMs: 0,
+        inspectPage: async current => ({ kind: current.kind }),
+        fillWorkflowEmail: async current => { current.kind = 'password' },
+        fillLoginPassword: async current => { current.kind = 'totp' },
+        fillVerificationCode,
+        chooseDefaultWorkspace: async current => {
+          current.location = 'http://localhost:1455/auth/callback?code=test-code&state=helper-injection'
+        }
+      }
+    })
+
+    await runner.start({
+      task_id: 'helper-injection',
+      owner_id: 1,
+      email: 'child@example.test',
+      password: 'synthetic-password',
+      totp_secret: 'JBSWY3DPEHPK3PXP',
+      oauth_session_id: 'oauth-session-abcdefghijklmnop',
+      auth_url: 'https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&state=helper-injection'
+    })
+    const deadline = Date.now() + 3000
+    while (runner.get('helper-injection', 1).status === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20))
     }
 
-    await fillVerificationCode(page, '123456')
-    assert.equal(observed.code, '123456')
-    assert.equal(observed.clicked, 1)
+    const result = runner.get('helper-injection', 1)
+    assert.equal(result.status, 'completed')
+    assert.equal(result.stage, 'callback_received')
+    assert.match(observed.code, /^\d{6}$/)
+    assert.equal(observed.enterPresses, 1)
+    assert.equal(observed.closes, 1)
   })
 
   it('returns from an old SMS page and switches a password prompt to email-code login', async () => {

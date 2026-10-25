@@ -464,6 +464,7 @@ func newOpsUpstreamProxySnapshot(account *Account, proxyURL string, directWhenEm
 // freezeOpenAIHTTPUpstreamProxy snapshots the exact route input immediately
 // before an OpenAI HTTP attempt. An empty proxy URL is explicitly direct.
 func freezeOpenAIHTTPUpstreamProxy(c *gin.Context, account *Account, proxyURL string) {
+	freezeUsageEgress(c, account, proxyURL, true)
 	if account == nil || !account.IsOpenAI() {
 		setOpsUpstreamProxySnapshot(c, opsUpstreamProxySnapshot{mode: opsUpstreamProxyUnknown, proxyName: opsProxyNameUnknown})
 		return
@@ -476,6 +477,7 @@ func freezeOpenAIHTTPUpstreamProxy(c *gin.Context, account *Account, proxyURL st
 // websocket default client may honor environment proxies, so attribution is
 // unknown rather than direct.
 func freezeOpenAIWSUpstreamProxy(c *gin.Context, account *Account, proxyURL string) {
+	freezeUsageEgress(c, account, proxyURL, false)
 	if account == nil || !account.IsOpenAI() {
 		setOpsUpstreamProxySnapshot(c, opsUpstreamProxySnapshot{mode: opsUpstreamProxyUnknown, proxyName: opsProxyNameUnknown})
 		return

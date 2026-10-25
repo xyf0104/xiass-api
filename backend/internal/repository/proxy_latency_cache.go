@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
@@ -34,7 +35,19 @@ func (c *proxyLatencyCache) GetProxyLatencies(ctx context.Context, proxyIDs []in
 		keys = append(keys, proxyLatencyKey(id))
 	}
 
-	values, err := c.rdb.MGet(ctx, keys...).Result()
+	client := c.rdb
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return results, context.DeadlineExceeded
+		}
+		// The shared Redis client may ignore context deadlines during socket
+		// reads. Usage enrichment must not inherit its multi-second timeout.
+		if timeout := client.Options().ReadTimeout; timeout <= 0 || remaining < timeout {
+			client = client.WithTimeout(remaining)
+		}
+	}
+	values, err := client.MGet(ctx, keys...).Result()
 	if err != nil {
 		return results, err
 	}

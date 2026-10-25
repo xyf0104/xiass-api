@@ -692,6 +692,16 @@ type UsageLog struct {
 	Subscription *UserSubscription `json:"subscription,omitempty"`
 }
 
+type UsageEgress struct {
+	Route           string     `json:"route"`
+	ProxyID         int64      `json:"proxy_id,omitempty"`
+	ProxyName       string     `json:"proxy_name,omitempty"`
+	ProxyAddress    string     `json:"proxy_address,omitempty"`
+	IPAddress       string     `json:"ip_address,omitempty"`
+	IPObservedAt    *time.Time `json:"ip_observed_at,omitempty"`
+	ExecutionNodeID string     `json:"execution_node_id,omitempty"`
+}
+
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
 type AdminUsageLog struct {
 	UsageLog
@@ -720,6 +730,8 @@ type AdminUsageLog struct {
 
 	// IPAddress 用户请求 IP
 	IPAddress *string `json:"ip_address,omitempty"`
+	// Egress is the immutable route snapshot captured for this historical request.
+	Egress *UsageEgress `json:"egress,omitempty"`
 
 	// Account 最小账号信息（避免泄露敏感字段）
 	Account *AccountSummary `json:"account,omitempty"`

@@ -1118,9 +1118,8 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 }
 
 // normalizeGroupModelPricing keeps group-owned pricing detached from channel
-// records. It intentionally reuses XIASS's model/interval validation while
-// accepting only the existing static pricing structure: group time pricing is
-// not part of the XIASS contract.
+// records. Final token prices may use context intervals; base group pricing
+// retains the legacy flat-price behavior.
 func normalizeGroupModelPricing(platform string, pricing []ChannelModelPricing) ([]ChannelModelPricing, error) {
 	if len(pricing) == 0 {
 		return []ChannelModelPricing{}, nil

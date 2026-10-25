@@ -633,13 +633,14 @@ func normalizeGrokReasoningEffortValue(raw, model string) (string, bool) {
 
 func grokSupportsXHighReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
-	return model == "grok-4.6" || model == "grok-4.6-latest"
+	return model == "grok-4.6" || model == "grok-4.6-latest" || model == "grok-4.7" || model == "grok-4.7-latest"
 }
 
 func grokSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	switch model {
 	case xai.DefaultTextModel, "grok-4.5-latest", "grok-4.6", "grok-4.6-latest",
+		"grok-4.7", "grok-4.7-latest",
 		"grok-4.3", "grok-4.3-latest",
 		"grok-3-mini", "grok-3-mini-fast", "grok-4.20-0309-reasoning",
 		"grok-4.20-reasoning", "grok-4.20-multi-agent-0309":
@@ -650,8 +651,7 @@ func grokSupportsReasoningEffort(model string) bool {
 }
 
 func GrokSupportsXHighReasoningEffort(model string) bool {
-	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
-	return model == "grok-4.6" || model == "grok-4.6-latest"
+	return grokSupportsXHighReasoningEffort(model)
 }
 
 var grokResponsesUnsupportedRecursiveFields = map[string]struct{}{

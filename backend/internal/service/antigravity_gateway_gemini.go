@@ -109,7 +109,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		}
 	}
 
-	projectID, err := resolveAntigravityProjectID(account)
+	projectID, err := s.resolveRequestProjectID(ctx, account, accessToken)
 	if err != nil {
 		_ = s.writeGoogleError(c, http.StatusBadRequest, err.Error())
 		return nil, err

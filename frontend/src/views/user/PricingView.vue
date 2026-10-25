@@ -35,7 +35,7 @@
         <Icon name="refresh" size="lg" class="animate-spin text-gray-400" />
       </div>
 
-      <div v-else-if="activeChannel" class="space-y-0">
+      <div v-else-if="activeGroup" class="space-y-0">
         <!-- 价格列表卡片 -->
         <div class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800">
           <!-- 标题栏 -->
@@ -217,7 +217,7 @@
                             <PriceCell
                               :base-price="item.basePrice"
                               :group-base-price="item.groupBasePrice"
-                              :multiplier="multiplierFor(model)"
+                              :multiplier="item.groupBasePrice != null ? 1 : multiplierFor(model)"
                               :mode="priceMode"
                               :scale="item.scale"
                               :unit="item.unit"
@@ -258,7 +258,8 @@
                           </div>
                           <PriceCell
                             :base-price="item.basePrice"
-                            :multiplier="multiplierFor(model)"
+                            :group-base-price="item.groupBasePrice"
+                            :multiplier="item.groupBasePrice != null ? 1 : multiplierFor(model)"
                             :mode="priceMode"
                             :scale="item.scale"
                             :unit="item.unit"
@@ -294,7 +295,7 @@
 <script setup lang="ts">
 /**
  * 模型定价页面 — 对标 apikey.fun 的分组卡片 + 定价表格布局
- * 数据来源：复用 /channels/available API（需登录），按平台聚合展示
+ * 数据来源：/channels/pricing API（需登录），按平台聚合展示
  */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -311,6 +312,7 @@ import userChannelsAPI, {
 import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { sortGroups } from '@/utils/groupSorting'
 import {
   formatPeakRateWindow,
   hasPeakRate,
@@ -378,26 +380,24 @@ const productCategories: { platform: GroupPlatform; label: string }[] = [
 
 // ==================== 计算属性 ====================
 
-/** 当前选中平台对应的渠道 */
-const activeChannel = computed(() => {
-  for (const ch of channels.value) {
-    const section = ch.platforms.find(p => p.platform === activePlatform.value)
-    if (section) return { channel: ch, section }
-  }
-  return null
-})
+const activeSections = computed(() => channels.value.flatMap(channel =>
+  channel.platforms.filter(section => section.platform === activePlatform.value)
+))
 
-/** 当前平台下的分组列表（已按倍率从小到大排序） */
+/** 汇总同平台的所有渠道，同时保留服务端过滤后的分组可见性。 */
 const activeGroups = computed((): PricingGroup[] => {
-  if (!activeChannel.value) return []
-  return [...activeChannel.value.section.groups]
-    .map(group => group as PricingGroup)
-    .sort((a, b) => baseMultiplierForGroup(a) - baseMultiplierForGroup(b))
+  const groups = new Map<number, PricingGroup>()
+  for (const section of activeSections.value) {
+    for (const group of section.groups) {
+      if (!groups.has(group.id)) groups.set(group.id, group)
+    }
+  }
+  return sortGroups([...groups.values()], { getEffectiveRate: baseMultiplierForGroup })
 })
 
 watch(activeGroups, (groups) => {
-  if (groups.length > 0 && !groups.find(g => g.id === activeGroupId.value)) {
-    activeGroupId.value = groups[0].id
+  if (!groups.some(group => group.id === activeGroupId.value)) {
+    activeGroupId.value = groups[0]?.id ?? null
   }
 }, { immediate: true })
 
@@ -406,10 +406,12 @@ const activeGroup = computed(() => {
   return activeGroups.value.find(g => g.id === activeGroupId.value) ?? activeGroups.value[0]
 })
 
-/** 当前平台下的模型列表 */
+/** 模型与价格必须跟随所选分组的渠道，不能混用同平台的其他渠道。 */
 const activeModels = computed((): UserSupportedModel[] => {
-  if (!activeChannel.value) return []
-  return activeChannel.value.section.supported_models
+  const groupId = activeGroup.value?.id
+  return activeSections.value.find(section =>
+    section.groups.some(group => group.id === groupId)
+  )?.supported_models ?? []
 })
 
 // ==================== 格式化方法 ====================
@@ -605,7 +607,34 @@ function tokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
 
 function supplementalTokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
   const primaryKeys = new Set(['input', 'output', 'cache-write', 'cache-read'])
-  return tokenPriceItems(model).filter(item => !primaryKeys.has(item.key))
+  const items = tokenPriceItems(model).filter(item => !primaryKeys.has(item.key))
+  const finalPricing = finalTokenPricingFor(model)
+  for (const [index, interval] of (finalPricing?.intervals ?? []).entries()) {
+    const prefix = `分组区间 ${intervalLabel(interval)}`
+    const intervalItems = [
+      ['input_price', 'input_multiplier', '输入'],
+      ['output_price', 'output_multiplier', '输出'],
+      ['cache_write_price', 'cache_write_multiplier', '缓存创建'],
+      ['cache_read_price', 'cache_read_multiplier', '缓存读取']
+    ] as const
+    for (const [field, multiplierField, label] of intervalItems) {
+      const basePrice = normalizedPrice(finalPricing?.[field])
+      const price = normalizedPrice(interval[field])
+        ?? (basePrice != null && interval[multiplierField] != null
+          ? basePrice * interval[multiplierField]
+          : null)
+      if (price == null) continue
+      items.push({
+        key: `final-interval-${index}-${field}`,
+        label: `${prefix} · ${label}`,
+        basePrice: null,
+        groupBasePrice: price,
+        scale: 1_000_000,
+        unit: '/ 1M tokens'
+      })
+    }
+  }
+  return items
 }
 
 function perRequestPriceItems(model: UserSupportedModel): DisplayPriceItem[] {

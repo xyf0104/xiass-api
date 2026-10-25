@@ -120,10 +120,11 @@ func (s *grokMediaSlotsCache) assertReleased(t *testing.T) {
 
 type grokMediaSlotBindings struct {
 	testutil.StubGatewayCache
-	owner  int64
-	writes int
-	key    string
-	billed map[string]bool
+	owner   int64
+	writes  int
+	key     string
+	billed  map[string]bool
+	pending []byte
 }
 
 func (s *grokMediaSlotBindings) GetSessionAccountID(_ context.Context, groupID int64, key string) (int64, error) {
@@ -144,6 +145,15 @@ func (s *grokMediaSlotBindings) RefreshSessionTTL(context.Context, int64, string
 func (s *grokMediaSlotBindings) DeleteSessionAccountID(context.Context, int64, string) error {
 	s.writes++
 	return nil
+}
+
+func (s *grokMediaSlotBindings) SetGrokVideoPendingBilling(_ context.Context, _ string, payload []byte, _ time.Duration) error {
+	s.pending = append([]byte(nil), payload...)
+	return nil
+}
+
+func (s *grokMediaSlotBindings) GetGrokVideoPendingBilling(_ context.Context, _ string) ([]byte, error) {
+	return append([]byte(nil), s.pending...), nil
 }
 
 func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key string, _ time.Duration) (bool, error) {
@@ -393,7 +403,7 @@ func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	result := &service.OpenAIForwardResult{ResponseID: "task", Model: "grok-imagine-video",
 		VideoCount: 1, VideoDurationSeconds: 6}
 	for i := range 20 {
-		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
+		bill, _ := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
 		if i == 0 {
 			require.NotNil(t, bill)
 			require.Equal(t, service.StableGrokVideoBillingRequestID("task"), bill.RequestID)
@@ -402,4 +412,73 @@ func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 		}
 	}
 	require.Len(t, bindings.billed, 1)
+}
+
+func TestGrokMediaVideoCreationStoresDispatchEgressSnapshot(t *testing.T) {
+	h, slots, _, _ := newGrokMediaSlotHandler(t, false, false)
+	c, w := grokMediaSlotContext(context.Background(), true)
+
+	h.GrokVideoGeneration(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	pending, err := h.gatewayService.LoadGrokVideoPendingBilling(context.Background(), "task", 10, 20)
+	require.NoError(t, err)
+	require.NotNil(t, pending)
+	require.NotNil(t, pending.Egress)
+	require.Equal(t, "direct", pending.Egress.Route)
+	require.False(t, pending.Egress.CapturedAt.IsZero())
+	slots.assertReleased(t)
+}
+
+func TestGrokMediaDeferredBillingUsesCreationEgressInsteadOfPollingRoute(t *testing.T) {
+	h, _, _, _ := newGrokMediaSlotHandler(t, false, false)
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, ok := middleware2.GetAPIKeyFromContext(c)
+	require.True(t, ok)
+	subject := middleware2.AuthSubject{UserID: 10, Concurrency: 5}
+	proxyUpdatedAt := time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)
+	capturedAt := proxyUpdatedAt.Add(time.Minute)
+	creationEgress := &service.UsageEgress{
+		Route:          "proxy",
+		ProxyID:        71,
+		ProxyName:      "creation-exit",
+		ProxyAddress:   "10.0.0.71:1080",
+		ProxyUpdatedAt: proxyUpdatedAt,
+		CapturedAt:     capturedAt,
+	}
+	require.NoError(t, h.gatewayService.StoreGrokVideoPendingBilling(c.Request.Context(), "task", subject.UserID, key.ID, service.GrokVideoPendingBilling{
+		Model:  "grok-imagine-video",
+		Egress: creationEgress,
+	}))
+
+	bill, deferredEgress := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", &service.OpenAIForwardResult{
+		ResponseID: "task", Model: "grok-imagine-video", VideoCount: 1, VideoDurationSeconds: 6,
+	})
+	require.NotNil(t, bill)
+	require.Equal(t, creationEgress, deferredEgress)
+
+	pollProxyID := int64(99)
+	pollAccount := &service.Account{ID: 1, RequestProxy: &service.Proxy{ID: pollProxyID, Name: "poll-exit", Protocol: "socks5", Host: "10.0.0.99", Port: 1080}}
+	usageCtx := grokMediaUsageContext(c.Request.Context(), c, pollAccount, &grokMediaUsageEgressOverride{egress: deferredEgress})
+	require.Equal(t, creationEgress, service.UsageEgressFromContext(usageCtx))
+}
+
+func TestGrokMediaDeferredBillingLegacyPendingDoesNotUsePollingRoute(t *testing.T) {
+	h, _, _, _ := newGrokMediaSlotHandler(t, false, false)
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, ok := middleware2.GetAPIKeyFromContext(c)
+	require.True(t, ok)
+	subject := middleware2.AuthSubject{UserID: 10, Concurrency: 5}
+	require.NoError(t, h.gatewayService.StoreGrokVideoPendingBilling(c.Request.Context(), "task", subject.UserID, key.ID, service.GrokVideoPendingBilling{
+		Model: "grok-imagine-video",
+	}))
+
+	_, deferredEgress := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", &service.OpenAIForwardResult{
+		ResponseID: "task", Model: "grok-imagine-video", VideoCount: 1, VideoDurationSeconds: 6,
+	})
+	require.Nil(t, deferredEgress)
+
+	pollAccount := &service.Account{ID: 1, RequestProxy: &service.Proxy{ID: 99, Name: "poll-exit", Protocol: "socks5", Host: "10.0.0.99", Port: 1080}}
+	usageCtx := grokMediaUsageContext(c.Request.Context(), c, pollAccount, &grokMediaUsageEgressOverride{egress: nil})
+	require.Nil(t, service.UsageEgressFromContext(usageCtx))
 }

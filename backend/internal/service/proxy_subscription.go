@@ -30,11 +30,13 @@ var ErrProxySubscriptionChanged = infraerrors.Conflict("PROXY_SUBSCRIPTION_CHANG
 // subscription snapshot in the same transaction. The expected value is a CAS.
 type ProxySubscriptionPersistence interface {
 	Load(context.Context) (string, error)
+	ExistingProxyIDs(context.Context, []int64) (map[int64]bool, error)
 	Update(context.Context, string, func(ProxyRepository) (string, error)) error
 }
 
 type ProxySubscriptionSource struct {
 	AllowInsecureTLS bool     `json:"allow_insecure_tls,omitempty"`
+	ClientRef        string   `json:"client_ref,omitempty"`
 	ID               string   `json:"id"`
 	Name             string   `json:"name,omitempty"`
 	URL              string   `json:"url,omitempty"`
@@ -65,6 +67,7 @@ type proxySubscriptionConfig struct {
 
 type ProxySubscriptionSourceView struct {
 	AllowInsecureTLS bool     `json:"allow_insecure_tls,omitempty"`
+	ClientRef        string   `json:"client_ref,omitempty"`
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
 	URL              string   `json:"url,omitempty"`
@@ -184,14 +187,19 @@ func (s *ProxySubscriptionService) Preview(ctx context.Context, sources []ProxyS
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.agent.Preview(ctx, normalized)
+	stableSources := stripProxySubscriptionClientRefs(normalized)
+	result, err := s.agent.Preview(ctx, stableSources)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateSubscriptionAgentResult(result); err != nil {
 		return nil, err
 	}
-	next := &proxySubscriptionConfig{Sources: normalized, Nodes: mergeAgentNodes(result.Nodes, current.Nodes), SelectedNodeIDs: current.SelectedNodeIDs, Snapshot: result.Snapshot, Addresses: current.Addresses, UpdatedAt: current.UpdatedAt}
+	nodes, selected, err := s.reconcilePreviewProxyReferences(ctx, mergeAgentNodes(result.Nodes, current.Nodes), current.SelectedNodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	next := &proxySubscriptionConfig{Sources: stableSources, Nodes: nodes, SelectedNodeIDs: selected, Snapshot: result.Snapshot, Addresses: current.Addresses, UpdatedAt: current.UpdatedAt}
 	id := uuid.NewString()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -205,6 +213,7 @@ func (s *ProxySubscriptionService) Preview(ctx context.Context, sources []ProxyS
 	}
 	s.previews[id] = proxySubscriptionPreview{Config: next, Revision: raw, Expires: time.Now().Add(10 * time.Minute)}
 	out := configOverview(next)
+	bindProxySubscriptionClientRefs(out.Sources, normalized)
 	out.AgentAvailable, out.PreviewID = true, id
 	return out, nil
 }
@@ -228,7 +237,7 @@ func (s *ProxySubscriptionService) Apply(ctx context.Context, sources []ProxySub
 	if err != nil {
 		return nil, err
 	}
-	if !reflect.DeepEqual(normalized, p.Config.Sources) {
+	if !reflect.DeepEqual(stripProxySubscriptionClientRefs(normalized), p.Config.Sources) {
 		return nil, ErrProxySubscriptionChanged
 	}
 	ids, err := normalizeSelectedNodeIDs(selected)
@@ -319,6 +328,14 @@ func (s *ProxySubscriptionService) Refresh(ctx context.Context) (*ProxySubscript
 	next := *current
 	next.Snapshot = result.Snapshot
 	next.Nodes = mergeAgentNodes(result.Nodes, current.Nodes)
+	_, retainedSelection, err := s.reconcilePreviewProxyReferences(ctx, append([]ProxySubscriptionNode(nil), next.Nodes...), current.SelectedNodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(retainedSelection) != len(current.SelectedNodeIDs) {
+		s.lastError = "A selected proxy was deleted; saved nodes retained"
+		return nil, infraerrors.BadRequest("PROXY_NODE_MISSING", "A selected subscription node is unavailable; preview and select again")
+	}
 	if err := validateSelectedSubscriptionNodes(&next); err != nil {
 		s.lastError = "A selected node disappeared from its subscription; saved nodes retained"
 		return nil, err
@@ -363,6 +380,33 @@ func validateSelectedSubscriptionNodes(c *proxySubscriptionConfig) error {
 		}
 	}
 	return nil
+}
+
+func (s *ProxySubscriptionService) reconcilePreviewProxyReferences(ctx context.Context, nodes []ProxySubscriptionNode, selected []string) ([]ProxySubscriptionNode, []string, error) {
+	proxyIDs := make([]int64, 0, len(nodes))
+	for _, node := range nodes {
+		if node.ProxyID > 0 {
+			proxyIDs = append(proxyIDs, node.ProxyID)
+		}
+	}
+	existing, err := s.store.ExistingProxyIDs(ctx, proxyIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	removedSelection := map[string]bool{}
+	for index := range nodes {
+		if nodes[index].ProxyID > 0 && !existing[nodes[index].ProxyID] {
+			removedSelection[nodes[index].ID] = true
+			nodes[index].ProxyID = 0
+		}
+	}
+	filtered := make([]string, 0, len(selected))
+	for _, id := range selected {
+		if !removedSelection[id] {
+			filtered = append(filtered, id)
+		}
+	}
+	return nodes, filtered, nil
 }
 
 func subscriptionRouteAddresses(result *proxySubscriptionAgentResult, selected []string, previous map[string]string) (map[string]string, error) {
@@ -460,20 +504,35 @@ func normalizeProxySubscriptionSources(input, current []ProxySubscriptionSource)
 		return nil, infraerrors.BadRequest("PROXY_SOURCE_LIMIT", "At most 16 subscription sources are supported")
 	}
 	old := map[string]ProxySubscriptionSource{}
+	oldByContent := map[string]string{}
 	for _, source := range current {
 		old[source.ID] = source
+		if identity, ok := proxySubscriptionContentIdentity(source); ok {
+			oldByContent[identity] = source.ID
+		}
 	}
 	result := make([]ProxySubscriptionSource, 0, len(input))
-	seenIDs, seenInputs := map[string]bool{}, map[string]bool{}
+	seenIDs := map[string]bool{}
+	type seenContent struct {
+		resultIndex    int
+		sourceID       string
+		hadContent     bool
+		retainedSource bool
+	}
+	seenContentByIdentity := map[string]seenContent{}
 	for i, source := range input {
+		source.ClientRef = strings.TrimSpace(source.ClientRef)
+		if len(source.ClientRef) > 128 || strings.ContainsAny(source.ClientRef, "\r\n\t") {
+			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Invalid subscription client reference")
+		}
 		source.ID = strings.TrimSpace(source.ID)
+		hadExplicitID := source.ID != ""
 		if source.ID == "" {
 			source.ID = "sub-" + uuid.NewString()
 		}
-		if len(source.ID) > 96 || strings.ContainsAny(source.ID, "\r\n\t /\\") || seenIDs[source.ID] {
+		if len(source.ID) > 96 || strings.ContainsAny(source.ID, "\r\n\t /\\") {
 			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Invalid or duplicate source ID")
 		}
-		seenIDs[source.ID] = true
 		source.Name = strings.TrimSpace(source.Name)
 		if source.Name == "" {
 			source.Name = fmt.Sprintf("Subscription %d", i+1)
@@ -482,6 +541,7 @@ func normalizeProxySubscriptionSources(input, current []ProxySubscriptionSource)
 			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Invalid subscription name")
 		}
 		source.URL, source.Input = strings.TrimSpace(source.URL), strings.TrimSpace(source.Input)
+		hadContent := source.URL != "" || source.Input != ""
 		if source.URL == "" && source.Input == "" {
 			source.URL, source.Input = old[source.ID].URL, old[source.ID].Input
 		}
@@ -497,12 +557,33 @@ func normalizeProxySubscriptionSources(input, current []ProxySubscriptionSource)
 			parsed.Fragment, parsed.RawFragment = "", ""
 			source.URL = parsed.String()
 		}
-		sum := sha256.Sum256([]byte(source.URL + "\x00" + source.Input))
-		identity := hex.EncodeToString(sum[:])
-		if seenInputs[identity] {
+		identity, ok := proxySubscriptionContentIdentity(source)
+		if !ok {
+			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Provide one subscription URL or file content")
+		}
+		if !hadExplicitID {
+			if existingID := oldByContent[identity]; existingID != "" {
+				source.ID = existingID
+			}
+		}
+		retainedSource := hadExplicitID && !hadContent && old[source.ID].ID != ""
+		if previous, duplicate := seenContentByIdentity[identity]; duplicate {
+			if source.ID == previous.sourceID && ((previous.retainedSource && hadContent) || (retainedSource && previous.hadContent)) {
+				if hadContent && !retainedSource {
+					result[previous.resultIndex].ClientRef = source.ClientRef
+				} else if retainedSource {
+					source.ClientRef = result[previous.resultIndex].ClientRef
+					result[previous.resultIndex] = source
+				}
+				continue
+			}
 			return nil, infraerrors.BadRequest("DUPLICATE_SUBSCRIPTION", "The same subscription source was added twice")
 		}
-		seenInputs[identity] = true
+		if seenIDs[source.ID] {
+			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Invalid or duplicate source ID")
+		}
+		seenIDs[source.ID] = true
+		seenContentByIdentity[identity] = seenContent{resultIndex: len(result), sourceID: source.ID, hadContent: hadContent, retainedSource: retainedSource}
 		source.UserAgent = strings.TrimSpace(source.UserAgent)
 		if len(source.UserAgent) > 256 || strings.ContainsAny(source.UserAgent, "\r\n") || len(source.IncludeProtocols) > 16 || len(source.ExcludeKeywords) > 64 {
 			return nil, infraerrors.BadRequest("INVALID_SUBSCRIPTION", "Invalid subscription filters or user agent")
@@ -522,6 +603,41 @@ func normalizeProxySubscriptionSources(input, current []ProxySubscriptionSource)
 		result = append(result, source)
 	}
 	return result, nil
+}
+
+func stripProxySubscriptionClientRefs(sources []ProxySubscriptionSource) []ProxySubscriptionSource {
+	result := append([]ProxySubscriptionSource(nil), sources...)
+	for index := range result {
+		result[index].ClientRef = ""
+	}
+	return result
+}
+
+func bindProxySubscriptionClientRefs(views []ProxySubscriptionSourceView, sources []ProxySubscriptionSource) {
+	refs := make(map[string]string, len(sources))
+	for _, source := range sources {
+		refs[source.ID] = source.ClientRef
+	}
+	for index := range views {
+		views[index].ClientRef = refs[views[index].ID]
+	}
+}
+
+func proxySubscriptionContentIdentity(source ProxySubscriptionSource) (string, bool) {
+	urlValue, inputValue := strings.TrimSpace(source.URL), strings.TrimSpace(source.Input)
+	if urlValue != "" {
+		parsed, err := url.Parse(urlValue)
+		if err != nil {
+			return "", false
+		}
+		parsed.Fragment, parsed.RawFragment = "", ""
+		urlValue = parsed.String()
+	}
+	if (urlValue == "") == (inputValue == "") {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(urlValue + "\x00" + inputValue))
+	return hex.EncodeToString(sum[:]), true
 }
 
 func validateProxySubscriptionURL(raw string) error {

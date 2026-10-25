@@ -302,6 +302,9 @@ const openAITestModeOptions = computed(() => [
 ])
 const prioritizedGeminiModels = [
   'gemini-3.1-flash-image',
+  'gemini-4-argon-high',
+  'gemini-4-argon-medium',
+  'gemini-4-argon-low',
   'gemini-3.8-flash-high',
   'gemini-3.8-flash-medium',
   'gemini-3.8-flash-low',
@@ -348,6 +351,9 @@ const sortTestModels = (models: ClaudeModel[]) => {
 }
 
 const antigravityGeminiFlashDisplayNames: Record<string, string> = {
+  'gemini-4-argon-high': 'Gemini 4 Argon High',
+  'gemini-4-argon-medium': 'Gemini 4 Argon Medium',
+  'gemini-4-argon-low': 'Gemini 4 Argon Low',
   'gemini-3.7-flash-high': 'Gemini 3.7 Flash High',
   'gemini-3.7-flash-medium': 'Gemini 3.7 Flash Medium',
   'gemini-3.7-flash-low': 'Gemini 3.7 Flash Low',

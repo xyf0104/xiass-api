@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -409,6 +411,36 @@ func (s *BillingService) initFallbackPricing() {
 	// Claude 4.8 Opus / Claude Opus 5：标准 $5/$25，Fast $10/$50 per MTok。
 	s.fallbackPrices["claude-opus-4.8"] = pricingWithPriorityMultiplier(s.fallbackPrices["claude-opus-4.7"], 2)
 	s.fallbackPrices["claude-opus-5"] = pricingWithPriorityMultiplier(s.fallbackPrices["claude-opus-4.8"], 2)
+	s.fallbackPrices["claude-opus-5-5"] = &ModelPricing{
+		InputPricePerToken:         4e-6,
+		OutputPricePerToken:        20e-6,
+		CacheCreationPricePerToken: 5e-6,
+		CacheReadPricePerToken:     0.2e-6,
+		CacheCreation5mPrice:       5e-6,
+		CacheCreation1hPrice:       8e-6,
+		SupportsCacheBreakdown:     true,
+	}
+	s.fallbackPrices["claude-sonnet-5-5"] = &ModelPricing{
+		InputPricePerToken:         2e-6,
+		OutputPricePerToken:        10e-6,
+		CacheCreationPricePerToken: 2.5e-6,
+		CacheReadPricePerToken:     0.2e-6,
+		CacheCreation5mPrice:       2.5e-6,
+		CacheCreation1hPrice:       4e-6,
+		SupportsCacheBreakdown:     true,
+	}
+	s.fallbackPrices["claude-haiku-5-5"] = &ModelPricing{
+		InputPricePerToken:          0.1e-6,
+		OutputPricePerToken:         0.5e-6,
+		CacheCreationPricePerToken:  0.125e-6,
+		CacheReadPricePerToken:      0.01e-6,
+		CacheCreation5mPrice:        0.125e-6,
+		CacheCreation1hPrice:        0.2e-6,
+		LongContextInputThreshold:   100000,
+		LongContextInputMultiplier:  5,
+		LongContextOutputMultiplier: 5,
+		SupportsCacheBreakdown:      true,
+	}
 
 	// Claude Fable 5.x uses the same input/output and cache-write prices, while
 	// Fable 5.1 reduces cache reads from $1 to $0.25 per MTok.
@@ -467,6 +499,13 @@ func (s *BillingService) initFallbackPricing() {
 		InputPricePerToken:     0.75e-6,
 		OutputPricePerToken:    3.75e-6,
 		CacheReadPricePerToken: 0.075e-6,
+		SupportsCacheBreakdown: false,
+	}
+	// Gemini 4 Argon official introductory rates, shared by its reasoning tiers.
+	s.fallbackPrices["gemini-4-argon"] = &ModelPricing{
+		InputPricePerToken:     2e-6,
+		OutputPricePerToken:    10e-6,
+		CacheReadPricePerToken: 0.1e-6,
 		SupportsCacheBreakdown: false,
 	}
 
@@ -556,6 +595,20 @@ func (s *BillingService) initFallbackPricing() {
 	}
 	// GPT-6 Sol/Luna use the same compatibility fallback cards as their GPT-5.6
 	// counterparts until an administrator configures explicit channel pricing.
+	s.fallbackPrices["gpt-6.1-sol"] = &ModelPricing{
+		InputPricePerToken:                 2e-6,
+		InputPricePerTokenPriority:         4e-6,
+		OutputPricePerToken:                10e-6,
+		OutputPricePerTokenPriority:        20e-6,
+		CacheCreationPricePerToken:         2.5e-6,
+		CacheCreationPricePerTokenPriority: 5e-6,
+		CacheReadPricePerToken:             0.1e-6,
+		CacheReadPricePerTokenPriority:     0.2e-6,
+		CacheCreationPriceExplicit:         true,
+		LongContextInputThreshold:          272_000,
+		LongContextInputMultiplier:         2,
+		LongContextOutputMultiplier:        1.5,
+	}
 	s.fallbackPrices["gpt-6-sol"] = cloneBillingModelPricing(s.fallbackPrices["gpt-5.6-sol"])
 	s.fallbackPrices["gpt-6-luna"] = cloneBillingModelPricing(s.fallbackPrices["gpt-5.6-luna"])
 
@@ -846,6 +899,19 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextOutputMultiplier:   2,
 	}
 
+	// xAI Grok 4.7: $2 input / $0.50 cached input / $6 output below 200k;
+	// input, cached input, and output are all 2x from 200k onward.
+	s.fallbackPrices["grok-4.7"] = &ModelPricing{
+		InputPricePerToken:            2e-6,
+		OutputPricePerToken:           6e-6,
+		CacheReadPricePerToken:        0.5e-6,
+		SupportsCacheBreakdown:        false,
+		LongContextInputThreshold:     200000,
+		LongContextThresholdInclusive: true,
+		LongContextInputMultiplier:    2,
+		LongContextOutputMultiplier:   2,
+	}
+
 	// xAI Grok 4.3: $1.25 input / $0.20 cached / $2.50 output below 200k.
 	s.fallbackPrices["grok-4.3"] = &ModelPricing{
 		InputPricePerToken:            1.25e-6,
@@ -875,7 +941,7 @@ func (s *BillingService) initFallbackPricing() {
 
 // getFallbackPricing 根据模型系列获取回退价格
 func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
-	modelLower := strings.ToLower(model)
+	modelLower := normalizeAntigravityClaudeTierAlias(strings.ToLower(model))
 
 	// 按模型系列匹配
 	if strings.Contains(modelLower, "fable-5-1") || strings.Contains(modelLower, "fable-5.1") ||
@@ -884,6 +950,15 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "fable-5") || strings.Contains(modelLower, "fable5") {
 		return s.fallbackPrices["claude-fable-5"]
+	}
+	if claude.IsOpus55(modelLower) {
+		return s.fallbackPrices["claude-opus-5-5"]
+	}
+	if claude.IsSonnet55(modelLower) {
+		return s.fallbackPrices["claude-sonnet-5-5"]
+	}
+	if claude.IsHaiku55(modelLower) {
+		return s.fallbackPrices["claude-haiku-5-5"]
 	}
 	if strings.Contains(modelLower, "opus") {
 		// "opus-5" 必须先判：不能用裸 "5" 匹配，否则 claude-opus-4-5 会被误判。
@@ -931,6 +1006,9 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "gemini-3.8-flash") || strings.Contains(modelLower, "gemini-3-8-flash") {
 		return s.fallbackPrices["gemini-3.8-flash"]
+	}
+	if strings.Contains(modelLower, "gemini-4-argon") {
+		return s.fallbackPrices["gemini-4-argon"]
 	}
 
 	if strings.Contains(modelLower, "deepseek-v4-flash-vision-exp") {
@@ -1058,6 +1136,8 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
+		case "gpt-6.1-sol":
+			return s.fallbackPrices["gpt-6.1-sol"]
 		case "gpt-6-sol":
 			return s.fallbackPrices["gpt-6-sol"]
 		case "gpt-6-astra":
@@ -1092,6 +1172,8 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["grok-4.5"]
 	case "grok-4.6", "grok-4.6-latest":
 		return s.fallbackPrices["grok-4.6"]
+	case "grok-4.7", "grok-4.7-latest":
+		return s.fallbackPrices["grok-4.7"]
 	case "grok-4.3",
 		"grok-4.20-0309-reasoning",
 		"grok-4.20-0309-non-reasoning",
@@ -1428,17 +1510,18 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
 	applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.Model, input.ReasoningEffort, pricing))
-	applyFinalTokenPricing(breakdown, resolved.FinalTokenPricing, input.Tokens, input.RateMultiplier)
+	applyFinalTokenPricing(breakdown, resolved.FinalTokenPricing, input.Tokens, input.RateMultiplier, pricingContext)
 	return breakdown, nil
 }
 
 // Final group prices directly control user billing; raw TotalCost remains the
 // upstream/account-cost snapshot. Nil inherits legacy billing, while zero is
 // an explicit free price.
-func applyFinalTokenPricing(breakdown *CostBreakdown, p *ChannelModelPricing, tokens UsageTokens, rate float64) {
+func applyFinalTokenPricing(breakdown *CostBreakdown, p *ChannelModelPricing, tokens UsageTokens, rate float64, contextTokens int) {
 	if breakdown == nil || p == nil || rate < 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return
 	}
+	p = resolveFinalTokenPricingForContext(p, contextTokens)
 	actual := breakdown.ActualCost
 	if p.InputPrice != nil {
 		actual -= breakdown.InputCost * rate
@@ -1476,6 +1559,34 @@ func applyFinalTokenPricing(breakdown *CostBreakdown, p *ChannelModelPricing, to
 		actual = 0
 	}
 	breakdown.ActualCost = actual
+}
+
+func resolveFinalTokenPricingForContext(pricing *ChannelModelPricing, contextTokens int) *ChannelModelPricing {
+	if pricing == nil {
+		return nil
+	}
+	interval := pricing.GetIntervalForContext(contextTokens)
+	if interval == nil {
+		return pricing
+	}
+	resolved := pricing.Clone()
+	applyPrice := func(base **float64, override, multiplier *float64) {
+		if override != nil {
+			value := *override
+			*base = &value
+			return
+		}
+		if multiplier != nil && *base != nil {
+			value := **base * *multiplier
+			*base = &value
+		}
+	}
+	applyPrice(&resolved.InputPrice, interval.InputPrice, interval.InputMultiplier)
+	applyPrice(&resolved.OutputPrice, interval.OutputPrice, interval.OutputMultiplier)
+	applyPrice(&resolved.CacheWritePrice, interval.CacheWritePrice, interval.CacheWriteMultiplier)
+	applyPrice(&resolved.CacheReadPrice, interval.CacheReadPrice, interval.CacheReadMultiplier)
+	applyPrice(&resolved.CacheWrite1hPrice, interval.CacheWrite1hPrice, interval.CacheWriteMultiplier)
+	return &resolved
 }
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
@@ -1753,7 +1864,10 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		return &cloned
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
-	isGPT56 := isOpenAIGPT56Model(normalized)
+	isGPT56 := isOpenAIGPT56Model(normalized) || openai.IsGPT61SolModelSpelling(normalized)
+	modelLower := strings.ToLower(strings.TrimSpace(model))
+	isGrok47 := modelLower == "grok-4.7" || modelLower == "grok-4.7-latest"
+	needsGrok47InclusiveThreshold := isGrok47 && pricing.LongContextInputThreshold == 200000 && !pricing.LongContextThresholdInclusive
 	needsMaxReasoningEffortMultiplier := isClaudeFable51Model(model) && pricing.MaxReasoningEffortMultiplier == nil
 	needsCacheCreationPolicy := !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
@@ -1763,10 +1877,13 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		needsCacheCreationPolicy = false
 		needsLongContextPolicy = false
 	}
-	if !needsCacheCreationPolicy && !needsLongContextPolicy && !needsMaxReasoningEffortMultiplier {
+	if !needsCacheCreationPolicy && !needsLongContextPolicy && !needsMaxReasoningEffortMultiplier && !needsGrok47InclusiveThreshold {
 		return pricing
 	}
 	cloned := *pricing
+	if needsGrok47InclusiveThreshold {
+		cloned.LongContextThresholdInclusive = true
+	}
 	if needsMaxReasoningEffortMultiplier {
 		cloned.MaxReasoningEffortMultiplier = defaultMaxReasoningEffortMultiplier(model)
 	}

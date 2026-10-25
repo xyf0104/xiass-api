@@ -8,6 +8,8 @@ const SMS_TIMEOUT = 180_000
 const PHONE_CONFIRMATION_TIMEOUT = 5 * 60_000
 const TTL = 15 * 60_000
 const STEP_DELAY = 1_000
+const TOTP_RETRY_DELAY = 5_000
+const MAX_TOTP_ATTEMPTS = 2
 export const BATCH_OAUTH_REASONS = Object.freeze([
   '', 'sms_timeout', 'sms_confirmation_timeout', 'email_code_required',
   'email_code_timeout', 'email_code_access_denied', 'email_code_unavailable', 'invalid_email_code',
@@ -213,6 +215,7 @@ export class BatchOAuthRunner {
       emailSubmitted: false, expiresAt: this.#h.now() + TTL,
       stageDeadline: 0, smsDeadline: 0, context: null, page: null,
       emailCodeSession: null, emailCodeAbort: null, emailCodeRequestedAt: 0, emailCodeSubmittedAt: 0,
+      totpAttempts: 0, totpLastSubmittedAt: 0, totpLastTimeStep: -1,
     }
     this.#tasks.set(task.id, task)
     this.#slots++
@@ -405,11 +408,12 @@ export class BatchOAuthRunner {
     }
     if (/captcha|verify (?:that )?you are human|checking your browser|验证您是人类|人机验证/i.test(body)) return { kind: 'captcha' }
     if (await firstVisible(page.locator('iframe[src*="captcha"], iframe[src*="challenges.cloudflare.com"]'))) return { kind: 'captcha' }
-    if (/(?:your |this )?account (?:has been |is )?(?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)/i.test(body)) return { kind: 'account_deleted_or_disabled' }
+    if (/(?:your |this )?account (?:has been |is )?(?:deleted|deactivated|disabled)|you do not have an account because it has been (?:deleted|deactivated|disabled)|account_(?:deleted|deactivated|disabled)|账号.*(?:已删除|删除|已停用|停用)/i.test(body)) return { kind: 'account_deleted_or_disabled' }
     if (/(?:your |this )?account (?:has been |is )?(?:suspended|banned|restricted|limited)|account_(?:suspended|restricted|limited)|账号.*(?:封禁|受限|限制)/i.test(body)) return { kind: 'account_blocked' }
     if (/incorrect (?:email address or password|email or password|password)|invalid (?:email or password|credentials)|wrong password/i.test(body)) {
       return { kind: 'invalid_credentials' }
     }
+    if (/\bauthentication error\b|身份验证错误|身份驗證錯誤/i.test(body)) return { kind: 'manual_challenge' }
     const path = new URL(page.url()).pathname
     const visibleInputs = page.locator('input:visible')
     if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body)
@@ -463,6 +467,7 @@ export class BatchOAuthRunner {
     }
     const button = await this.#h.firstVisibleRole(page, 'button', [/^(?:continue|next|verify|继续|下一步)$/i])
     if (button) await button.click()
+    else if (typeof inputs.at(-1)?.press === 'function') await inputs.at(-1).press('Enter')
   }
 
   async #submitPhone(page, value) {
@@ -531,6 +536,7 @@ export class BatchOAuthRunner {
         const state = await this.#inspect(page)
         if (this.#checkTimeout(task)) break
         if (!this.#trustedPage(task)) { this.#stop(task, 'blocked', 'manual_challenge'); break }
+        if (state.kind !== 'totp' && task.totpAttempts > 0) task.secret = ''
         if (state.email && state.email.toLowerCase() !== task.email) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
         if (state.kind === 'email_code') {
           if (task.loginMethod !== 'email_code' || !task.emailCodeSession) {
@@ -568,10 +574,38 @@ export class BatchOAuthRunner {
         }
         const manual = { captcha: 'captcha_required', account_blocked: 'account_blocked', account_deleted_or_disabled: 'account_deleted_or_disabled', invalid_email_code: 'invalid_email_code',
           invalid_credentials: 'invalid_credentials', invalid_totp: 'invalid_totp', invalid_sms_code: 'invalid_sms_code',
-          signup: 'manual_challenge', external_provider: 'manual_challenge' }[state.kind]
+          signup: 'manual_challenge', external_provider: 'manual_challenge', manual_challenge: 'manual_challenge' }[state.kind]
         if (manual) { this.#stop(task, 'blocked', manual); break }
         const retryable = { openai_route_error: 'openai_route_error', oauth_session_expired: 'oauth_session_expired' }[state.kind]
         if (retryable) { this.#stop(task, 'failed', retryable); break }
+        if (state.kind === 'totp') {
+          if (!task.secret) { this.#stop(task, 'blocked', 'authenticator_required'); break }
+          const now = this.#h.now()
+          const timeStep = Math.floor(now / 30_000)
+          if (task.totpAttempts > 0) {
+            const elapsed = now - task.totpLastSubmittedAt
+            if (elapsed < TOTP_RETRY_DELAY) {
+              await this.#pause(task)
+              continue
+            }
+            if (task.totpAttempts >= MAX_TOTP_ATTEMPTS) {
+              this.#stop(task, 'failed', 'invalid_totp')
+              break
+            }
+            if (timeStep <= task.totpLastTimeStep) {
+              await this.#pause(task)
+              continue
+            }
+          }
+          task.totpAttempts++
+          task.totpLastSubmittedAt = now
+          task.totpLastTimeStep = timeStep
+          this.#stage(task, 'totp')
+          const code = generateTOTP(task.secret, now)
+          await this.#code(page, code)
+          await this.#stepPause(task)
+          continue
+        }
         if (state.kind === 'phone_rejected') {
           if (task.phone) task.rejected.add(task.phone)
           this.#stage(task, 'phone_required')
@@ -618,7 +652,7 @@ export class BatchOAuthRunner {
           }
           continue
         }
-        if (['login', 'email', 'password', 'totp', 'profile', 'workspace'].includes(state.kind) && !attempted.has(state.kind)) {
+        if (['login', 'email', 'password', 'profile', 'workspace'].includes(state.kind) && !attempted.has(state.kind)) {
           attempted.add(state.kind)
           this.#stage(task, state.kind)
           if (state.kind === 'login') await state.action.click()
@@ -631,12 +665,6 @@ export class BatchOAuthRunner {
             if (!task.emailSubmitted) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
             await this.#fill(page, 'password', task.password)
             task.password = ''
-          }
-          if (state.kind === 'totp') {
-            if (!task.secret) { this.#stop(task, 'blocked', 'authenticator_required'); break }
-            const code = generateTOTP(task.secret, this.#h.now())
-            task.secret = ''
-            await this.#code(page, code)
           }
           if (state.kind === 'profile') await this.#profile(page)
           if (state.kind === 'workspace') {

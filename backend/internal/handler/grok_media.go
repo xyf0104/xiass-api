@@ -466,6 +466,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				VideoDurationSeconds: result.VideoDurationSeconds,
 				OriginalModel:        clientRequestedModel(c, requestModel),
 				CreatedAt:            videoCreateStartedAt,
+				Egress:               service.UsageEgressFromContext(service.UsageEgressContext(requestCtx, c, account)),
 			}
 			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
@@ -484,11 +485,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 		if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
-			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+			if billResult, creationEgress := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID, &grokMediaUsageEgressOverride{egress: creationEgress})
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID, nil)
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -555,13 +556,13 @@ func prepareGrokVideoCompletionBilling(
 	subject middleware2.AuthSubject,
 	taskRequestID string,
 	statusResult *service.OpenAIForwardResult,
-) *service.OpenAIForwardResult {
+) (*service.OpenAIForwardResult, *service.UsageEgress) {
 	if h == nil || h.gatewayService == nil || apiKey == nil || statusResult == nil || statusResult.VideoCount <= 0 {
-		return nil
+		return nil, nil
 	}
 	taskRequestID = strings.TrimSpace(firstNonEmptyString(taskRequestID, statusResult.ResponseID))
 	if taskRequestID == "" {
-		return nil
+		return nil, nil
 	}
 	pending, loadErr := h.gatewayService.LoadGrokVideoPendingBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if loadErr != nil {
@@ -573,7 +574,7 @@ func prepareGrokVideoCompletionBilling(
 				zap.String("request_id", taskRequestID),
 				zap.String("reason", "no create-time snapshot and status has no video.duration"),
 			)
-			return nil
+			return nil, nil
 		}
 		reqLog.Error("grok_media.video_billing_without_pending",
 			zap.String("request_id", taskRequestID),
@@ -583,10 +584,10 @@ func prepareGrokVideoCompletionBilling(
 	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", taskRequestID), zap.Error(err))
-		return nil
+		return nil, nil
 	}
 	if !claimed {
-		return nil
+		return nil, nil
 	}
 	merged := *statusResult
 	if pending != nil {
@@ -626,7 +627,10 @@ func prepareGrokVideoCompletionBilling(
 			merged.Duration = duration
 		}
 	}
-	return &merged
+	if pending == nil {
+		return &merged, nil
+	}
+	return &merged, pending.Egress
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -636,6 +640,17 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+type grokMediaUsageEgressOverride struct {
+	egress *service.UsageEgress
+}
+
+func grokMediaUsageContext(parent context.Context, c *gin.Context, account *service.Account, override *grokMediaUsageEgressOverride) context.Context {
+	if override != nil {
+		return service.WithUsageEgressContext(parent, override.egress)
+	}
+	return service.UsageEgressContext(parent, c, account)
 }
 
 func recordGrokMediaUsage(
@@ -650,6 +665,7 @@ func recordGrokMediaUsage(
 	requestModel string,
 	body []byte,
 	requestID string,
+	egressOverride *grokMediaUsageEgressOverride,
 ) {
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
@@ -678,7 +694,7 @@ func recordGrokMediaUsage(
 			payloadForHash = []byte(videoTaskID)
 		}
 	}
-	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+	h.submitOpenAIUsageRecordTask(grokMediaUsageContext(c.Request.Context(), c, account, egressOverride), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,

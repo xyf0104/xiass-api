@@ -37,12 +37,12 @@ describe('SubscriptionProxyPanel', () => {
   })
 
   it('backfills server source IDs and applies the exact preview snapshot ID', async () => {
-    api.previewSubscriptions.mockResolvedValue({
+    api.previewSubscriptions.mockImplementation(async (submitted) => ({
       agent_available: true,
       preview_id: 'preview-1',
-      sources: [{ id: 'server-source-1', name: 'Subscription 1', source_kind: 'url', configured: false }],
+      sources: [{ id: 'server-source-1', client_ref: submitted[0].client_ref, name: 'Subscription 1', source_kind: 'url', configured: false }],
       nodes: [{ id: 'node-1', source_id: 'server-source-1', source_name: 'Subscription 1', name: 'Node A', protocol: 'vless', selected: true }]
-    })
+    }))
     api.applySubscriptions.mockResolvedValue({
       agent_available: true,
       sources: [{ id: 'server-source-1', name: 'Subscription 1', source_kind: 'url', configured: true, url: 'https://example.test/…' }],
@@ -94,6 +94,126 @@ describe('SubscriptionProxyPanel', () => {
     await wrapper.findAll('button').find(button => button.text().includes('subscriptions.refresh'))!.trigger('click')
     await flushPromises()
     expect((nameInput.element as HTMLInputElement).value).toBe('Unsaved change')
+  })
+
+  it('coalesces a re-entered saved URL into the existing source after preview', async () => {
+    api.getSubscriptions.mockResolvedValue({
+      agent_available: true,
+      sources: [{ id: 'saved-source', name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }],
+      nodes: []
+    })
+    api.previewSubscriptions.mockImplementation(async (submitted) => ({
+      agent_available: true,
+      preview_id: 'coalesced-preview',
+      sources: [{ id: 'saved-source', client_ref: submitted.find(source => source.url)?.client_ref, name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }],
+      nodes: []
+    }))
+    api.applySubscriptions.mockResolvedValue(emptyOverview)
+    const wrapper = mount(SubscriptionProxyPanel, { global })
+    await flushPromises()
+
+    await wrapper.get('#subscription-url-batch').setValue('https://saved.test/subscription')
+    await wrapper.findAll('button').find(button => button.text().includes('addUrls'))!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('input[type="url"]')).toHaveLength(1)
+    expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe('https://saved.test/subscription')
+    await wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.trigger('click')
+    await wrapper.get('[data-test="confirm-button"]').trigger('click')
+    await flushPromises()
+    expect(api.applySubscriptions).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'saved-source', url: 'https://saved.test/subscription' })],
+      [],
+      'coalesced-preview'
+    )
+  })
+
+  it('correlates multiple masked and new sources only by server ID or client reference', async () => {
+    api.getSubscriptions.mockResolvedValue({
+      agent_available: true,
+      sources: [
+        { id: 'source-a', name: 'A', source_kind: 'url', configured: true, url: 'https://a.test/…' },
+        { id: 'source-b', name: 'B', source_kind: 'url', configured: true, url: 'https://b.test/…' }
+      ],
+      nodes: []
+    })
+    api.previewSubscriptions.mockImplementation(async (submitted) => {
+      const added = submitted.find(source => source.url === 'https://c.test/sub')!
+      const duplicateB = submitted.find(source => source.url === 'https://b.test/private')!
+      const savedA = submitted.find(source => source.id === 'source-a')!
+      return {
+        agent_available: true,
+        preview_id: 'multi-preview',
+        sources: [
+          { id: 'source-c', client_ref: added.client_ref, name: 'C', source_kind: 'url', configured: true },
+          { id: 'source-b', client_ref: duplicateB.client_ref, name: 'B', source_kind: 'url', configured: true, url: 'https://b.test/…' },
+          { id: 'source-a', client_ref: savedA.client_ref, name: 'A', source_kind: 'url', configured: true, url: 'https://a.test/…' }
+        ],
+        nodes: []
+      }
+    })
+    const wrapper = mount(SubscriptionProxyPanel, { global })
+    await flushPromises()
+
+    await wrapper.get('#subscription-url-batch').setValue('https://b.test/private\nhttps://c.test/sub')
+    await wrapper.findAll('button').find(button => button.text().includes('addUrls'))!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+    await flushPromises()
+
+    const values = wrapper.findAll('input[type="url"]').map(input => (input.element as HTMLInputElement).value)
+    expect(values).toEqual(['https://c.test/sub', 'https://b.test/private', ''])
+  })
+
+  it('hydrates the saved refresh error without replacing visible nodes', async () => {
+    const savedNodes = [{ id: 'saved-node', source_id: 'saved-source', source_name: 'Saved', name: 'Node A', protocol: 'vless', selected: true }]
+    api.getSubscriptions
+      .mockResolvedValueOnce({ agent_available: true, sources: [{ id: 'saved-source', name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }], nodes: savedNodes })
+      .mockResolvedValueOnce({ agent_available: true, sources: [{ id: 'saved-source', name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }], nodes: savedNodes, last_error: 'Subscription refresh failed; saved nodes retained' })
+    api.refreshSubscriptions.mockRejectedValue(new Error('subscription provider offline'))
+    const wrapper = mount(SubscriptionProxyPanel, { global })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('subscriptions.refresh'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Subscription refresh failed; saved nodes retained')
+    expect(wrapper.text()).toContain('Node A')
+    expect(api.getSubscriptions).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens a fresh preview when a saved selected node disappears', async () => {
+    const savedSource = { id: 'saved-source', name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }
+    const savedNode = { id: 'old-node', source_id: 'saved-source', source_name: 'Saved', name: 'Old node', protocol: 'vless', selected: true, proxy_id: 41 }
+    api.getSubscriptions
+      .mockResolvedValueOnce({ agent_available: true, sources: [savedSource], nodes: [savedNode] })
+      .mockResolvedValueOnce({ agent_available: true, sources: [savedSource], nodes: [savedNode], last_error: 'A selected node disappeared from its subscription; saved nodes retained' })
+    api.refreshSubscriptions.mockRejectedValue({ reason: 'PROXY_NODE_MISSING', message: 'A selected subscription node is unavailable; preview and select again' })
+    api.previewSubscriptions.mockImplementation(async (submitted) => ({
+      agent_available: true,
+      preview_id: 'replacement-preview',
+      sources: [{ ...savedSource, client_ref: submitted[0].client_ref }],
+      nodes: [
+        { ...savedNode, missing: true },
+        { id: 'new-node', source_id: 'saved-source', source_name: 'Saved', name: 'New node', protocol: 'vless', selected: false }
+      ]
+    }))
+    api.applySubscriptions.mockResolvedValue({ agent_available: true, sources: [savedSource], nodes: [] })
+    const wrapper = mount(SubscriptionProxyPanel, { global })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('subscriptions.refresh'))!.trigger('click')
+    await flushPromises()
+
+    expect(api.previewSubscriptions).toHaveBeenCalledWith([expect.objectContaining({ id: 'saved-source', url: '' })])
+    expect(wrapper.text()).toContain('Old node')
+    expect(wrapper.text()).toContain('New node')
+    const nodeCheckboxes = wrapper.findAll('tbody input[type="checkbox"]')
+    expect(nodeCheckboxes).toHaveLength(2)
+    expect(nodeCheckboxes[0].attributes('disabled')).toBeDefined()
+    expect(nodeCheckboxes[1].attributes('disabled')).toBeUndefined()
+    expect((nodeCheckboxes[1].element as HTMLInputElement).checked).toBe(false)
+    expect(api.applySubscriptions).not.toHaveBeenCalled()
   })
 
   it('adds pasted URI, Base64, or Clash text as an input source', async () => {

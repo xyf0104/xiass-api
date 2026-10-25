@@ -331,6 +331,12 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
+    case 'deepseek':
+      return [
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
     case 'grok':
       return [
         { id: 'grok', label: t('keys.useKeyModal.cliTabs.grokCli'), icon: TerminalIcon },
@@ -380,6 +386,10 @@ const platformDescription = computed(() => {
       return t('keys.useKeyModal.gemini.description')
     case 'antigravity':
       return t('keys.useKeyModal.antigravity.description')
+    case 'deepseek':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.deepseek.codexDescription')
+        : t('keys.useKeyModal.deepseek.description')
     case 'grok':
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.grok.claudeDescription')
@@ -408,6 +418,10 @@ const platformNote = computed(() => {
       return activeClientTab.value === 'claude'
         ? t('keys.useKeyModal.antigravity.claudeNote')
         : t('keys.useKeyModal.antigravity.geminiNote')
+    case 'deepseek':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.deepseek.codexNote')
+        : t('keys.useKeyModal.note')
     case 'grok':
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.grok.claudeNote')
@@ -477,6 +491,8 @@ const currentFiles = computed((): FileConfig[] => {
           generateOpenCodeConfig('antigravity-claude', antigravityBase, apiKey, 'opencode.json (Claude)'),
           generateOpenCodeConfig('antigravity-gemini', antigravityGeminiBase, apiKey, 'opencode.json (Gemini)')
         ]
+      case 'deepseek':
+        return [generateOpenCodeConfig('deepseek', apiBase, apiKey)]
       case 'grok':
         return [generateOpenCodeConfig('grok', apiBase, apiKey)]
       default:
@@ -500,6 +516,11 @@ const currentFiles = computed((): FileConfig[] => {
         return [generateGeminiCliContent(`${baseUrl}/antigravity`, apiKey)]
       }
       return generateAnthropicFiles(`${baseUrl}/antigravity`, apiKey)
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return generateDeepSeekCodexFiles(apiBase, apiKey)
+      }
+      return generateAnthropicFiles(baseRoot, apiKey)
     case 'grok':
       if (activeClientTab.value === 'claude') {
         return generateGrokClaudeFiles(baseRoot, apiKey)
@@ -766,6 +787,42 @@ responses_websockets_v2 = true`
   ]
 }
 
+function generateDeepSeekCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  const isWindows = activeTab.value === 'windows'
+  const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
+  const configContent = `model_provider = "DeepSeek"
+model = "deepseek-v4-pro"
+review_model = "deepseek-v4-pro"
+model_reasoning_effort = "high"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+
+[model_providers.DeepSeek]
+name = "DeepSeek"
+base_url = "${baseUrl}"
+wire_api = "responses"
+requires_openai_auth = true
+
+[features]
+goals = true`
+  const authContent = `{
+  "OPENAI_API_KEY": "${apiKey}"
+}`
+
+  return [
+    {
+      path: `${configDir}/config.toml`,
+      content: configContent,
+      hint: t('keys.useKeyModal.deepseek.codexConfigTomlHint')
+    },
+    {
+      path: `${configDir}/auth.json`,
+      content: authContent
+    }
+  ]
+}
+
 function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
@@ -837,6 +894,23 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     },
     'gpt-6-astra': {
       name: 'GPT-6 Astra',
+      limit: {
+        context: 1050000,
+        output: 128000
+      },
+      options: {
+        store: false
+      },
+      variants: {
+        low: {},
+        medium: {},
+        high: {},
+        xhigh: {},
+        max: {}
+      }
+    },
+    'gpt-6.1-sol': {
+      name: 'GPT-6.1 Sol',
       limit: {
         context: 1050000,
         output: 128000
@@ -1123,6 +1197,24 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
           type: 'enabled'
         }
       }
+    },
+    'gemini-4-argon-high': {
+      name: 'Gemini 4 Argon (High)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: -1, type: 'enabled' } }
+    },
+    'gemini-4-argon-medium': {
+      name: 'Gemini 4 Argon (Medium)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: 4000, type: 'enabled' } }
+    },
+    'gemini-4-argon-low': {
+      name: 'Gemini 4 Argon (Low)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: 1000, type: 'enabled' } }
     }
   }
 
@@ -1229,6 +1321,24 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
         }
       }
     },
+    'gemini-4-argon-high': {
+      name: 'Gemini 4 Argon (High)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: -1, type: 'enabled' } }
+    },
+    'gemini-4-argon-medium': {
+      name: 'Gemini 4 Argon (Medium)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: 4000, type: 'enabled' } }
+    },
+    'gemini-4-argon-low': {
+      name: 'Gemini 4 Argon (Low)',
+      limit: { context: 1048576, output: 65536 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { budgetTokens: 1000, type: 'enabled' } }
+    },
     'gemini-2.5-flash-image': {
       name: 'Gemini 2.5 Flash Image',
       limit: {
@@ -1297,6 +1407,24 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
         }
       }
     },
+    'claude-opus-5-5': {
+      name: 'Claude Opus 5.5',
+      limit: { context: 1000000, output: 128000 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { type: 'adaptive' } }
+    },
+    'claude-sonnet-5-5': {
+      name: 'Claude Sonnet 5.5',
+      limit: { context: 1000000, output: 128000 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { type: 'adaptive' } }
+    },
+    'claude-haiku-5-5': {
+      name: 'Claude Haiku 5.5',
+      limit: { context: 1000000, output: 128000 },
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      options: { thinking: { type: 'adaptive' } }
+    },
     'claude-opus-4-6-thinking': {
       name: 'Claude 4.6 Opus (Thinking)',
       limit: {
@@ -1333,6 +1461,22 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     }
   }
   const grokModels = {
+    'grok-4.7': {
+      name: 'Grok 4.7',
+      modalities: {
+        input: ['text', 'image'],
+        output: ['text']
+      },
+      options: {
+        reasoningEffort: 'high'
+      },
+      variants: {
+        low: { reasoningEffort: 'low' },
+        medium: { reasoningEffort: 'medium' },
+        high: { reasoningEffort: 'high' },
+        xhigh: { reasoningEffort: 'xhigh' }
+      }
+    },
     'grok-4.5': {
       name: 'Grok 4.5',
       limit: { context: 1000000, output: 128000 }
@@ -1350,12 +1494,79 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       limit: { context: 500000, output: 128000 }
     }
   }
+  const deepseekModels = {
+    'deepseek-flash': {
+      name: 'DeepSeek Flash',
+      limit: { context: 1048576, output: 393216 },
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      options: { thinking: { type: 'enabled' } }
+    },
+    'deepseek-v4-pro': {
+      name: 'DeepSeek V4 Pro',
+      limit: { context: 1048576, output: 393216 },
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      options: { thinking: { type: 'enabled' } }
+    },
+    'deepseek-v4-flash': {
+      name: 'DeepSeek V4 Flash',
+      limit: { context: 1048576, output: 393216 },
+      modalities: { input: ['text'], output: ['text'] },
+      options: { thinking: { type: 'enabled' } }
+    },
+    'deepseek-v4-flash-vision-exp': {
+      name: 'DeepSeek V4 Flash Vision Experimental',
+      limit: { context: 1048576, output: 393216 },
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      options: { thinking: { type: 'enabled' } }
+    }
+  }
 
   if (platform === 'gemini') {
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].models = geminiModels
   } else if (platform === 'anthropic') {
     provider[platform].npm = '@ai-sdk/anthropic'
+    provider[platform].models = {
+      'claude-opus-5-5': {
+        name: 'Claude Opus 5.5',
+        limit: { context: 1000000, output: 128000 },
+        modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+        options: { thinking: { type: 'adaptive' }, effort: 'medium' },
+        variants: {
+          low: { effort: 'low' },
+          medium: { effort: 'medium' },
+          high: { effort: 'high' },
+          xhigh: { effort: 'xhigh' },
+          max: { effort: 'max' }
+        }
+      },
+      'claude-sonnet-5-5': {
+        name: 'Claude Sonnet 5.5',
+        limit: { context: 1000000, output: 128000 },
+        modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+        options: { thinking: { type: 'adaptive' }, effort: 'high' },
+        variants: {
+          low: { effort: 'low' },
+          medium: { effort: 'medium' },
+          high: { effort: 'high' },
+          xhigh: { effort: 'xhigh' },
+          max: { effort: 'max' }
+        }
+      },
+      'claude-haiku-5-5': {
+        name: 'Claude Haiku 5.5',
+        limit: { context: 1000000, output: 128000 },
+        modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+        options: { thinking: { type: 'adaptive' }, effort: 'medium' },
+        variants: {
+          low: { effort: 'low' },
+          medium: { effort: 'medium' },
+          high: { effort: 'high' },
+          xhigh: { effort: 'xhigh' },
+          max: { effort: 'max' }
+        }
+      }
+    }
   } else if (platform === 'antigravity-claude') {
     provider[platform].npm = '@ai-sdk/anthropic'
     provider[platform].name = 'Antigravity (Claude)'
@@ -1370,6 +1581,10 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].npm = '@ai-sdk/openai'
     provider[platform].name = 'Grok via XIASS API'
     provider[platform].models = grokModels
+  } else if (platform === 'deepseek') {
+    provider[platform].npm = '@ai-sdk/openai-compatible'
+    provider[platform].name = 'DeepSeek via XIASS API'
+    provider[platform].models = deepseekModels
   }
 
   const agent =

@@ -204,7 +204,7 @@ func TestAntigravityRetryLoop_CachedDaily401ClearsPreferenceWhenProdFails(t *tes
 	require.Empty(t, svc.endpointPreferences)
 }
 
-func TestAntigravityRetryLoop_CachedDailyBare429DoesNotReplayOnProd(t *testing.T) {
+func TestAntigravityRetryLoop_CachedDailyBare429FailsOverToNextAccount(t *testing.T) {
 	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	upstream := &sequencedAntigravityEndpointUpstream{steps: []antigravityEndpointStep{
 		{status: http.StatusTooManyRequests, body: bareAntigravityEndpoint429},
@@ -215,9 +215,11 @@ func TestAntigravityRetryLoop_CachedDailyBare429DoesNotReplayOnProd(t *testing.T
 
 	result, err := svc.antigravityRetryLoop(p)
 
-	require.NoError(t, err)
-	require.Equal(t, http.StatusTooManyRequests, result.resp.StatusCode)
-	defer result.resp.Body.Close()
+	require.Nil(t, result)
+	var switchErr *AntigravityAccountSwitchError
+	require.ErrorAs(t, err, &switchErr)
+	require.Equal(t, p.account.ID, switchErr.OriginalAccountID)
+	require.Equal(t, p.requestedModel, switchErr.RateLimitedModel)
 	require.Equal(t, []string{dailyURL + "/v1internal:generateContent"}, upstream.calls)
 	require.Equal(t, []string{dailyURL, prodURL}, svc.antigravityForwardBaseURLs(p))
 }

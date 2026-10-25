@@ -69,6 +69,15 @@ func (r *subscriptionTestStore) Load(context.Context) (string, error) {
 	defer r.mu.Unlock()
 	return r.raw, nil
 }
+func (r *subscriptionTestStore) ExistingProxyIDs(_ context.Context, ids []int64) (map[int64]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		_, result[id] = r.proxies.rows[id]
+	}
+	return result, nil
+}
 func (r *subscriptionTestStore) Update(_ context.Context, expected string, fn func(ProxyRepository) (string, error)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -214,6 +223,8 @@ func TestProxySubscriptionRefreshFailureAndMissingNodeRetainLastGood(t *testing.
 	require.NoError(t, err)
 	raw := store.raw
 	count := len(agent.syncs)
+	originalNodes := append([]ProxySubscriptionNode(nil), agent.nodes...)
+	originalProxy := store.proxies.rows[1]
 	agent.previewErr = errors.New("offline")
 	_, err = svc.Refresh(ctx)
 	require.Error(t, err)
@@ -225,6 +236,12 @@ func TestProxySubscriptionRefreshFailureAndMissingNodeRetainLastGood(t *testing.
 	require.Error(t, err)
 	require.Equal(t, raw, store.raw)
 	require.Len(t, agent.syncs, count)
+	agent.nodes = originalNodes
+	overview, err := svc.Refresh(ctx)
+	require.NoError(t, err)
+	require.Empty(t, overview.LastError)
+	require.Equal(t, originalProxy, store.proxies.rows[1])
+	require.Equal(t, "127.0.0.1:31001", agent.syncs[len(agent.syncs)-1].ListenAddresses["route-a"])
 }
 
 func TestProxySubscriptionRejectsEmptyUnknownStaleAndMutatedPreview(t *testing.T) {
@@ -312,6 +329,128 @@ func TestProxySubscriptionMultipleSourcesValidation(t *testing.T) {
 	}
 	require.NoError(t, validateProxySubscriptionURL("https://external.example/sub"))
 	require.NoError(t, validateProxySubscriptionURL("http://127.0.0.1:9000/sub"))
+}
+
+func TestProxySubscriptionRetainedSourceAndReenteredURLAreIdempotent(t *testing.T) {
+	svc, store, agent, sources := subscriptionFixture()
+	initial, err := svc.Preview(context.Background(), sources[:1])
+	require.NoError(t, err)
+	_, err = svc.Apply(context.Background(), sources[:1], []string{"route-a"}, initial.PreviewID)
+	require.NoError(t, err)
+	retained := []ProxySubscriptionSource{
+		{ClientRef: "saved-row", ID: sources[0].ID, Name: sources[0].Name},
+		{ClientRef: "reentered-row", URL: sources[0].URL},
+	}
+	got, err := normalizeProxySubscriptionSources(retained, sources[:1])
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "reentered-row", got[0].ClientRef)
+	require.Equal(t, sources[0], stripProxySubscriptionClientRefs(got)[0])
+	preview, err := svc.Preview(context.Background(), retained)
+	require.NoError(t, err)
+	require.Equal(t, "reentered-row", preview.Sources[0].ClientRef)
+	require.Empty(t, svc.previews[preview.PreviewID].Config.Sources[0].ClientRef)
+	_, err = svc.Apply(context.Background(), retained, []string{"route-a"}, preview.PreviewID)
+	require.NoError(t, err)
+	saved, _, err := svc.load(context.Background())
+	require.NoError(t, err)
+	require.Len(t, saved.Sources, 1)
+	require.Equal(t, sources[0], saved.Sources[0])
+	require.Len(t, agent.syncs, 4)
+	require.Len(t, store.proxies.rows, 1)
+	require.NotContains(t, store.raw, "saved-row")
+	require.NotContains(t, store.raw, "reentered-row")
+}
+
+func TestProxySubscriptionRepeatedNewURLStillRejectsDuplicate(t *testing.T) {
+	_, _, _, sources := subscriptionFixture()
+	_, err := normalizeProxySubscriptionSources([]ProxySubscriptionSource{
+		{URL: sources[0].URL},
+		{URL: sources[0].URL},
+	}, nil)
+	require.ErrorContains(t, err, "DUPLICATE_SUBSCRIPTION")
+}
+
+func TestProxySubscriptionMultipleSavedSourcesKeepIdentityWhenOneURLIsReentered(t *testing.T) {
+	current := []ProxySubscriptionSource{
+		{ID: "source-a", Name: "A", URL: "https://a.example/sub?token=a"},
+		{ID: "source-b", Name: "B", URL: "https://b.example/sub?token=b"},
+	}
+	for _, input := range [][]ProxySubscriptionSource{
+		{
+			{ClientRef: "saved-a", ID: "source-a", Name: "A"},
+			{ClientRef: "saved-b", ID: "source-b", Name: "B"},
+			{ClientRef: "reentered-b", URL: current[1].URL},
+			{ClientRef: "new-c", URL: "https://c.example/sub"},
+		},
+		{
+			{ClientRef: "reentered-b", URL: current[1].URL},
+			{ClientRef: "saved-a", ID: "source-a", Name: "A"},
+			{ClientRef: "saved-b", ID: "source-b", Name: "B"},
+			{ClientRef: "new-c", URL: "https://c.example/sub"},
+		},
+	} {
+		got, err := normalizeProxySubscriptionSources(input, current)
+		require.NoError(t, err)
+		require.Len(t, got, 3)
+		byID := map[string]ProxySubscriptionSource{}
+		for _, source := range got {
+			byID[source.ID] = source
+		}
+		require.Equal(t, "saved-a", byID["source-a"].ClientRef)
+		require.Equal(t, "reentered-b", byID["source-b"].ClientRef)
+		require.Equal(t, "B", byID["source-b"].Name)
+		require.Equal(t, current[1].URL, byID["source-b"].URL)
+		var newSource ProxySubscriptionSource
+		for id, source := range byID {
+			if id != "source-a" && id != "source-b" {
+				newSource = source
+			}
+		}
+		require.Equal(t, "new-c", newSource.ClientRef)
+		require.Equal(t, "https://c.example/sub", newSource.URL)
+	}
+}
+
+func TestProxySubscriptionPreviewClearsDeletedProxyReferenceBeforeExplicitReimport(t *testing.T) {
+	svc, store, _, sources := subscriptionFixture()
+	ctx := context.Background()
+	initial, err := svc.Preview(ctx, sources)
+	require.NoError(t, err)
+	applied, err := svc.Apply(ctx, sources, []string{"route-a"}, initial.PreviewID)
+	require.NoError(t, err)
+	oldProxyID := applied.Nodes[0].ProxyID
+	require.Positive(t, oldProxyID)
+	delete(store.proxies.rows, oldProxyID)
+	rawAfterDelete := store.raw
+
+	_, err = svc.Refresh(ctx)
+	require.ErrorContains(t, err, "PROXY_NODE_MISSING")
+	require.Equal(t, rawAfterDelete, store.raw)
+	require.NotContains(t, store.proxies.rows, oldProxyID)
+
+	retained := []ProxySubscriptionSource{{ID: sources[0].ID, Name: sources[0].Name}, {ID: sources[1].ID, Name: sources[1].Name}}
+	preview, err := svc.Preview(ctx, retained)
+	require.NoError(t, err)
+	var routeA ProxySubscriptionNodeView
+	for _, node := range preview.Nodes {
+		if node.ID == "route-a" {
+			routeA = node
+		}
+	}
+	require.Zero(t, routeA.ProxyID)
+	require.False(t, routeA.Selected)
+
+	reimported, err := svc.Apply(ctx, retained, []string{"route-a"}, preview.PreviewID)
+	require.NoError(t, err)
+	for _, node := range reimported.Nodes {
+		if node.ID == "route-a" {
+			require.Positive(t, node.ProxyID)
+			require.NotEqual(t, oldProxyID, node.ProxyID)
+			require.True(t, node.Selected)
+		}
+	}
+	require.NotContains(t, store.proxies.rows, oldProxyID)
 }
 
 func TestProxySubscriptionURLFragmentNormalization(t *testing.T) {

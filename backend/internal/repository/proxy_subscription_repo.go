@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -25,6 +26,21 @@ func (r *proxySubscriptionPersistence) Load(ctx context.Context) (string, error)
 		return "", err
 	}
 	return row.Value, nil
+}
+
+func (r *proxySubscriptionPersistence) ExistingProxyIDs(ctx context.Context, ids []int64) (map[int64]bool, error) {
+	result := make(map[int64]bool, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	rows, err := r.client.Proxy.Query().Where(proxy.IDIn(ids...)).Select(proxy.FieldID).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.ID] = true
+	}
+	return result, nil
 }
 
 func (r *proxySubscriptionPersistence) Update(ctx context.Context, expected string, mutate func(service.ProxyRepository) (string, error)) error {
