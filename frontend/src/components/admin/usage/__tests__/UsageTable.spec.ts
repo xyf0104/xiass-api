@@ -977,6 +977,7 @@ describe('admin UsageTable cache hit rate', () => {
     expect(hitRate.text()).toBe(expected)
     expect(cacheRead.element.nextElementSibling).toBe(hitRate.element)
     expect(cacheRead.element.parentElement?.classList.contains('inline-flex')).toBe(true)
+    expect(cacheRead.classes()).toEqual(expect.arrayContaining(['text-sky-600', 'dark:text-sky-400']))
     expect(hitRate.classes()).toEqual(expect.arrayContaining(['text-violet-600', 'dark:text-violet-400']))
   })
 })
