@@ -26,7 +26,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version-file: tools/xiass-codex-helper/go.mod
+          check-latest: false
           cache-dependency-path: tools/xiass-codex-helper/go.sum
 
       - name: Build universal macOS helper
@@ -60,7 +61,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version-file: tools/xiass-codex-helper/go.mod
+          check-latest: false
           cache-dependency-path: tools/xiass-codex-helper/go.sum
 
       - name: Build Windows helper
