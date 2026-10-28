@@ -299,6 +299,43 @@ describe('admin UsageTable per-request egress snapshot', () => {
     expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
   })
 
+  it('shortens only the persisted subscription name and ignores later account proxy changes', async () => {
+    const egress = Object.freeze({
+      route: 'proxy',
+      proxy_id: 7,
+      proxy_name: '[Subscription] Historical source / Tokyo / Backup',
+      proxy_address: '10.0.0.8:1080',
+      ip_address: '203.0.113.8',
+      ip_observed_at: '2026-10-24T08:30:00Z',
+      execution_node_id: 'api2',
+    })
+    const row = {
+      ...baseImageRow,
+      request_id: 'subscription-snapshot',
+      account: { id: 12, name: 'Account 12', proxy: { id: 7, name: 'Renamed current proxy' } },
+      egress,
+    }
+    const wrapper = mountAccountRows([row])
+    const line = wrapper.get('[data-testid="account-egress"]')
+    expect(line.text()).toContain('Tokyo / Backup')
+    expect(line.text()).toContain('203.0.113.8')
+    expect(line.attributes('title')).toContain('Proxy name: Tokyo / Backup')
+    expect(line.attributes('title')).toContain('Proxy address: 10.0.0.8:1080')
+    expect(line.attributes('title')).toContain('Last IP probe:')
+    expect(line.attributes('title')).not.toContain('[Subscription]')
+    expect(line.attributes('title')).not.toContain('Renamed current proxy')
+    const originalPresentation = line.html()
+
+    await wrapper.setProps({ data: [{
+      ...row,
+      account: { id: 12, name: 'Account 12', proxy: { id: 9, name: 'New account exit' } },
+    }] as any })
+
+    expect(line.html()).toBe(originalPresentation)
+    expect(egress.proxy_name).toBe('[Subscription] Historical source / Tokyo / Backup')
+    wrapper.unmount()
+  })
+
   it('shows the selected proxy identity without presenting its listener as a public IP', () => {
     const wrapper = mountAccountRows([{
       ...baseImageRow,
@@ -324,12 +361,18 @@ describe('admin UsageTable per-request egress snapshot', () => {
     const wrapper = mountAccountRows([{
       ...baseImageRow,
       request_id: 'historical',
-      account: { id: 12, name: 'Current proxy account', execution_node_id: 'api9' },
+      account: {
+        id: 12,
+        name: 'Current proxy account',
+        execution_node_id: 'api9',
+        proxy: { id: 7, name: '[Subscription] Source A / Current exit' },
+      },
     }])
 
     const line = wrapper.get('[data-request-id="historical"]')
     expect(line.text()).toContain('Not recorded')
     expect(line.text()).not.toContain('api9')
+    expect(line.text()).not.toContain('Current exit')
     expect(line.classes()).toContain('text-gray-400')
   })
 

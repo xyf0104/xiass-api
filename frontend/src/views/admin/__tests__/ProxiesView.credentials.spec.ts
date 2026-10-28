@@ -13,7 +13,7 @@ const mountView = () => shallowMount(ProxiesView, {
   global: { stubs: {
     AppLayout: { template: '<div><slot /></div>' },
     TablePageLayout: { template: '<div><slot name="table" /></div>' },
-    DataTable: { props: ['data'], template: '<div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div>' },
+    DataTable: { props: ['data'], template: '<div v-for="row in data" :key="row.id"><span data-testid="proxy-name"><slot name="cell-name" :value="row.name" /></span><slot name="cell-actions" :row="row" /></div>' },
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' },
   } },
 })
@@ -36,6 +36,26 @@ async function submit() {
 }
 
 describe('proxy credential updates', () => {
+  it('shows the short subscription name but edits and saves its original stored name', async () => {
+    const proxy = Object.freeze({
+      id: 9,
+      name: '[Subscription] Source A / Tokyo',
+      protocol: 'http',
+      host: 'proxy.example',
+      port: 8080,
+      username: 'old-user',
+      status: 'active'
+    })
+    list.mockResolvedValue({ items: [proxy], total: 1, pages: 1 })
+
+    await edit()
+    expect(wrapper.get('[data-testid="proxy-name"]').text()).toBe('Tokyo')
+    expect(wrapper.get<HTMLInputElement>('#edit-proxy-form input[type="text"]').element.value).toBe(proxy.name)
+    expect((await submit()).name).toBe('[Subscription] Source A / Tokyo')
+    expect(update.mock.calls[0][0]).toBe(9)
+    expect(proxy.name).toBe('[Subscription] Source A / Tokyo')
+  })
+
   it('sends an explicit empty username when cleared', async () => {
     await edit()
     const username = wrapper.findAll<HTMLInputElement>('#edit-proxy-form input').find(input => input.element.value === 'old-user')!

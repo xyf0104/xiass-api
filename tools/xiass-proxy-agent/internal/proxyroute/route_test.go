@@ -70,6 +70,76 @@ func TestCloseReleasesListenerAndAcceptedConnections(t *testing.T) {
 	}
 }
 
+func TestRouteBindsDockerNetworkButAdvertisesLoopbackAddress(t *testing.T) {
+	t.Setenv("XIASS_PROXY_AGENT_ROUTE_BIND_HOST", "0.0.0.0")
+	reserve, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := reserve.Addr().String()
+	_ = reserve.Close()
+	for _, address := range []string{"", "127.0.0.1:0", fixed} {
+		t.Run("listen="+address, func(t *testing.T) {
+			route, err := Build(map[string]any{"type": "http", "server": "127.0.0.1", "port": 18051}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer route.Close()
+			if err := route.Start(address); err != nil {
+				t.Fatal(err)
+			}
+			bound := route.listener.Addr().(*net.TCPAddr)
+			if !bound.IP.IsUnspecified() || bound.Port == 0 {
+				t.Fatalf("browser cannot reach listener %s", bound)
+			}
+			advertised := net.JoinHostPort("127.0.0.1", strconv.Itoa(bound.Port))
+			if route.Addr() != advertised || (address == fixed && route.Addr() != fixed) {
+				t.Fatalf("advertised address=%q want %q", route.Addr(), advertised)
+			}
+			conn, err := net.DialTimeout("tcp", advertised, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+		})
+	}
+}
+
+func TestRouteBindConfigurationIsExplicitAndPreservesLocalAccess(t *testing.T) {
+	for _, configured := range []string{"", "127.0.0.1", "192.0.2.1", "localhost", "::1"} {
+		t.Run("bind="+configured, func(t *testing.T) {
+			t.Setenv("XIASS_PROXY_AGENT_ROUTE_BIND_HOST", configured)
+			route, err := Build(map[string]any{"type": "http", "server": "127.0.0.1", "port": 18051}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer route.Close()
+			err = route.Start("")
+			if configured != "" && configured != "127.0.0.1" {
+				if err == nil {
+					t.Fatal("accepted an incompatible bind address")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !route.listener.Addr().(*net.TCPAddr).IP.IsLoopback() {
+				t.Fatal("default route escaped loopback")
+			}
+		})
+	}
+	t.Setenv("XIASS_PROXY_AGENT_ROUTE_BIND_HOST", "0.0.0.0")
+	route, err := Build(map[string]any{"type": "http", "server": "127.0.0.1", "port": 18051}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Close()
+	if err := route.Start("[::1]:0"); err == nil {
+		t.Fatal("IPv4 wildcard would make the persisted IPv6 loopback unreachable")
+	}
+}
+
 func TestHTTPAdapterSOCKSEndToEnd(t *testing.T) {
 	target := startEchoServer(t)
 	proxy := startHTTPConnectProxy(t)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +22,13 @@ type Route struct {
 	DisplayName string
 	Protocol    string
 
-	outbound *upstream.Route
-	listener net.Listener
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
-	closed   bool
-	close    sync.Once
+	outbound       *upstream.Route
+	listener       net.Listener
+	advertisedAddr string
+	mu             sync.Mutex
+	conns          map[net.Conn]struct{}
+	closed         bool
+	close          sync.Once
 }
 
 func Build(node map[string]any, index int) (*Route, error) {
@@ -54,7 +56,15 @@ func (r *Route) Start(listenAddr string) error {
 	if !IsLoopbackAddress(listenAddr) {
 		return errors.New("route listener must use a loopback address")
 	}
-	listener, err := net.Listen("tcp", listenAddr)
+	host, port, _ := net.SplitHostPort(listenAddr)
+	bindAddr := listenAddr
+	if configured := strings.TrimSpace(os.Getenv("XIASS_PROXY_AGENT_ROUTE_BIND_HOST")); configured != "" && configured != host {
+		if configured != "0.0.0.0" || net.ParseIP(host).To4() == nil {
+			return errors.New("route bind host must match the loopback host or use 0.0.0.0 for IPv4")
+		}
+		bindAddr = net.JoinHostPort(configured, port)
+	}
+	listener, err := net.Listen("tcp", bindAddr)
 	if err != nil {
 		return errors.New("cannot start loopback route listener")
 	}
@@ -65,6 +75,10 @@ func (r *Route) Start(listenAddr string) error {
 		return errors.New("route listener is already closed or started")
 	}
 	r.listener = listener
+	// Persist a usable local address even when Docker peers need a wildcard
+	// listener. New subscriptions allocate a port here before saving it.
+	_, actualPort, _ := net.SplitHostPort(listener.Addr().String())
+	r.advertisedAddr = net.JoinHostPort(host, actualPort)
 	r.mu.Unlock()
 	go r.acceptLoop()
 	return nil
@@ -78,6 +92,9 @@ func (r *Route) Addr() string {
 	defer r.mu.Unlock()
 	if r.listener == nil {
 		return ""
+	}
+	if r.advertisedAddr != "" {
+		return r.advertisedAddr
 	}
 	return r.listener.Addr().String()
 }

@@ -30,6 +30,7 @@ const (
 	ExecutionNodeStateSourceNodeIDEnv = "XIASS_CLUSTER_STATE_SOURCE_NODE_ID"
 	ExecutionNodeNodeURLsEnv          = "XIASS_CLUSTER_NODE_URLS_JSON"
 	ExecutionNodeJoinProofTokenEnv    = "XIASS_CLUSTER_JOIN_PROOF_TOKEN"
+	ExecutionNodeSOCKSBindHostEnv     = "XIASS_EXECUTION_NODE_SOCKS_BIND_HOST"
 
 	executionNodePostgresTunnelAddress = "127.0.0.1:15432"
 	executionNodeRedisTunnelAddress    = "127.0.0.1:16379"
@@ -105,6 +106,20 @@ func (r *ExecutionNodeTunnelRuntime) Close() error {
 	return firstErr
 }
 
+func executionNodeSOCKSListenAddress() (string, error) {
+	host := strings.TrimSpace(os.Getenv(ExecutionNodeSOCKSBindHostEnv))
+	if host == "" || host == "127.0.0.1" {
+		return executionNodeEgressSOCKSAddress, nil
+	}
+	// Docker browsers use the API's private interface. Keep the same port and
+	// token-authenticated handler, and retain IPv4 loopback access for the API.
+	if host != "0.0.0.0" {
+		return "", fmt.Errorf("%s must be 127.0.0.1 or 0.0.0.0", ExecutionNodeSOCKSBindHostEnv)
+	}
+	_, port, _ := net.SplitHostPort(executionNodeEgressSOCKSAddress)
+	return net.JoinHostPort(host, port), nil
+}
+
 // StartExecutionNodeTunnelRuntimeFromEnv starts the local state and egress
 // listeners before configuration loading. A member therefore reaches the
 // source PostgreSQL/Redis through verified HTTPS without exposing either
@@ -128,7 +143,11 @@ func StartExecutionNodeTunnelRuntimeFromEnv() (*ExecutionNodeTunnelRuntime, erro
 		return nil, cause
 	}
 
-	egressListener, err := net.Listen("tcp", executionNodeEgressSOCKSAddress)
+	egressAddress, err := executionNodeSOCKSListenAddress()
+	if err != nil {
+		return closeOnError(err)
+	}
+	egressListener, err := net.Listen("tcp", egressAddress)
 	if err != nil {
 		return nil, fmt.Errorf("listen on execution-node egress SOCKS address: %w", err)
 	}

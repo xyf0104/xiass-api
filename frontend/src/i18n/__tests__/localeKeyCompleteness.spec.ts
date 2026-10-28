@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 import en from '../locales/en'
 import zh from '../locales/zh'
@@ -86,5 +87,11 @@ describe('locale key completeness', () => {
   it('contains every statically referenced production key', () => {
     expect(missingKeys(usedKeys, enKeys), 'English locale is missing referenced keys').toEqual([])
     expect(missingKeys(usedKeys, zhKeys), 'Chinese locale is missing referenced keys').toEqual([])
+  })
+
+  it('contains the dynamically selected group platform labels in both locales', () => {
+    const platformKeys = GROUP_PLATFORM_OPTIONS.map(({ value }) => `admin.groups.platforms.${value}`)
+    expect(missingKeys(platformKeys, enKeys), 'English group platform labels are missing').toEqual([])
+    expect(missingKeys(platformKeys, zhKeys), 'Chinese group platform labels are missing').toEqual([])
   })
 })

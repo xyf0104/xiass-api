@@ -136,6 +136,34 @@ func TestSnapshotIsPortableAcrossAgentRestarts(t *testing.T) {
 	}
 }
 
+func TestDockerSubscriptionAllocatesAndRestoresTheSameLocalAddress(t *testing.T) {
+	t.Setenv("XIASS_PROXY_AGENT_ROUTE_BIND_HOST", "0.0.0.0")
+	first := NewManager()
+	defer first.Close()
+	preview, err := first.Preview(context.Background(), []proxyroute.Source{{ID: "inline", Input: "http://127.0.0.1:18021"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := []string{preview.Nodes[0].ID}
+	created, err := first.Sync(context.Background(), preview.Snapshot, selected, nil, true)
+	if err != nil || len(created.Routes) != 1 {
+		t.Fatalf("new subscription: routes=%v err=%v", created.Routes, err)
+	}
+	address := created.Routes[0].SOCKS5
+	if !proxyroute.IsLoopbackAddress(address) {
+		t.Fatalf("API cannot persist route address %q", address)
+	}
+	assertListening(t, address)
+	first.Close()
+	second := NewManager()
+	defer second.Close()
+	restored, err := second.Sync(context.Background(), preview.Snapshot, selected, map[string]string{selected[0]: address}, true)
+	if err != nil || len(restored.Routes) != 1 || restored.Routes[0].SOCKS5 != address {
+		t.Fatalf("restored subscription: routes=%v err=%v", restored.Routes, err)
+	}
+	assertListening(t, address)
+}
+
 func TestConcurrentSyncsAreSerializedAndIdempotent(t *testing.T) {
 	manager := NewManager()
 	defer manager.Close()

@@ -142,6 +142,13 @@ services:
       - TEAM_CHILD_AUTOMATION_URL=${TEAM_CHILD_AUTOMATION_URL:-http://team-child-browser:8090}
       - TEAM_CHILD_AUTOMATION_TOKEN=${TEAM_CHILD_AUTOMATION_TOKEN:-}
       - TEAM_CHILD_PROTECTED_MEMBER_EMAILS=${TEAM_CHILD_PROTECTED_MEMBER_EMAILS:-}
+      - XIASS_PROXY_AGENT_ROUTE_BIND_HOST=${XIASS_PROXY_AGENT_ROUTE_BIND_HOST:-0.0.0.0}
+      # Does not enable the execution-node runtime; when opted in, retain
+      # SOCKS token auth on port 19080 without publishing it to the host.
+      - XIASS_EXECUTION_NODE_SOCKS_BIND_HOST=${XIASS_EXECUTION_NODE_SOCKS_BIND_HOST:-0.0.0.0}
+      # Browser/automation share their own namespace; subscription SOCKS ports
+      # are reachable on the API's private Docker interface, never published.
+      - TEAM_CHILD_BROWSER_PROXY_HOST=${TEAM_CHILD_BROWSER_PROXY_HOST-xiass-api}
 
       # =======================================================================
       # Database Configuration (PostgreSQL)
@@ -317,9 +324,10 @@ services:
     networks:
       - xiass-api-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      # Verify the embedded UI as well as the API before declaring it healthy.
+      test: ["CMD-SHELL", "wget -q -T 5 -O /dev/null http://localhost:8080/health && wget -q -T 5 -O - http://localhost:8080/login | grep -qi '<!doctype html'"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
       start_period: 30s
 

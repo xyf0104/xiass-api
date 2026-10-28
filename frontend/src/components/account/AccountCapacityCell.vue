@@ -19,7 +19,7 @@
           :class="binding.available ? 'text-gray-600 dark:text-dark-300' : 'text-gray-400 line-through dark:text-dark-500'"
           :title="proxyBindingTitle(binding)"
         >
-          <span class="min-w-0 truncate">{{ binding.proxy?.name || `#${binding.proxy_id}` }}</span>
+          <span class="min-w-0 truncate">{{ formatProxyDisplayName(binding.proxy?.name) || `#${binding.proxy_id}` }}</span>
           <span class="shrink-0">{{ binding.current_concurrency }}/{{ binding.max_concurrency }}</span>
         </div>
       </div>
@@ -59,6 +59,7 @@ import { useI18n } from 'vue-i18n'
 import type { Account, AccountProxyBinding } from '@/types'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 
 const props = defineProps<{
   account: Account
@@ -77,7 +78,7 @@ const proxyBindingTitle = (binding: AccountProxyBinding) => {
   const proxy = binding.proxy
   if (!proxy) return t('admin.accounts.multiProxy.missingProxy', { id: binding.proxy_id })
   const host = proxy.host.includes(':') && !proxy.host.startsWith('[') ? `[${proxy.host}]` : proxy.host
-  return `${proxy.name} · ${proxy.protocol}://${host}:${proxy.port} · ${binding.current_concurrency}/${binding.max_concurrency}`
+  return `${formatProxyDisplayName(proxy.name)} · ${proxy.protocol}://${host}:${proxy.port} · ${binding.current_concurrency}/${binding.max_concurrency}`
 }
 
 const concurrencyClass = computed(() => {

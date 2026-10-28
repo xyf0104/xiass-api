@@ -192,6 +192,37 @@ describe('ProxySelector', () => {
     expect(testProxy).toHaveBeenNthCalledWith(2, 2)
   })
 
+  it('shortens labels while searching original subscription names and selecting by ID', async () => {
+    const subscriptionProxies = proxies.map((proxy, index) => Object.freeze({
+      ...proxy,
+      name: `[Subscription] Source ${index + 1} / Tokyo`
+    }))
+    const selector = mountSelector()
+    await selector.setProps({ proxies: subscriptionProxies, modelValue: 1 })
+
+    expect(selector.get('button.select-trigger').text()).toContain('Tokyo (http://alpha.example.com:8080)')
+    expect(selector.get('button.select-trigger').text()).not.toContain('[Subscription]')
+
+    const dropdown = await openDropdown(selector)
+    const search = dropdown!.querySelector<HTMLInputElement>('.select-search-input')!
+    search.value = 'Source 2'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    const row = findProxyRow('Tokyo')
+    expect(dropdown?.textContent).not.toContain('[Subscription]')
+    expect(dropdown?.textContent).not.toContain('alpha.example.com')
+    expect(row.textContent).toContain('beta.example.com')
+    row.click()
+    await nextTick()
+
+    expect(selector.emitted('update:modelValue')).toEqual([[2]])
+    expect(subscriptionProxies.map(proxy => proxy.name)).toEqual([
+      '[Subscription] Source 1 / Tokyo',
+      '[Subscription] Source 2 / Tokyo'
+    ])
+  })
+
   it('flips upward and exposes only the reachable viewport height', async () => {
     setViewport(800, 240)
     const selector = mountSelector()

@@ -43,6 +43,27 @@ const proxies: Proxy[] = [
 ]
 
 describe('MultiProxySelector', () => {
+  it('shortens visible and accessible labels while preserving the original proxy and binding', async () => {
+    const proxy = Object.freeze({ ...proxies[0], name: '[Subscription] Source A / IPv6 exit' })
+    const wrapper = mount(MultiProxySelector, {
+      props: { modelValue: [], proxies: [proxy] },
+      global: { stubs: { Icon: true } }
+    })
+
+    expect(wrapper.text()).toContain('IPv6 exit')
+    expect(wrapper.text()).not.toContain('[Subscription]')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    const selected = wrapper.emitted('update:modelValue')?.at(-1)?.[0]
+    expect(selected).toEqual([{ proxy_id: 2, max_concurrency: 1, route_priority: 0 }])
+    await wrapper.setProps({ modelValue: selected })
+    for (const input of wrapper.findAll('input[type="number"]')) {
+      expect(input.attributes('aria-label')).toContain('IPv6 exit')
+      expect(input.attributes('aria-label')).not.toContain('[Subscription]')
+    }
+    expect(proxy.name).toBe('[Subscription] Source A / IPv6 exit')
+    wrapper.unmount()
+  })
+
   it('selects exits, edits capacity and rank, and preserves IPv6 formatting', async () => {
     const wrapper = mount(MultiProxySelector, {
       props: { modelValue: [], proxies },

@@ -796,8 +796,9 @@ func TestBatchOAuthConfigurationRejectsInvalidReferencesBeforeAutomation(t *test
 	require.Zero(t, f.sidecarCalls.Load())
 }
 
-func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress(t *testing.T) {
-	t.Run("local built-in execution node", func(t *testing.T) {
+func TestBatchOAuthBrowserProxyKeepsAccountProxyAndUsesLocalNodeEgress(t *testing.T) {
+	t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "")
+	t.Run("local built-in execution node in a shared namespace", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
 		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 		f.admin.proxies = []service.Proxy{{ID: 85, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
@@ -806,14 +807,62 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyButUsesEquivalentLocalNodeEgress
 		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 3, Priority: 1, FingerprintMode: "off"}
 		proxy, err := f.h.validateBatchConfig(context.Background(), &cfg)
 		require.NoError(t, err)
-		require.Nil(t, proxy)
+		require.Equal(t, "socks5://127.0.0.1:19080", proxy["server"])
+		require.Equal(t, "api2", proxy["username"])
+		require.Equal(t, strings.Repeat("a", 64), proxy["password"])
 		require.NotNil(t, cfg.ProxyID)
 		require.Equal(t, int64(85), *cfg.ProxyID)
 	})
 
+	t.Run("Docker uses the existing authenticated built-in port", func(t *testing.T) {
+		f := newBatchOAuthFixture(t)
+		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+		t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "xiass-api")
+		f.admin.proxies = []service.Proxy{{ID: 85, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+			Username: "api2", Password: strings.Repeat("a", 64), Status: service.StatusActive}}
+		proxyID := int64(85)
+		proxy, err := f.h.batchOAuthBrowserProxy(context.Background(), &proxyID)
+		require.NoError(t, err)
+		require.Equal(t, "socks5://xiass-api:19080", proxy["server"])
+		require.Equal(t, "api2", proxy["username"])
+		require.Equal(t, strings.Repeat("a", 64), proxy["password"])
+		require.Equal(t, "127.0.0.1", f.admin.proxies[0].Host)
+		require.Equal(t, 19080, f.admin.proxies[0].Port)
+	})
+
+	t.Run("subscription socks5h proxy is normalized for the browser", func(t *testing.T) {
+		f := newBatchOAuthFixture(t)
+		t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "xiass-api")
+		f.admin.proxies = []service.Proxy{{ID: 84, Name: "subscription-jp", Protocol: "socks5h", Host: "127.0.0.1", Port: 39221,
+			Status: service.StatusActive}}
+		proxyID := int64(84)
+		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 1, Priority: 1, FingerprintMode: "off"}
+		proxy, err := f.h.validateBatchConfig(context.Background(), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, "socks5://xiass-api:39221", proxy["server"])
+		require.Equal(t, "127.0.0.1", f.admin.proxies[0].Host)
+		require.Equal(t, "socks5h", f.admin.proxies[0].Protocol)
+	})
+
+	for _, host := range []string{"127.0.0.1", "::1", "localhost"} {
+		t.Run("native listener "+host+" keeps its address", func(t *testing.T) {
+			f := newBatchOAuthFixture(t)
+			p := service.Proxy{ID: 84, Name: "local", Protocol: "socks5h", Host: host, Port: 39221, Status: service.StatusActive}
+			f.admin.proxies = []service.Proxy{p}
+			proxy, err := f.h.batchOAuthBrowserProxy(context.Background(), &p.ID)
+			require.NoError(t, err)
+			require.Equal(t, strings.Replace(p.URL(), "socks5h:", "socks5:", 1), proxy["server"])
+			t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "api-custom")
+			proxy, err = f.h.batchOAuthBrowserProxy(context.Background(), &p.ID)
+			require.NoError(t, err)
+			require.Equal(t, "socks5://api-custom:39221", proxy["server"])
+		})
+	}
+
 	t.Run("ordinary proxy", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
 		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
+		t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "xiass-api")
 		f.admin.proxies = []service.Proxy{{ID: 9, Name: "external", Protocol: "http", Host: "proxy.example.test", Port: 8080,
 			Username: "user", Password: "password", Status: service.StatusActive}}
 		proxyID := int64(9)

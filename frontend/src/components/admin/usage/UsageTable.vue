@@ -574,6 +574,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
@@ -727,7 +728,7 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
     }
   }
 
-  const proxyName = snapshotText(egress.proxy_name)
+  const proxyName = formatProxyDisplayName(snapshotText(egress.proxy_name))
   const proxyAddress = snapshotText(egress.proxy_address)
   const proxyFallback = egress.proxy_id != null
     ? `${t('admin.usage.egressProxy')} #${egress.proxy_id}`

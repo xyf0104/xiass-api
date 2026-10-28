@@ -92,7 +92,7 @@
           >
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <span class="truncate font-medium">{{ proxy.name }}</span>
+                <span class="truncate font-medium">{{ formatProxyDisplayName(proxy.name) }}</span>
                 <!-- Account count badge -->
                 <span
                   v-if="proxy.account_count !== undefined"
@@ -181,6 +181,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Icon from '@/components/icons/Icon.vue'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import type { Proxy } from '@/types'
 
 const { t } = useI18n()
@@ -236,7 +237,7 @@ const selectedLabel = computed(() => {
     return t('admin.accounts.noProxy')
   }
   const proxy = selectedProxy.value
-  return `${proxy.name} (${proxy.protocol}://${proxy.host}:${proxy.port})`
+  return `${formatProxyDisplayName(proxy.name)} (${proxy.protocol}://${proxy.host}:${proxy.port})`
 })
 
 const filteredProxies = computed(() => {

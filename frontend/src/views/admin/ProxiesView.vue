@@ -158,7 +158,7 @@
           </template>
 
           <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <span class="font-medium text-gray-900 dark:text-white">{{ formatProxyDisplayName(value) }}</span>
           </template>
 
           <template #cell-protocol="{ value }">
@@ -858,7 +858,7 @@
     <ConfirmDialog
       :show="showDeleteDialog"
       :title="t('admin.proxies.deleteProxy')"
-      :message="t('admin.proxies.deleteConfirm', { name: deletingProxy?.name })"
+      :message="t('admin.proxies.deleteConfirm', { name: formatProxyDisplayName(deletingProxy?.name) })"
       :confirm-text="t('common.delete')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -904,7 +904,7 @@
           <div class="flex items-center justify-between gap-4">
             <div>
               <div class="text-sm text-gray-500 dark:text-gray-400">
-                {{ qualityReportProxy?.name || '-' }}
+                {{ formatProxyDisplayName(qualityReportProxy?.name) || '-' }}
               </div>
               <div class="mt-1 text-sm text-gray-700 dark:text-gray-200">
                 {{ qualityReport.summary }}
@@ -972,7 +972,7 @@
     <!-- Proxy Accounts Dialog -->
     <BaseDialog
       :show="showAccountsModal"
-      :title="t('admin.proxies.accountsTitle', { name: accountsProxy?.name || '' })"
+      :title="t('admin.proxies.accountsTitle', { name: formatProxyDisplayName(accountsProxy?.name) })"
       width="normal"
       @close="closeAccountsModal"
     >
@@ -1041,6 +1041,7 @@ import { useSwipeSelect } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 
 const { t } = useI18n()
@@ -1216,7 +1217,7 @@ const loadBackupProxyOptions = async () => {
 const backupProxyOptions = (excludeId?: number) =>
   allProxiesForBackup.value
     .filter(p => p.id !== excludeId)
-    .map(p => ({ label: `${p.name} (${p.host}:${p.port})`, value: p.id }))
+    .map(p => ({ label: `${formatProxyDisplayName(p.name)} (${p.host}:${p.port})`, value: p.id }))
 
 let abortController: AbortController | null = null
 

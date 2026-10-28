@@ -80,7 +80,7 @@
                 <span class="min-w-0 break-all text-gray-600 dark:text-gray-300">所属服务器：{{ account.execution_node_id?.trim() || '本机' }}</span>
                 <span class="min-w-0 break-words text-xs text-gray-500 dark:text-gray-400">{{ account.platform }} · {{ planName(account) }}</span>
                 <span class="min-w-0 break-all text-xs" :class="membership.get(account.id)?.id === poolId ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'">号池：{{ membership.get(account.id)?.name || '未分配' }}</span>
-                <span class="min-w-0 break-all text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">代理出口：{{ proxyName(account.proxy_id) }}</span>
+                <span class="min-w-0 break-all text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">代理出口：{{ formatProxyDisplayName(proxyName(account.proxy_id)) }}</span>
                 <span v-if="selectionDisabledReason(account)" class="min-w-0 break-words text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">{{ selectionDisabledReason(account) }}</span>
               </span>
             </label>
@@ -111,6 +111,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { accountPoolsAPI, getAccountPoolAccounts, type AccountPool } from '@/api/admin/accountPools'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import type { Account, Proxy } from '@/types'
 
 const props = defineProps<{ show: boolean; proxies: Proxy[] }>()
@@ -270,7 +271,7 @@ function changeProxy(proxyId: number | null) {
   if (proxyId === pool.proxy_id) return
   confirmation.value = {
     kind: 'proxy', poolId: pool.id, proxyId, title: '覆盖号池代理',
-    message: `将“${pool.name}”的代理改为${proxyName(proxyId)}，并覆盖全部 ${pool.account_count} 个现有成员的代理。后续加入的账号也将继承此代理。确认继续？`
+    message: `将“${pool.name}”的代理改为${formatProxyDisplayName(proxyName(proxyId))}，并覆盖全部 ${pool.account_count} 个现有成员的代理。后续加入的账号也将继承此代理。确认继续？`
   }
 }
 
@@ -283,7 +284,7 @@ function askMembers(remove: boolean) {
     title: remove ? '移出号池' : '加入号池并应用代理',
     message: remove
       ? `将选中的 ${ids.length} 个成员移出“${pool.name}”，账号及其当前代理保持不变。确认继续？`
-      : `将选中的 ${ids.length} 个账号加入“${pool.name}”，替换原号池归属，并将其代理覆盖为${proxyName(pool.proxy_id)}。确认继续？`
+      : `将选中的 ${ids.length} 个账号加入“${pool.name}”，替换原号池归属，并将其代理覆盖为${formatProxyDisplayName(proxyName(pool.proxy_id))}。确认继续？`
   }
 }
 

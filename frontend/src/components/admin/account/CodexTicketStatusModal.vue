@@ -56,7 +56,7 @@
               <input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600" :checked="isCaptureProxySelected(option.proxy.id)" :disabled="busy || captureMode === 'all'" @change="toggleCaptureProxy(option.proxy.id)" />
               <span class="min-w-0 flex-1">
                 <span class="flex min-w-0 flex-wrap items-center gap-2">
-                  <span class="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ option.proxy.name }}</span>
+                  <span class="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ formatProxyDisplayName(option.proxy.name) }}</span>
                   <span class="font-mono text-[11px] uppercase text-gray-400">{{ option.proxy.protocol }}</span>
                 </span>
                 <span class="block break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ proxyAddress(option.proxy) }}</span>
@@ -93,7 +93,7 @@
             <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.expiresAt') }}</span><span class="text-right text-gray-800 dark:text-gray-200">{{ status.expires_at ? formatDateTime(status.expires_at) : '-' }}</span>
             <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.remaining') }}</span><span class="text-right text-gray-800 dark:text-gray-200">{{ status.ready ? formatRemaining(status.remaining_seconds) : '-' }}</span>
             <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.observedModel') }}</span><span class="text-right font-mono text-gray-800 dark:text-gray-200">{{ status.observed_model || '-' }}</span>
-            <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.egress') }}</span><span class="text-right text-gray-800 dark:text-gray-200">{{ status.proxy_name || status.proxy_id || '-' }}</span>
+            <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.egress') }}</span><span class="text-right text-gray-800 dark:text-gray-200">{{ formatProxyDisplayName(status.proxy_name) || status.proxy_id || '-' }}</span>
             <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.codexTicket.latency') }}</span><span class="text-right text-gray-800 dark:text-gray-200">{{ status.latency_ms ? `${status.latency_ms} ms` : '-' }}</span>
           </div>
           <p v-if="status.fallback" class="mt-3 text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.codexTicket.fallbackHint', { model: status.observed_model || '-' }) }}</p>
@@ -106,7 +106,7 @@
             <summary class="cursor-pointer select-none">{{ t('admin.accounts.codexTicket.probeDetails', { count: status.probes.length }) }}</summary>
             <div class="mt-2 space-y-1 border-l-2 border-gray-200 pl-3 dark:border-dark-600">
               <div v-for="(probe, index) in status.probes" :key="`${status.model}-${probe.proxy_id || probe.proxy_name || index}`" class="flex items-center justify-between gap-3">
-                <span>{{ probe.proxy_name || probe.proxy_id || t('admin.accounts.codexTicket.unknownEgress') }}</span>
+                <span>{{ formatProxyDisplayName(probe.proxy_name) || probe.proxy_id || t('admin.accounts.codexTicket.unknownEgress') }}</span>
                 <span class="font-mono" :class="probe.valid ? 'text-emerald-600 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'">{{ probe.observed_model || '-' }} · {{ probe.latency_ms ? `${probe.latency_ms} ms` : '-' }}</span>
               </div>
             </div>
@@ -129,6 +129,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import { accountsAPI } from '@/api/admin/accounts'
 import { proxiesAPI } from '@/api/admin/proxies'
 import type { Account, CodexTurnTicketStatus, Proxy, ProxySubscriptionOverview } from '@/types'

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -483,23 +484,37 @@ func (h *OpenAIOAuthHandler) batchOAuthBrowserProxy(ctx context.Context, proxyID
 	if err != nil || p == nil || !p.IsActive() || p.IsExpired(time.Now()) {
 		return nil, errors.New("proxy unavailable")
 	}
-	if p.Protocol != "http" && p.Protocol != "https" && p.Protocol != "socks5" {
+	protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+	if protocol != "http" && protocol != "https" && protocol != "socks5" && protocol != "socks5h" {
 		return nil, errors.New("browser proxy protocol unsupported")
 	}
-	// The built-in execution-node proxy is loopback inside xiass-api. The
-	// browser sidecar runs on the same host but in a different container, so its
-	// equivalent local-node route is direct Docker egress from that same host.
+	// The browser and automation share a namespace with each other, not with
+	// the API. Only deployments that expose local listeners to that namespace
+	// should configure a browser-facing host; native/shared-namespace use keeps
+	// the original address.
+	browserProxyHost := strings.TrimSpace(os.Getenv("TEAM_CHILD_BROWSER_PROXY_HOST"))
 	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	if strings.HasPrefix(p.Name, service.ExecutionNodeBuiltinProxyNamePrefix) &&
-		p.Protocol == "socks5" && p.Host == "127.0.0.1" && p.Port == 19080 && strings.TrimSpace(p.Password) != "" {
+	isLocalExecutionNodeProxy := strings.HasPrefix(p.Name, service.ExecutionNodeBuiltinProxyNamePrefix) &&
+		(protocol == "socks5" || protocol == "socks5h") && p.Host == "127.0.0.1" && p.Port == 19080 && strings.TrimSpace(p.Password) != ""
+	if isLocalExecutionNodeProxy {
 		if localNodeID == "" || p.Name != service.ExecutionNodeBuiltinProxyNamePrefix+localNodeID || p.Username != localNodeID {
 			return nil, errors.New("proxy belongs to another execution node")
 		}
-		return nil, nil
 	}
 	u, err := url.Parse(p.URL())
 	if err != nil || u.Hostname() == "" || p.Port <= 0 || p.Port > 65535 {
 		return nil, errors.New("invalid proxy")
+	}
+	u.Scheme = protocol
+	if protocol == "socks5h" {
+		// Playwright accepts socks5:// for browser contexts. SOCKS5 DNS is
+		// still resolved by the proxy for Chromium; normalize the XIASS
+		// socks5h storage alias before sending it to the automation sidecar.
+		u.Scheme = "socks5"
+	}
+	ip := net.ParseIP(u.Hostname())
+	if browserProxyHost != "" && ((ip != nil && ip.IsLoopback()) || strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), "localhost")) {
+		u.Host = net.JoinHostPort(browserProxyHost, strconv.Itoa(p.Port))
 	}
 	u.User = nil
 	return map[string]string{"server": u.String(), "username": p.Username, "password": p.Password}, nil

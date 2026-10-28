@@ -362,6 +362,9 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingSer
 		groups.GET("/live-capability", h.Admin.Group.GetLiveCapability)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
 		groups.GET("/:id/models-list-candidates", h.Admin.Group.GetModelsListCandidates)
+		// Keep the XIASS frontend and older clients' model-allowlist endpoint
+		// as a compatibility alias for the newer models-list route.
+		groups.GET("/:id/model-allowlist-candidates", h.Admin.Group.GetGroupModelAllowlistCandidates)
 		groups.GET("/:id/user-account-runtime", h.Admin.Group.GetUserAccountRuntime)
 		groups.GET("/:id/users/:user_id/account-allowlist", h.Admin.Group.GetUserAccountAllowlist)
 		groups.PUT("/:id/users/:user_id/account-allowlist", h.Admin.Group.ReplaceUserAccountAllowlist)

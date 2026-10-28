@@ -180,6 +180,18 @@ test('RFC 6238 SHA-1 vectors reduced to six digits, padding and step boundaries'
   assert.throws(() => generateTOTP(SECRET, -1), /invalid_input/)
 })
 
+test('SOCKS5H aliases are normalized without losing selected egress or credentials', async () => {
+  for (const protocol of ['socks5h', 'SOCKS5H', 'SOCKS5']) {
+    const h = harness()
+    const proxy = { server: ` ${protocol}://proxy.example:1080/ `, username: 'user%40', password: 'secret%20' }
+    await h.runner.start(body('task-1', 1, { proxy }))
+    await flush()
+    assert.deepEqual(h.contexts[0].options.proxy, { ...proxy, server: 'socks5://proxy.example:1080' })
+    await h.runner.cancel('task-1', 1)
+    await flush()
+  }
+})
+
 test('three isolated contexts maximum, exact backend IDs, per-task proxy and credential identity', async () => {
   const h = harness()
   const ids = [['a', 1], ['b', 2], ['c', 3]]

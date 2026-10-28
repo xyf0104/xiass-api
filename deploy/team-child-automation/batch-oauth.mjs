@@ -84,10 +84,11 @@ function proxyOptions(value) {
   try {
     if (typeof value !== 'object' || Array.isArray(value)) throw new Error()
     const url = new URL(value.server)
-    if (!['http:', 'https:', 'socks5:'].includes(url.protocol)
+    if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(url.protocol)
       || !url.hostname || url.username || url.password || url.search || url.hash
       || !['', '/'].includes(url.pathname)) throw new Error()
-    const result = { server: value.server }
+    if (url.protocol === 'socks5h:') url.protocol = 'socks5:'
+    const result = { server: `${url.protocol}//${url.host}` }
     for (const key of ['username', 'password']) {
       if (value[key] !== undefined) {
         if (typeof value[key] !== 'string' || value[key].length > 2048) throw new Error()

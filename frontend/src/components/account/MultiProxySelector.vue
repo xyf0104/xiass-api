@@ -65,7 +65,7 @@
         />
         <span class="min-w-0">
           <span class="flex min-w-0 items-center gap-2">
-            <span class="truncate text-sm font-medium text-gray-800 dark:text-dark-100">{{ proxy.name }}</span>
+            <span class="truncate text-sm font-medium text-gray-800 dark:text-dark-100">{{ formatProxyDisplayName(proxy.name) }}</span>
             <span class="shrink-0 font-mono text-[11px] uppercase text-gray-400">{{ proxy.protocol }}</span>
           </span>
           <span class="block break-all font-mono text-xs text-gray-500 dark:text-dark-400">
@@ -81,7 +81,7 @@
               max="10000"
               class="input h-8 w-14 px-1.5 text-center font-mono text-xs"
               :disabled="disabled"
-              :aria-label="t('admin.accounts.multiProxy.routePriorityFor', { name: proxy.name })"
+              :aria-label="t('admin.accounts.multiProxy.routePriorityFor', { name: formatProxyDisplayName(proxy.name) })"
               @click.stop
               @input="updatePriority(proxy.id, $event)"
             />
@@ -95,7 +95,7 @@
               max="10000"
               class="input h-8 w-16 px-2 text-center font-mono text-xs"
               :disabled="disabled"
-              :aria-label="t('admin.accounts.multiProxy.proxyCapacity', { name: proxy.name })"
+              :aria-label="t('admin.accounts.multiProxy.proxyCapacity', { name: formatProxyDisplayName(proxy.name) })"
               @click.stop
               @input="updateCapacity(proxy.id, $event)"
             />
@@ -140,6 +140,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import { formatProxyDisplayName } from '@/utils/proxyDisplay'
 import type { AccountProxyBindingInput, Proxy } from '@/types'
 
 const props = withDefaults(defineProps<{
