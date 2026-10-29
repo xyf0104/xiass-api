@@ -1,6 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import type { Ref } from 'vue'
 import PixlabSMSReceiver from '../PixlabSMSReceiver.vue'
+import { usePixlabSMSReceiver } from '@/composables/usePixlabSMSReceiver'
+
+enableAutoUnmount(afterEach)
+afterEach(() => vi.useRealTimers())
 
 const SMSReceiverActionDialogStub = {
   props: ['show'],
@@ -25,6 +30,7 @@ const { receiverMocks, receiverState, copyToClipboardMock } = vi.hoisted(() => (
     clearQueuedCardKeys: vi.fn()
   },
   receiverState: {
+    phase: 'idle',
     canChangeNumber: false,
     hasActiveSession: false,
     code: '--',
@@ -35,8 +41,8 @@ const { receiverMocks, receiverState, copyToClipboardMock } = vi.hoisted(() => (
 vi.mock('@/composables/usePixlabSMSReceiver', async () => {
   const { ref } = await import('vue')
   return {
-    usePixlabSMSReceiver: () => ({
-      phase: ref('idle'),
+    usePixlabSMSReceiver: vi.fn(() => ({
+      phase: ref(receiverState.phase),
       phoneDisplay: ref('--'),
       phoneForCopy: ref('+27749433060'),
       countryCallingCode: ref('27'),
@@ -57,7 +63,7 @@ vi.mock('@/composables/usePixlabSMSReceiver', async () => {
       isChangingNumber: ref(false),
       isCancelling: ref(false),
       ...receiverMocks
-    })
+    }))
   }
 })
 
@@ -76,6 +82,8 @@ vi.mock('@/composables/useClipboard', () => ({
 describe('PixlabSMSReceiver', () => {
   beforeEach(() => {
     Object.values(receiverMocks).forEach((mock) => mock.mockReset())
+    vi.mocked(usePixlabSMSReceiver).mockClear()
+    receiverState.phase = 'idle'
     receiverState.canChangeNumber = false
     receiverState.hasActiveSession = false
     receiverState.code = '--'
@@ -83,9 +91,9 @@ describe('PixlabSMSReceiver', () => {
     receiverMocks.start.mockResolvedValue('waiting')
   })
 
-  function mountReceiver(active = true) {
+  function mountReceiver(active = true, automationMode = false) {
     return mount(PixlabSMSReceiver, {
-      props: { active },
+      props: { active, automationMode },
       global: {
         stubs: {
           BaseDialog: true,
@@ -221,6 +229,11 @@ describe('PixlabSMSReceiver', () => {
 
     await flushPromises()
     expect(wrapper.get('[data-testid="sms-confirm-dialog"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="cancel-sms-receiver-action"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text() === '换号')!.trigger('click')
     await wrapper.get('[data-testid="confirm-sms-receiver-action"]').trigger('click')
     await flushPromises()
 
@@ -289,6 +302,158 @@ describe('PixlabSMSReceiver', () => {
     expect(receiverMocks.cancel).toHaveBeenCalledTimes(1)
     expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
     expect(wrapper.emitted('session-cancelled')).toEqual([[]])
+  })
+
+  it('requires confirmation for a manual claim after an automated claim fails', async () => {
+    receiverMocks.start.mockRejectedValueOnce(new Error('SMS unavailable'))
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    expect(receiverMocks.start).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('[data-testid="request-sms-phone"]').trigger('click')
+    expect(receiverMocks.start).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="sms-confirm-dialog"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="cancel-sms-receiver-action"]').trigger('click')
+    expect(receiverMocks.start).toHaveBeenCalledTimes(1)
+
+    await claimNumber(wrapper)
+    expect(receiverMocks.start).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('phone-ready')).toEqual([['+27749433060']])
+  })
+
+  it.each([
+    { label: '换号', action: 'changeNumber' as const, outcome: 'waiting' },
+    { label: '取消', action: 'cancel' as const, outcome: 'expired' },
+  ])('requires confirmation for a manual $label click in automation mode', async ({ label, action, outcome }) => {
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks[action].mockResolvedValue(outcome)
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    const button = wrapper.findAll('button').find(button => button.text() === label)!
+
+    await button.trigger('click')
+    await flushPromises()
+    expect(receiverMocks[action]).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="sms-confirm-dialog"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="cancel-sms-receiver-action"]').trigger('click')
+    expect(receiverMocks[action]).not.toHaveBeenCalled()
+
+    await button.trigger('click')
+    await wrapper.get('[data-testid="confirm-sms-receiver-action"]').trigger('click')
+    await flushPromises()
+    expect(receiverMocks[action]).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+  })
+
+  it('still claims automatically when the Team workflow enters the phone node', async () => {
+    const wrapper = mountReceiver(false, true)
+    expect(receiverMocks.start).not.toHaveBeenCalled()
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+    expect(receiverMocks.start).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('phone-ready')).toEqual([['+27749433060']])
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+  })
+
+  it('still replaces a rejected number automatically from the Team workflow node', async () => {
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks.changeNumber.mockResolvedValue('waiting')
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await wrapper.setProps({ replacementRequired: true })
+    await flushPromises()
+    expect(receiverMocks.changeNumber).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('phone-ready')).toEqual([['+27749433060'], ['+27749433060']])
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+  })
+
+  it('still replaces a waiting Team number automatically after 120 seconds', async () => {
+    vi.useFakeTimers()
+    receiverState.phase = 'waiting'
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks.changeNumber.mockResolvedValue('waiting')
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(119_999)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(receiverMocks.changeNumber).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+  })
+
+  it.each(['换号', '取消'])('defers timed replacement while the manual %s dialog is open and resumes after dismissal', async label => {
+    vi.useFakeTimers()
+    receiverState.phase = 'waiting'
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks.changeNumber.mockResolvedValue('waiting')
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(119_000)
+    await wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(true)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    expect(receiverMocks.cancel).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="cancel-sms-receiver-action"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(119_999)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(receiverMocks.changeNumber).toHaveBeenCalledTimes(1)
+    expect(receiverMocks.cancel).not.toHaveBeenCalled()
+  })
+
+  it.each(['submission', 'phone', 'session'])('invalidates a manual confirmation when its %s identity changes', async identity => {
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '换号')!.trigger('click')
+    const dialog = wrapper.findComponent(SMSReceiverActionDialogStub)
+    const receiver = vi.mocked(usePixlabSMSReceiver).mock.results.at(-1)!.value as { phoneForCopy: Ref<string>; sessionExpiresAt: Ref<string> }
+    if (identity === 'submission') await wrapper.setProps({ submissionKey: 'new-phone-node' })
+    else if (identity === 'phone') receiver.phoneForCopy.value = '+12025550123'
+    else receiver.sessionExpiresAt.value = '2026-08-14T00:30:00.000Z'
+    // A stale confirm event must also fail before the identity watcher runs.
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+  })
+
+  it('keeps workflow reset cancellation immediate and invalidates an open manual dialog', async () => {
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks.cancel.mockResolvedValue('expired')
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '换号')!.trigger('click')
+    expect(wrapper.get('[data-testid="sms-confirm-dialog"]').exists()).toBe(true)
+    await wrapper.setProps({ automationCancelSignal: 1 })
+    await flushPromises()
+    expect(receiverMocks.cancel).toHaveBeenCalledTimes(1)
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="sms-confirm-dialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('session-cancelled')).toEqual([[]])
+  })
+
+  it('rechecks a Team rejection deferred by a manual dialog when it is dismissed', async () => {
+    receiverState.hasActiveSession = true
+    receiverState.canChangeNumber = true
+    receiverMocks.changeNumber.mockResolvedValue('waiting')
+    const wrapper = mountReceiver(true, true)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click')
+    await wrapper.setProps({ replacementRequired: true })
+    expect(receiverMocks.changeNumber).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="cancel-sms-receiver-action"]').trigger('click')
+    await flushPromises()
+    expect(receiverMocks.changeNumber).toHaveBeenCalledTimes(1)
+    expect(receiverMocks.cancel).not.toHaveBeenCalled()
   })
 
 })

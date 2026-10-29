@@ -115,6 +115,7 @@ type batchOAuthTask struct {
 	createAttempted         bool
 	submittedPhone          string
 	rejectedPhones          map[string]bool
+	replacementConfirmed    bool
 	loginPasswordEncrypted  string `json:"-"`
 	loginTOTPEncrypted      string `json:"-"`
 	loginEmailCodeEncrypted string `json:"-"`
@@ -719,7 +720,7 @@ func batchOAuthPublicReason(reason string) string {
 	switch reason {
 	case "sms_timeout", "sms_confirmation_timeout", "email_code_required", "email_code_timeout", "email_code_access_denied", "email_code_unavailable", "invalid_email_code", "reauthorization_phone_required", "captcha_required", "captcha", "account_blocked", "account_banned", "account_deleted_or_disabled", "unknown_error", "manual_challenge", "task_expired", "invalid_credentials", "authenticator_required", "phone_rejected":
 		return reason
-	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "sms_channel_selection_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
+	case "proxy_unavailable", "navigation_timeout", "browser_context_lost", "page_interaction_failed", "sms_channel_selection_failed", "sms_delivery_failed", "invalid_totp", "invalid_sms_code", "openai_route_error", "oauth_session_expired":
 		return reason
 	case "oauth_exchange_failed", "oauth_identity_mismatch", "account_update_failed", "account_configuration_changed", "account_state_recovery_failed", "invalid_configuration", "automation_start_failed", "adspower_profile_limit", "adspower_profile_busy", "oauth_session_failed":
 		return reason
@@ -1558,6 +1559,7 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 	t.adsPowerLaunchDelivery = ""
 	t.adsPowerLaunchExpiresAt = time.Time{}
 	t.submittedPhone = ""
+	t.replacementConfirmed = false
 	t.RestartCount++
 	t.RequiresSMSConfirmation = false
 	t.FinishedAt = nil
@@ -1572,6 +1574,23 @@ func (h *OpenAIOAuthHandler) restartBatchOAuthTask(c *gin.Context, mode string) 
 
 func (h *OpenAIOAuthHandler) BatchOAuthSMSAction(c *gin.Context) {
 	h.batchOAuthSMSAction(c, batchOAuthModeCreate)
+}
+
+// The caller holds t.mu, binding cleanup to this attempt. The sidecar has no
+// delivery receipt, so retrying a consumed code after an ambiguous error is unsafe.
+func (h *OpenAIOAuthHandler) failBatchSMSDelivery(ctx context.Context, t *batchOAuthTask) {
+	t.Status, t.Stage, t.Reason = "failed", "failed", "sms_delivery_failed"
+	t.RequiresSMSConfirmation = false
+	t.markFinishedIfTerminal()
+	t.snapshotJSONLocked()
+	h.revokeTerminalBatchSession(t)
+
+	historyCtx, cancelHistory := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	_ = h.persistOpenAIReauthorizationTaskState(historyCtx, t)
+	cancelHistory()
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, _ = t.sidecar(cleanupCtx, "cancel", nil)
 }
 
 func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
@@ -1641,7 +1660,11 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 	}
 	result, err := h.batchSMSService.WorkflowAction(ctx, t.ownerID, t.ID, id, action, confirmed)
 	if err != nil {
-		response.Error(c, 502, "SMS action failed; reservation retained for retry")
+		if errors.Is(err, service.ErrPixlabSMSNoCardKey) {
+			response.ErrorFrom(c, service.ErrPixlabSMSNoCardKey)
+			return
+		}
+		response.Error(c, 502, "SMS action failed; retry the current workflow")
 		return
 	}
 	if result == nil {
@@ -1651,6 +1674,7 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 	if action != "cancel" {
 		if result.Code != "" && t.Stage == "sms_waiting" {
 			if _, err := t.sidecar(ctx, "sms-code", map[string]any{"code": result.Code}); err != nil {
+				h.failBatchSMSDelivery(ctx, t)
 				response.Error(c, 502, "SMS code delivery failed; restart required")
 				return
 			}
@@ -1663,7 +1687,15 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 				response.Error(c, 502, "SMS provider returned an invalid phone number")
 				return
 			}
-			if t.rejectedPhones[phone] || (t.Reason == "phone_rejected" && action != "change") {
+			// A provider may repeat the currently submitted replacement while the
+			// browser is still at the phone node. Once the replacement was delivered
+			// after an explicit change confirmation, that same phone is the active
+			// attempt and must be allowed through read-only polling. Older rejected
+			// numbers and unconfirmed numbers remain blocked.
+			currentPhone := strings.TrimSpace(t.submittedPhone)
+			if t.rejectedPhones[phone] ||
+				(t.Reason == "phone_rejected" && action != "change" &&
+					!(t.replacementConfirmed && phone == currentPhone)) {
 				t.RequiresSMSConfirmation = true
 				response.Error(c, 409, "Confirm a different phone number in XIASS first")
 				return
@@ -1675,8 +1707,17 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 				response.Error(c, 502, "Phone delivery failed; retry current reservation")
 				return
 			}
+			if action == "change" {
+				t.replacementConfirmed = true
+			}
 		}
 	}
 	// Codes and provider session IDs are never accepted from or disclosed to UI.
-	response.Success(c, gin.H{"task": t, "sms": gin.H{"status": result.Status, "number": result.Number, "expires_at": result.ExpiresAt}})
+	response.Success(c, gin.H{
+		"task":           t,
+		"sms":            gin.H{"status": result.Status, "number": result.Number, "expires_at": result.ExpiresAt},
+		"poll_seconds":   result.PollSeconds,
+		"number_pending": result.NumberPending,
+		"local_stop":     result.LocalStop,
+	})
 }

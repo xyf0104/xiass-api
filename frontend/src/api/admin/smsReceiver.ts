@@ -1,5 +1,11 @@
 import { apiClient } from '../client'
 
+export type SMSReceiverProvider = 'pixlab' | 'giema'
+
+export interface SMSReceiverProviderConfig {
+  giema_api_key_configured: boolean
+}
+
 export interface SMSReceiverQueueStatus {
   queued_count: number
   active_count: number
@@ -21,6 +27,9 @@ export interface SMSReceiverSession {
   charge_state?: 'held' | 'captured' | 'released' | ''
   balance?: number
   action_available_at?: string
+  number_pending?: boolean
+  poll_seconds?: number
+  local_stop?: boolean
 }
 
 export interface SMSReceiverAddResult {
@@ -36,6 +45,7 @@ export interface SMSReceiverClearResult {
 export interface SMSReceiverCardKey {
   id: number
   card_key: string
+  provider?: string
   status: string
   claim_count: number
   queue_rank: number
@@ -56,9 +66,20 @@ export async function getStatus(): Promise<SMSReceiverQueueStatus> {
   return data
 }
 
-export async function addCardKeys(cardKeys: string): Promise<SMSReceiverAddResult> {
+export async function getProviderConfig(): Promise<SMSReceiverProviderConfig> {
+  const { data } = await apiClient.get<SMSReceiverProviderConfig>('/admin/settings/sms-receiver/providers')
+  return { giema_api_key_configured: data?.giema_api_key_configured === true }
+}
+
+export async function updateProviderConfig(apiKey: string): Promise<SMSReceiverProviderConfig> {
+  const { data } = await apiClient.put<SMSReceiverProviderConfig>('/admin/settings/sms-receiver/providers', { api_key: apiKey })
+  return { giema_api_key_configured: data?.giema_api_key_configured === true }
+}
+
+export async function addCardKeys(cardKeys: string, provider?: SMSReceiverProvider): Promise<SMSReceiverAddResult> {
   const { data } = await apiClient.post<SMSReceiverAddResult>('/admin/settings/sms-receiver/card-keys', {
-    card_keys: cardKeys
+    card_keys: cardKeys,
+    ...(provider ? { provider } : {})
   })
   return data
 }

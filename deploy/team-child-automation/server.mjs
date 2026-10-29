@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { chromium } from '@playwright/test'
 import { generateTOTP, normalizeTOTPSecret, isAuthenticatorChallenge } from './totp.mjs'
-import { BatchOAuthRunner } from './batch-oauth.mjs'
+import { BatchOAuthRunner, profileFormInputs } from './batch-oauth.mjs'
 import { createProxyContext } from './browser-proxy.mjs'
 
 const port = Number(process.env.PORT || 8090)
@@ -335,7 +335,10 @@ async function reloadMemberPage(active, targetURL, forceRefresh) {
   // A normal read is deliberately DOM-only. The managed tab may already have
   // a fully authenticated Members SPA, and re-running goto here resets its
   // React state before member or invitation rows finish rendering.
-  if (!forceRefresh && isTeamMembersPage(active)) return undefined
+  const intervention = isManagedTeamPage(active)
+    ? memberPageInterventionKind(await active.locator('body').innerText().catch(() => ''))
+    : ''
+  if (intervention || (!forceRefresh && (isTeamMembersPage(active) || isManagedTeamPage(active)))) return undefined
 
   let cdpSession
   if (forceRefresh) {
@@ -371,8 +374,25 @@ function isTeamMembersPage(page) {
   }
 }
 
-function reusableTeamPage(context) {
-  if (managedMembersPage && !managedMembersPage.isClosed() && isTeamMembersPage(managedMembersPage)) return managedMembersPage
+function isManagedTeamPage(page, context, managedPage = managedMembersPage) {
+  if (!page || page.isClosed?.()) return false
+  if (page !== managedPage) return false
+  try {
+    return !context || page.context?.() === context
+  } catch {
+    return false
+  }
+}
+
+function memberPageInterventionKind(body) {
+  const text = String(body || '')
+  if (/log in|sign in|登录/i.test(text) && !/成员|members/i.test(text)) return 'login'
+  if (/captcha|verify (?:that )?you are human|checking your browser|two-factor|2fa|验证码|人机验证|身份验证/i.test(text)) return 'manual_challenge'
+  return ''
+}
+
+function reusableTeamPage(context, managedPage = managedMembersPage) {
+  if (isManagedTeamPage(managedPage, context, managedPage)) return managedPage
   return context.pages().find((page) => isTeamMembersPage(page) && !page.isClosed())
 }
 
@@ -549,8 +569,12 @@ function parsePendingInvites(text) {
 async function readMembers(current) {
   await waitForMemberPageReady(current)
   const body = await current.locator('body').innerText()
-  if (/log in|登录|sign in/i.test(body) && !/成员|members/i.test(body)) {
+  const intervention = memberPageInterventionKind(body)
+  if (intervention === 'login') {
     throw new Error('服务器浏览器尚未登录 ChatGPT 管理员页面')
+  }
+  if (intervention === 'manual_challenge') {
+    throw new Error('服务器浏览器当前需要人工完成登录或验证，请在内嵌浏览器处理后重试')
   }
 
   const rows = await rowsFor(current)
@@ -862,6 +886,8 @@ async function waitForMemberPageReady(current) {
   let toolbarVisibleAt = 0
   let emptyStateVisibleAt = 0
   while (Date.now() < deadline) {
+    const intervention = memberPageInterventionKind(await current.locator('body').innerText().catch(() => ''))
+    if (intervention) return
     if (await pendingInvitesRouteSelected(current)) {
       const control = await membersControl(current)
       if (control) {
@@ -1853,7 +1879,7 @@ function openAIPhoneSubmissionFailure(body) {
     return 'oauth_session_expired'
   }
   if (
-    /phone.*(?:invalid|unavailable|used too many|already (?:used|linked|associated)|maximum|max(?:imum)? number|not supported|cannot be used|can't be used)/i.test(body)
+    /phone.*(?:invalid|not valid|unavailable|used too many|already (?:used|linked|associated)|maximum|max(?:imum)? number|not supported|cannot be used|can't be used)/i.test(body)
     || /(?:try|use) (?:a )?(?:different|another) phone number|too many (?:accounts|verification attempts)|unable to (?:send|verify).*phone/i.test(body)
     || /无法使用.*号码|(?:手机号|电话号码).*(?:不可用|无效|次数过多|已使用|已绑定|不受支持)|请.*(?:更换|其他).*号码/i.test(body)
   ) {
@@ -2015,29 +2041,10 @@ async function submitPhoneWithOAuthRecovery(current, workflow, phone) {
 }
 
 async function fillProfile(current) {
-  await sleep(5000)
-  await waitForOAuthPage('OpenAI 未进入姓名和年龄页面', async () => {
-    const body = await oauthBody(current)
-    return /name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body)
-      && (await current.locator('input:visible').count().catch(() => 0)) > 0
-  })
-
-  const nameInput = await firstVisibleInput(current, (metadata) => /name|姓名/.test(metadata))
-    || await firstVisible(current.locator('input:visible'))
-  if (!nameInput) throw new Error('OpenAI 资料页中找不到姓名输入框')
-  await nameInput.fill('black')
-
-  const ageInput = await firstVisibleInput(current, (metadata) => /age|birth|年龄|出生/.test(metadata))
-  if (ageInput) {
-    await ageInput.fill('26')
-  } else {
-    const visibleInputs = current.locator('input:visible')
-    if (await visibleInputs.count() > 1) {
-      await visibleInputs.nth(1).fill('26')
-    } else {
-      throw new Error('OpenAI 资料页中找不到年龄输入框')
-    }
-  }
+  const fields = await profileFormInputs(current)
+  if (!fields) throw new Error('OpenAI 当前页面不是可填写的姓名和年龄表单')
+  await fields.name.fill('black')
+  await fields.age.fill('26')
   await clickOAuthContinue(current)
 }
 
@@ -2130,8 +2137,7 @@ async function waitForPrivateRegistrationComplete(current) {
 
       const verification = await verificationInputs(current)
       const emailInput = await firstVisibleInput(current, isEmailInputMetadata)
-      const visibleInputs = await current.locator('input:visible').count().catch(() => 0)
-      if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body) && visibleInputs > 0) {
+      if (await profileFormInputs(current)) {
         return { kind: 'profile' }
       }
       const hostname = oauthPageHostname(current)
@@ -2612,8 +2618,7 @@ async function postSMSNextState(current, workflow) {
   const callbackURL = await workflowCallbackURLFromPage(current, workflow)
   if (callbackURL) return { kind: 'callback', callbackURL }
   const body = await oauthBody(current)
-  const visibleInputs = await current.locator('input:visible').count().catch(() => 0)
-  if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body) && visibleInputs > 0) return { kind: 'profile' }
+  if (await profileFormInputs(current)) return { kind: 'profile' }
   if (isReauthorizationWorkspacePage(body)) return { kind: 'workspace' }
   return { kind: 'unknown' }
 }
@@ -3578,6 +3583,7 @@ export {
   decryptWorkflowState,
   encryptWorkflowState,
   fillOAuthInputValue,
+  fillProfile,
   fillVerificationCode,
   advanceRegisteredOAuth,
   beginWorkflowEmailChallenge,
@@ -3588,13 +3594,17 @@ export {
   pendingInvitesTabSelected,
   isSignupAccountCreationRejectionText,
   openAIPhoneSubmissionFailure,
+  postSMSNextState,
   registeredOAuthNextState,
   reauthorizationNextState,
   waitForReauthorizationNextState,
   advanceOAuthReauthorization,
   recoverOpenAIPhoneEntry,
   resetOAuthWorkflowSteps,
+  reusableTeamPage,
   reusableOAuthPage,
+  isManagedTeamPage,
+  memberPageInterventionKind,
   resumePausedWorkflow,
   selectLoginForAnotherAccount,
   setWorkflowNode,

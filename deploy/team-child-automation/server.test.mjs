@@ -63,6 +63,7 @@ describe('Team child OAuth automation state', () => {
       'This phone number is already associated with another account.',
       'Please use a different phone number.',
       'This phone number is not supported.',
+      'Phone number is not valid.',
       '该电话号码已使用，请更换其他号码。',
     ]) {
       assert.equal(openAIPhoneSubmissionFailure(text), 'phone_rejected')

@@ -224,7 +224,7 @@
   </BaseDialog>
 
   <SMSReceiverActionDialog
-    :show="!automationMode && confirmationAction !== null"
+    :show="confirmationAction !== null"
     :title="confirmationAction === 'cancel' ? '取消当前号码' : confirmationAction === 'change' ? '更换当前号码' : '领取授权手机号'"
     :message="confirmationAction === 'cancel'
       ? '确认取消当前手机号，并只重新打开 OAuth 授权步骤吗？'
@@ -316,6 +316,11 @@ const isClearingKeys = ref(false)
 const hasManuallyStarted = ref(false)
 const isStartingPhone = ref(false)
 const confirmationAction = ref<'claim' | 'cancel' | 'change' | null>(null)
+const receiverIdentity = computed(() => JSON.stringify([
+  props.submissionKey, props.automationCancelSignal, props.active,
+  hasActiveSession.value, phoneForCopy.value, sessionExpiresAt.value
+]))
+let confirmationIdentity = ''
 const lastEmittedCode = ref('')
 const lastEmittedPhoneSignature = ref('')
 const replacementPromptHandled = ref(false)
@@ -361,22 +366,14 @@ async function requestPhone(): Promise<void> {
 
 function requestRequiredReplacement(): void {
   if (!props.active || isChangingNumber.value || isStartingPhone.value) return
-  if (props.automationMode) {
-    void changeNumber()
-    return
-  }
   // The external page explicitly rejected this number. The same in-app
   // confirmation used for an ordinary replacement remains mandatory.
-  confirmationAction.value = 'change'
+  openConfirmation('change')
 }
 
 function requestPhoneConfirmation(): void {
   if (!props.active || isStartingPhone.value) return
-  if (props.automationMode) {
-    void requestPhone()
-    return
-  }
-  confirmationAction.value = 'claim'
+  openConfirmation('claim')
 }
 
 async function refresh(): Promise<void> {
@@ -414,11 +411,7 @@ function emitPhoneIfReady(confirmedNow = false): void {
 
 function requestChangeConfirmation(): void {
   if (!canChangeNumber.value || isChangingNumber.value) return
-  if (props.automationMode) {
-    void changeNumber()
-    return
-  }
-  confirmationAction.value = 'change'
+  openConfirmation('change')
 }
 
 async function cancel(): Promise<void> {
@@ -441,11 +434,12 @@ async function cancel(): Promise<void> {
 
 function requestCancelConfirmation(): void {
   if (!canCancel.value || isCancelling.value) return
-  if (props.automationMode) {
-    void cancel()
-    return
-  }
-  confirmationAction.value = 'cancel'
+  openConfirmation('cancel')
+}
+
+function openConfirmation(action: 'claim' | 'cancel' | 'change'): void {
+  confirmationIdentity = receiverIdentity.value
+  confirmationAction.value = action
 }
 
 function closeConfirmation(): void {
@@ -455,6 +449,12 @@ function closeConfirmation(): void {
 async function confirmReceiverAction(): Promise<void> {
   const action = confirmationAction.value
   if (!action || confirmationPending.value) return
+  if (confirmationIdentity !== receiverIdentity.value
+    || (action === 'change' && !canChangeNumber.value)
+    || (action === 'cancel' && !canCancel.value)) {
+    confirmationAction.value = null
+    return
+  }
   try {
     if (action === 'claim') await requestPhone()
     else if (action === 'change') await changeNumber()
@@ -471,11 +471,13 @@ function clearAutomationReplacementTimer(): void {
 
 function scheduleAutomationReplacement(): void {
   clearAutomationReplacementTimer()
+  if (confirmationAction.value || isStartingPhone.value || isChangingNumber.value || isCancelling.value) return
   if (!props.automationMode || !props.active || receiver.phase.value !== 'waiting' || !hasActiveSession.value || !receiver.phoneForCopy.value.trim()) return
   const delay = Math.max(1_000, Math.trunc(props.automationReplaceAfterMs || 120_000))
   automationReplacementTimer = setTimeout(() => {
     automationReplacementTimer = null
-    if (!props.automationMode || !props.active || receiver.phase.value !== 'waiting' || !hasActiveSession.value || isChangingNumber.value) return
+    if (confirmationAction.value || isStartingPhone.value || isChangingNumber.value || isCancelling.value) return
+    if (!props.automationMode || !props.active || receiver.phase.value !== 'waiting' || !hasActiveSession.value) return
     if (!canChangeNumber.value) {
       scheduleAutomationReplacement()
       return
@@ -558,14 +560,23 @@ watch(
   () => props.automationCancelSignal,
   (next, previous) => {
     if (!props.automationMode || next === previous || !hasActiveSession.value || isCancelling.value) return
+    confirmationAction.value = null
     void cancel()
   }
 )
 
-watch([replacementRequired, canChangeNumber], ([required]) => {
-  if (!required || confirmationAction.value || isChangingNumber.value) return
-  if (props.automationMode && !canChangeNumber.value) return
-  requestRequiredReplacement()
+watch(receiverIdentity, () => {
+  if (!confirmationPending.value) confirmationAction.value = null
+})
+
+watch([replacementRequired, canChangeNumber, confirmationAction], ([required, canChange, action], [wasRequired, couldChange]) => {
+  if (!required || action || isChangingNumber.value) return
+  if (props.automationMode) {
+    if (!canChange || !props.active || isStartingPhone.value) return
+    void changeNumber()
+  } else if (required !== wasRequired || canChange !== couldChange) {
+    requestRequiredReplacement()
+  }
 }, { immediate: true })
 
 watch(
@@ -594,7 +605,8 @@ watch(code, (value) => {
 })
 
 watch(
-  [() => props.automationMode, () => props.active, phase, phoneForCopy, hasActiveSession],
+  [() => props.automationMode, () => props.active, phase, phoneForCopy, hasActiveSession,
+    confirmationAction, isStartingPhone, isChangingNumber, isCancelling],
   () => { scheduleAutomationReplacement() },
   { immediate: true }
 )

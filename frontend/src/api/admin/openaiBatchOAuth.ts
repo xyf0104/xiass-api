@@ -42,6 +42,9 @@ export type BatchOAuthLogin = BatchOAuthPasswordLogin | BatchOAuthEmailCodeLogin
 export interface BatchOAuthSMS {
   task: BatchOAuthTask
   sms: { status: string; number: string; expires_at: string } | null
+  number_pending?: boolean
+  poll_seconds?: number
+  local_stop?: boolean
 }
 
 const path = '/admin/openai/batch-oauth/tasks'
@@ -71,10 +74,11 @@ export const batchOAuthAPI = {
   async launchAdsPower(id: string) {
     return (await apiClient.post<{ helper_url: string; expires_at: string; delivery?: 'queued' | 'local' }>(`${path}/${encodeURIComponent(id)}/adspower-launch`)).data
   },
-  async sms(id: string, action: 'check' | 'acquire' | 'change' | 'cancel') {
+  async sms(id: string, action: 'check' | 'acquire' | 'change' | 'cancel', confirmed = false) {
+    if (action !== 'check' && !confirmed) throw new Error('请先在 XIASS 站内确认接码操作。')
     const url = `${path}/${encodeURIComponent(id)}/sms`
     return action === 'check'
       ? (await apiClient.get<BatchOAuthSMS>(url)).data
-      : (await apiClient.post<BatchOAuthSMS>(`${url}/${action}`, { confirmed: true })).data
+      : (await apiClient.post<BatchOAuthSMS>(`${url}/${action}`, { confirmed })).data
   }
 }

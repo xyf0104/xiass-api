@@ -443,6 +443,31 @@ test('cross-task state, subframe, fetch, foreign host and late callback cannot c
   await flush()
 })
 
+test('a rejected profile form fails promptly instead of waiting for the task TTL', async () => {
+  const h = harness([{ afterPassword: 'profile', afterProfile: 'profile' }])
+  await h.runner.start(body('profile-stuck'))
+  await flush()
+  assert.equal(h.runner.get('profile-stuck', 1).stage, 'profile')
+  await h.clock.advance(29000)
+  assert.equal(h.runner.get('profile-stuck', 1).status, 'running')
+  await h.clock.advance(2000)
+  assert.equal(h.runner.get('profile-stuck', 1).status, 'failed')
+  assert.equal(h.runner.get('profile-stuck', 1).reason, 'page_interaction_failed')
+  assert.equal(h.contexts[0].page.calls.filter(([kind]) => kind === 'profile').length, 1)
+  assert.equal(h.contexts[0].closed, true)
+})
+
+test('a slow profile transition can still reach the workspace within its deadline', async () => {
+  const h = harness([{ afterPassword: 'profile', afterProfile: 'profile' }])
+  await h.runner.start(body('profile-slow'))
+  await flush()
+  await h.clock.advance(20000)
+  assert.equal(h.runner.get('profile-slow', 1).status, 'running')
+  h.contexts[0].page.kind = 'workspace'
+  await h.clock.advance(1000)
+  assert.equal(h.runner.get('profile-slow', 1).status, 'completed')
+})
+
 test('phone and SMS are external inputs; reject duplicate actions and previously rejected number', async () => {
   const h = harness([{ rejectPhone: '+15555550101' }])
   await h.runner.start(body())

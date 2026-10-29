@@ -15,6 +15,10 @@ export interface OAuthQueueRow {
   retryPending?: boolean
   error?: string
   number?: string
+  smsPolling?: boolean
+  smsPollSeconds?: number
+  smsLeaseChecked?: boolean
+  smsNextPollAt?: number
   automaticState?: string
   automaticAfter?: number
 }
@@ -34,6 +38,7 @@ const automaticRestartLimits: Record<string, number> = {
 }
 
 const operationUnconfirmedMessage = '操作未确认，请刷新状态后重试。'
+const noSMSCardKeyMessage = '暂无待用接码卡密，请补充卡密后重试。'
 
 export function batchTaskActive(task?: BatchOAuthTask) {
   return !!task && ['queued', 'running', 'ready'].includes(task.status)
@@ -78,7 +83,7 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
       || previous.stage !== task.stage || previous.restart_count !== task.restart_count
     row.task = task
     row.localStatus = undefined
-    if (progressed && row.error === operationUnconfirmedMessage) row.error = ''
+    if (progressed && (row.error === operationUnconfirmedMessage || row.error === noSMSCardKeyMessage)) row.error = ''
     if (task.account_id && !batchTaskSkipped(task) && !announced.has(task.account_id)) {
       announced.add(task.account_id)
       onCreated()
@@ -115,9 +120,12 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
     if (disposed || busyKeys.value.has(row.key)) return
     busyKeys.value.add(row.key)
     row.error = ''
-    try { await action() } catch {
+    try { await action() } catch (failure) {
       // Never surface an HTTP client's request payload or external login page.
-      row.error = operationUnconfirmedMessage
+      const noCardKey = typeof failure === 'object' && failure !== null
+        && (('reason' in failure && failure.reason === 'SMS_CARD_KEY_UNAVAILABLE')
+          || ('code' in failure && failure.code === 'SMS_CARD_KEY_UNAVAILABLE'))
+      row.error = noCardKey ? noSMSCardKeyMessage : operationUnconfirmedMessage
     } finally { busyKeys.value.delete(row.key) }
   }
 
@@ -184,15 +192,8 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
         } else if (secrets.has(row.key) && batchTaskWillAutoRestart(row.task)) {
           const state = `restart:${row.task.restart_count}:${row.task.reason}`
           await automatic(row, state, 10000, async () => retry(row))
-        } else if (row.task.browser_mode !== 'adspower' && row.task.status === 'running' && row.task.stage === 'phone_required') {
-          if (row.task.reason === 'phone_rejected') {
-            const state = `change:${row.task.restart_count}:${row.number || ''}`
-            await automatic(row, state, 1000, async () => sms(row, 'change'))
-          } else if (!row.number) {
-            const state = `acquire:${row.task.restart_count}`
-            await automatic(row, state, 1000, async () => ensurePhone(row))
-          }
-        } else if (row.task.browser_mode !== 'adspower' && row.task.status === 'running' && row.task.stage === 'sms_waiting') {
+        } else if (row.task.browser_mode !== 'adspower' && row.task.status === 'running'
+          && (row.task.stage === 'sms_waiting' || (row.task.stage === 'phone_required' && shouldPollSMS(row)))) {
           await pollSMS(row)
         }
       }
@@ -242,34 +243,52 @@ export function useBatchOpenAIOAuth(onCreated: () => void) {
   }
 
   async function pollSMS(row: OAuthQueueRow) {
+    if (row.smsNextPollAt && row.smsNextPollAt > Date.now()) return
     await operation(row, async () => {
-      const result = await batchOAuthAPI.sms(row.task!.task_id, 'check')
-      update(row, result.task)
-      row.number = result.sms?.number
-    })
-  }
-
-  async function ensurePhone(row: OAuthQueueRow) {
-    if (!row.task) return
-    await operation(row, async () => {
-      let result = await batchOAuthAPI.sms(row.task!.task_id, 'check')
-      update(row, result.task)
-      row.number = result.sms?.number
-      if (!result.sms?.number && row.task?.status === 'running' && row.task.stage === 'phone_required') {
-        result = await batchOAuthAPI.sms(row.task.task_id, 'acquire')
+      try {
+        const result = await batchOAuthAPI.sms(row.task!.task_id, 'check')
         update(row, result.task)
-        row.number = result.sms?.number
+        const returnedPollSeconds = validPollSeconds(result.poll_seconds)
+        if (returnedPollSeconds !== undefined) row.smsPollSeconds = returnedPollSeconds
+        row.smsLeaseChecked = true
+        if (result.local_stop === true) row.smsPolling = false
+        else row.smsPolling = Boolean(result.sms)
+        if (result.number_pending === true) row.number = undefined
+        else row.number = result.sms?.number || row.number
+      } finally {
+        row.smsNextPollAt = Date.now() + (row.smsPollSeconds || 5) * 1_000
       }
     })
   }
 
-  async function sms(row: OAuthQueueRow, action: 'acquire' | 'change' | 'cancel') {
-    if (!row.task) return
+  async function sms(row: OAuthQueueRow, action: 'acquire' | 'change' | 'cancel', confirmed = false) {
+    if (!row.task || !confirmed) return
     await operation(row, async () => {
-      const result = await batchOAuthAPI.sms(row.task!.task_id, action)
+      const result = await batchOAuthAPI.sms(row.task!.task_id, action, confirmed)
       update(row, result.task)
-      row.number = result.sms?.number
+      if (action === 'acquire' || action === 'change') {
+        row.smsLeaseChecked = true
+        row.smsPolling = result.local_stop !== true
+      }
+      const returnedPollSeconds = validPollSeconds(result.poll_seconds)
+      if (returnedPollSeconds !== undefined) row.smsPollSeconds = returnedPollSeconds
+      row.smsNextPollAt = Date.now() + (row.smsPollSeconds || 5) * 1_000
+      if (result.number_pending === true) row.number = undefined
+      else row.number = result.sms?.number || row.number
     })
+  }
+
+  function validPollSeconds(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.trunc(value) : undefined
+  }
+
+  function shouldPollSMS(row: OAuthQueueRow): boolean {
+    if (row.smsNextPollAt && row.smsNextPollAt > Date.now()) return false
+    if (row.smsPolling || row.number) return true
+    // A restored task has no browser login material. A read-only check can
+    // discover an already-owned server lease; the server returns null when
+    // there is no lease. Never turn this recovery check into a purchase.
+    return !row.smsLeaseChecked && !secrets.has(row.key) && Boolean(row.task?.requires_sms_confirmation)
   }
 
   async function cancel(row: OAuthQueueRow) {

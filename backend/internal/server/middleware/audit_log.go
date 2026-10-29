@@ -163,6 +163,7 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"PUT /api/v1/admin/prompt-audit/config":                              {},
 	"POST /api/v1/admin/prompt-audit/endpoints/probe":                    {},
 	"POST /api/v1/admin/settings/sms-receiver/card-keys":                 {},
+	"PUT /api/v1/admin/settings/sms-receiver/providers":                  {},
 	"DELETE /api/v1/admin/prompt-audit/events/:id":                       {},
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":                {},
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":              {},

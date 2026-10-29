@@ -73,6 +73,66 @@ describe('usePixlabSMSReceiver', () => {
     expect(localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)).toBeNull()
   })
 
+  it('clears a stale phone and code while preserving an active pending-number session', async () => {
+    vi.mocked(smsReceiverAPI.getStatus).mockResolvedValue({ queued_count: 1, active_count: 0 })
+    vi.mocked(smsReceiverAPI.redeem).mockResolvedValue({
+      session_id: 'server-session-pending-number',
+      status: 'WAITING',
+      number: '12025550123',
+      country: '美国',
+      queued_count: 0,
+    })
+    vi.mocked(smsReceiverAPI.check).mockResolvedValue({
+      session_id: 'server-session-pending-number',
+      status: 'WAITING',
+      number_pending: true,
+      poll_seconds: 2,
+      queued_count: 0,
+    })
+
+    await receiver.start()
+    expect(receiver.phoneForCopy.value).toBe('+12025550123')
+    receiver.code.value = '654321'
+
+    await receiver.refresh()
+
+    expect(receiver.hasActiveSession.value).toBe(true)
+    expect(receiver.phase.value).toBe('waiting')
+    expect(receiver.phoneForCopy.value).toBe('')
+    expect(receiver.phoneDisplay.value).toBe('--')
+    expect(receiver.localPhoneNumber.value).toBe('--')
+    expect(receiver.code.value).toBe('--')
+    expect(localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)).toBe('server-session-pending-number')
+  })
+
+  it('uses a valid provider poll interval and honors local stop without dropping the session', async () => {
+    vi.useFakeTimers()
+    vi.mocked(smsReceiverAPI.getStatus).mockResolvedValue({ queued_count: 1, active_count: 0 })
+    vi.mocked(smsReceiverAPI.redeem).mockResolvedValue({
+      session_id: 'server-session-poll-interval',
+      status: 'WAITING',
+      number_pending: true,
+      poll_seconds: 2,
+      queued_count: 0,
+    })
+    vi.mocked(smsReceiverAPI.check).mockResolvedValue({
+      session_id: 'server-session-poll-interval',
+      status: 'WAITING',
+      number_pending: true,
+      local_stop: true,
+      queued_count: 0,
+    })
+
+    await receiver.start()
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(smsReceiverAPI.check).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(smsReceiverAPI.check).toHaveBeenCalledTimes(1)
+    expect(receiver.hasActiveSession.value).toBe(true)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(smsReceiverAPI.check).toHaveBeenCalledTimes(1)
+  })
+
   it('deduplicates concurrent refreshes for the same active session', async () => {
     receiver.stop()
     localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, 'server-session-concurrent')
@@ -313,6 +373,33 @@ describe('usePixlabSMSReceiver', () => {
     expect(localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)).toBe('server-session-new')
     expect(receiver.phoneForCopy.value).toBe('+8613912345678')
     expect(receiver.queuedKeyCount.value).toBe(0)
+  })
+
+  it('clears the old phone and code when a confirmed rotation returns a pending number', async () => {
+    vi.mocked(smsReceiverAPI.getStatus).mockResolvedValue({ queued_count: 2, active_count: 0 })
+    vi.mocked(smsReceiverAPI.redeem).mockResolvedValue({
+      session_id: 'server-session-rotation-old',
+      status: 'WAITING',
+      number: '8613812345678',
+      queued_count: 1
+    })
+    vi.mocked(smsReceiverAPI.change).mockResolvedValue({
+      session_id: 'server-session-rotation-new',
+      status: 'WAITING',
+      number_pending: true,
+      poll_seconds: 2,
+      queued_count: 0
+    })
+
+    await receiver.start()
+    receiver.code.value = '654321'
+    await expect(receiver.changeNumber()).resolves.toBe('waiting')
+
+    expect(receiver.hasActiveSession.value).toBe(true)
+    expect(localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)).toBe('server-session-rotation-new')
+    expect(receiver.phoneForCopy.value).toBe('')
+    expect(receiver.phoneDisplay.value).toBe('--')
+    expect(receiver.code.value).toBe('--')
   })
 
   it('keeps the active member session price snapshot when queue status has a newer price', async () => {

@@ -14,7 +14,7 @@ vi.mock('@/utils/adspowerHelper', async importOriginal => ({
 vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(async () => ({ data: { items: [{ id: 4, name: '号池分组1', proxy_id: 9 }] } })) } }))
 const SelectStub = defineComponent({ props: ['modelValue', 'options'], emits: ['update:modelValue'], template: `<select :value="modelValue ?? ''" @change="$emit('update:modelValue', $event.target.value === '' ? null : Number.isNaN(Number($event.target.value)) ? $event.target.value : Number($event.target.value))"><option v-for="o in options" :value="o.value ?? ''">{{ o.label }}</option></select>` })
 const base = { props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' }
-const confirm = { props: ['show', 'title', 'message'], emits: ['cancel', 'confirm'], template: '<div v-if="show" data-testid="confirmation"><h3>{{title}}</h3><p>{{message}}</p><slot/><button data-testid="confirm" @click="$emit(\'confirm\')">确认</button></div>' }
+const confirm = { props: ['show', 'title', 'message'], emits: ['cancel', 'confirm'], template: '<div v-if="show" data-testid="confirmation"><h3>{{title}}</h3><p>{{message}}</p><slot/><button data-testid="confirm" @click="$emit(\'confirm\')">确认</button><button data-testid="dismiss" @click="$emit(\'cancel\')">取消</button></div>' }
 let wrapper: VueWrapper
 function task(stage = 'login'): BatchOAuthTask { return { task_id: 'task-00000000000001', email: 'person@example.test', login_method: 'password', status: 'running', stage, restart_count: 0, requires_sms_confirmation: stage === 'phone_required', created_at: '', expires_at: '' } }
 async function render(props: Record<string, unknown> = {}) {
@@ -101,19 +101,82 @@ describe('batch OAuth modal', () => {
     expect(wrapper.text()).not.toContain('失败 1')
     expect(wrapper.emitted('created')).toBeUndefined()
   })
-  it('automatically claims a number for the isolated batch workflow', async () => {
-    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [task('phone_required')], max_concurrency: 3, max_restarts: 2 })
-    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (_id, action) => action === 'check'
-      ? { task: task('phone_required'), sms: null }
-      : { task: task('sms_waiting'), sms: { number: '+12025550123', status: 'waiting', expires_at: '' } })
+  it('requires the in-app confirmation for a restored task after opening, refreshing and reopening the modal', async () => {
+    let current = task('phone_required')
+    vi.mocked(batchOAuthAPI.list).mockImplementation(async () => ({ items: [{ ...current }], max_concurrency: 3, max_restarts: 2 }))
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (_id, action) => {
+      if (action === 'check') return { task: current, sms: null }
+      current = task('sms_waiting')
+      return { task: current, sms: { number: '+12025550123', status: 'waiting', expires_at: '' } }
+    })
     await render()
+    expect(wrapper.text()).toContain('等待确认领取号码')
+    await wrapper.findAll('button').find(button => button.text().includes('刷新状态'))!.trigger('click')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    wrapper.unmount()
+    await render()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+
+    const claim = () => wrapper.findAll('button').find(button => button.text() === '领取号码')!
+    expect(claim().attributes('disabled')).toBeUndefined()
+    await claim().trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('确认领取号码')
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    await wrapper.get('[data-testid="dismiss"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+
+    await claim().trigger('click')
+    await wrapper.get('[data-testid="confirm"]').trigger('click')
     await flushPromises()
-    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledWith('task-00000000000001', 'acquire', true)
+    expect(wrapper.text()).toContain('+12025550123')
+    expect(wrapper.text()).toContain('正在等待短信验证码')
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(batchOAuthAPI.sms).toHaveBeenLastCalledWith('task-00000000000001', 'acquire', true)
+    await vi.advanceTimersByTimeAsync(1)
     await flushPromises()
-    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(1, 'task-00000000000001', 'check')
-    expect(batchOAuthAPI.sms).toHaveBeenNthCalledWith(2, 'task-00000000000001', 'acquire')
+    expect(batchOAuthAPI.sms).toHaveBeenLastCalledWith('task-00000000000001', 'check')
     expect(wrapper.find('[data-testid="confirmation"]').exists()).toBe(false)
+  })
+  it('offers a confirmed replacement for a restored rejected phone without a local number', async () => {
+    const rejected = { ...task('phone_required'), reason: 'phone_rejected' }
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [rejected], max_concurrency: 3, max_restarts: 2 })
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (_id, action) => action === 'check'
+      ? { task: rejected, sms: null }
+      : { task: task('sms_waiting'), sms: { number: '+12025550124', status: 'waiting', expires_at: '' } })
+    await render()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    expect(wrapper.text()).toContain('等待确认更换号码')
+    expect(wrapper.text()).not.toContain('系统将自动更换号码')
+    expect(wrapper.findAll('button').some(button => button.text() === '领取号码')).toBe(false)
+
+    await wrapper.findAll('button').find(button => button.text() === '更换号码')!.trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('确认更换号码')
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    await wrapper.get('[data-testid="confirm"]').trigger('click')
+    await flushPromises()
+    expect(batchOAuthAPI.sms).toHaveBeenCalledWith(rejected.task_id, 'change', true)
+  })
+  it('requires confirmation before cancelling a restored pending SMS reservation', async () => {
+    const expired = { ...task('sms_waiting'), status: 'failed' as const, reason: 'sms_timeout', requires_sms_confirmation: true }
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [expired], max_concurrency: 3, max_restarts: 2 })
+    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({ task: { ...expired, requires_sms_confirmation: false }, sms: null })
+    await render()
+    expect(wrapper.text()).toContain('短信等待超过3分钟，本次授权已停止，请确认接码状态后重新授权。')
+    expect(wrapper.text()).not.toContain('已取消旧号码')
+    await wrapper.findAll('button').find(button => button.text() === '取消接码')!.trigger('click')
+    expect(wrapper.get('[data-testid="confirmation"]').text()).toContain('确认取消接码')
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="dismiss"]').trigger('click')
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text() === '取消接码')!.trigger('click')
+    await wrapper.get('[data-testid="confirm"]').trigger('click')
+    await flushPromises()
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith(expired.task_id, 'cancel', true)
   })
   it('leaves AdsPower phone and SMS actions to the resident helper', async () => {
     vi.mocked(batchOAuthAPI.list).mockResolvedValue({
@@ -155,6 +218,16 @@ describe('batch OAuth modal', () => {
     await render()
     expect(wrapper.text()).toContain('OpenAI 登录页临时返回 Route Error')
     expect(wrapper.text()).toContain('OpenAI 登录会话已失效（invalid_state）')
+  })
+  it('explains consumed SMS codes with unconfirmed browser delivery without claiming or restarting', async () => {
+    vi.mocked(batchOAuthAPI.list).mockResolvedValue({ items: [
+      { ...task('sms_waiting'), status: 'failed', reason: 'sms_delivery_failed' },
+    ], max_concurrency: 3, max_restarts: 2 })
+    await render()
+    expect(wrapper.text()).toContain('验证码已收到，但未能确认浏览器接收，已停止本次授权，请重新授权。')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
   })
   it('resends only the current modal memory credentials when retrying', async () => {
     const failed: BatchOAuthTask = { ...task('opening'), status: 'failed', reason: 'proxy_unavailable', restart_count: 1 }

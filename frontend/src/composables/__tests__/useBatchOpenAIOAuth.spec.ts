@@ -209,6 +209,19 @@ describe('batch OAuth orchestration', () => {
     })).toBe(true)
   })
 
+  it('never automatically restarts or claims another number after unconfirmed SMS code delivery', async () => {
+    const c = await setup()
+    c.start(credentials.slice(0, 1), settings)
+    await flushPromises()
+    server[0] = { ...server[0], status: 'failed', stage: 'sms_waiting', reason: 'sms_delivery_failed' }
+    expect(batchTaskWillAutoRestart(server[0])).toBe(false)
+    await c.refresh()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(batchOAuthAPI.restart).not.toHaveBeenCalled()
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+    expect(batchOAuthAPI.create).toHaveBeenCalledTimes(1)
+  })
+
   it('starts only three accounts and advances one slot after completion', async () => {
     const c = await setup()
     c.start(credentials, settings)
@@ -234,22 +247,236 @@ describe('batch OAuth orchestration', () => {
     expect(JSON.stringify(c.rows.value)).not.toContain('password-')
     expect(JSON.stringify(c.rows.value)).not.toContain('JBSWY3')
   })
-  it('automatically acquires an independent number and routes each SMS check to its own task', async () => {
+  it.each([undefined, 'phone_rejected'])('only checks a restored phone_required task and never purchases a number (%s)', async reason => {
+    server = [{ ...task('restored'), stage: 'phone_required', reason, requires_sms_confirmation: true }]
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async id => ({ task: server.find(item => item.task_id === id)!, sms: null }))
+    await setup()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('restored', 'check')
+    expect(batchOAuthAPI.sms.mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    expect(batchOAuthAPI.create).not.toHaveBeenCalled()
+
+    scope.stop()
+    vi.mocked(batchOAuthAPI.sms).mockClear()
+    await setup()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('restored', 'check')
+  })
+  it('waits for confirmation when a newly started task reaches the phone node', async () => {
+    const c = await setup()
+    c.start(credentials.slice(0, 1), settings)
+    await flushPromises()
+    server[0] = { ...server[0], stage: 'phone_required', requires_sms_confirmation: true }
+    await c.refresh()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+  })
+  it.each(['acquire', 'change', 'cancel'] as const)('does not send an unconfirmed SMS %s', async action => {
+    server = [{ ...task('unconfirmed'), stage: 'phone_required' }]
+    const c = await setup()
+    await c.sms(c.rows.value[0], action)
+    await c.sms(c.rows.value[0], action, false)
+    expect(batchOAuthAPI.sms).not.toHaveBeenCalled()
+  })
+  it.each(['reason', 'code'])('shows only a fixed message for the known no-card %s', async field => {
+    server = [{ ...task('no-card'), stage: 'phone_required' }]
+    vi.mocked(batchOAuthAPI.sms).mockRejectedValueOnce({
+      [field]: 'SMS_CARD_KEY_UNAVAILABLE', message: 'secret-provider-payload', metadata: { card_key: 'private-card-key' },
+    })
+    const c = await setup()
+    await c.sms(c.rows.value[0], 'acquire', true)
+    expect(c.rows.value[0].error).toBe('暂无待用接码卡密，请补充卡密后重试。')
+    expect(JSON.stringify(c.rows.value)).not.toContain('secret-provider-payload')
+    expect(JSON.stringify(c.rows.value)).not.toContain('private-card-key')
+    await c.refresh()
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(1)
+    server[0] = { ...server[0], stage: 'phone_submitting' }
+    await c.refresh()
+    expect(c.rows.value[0].error).toBe('')
+  })
+  it('keeps unknown SMS errors generic without leaking their response or request data', async () => {
+    server = [{ ...task('sms-error'), stage: 'phone_required' }]
+    vi.mocked(batchOAuthAPI.sms).mockRejectedValueOnce({
+      reason: 'PRIVATE_PROVIDER_REASON', message: 'secret-provider-payload', config: { data: 'private-card-key' },
+    })
+    const c = await setup()
+    await c.sms(c.rows.value[0], 'acquire', true)
+    expect(c.rows.value[0].error).toBe('操作未确认，请刷新状态后重试。')
+    expect(JSON.stringify(c.rows.value)).not.toContain('PRIVATE_PROVIDER_REASON')
+    expect(JSON.stringify(c.rows.value)).not.toContain('secret-provider-payload')
+    expect(JSON.stringify(c.rows.value)).not.toContain('private-card-key')
+  })
+  it('keeps polling an acquired session when another concurrent task has no card key', async () => {
+    server = [
+      { ...task('has-card'), stage: 'phone_required' },
+      { ...task('no-card', 'other@example.test'), stage: 'phone_required' },
+    ]
+    vi.mocked(batchOAuthAPI.sms).mockImplementation(async (id) => {
+      if (id === 'no-card') throw { code: 404, reason: 'SMS_CARD_KEY_UNAVAILABLE', message: 'unused-server-message' }
+      server[0] = { ...server[0], stage: 'sms_waiting' }
+      return { task: server[0], sms: { number: '+12025550123', status: 'waiting', expires_at: '' } }
+    })
+    const c = await setup()
+    await Promise.all(c.rows.value.map(row => c.sms(row, 'acquire', true)))
+    expect(c.rows.value[0].number).toBe('+12025550123')
+    expect(c.rows.value[0].error).toBe('')
+    expect(c.rows.value[1].error).toBe('暂无待用接码卡密，请补充卡密后重试。')
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls.filter(([, action]) => action === 'check')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(batchOAuthAPI.sms).toHaveBeenLastCalledWith('has-card', 'check')
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls.filter(([id]) => id === 'no-card')).toEqual([['no-card', 'acquire', true]])
+    expect(c.rows.value[1].error).toBe('暂无待用接码卡密，请补充卡密后重试。')
+  })
+  it('claims only after confirmation and continues polling each existing SMS session by task', async () => {
     server = [{ ...task('first'), stage: 'phone_required' }, { ...task('second', 'other@example.test'), stage: 'sms_waiting' }]
     vi.mocked(batchOAuthAPI.sms).mockImplementation(async (id, action) => {
-      const current = server.find(t => t.task_id === id)!
+      const index = server.findIndex(t => t.task_id === id)
+      const current = server[index]
       if (id === 'first' && action === 'check') return { task: current, sms: null }
       const result = { ...current, stage: 'sms_waiting' }
+      server[index] = result
       return { task: result, sms: { status: 'waiting', number: id === 'first' ? '+12025550101' : '+12025550102', expires_at: '' } }
     })
-    await setup()
+    const c = await setup()
     expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['second', 'check'])
-    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).not.toContainEqual(['first', 'acquire'])
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls.every(([id, action]) => id === 'second' && action === 'check')).toBe(true)
+
+    await c.sms(c.rows.value[0], 'acquire', true)
+    expect(batchOAuthAPI.sms).toHaveBeenLastCalledWith('first', 'acquire', true)
+    expect(c.rows.value[0].number).toBe('+12025550101')
+    await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
     expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['first', 'check'])
-    expect(vi.mocked(batchOAuthAPI.sms).mock.calls).toContainEqual(['first', 'acquire'])
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls.filter(([, action]) => action === 'acquire')).toHaveLength(1)
     expect(batchOAuthAPI.create).not.toHaveBeenCalled()
+  })
+  it.each(['phone_required', 'sms_waiting'])('waits five seconds between failed SMS checks at %s while refreshing tasks every second', async stage => {
+    server = [{ ...task('failed-poll'), stage, requires_sms_confirmation: true }]
+    vi.mocked(batchOAuthAPI.sms).mockRejectedValue({
+      code: 502, message: 'secret-provider-payload', config: { data: 'private-card-key' },
+    })
+    const c = await setup()
+    const row = c.rows.value[0]
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('failed-poll', 'check')
+
+    for (let attempts = 1; attempts <= 3; attempts++) {
+      expect(row.error).toBe('操作未确认，请刷新状态后重试。')
+      expect(row.smsPollSeconds).toBeUndefined()
+      expect(row.smsNextPollAt).toBe(Date.now() + 5000)
+      const refreshes = vi.mocked(batchOAuthAPI.list).mock.calls.length
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(batchOAuthAPI.list).toHaveBeenCalledTimes(refreshes + 4)
+      expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(attempts)
+      await c.refresh()
+      expect(batchOAuthAPI.list).toHaveBeenCalledTimes(refreshes + 5)
+      expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(attempts)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(attempts + 1)
+    }
+    expect(vi.mocked(batchOAuthAPI.sms).mock.calls.every(([, action]) => action === 'check')).toBe(true)
+    expect(JSON.stringify(c.rows.value)).not.toContain('secret-provider-payload')
+    expect(JSON.stringify(c.rows.value)).not.toContain('private-card-key')
+  })
+  it.each(['phone_required', 'sms_waiting'])('retains the last valid interval after SMS failures and resumes at the new interval at %s', async stage => {
+    server = [{ ...task('cached-poll'), stage, requires_sms_confirmation: true }]
+    const result = { task: server[0], sms: { number: '+12025550123', status: 'waiting', expires_at: '' } }
+    vi.mocked(batchOAuthAPI.sms)
+      .mockResolvedValueOnce({ ...result, poll_seconds: 7 })
+      .mockRejectedValue({ code: 502 })
+    const c = await setup()
+    const row = c.rows.value[0]
+    expect(row.smsPollSeconds).toBe(7)
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(2)
+
+    for (let attempts = 2; attempts <= 3; attempts++) {
+      expect(row.error).toBe('操作未确认，请刷新状态后重试。')
+      expect(row.smsPollSeconds).toBe(7)
+      expect(row.smsNextPollAt).toBe(Date.now() + 7000)
+      await vi.advanceTimersByTimeAsync(6000)
+      await c.refresh()
+      expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(attempts)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(attempts + 1)
+    }
+
+    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({ ...result, poll_seconds: 0 })
+    await vi.advanceTimersByTimeAsync(7000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(5)
+    expect(row.error).toBe('')
+    expect(row.smsPollSeconds).toBe(7)
+    expect(row.smsNextPollAt).toBe(Date.now() + 7000)
+
+    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({ ...result, poll_seconds: 2 })
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(6)
+    expect(row.smsPollSeconds).toBe(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(6)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(7)
+  })
+  it('continues refreshing and completing another task while a failed SMS check waits to retry', async () => {
+    server = [
+      { ...task('failed-poll'), stage: 'sms_waiting' },
+      task('finishing', 'other@example.test'),
+    ]
+    vi.mocked(batchOAuthAPI.sms).mockRejectedValue({ code: 502 })
+    vi.mocked(batchOAuthAPI.complete).mockImplementationOnce(async () => {
+      server[1] = { ...server[1], status: 'completed', stage: 'completed', account_id: 123 }
+      return server[1]
+    })
+    const c = await setup()
+    server[1] = { ...server[1], status: 'ready', stage: 'callback_received' }
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.list).toHaveBeenCalledTimes(2)
+    expect(batchOAuthAPI.complete).toHaveBeenCalledExactlyOnceWith('finishing')
+    expect(c.rows.value[1].task?.status).toBe('completed')
+    expect(created).toHaveBeenCalledOnce()
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('failed-poll', 'check')
+  })
+  it('clears a stale batch phone while a confirmed provider rotation is still pending', async () => {
+    server = [{ ...task('rotation'), stage: 'phone_required' }]
+    const c = await setup()
+    const row = c.rows.value[0]
+    row.number = '+12025550123'
+    row.smsPollSeconds = 30
+    row.smsNextPollAt = Date.now() + 30_000
+    vi.mocked(batchOAuthAPI.sms).mockResolvedValue({
+      task: { ...server[0], stage: 'phone_required' },
+      sms: { status: 'waiting', number: '', expires_at: '' },
+      number_pending: true,
+      poll_seconds: 2,
+      local_stop: false,
+    })
+
+    await c.sms(row, 'change', true)
+
+    expect(row.number).toBeUndefined()
+    expect(row.smsPolling).toBe(true)
+    expect(row.smsPollSeconds).toBe(2)
+    expect(row.smsNextPollAt).toBe(Date.now() + 2000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledExactlyOnceWith('rotation', 'change', true)
+
+    vi.mocked(batchOAuthAPI.sms).mockRejectedValueOnce({ code: 502 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenLastCalledWith('rotation', 'check')
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(2)
+    expect(row.number).toBeUndefined()
+    expect(row.smsPollSeconds).toBe(2)
+    expect(row.smsNextPollAt).toBe(Date.now() + 2000)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(batchOAuthAPI.sms).toHaveBeenCalledTimes(3)
   })
   it('keeps ambiguous starts occupying slots and retries with the original idempotency key', async () => {
     vi.mocked(batchOAuthAPI.create).mockRejectedValueOnce(new Error('connection lost'))

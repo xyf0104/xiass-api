@@ -277,7 +277,7 @@ services:
       - PGID=${TEAM_CHILD_BROWSER_PGID:-1000}
       - TZ=${TZ:-Asia/Shanghai}
       - SUBFOLDER=/api/v1/team-child-browser/
-      - CHROME_CLI=--remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding ${TEAM_CHILD_BROWSER_START_URL:-https://chatgpt.com/admin/members}
+      - CHROME_CLI=--remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding ${TEAM_CHILD_BROWSER_BOOT_URL:-about:blank}
       - TITLE=XIASS Team Browser
       - START_DOCKER=false
       - HARDEN_DESKTOP=true

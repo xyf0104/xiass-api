@@ -812,6 +812,7 @@ const reasonLabels: Record<string, string> = {
   browser_context_lost: '独立隐私浏览器上下文意外关闭。',
   page_interaction_failed: 'OpenAI 页面控件发生变化或操作失败。',
   sms_channel_selection_failed: '无法确认已选择短信验证，未继续发送验证码。',
+  sms_delivery_failed: '验证码已收到，但未能确认浏览器接收，已停止本次授权，请重新授权。',
   oauth_exchange_failed: 'OAuth 回调换取凭据失败。',
   oauth_identity_mismatch: '授权完成后的 OpenAI 身份与目标账号不一致。',
   account_update_failed: 'OAuth 已完成，但凭据未能保存到原账号。',

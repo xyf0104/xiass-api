@@ -228,6 +228,7 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
   const isChangingNumber = ref(false)
   const isCancelling = ref(false)
   let pollingTimer: number | undefined
+  let pollingIntervalMs = POLL_INTERVAL_MS
   let clockTimer: number | undefined
   let sessionRefreshRequest: { sessionID: string; promise: Promise<SMSReceiveOutcome> } | undefined
   let expirySyncInFlight = false
@@ -403,7 +404,26 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
     sessionExpiresAtMs.value = null
   }
 
+  function clearPhoneDisplay(): void {
+    phoneDisplay.value = '--'
+    phoneForCopy.value = ''
+    countryCallingCode.value = ''
+    localPhoneNumber.value = '--'
+    region.value = '--'
+    countryFlag.value = ''
+    code.value = '--'
+  }
+
+  function validPollIntervalMs(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return null
+    return Math.max(1_000, Math.trunc(value * 1_000))
+  }
+
 	function applyPhone(result: SMSReceiverSession): void {
+		if (result.number_pending === true) {
+			clearPhoneDisplay()
+			return
+		}
     const rawNumber = result.number?.trim() ?? ''
     if (!rawNumber) return
     const formatted = formatPhone(rawNumber, result.country?.trim() ?? '')
@@ -426,6 +446,10 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
 
 	function applyResponse(result: SMSReceiverSession): SMSReceiveOutcome {
 		const previousSessionID = activeSessionID.value
+		const isNewSession = Boolean(result.session_id && result.session_id !== previousSessionID)
+		if (isNewSession) pollingIntervalMs = POLL_INTERVAL_MS
+		const returnedPollIntervalMs = validPollIntervalMs(result.poll_seconds)
+		if (returnedPollIntervalMs !== null) pollingIntervalMs = returnedPollIntervalMs
 		queuedKeyCount.value = result.queued_count
 		applyBilling(result)
     applyPhone(result)
@@ -446,7 +470,7 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
       return 'expired'
     }
 
-		if (result.session_id && result.session_id !== previousSessionID) {
+		if (isNewSession) {
 			// A confirmed claim/change starts a fresh SMS session. Clear the old
 			// code before polling it so a Team OAuth workflow cannot submit a stale
 			// verification code after a number replacement.
@@ -459,7 +483,8 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
     applySessionExpiry(result, previousSessionID)
     phase.value = 'waiting'
     startClockTicker()
-    startPolling()
+		if (result.local_stop === true) stopPolling()
+		else startPolling()
     return 'waiting'
   }
 
@@ -480,7 +505,7 @@ export function usePixlabSMSReceiver(scope: SMSReceiverScope = 'admin') {
         return
       }
       void refresh(true).catch(() => undefined)
-    }, POLL_INTERVAL_MS)
+    }, pollingIntervalMs)
   }
 
   async function resumeActive(): Promise<SMSReceiveOutcome> {

@@ -718,6 +718,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, setting
 		// XIASS server-side OAuth SMS receiver. Card keys remain encrypted at
 		// rest; plaintext is returned only by the administrator-only queue API.
 		adminSettings.GET("/sms-receiver", h.Admin.Setting.GetPixlabSMSStatus)
+		adminSettings.GET("/sms-receiver/providers", h.Admin.Setting.GetSMSProviderSettings)
+		adminSettings.PUT("/sms-receiver/providers", h.Admin.Setting.SaveSMSProviderSettings)
 		adminSettings.PUT("/sms-receiver/member-fee", h.Admin.Setting.UpdatePixlabSMSMemberFee)
 		adminSettings.GET("/sms-receiver/card-keys", h.Admin.Setting.ListPixlabSMSCardKeys)
 		adminSettings.POST("/sms-receiver/card-keys", h.Admin.Setting.AddPixlabSMSCardKeys)

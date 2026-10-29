@@ -8,6 +8,7 @@ const SMS_TIMEOUT = 180_000
 const PHONE_CONFIRMATION_TIMEOUT = 5 * 60_000
 const TTL = 15 * 60_000
 const STEP_DELAY = 1_000
+const PROFILE_TRANSITION_TIMEOUT = 30_000
 const TOTP_RETRY_DELAY = 5_000
 const MAX_TOTP_ATTEMPTS = 2
 export const BATCH_OAUTH_REASONS = Object.freeze([
@@ -107,6 +108,35 @@ async function firstVisible(locator) {
     if (await item.isVisible()) return item
   }
   return null
+}
+
+export async function profileFormInputs(page) {
+  let path
+  try { path = new URL(page.url()).pathname } catch { return null }
+  if (/phone|verify|verification|challenge/i.test(path)) return null
+  const inputs = page.locator('input')
+  let name = null
+  let age = null
+  for (let i = 0, count = await inputs.count(); i < count; i++) {
+    const input = inputs.nth(i)
+    if (!(await input.isVisible())) continue
+    const metadata = []
+    for (const key of ['type', 'name', 'id', 'autocomplete', 'aria-label', 'placeholder']) {
+      metadata.push(await input.getAttribute(key) || '')
+    }
+    if (typeof input.evaluate === 'function') {
+      metadata.push(await input.evaluate(element => Array.from(element.labels || [], label => label.textContent || '').join(' ')))
+    }
+    const type = metadata[0].toLowerCase()
+    const text = metadata.join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+    if (type === 'tel' || /one-time-code|(?:^|[^a-z])(?:phone|mobile|otp)(?:$|[^a-z])/.test(text)) return null
+    if (!['', 'text', 'number'].includes(type)) continue
+    if (/(?:^|[^a-z])(?:name|full[ _-]*name|姓名|名字)(?:$|[^a-z])/.test(text)) name ||= input
+    if (/(?:^|[^a-z])(?:age|年龄|年齡)(?:$|[^a-z])/.test(text)) age ||= input
+  }
+  // Country lists contain "Suriname" and phone forms have several inputs.
+  // Only explicit name and age fields are evidence of the profile form.
+  return name && age && name !== age ? { name, age } : null
 }
 
 const defaults = {
@@ -416,9 +446,13 @@ export class BatchOAuthRunner {
     }
     if (/\bauthentication error\b|身份验证错误|身份驗證錯誤/i.test(body)) return { kind: 'manual_challenge' }
     const path = new URL(page.url()).pathname
-    const visibleInputs = page.locator('input:visible')
-    if (/name|yourself|about you|姓名|年龄|介绍.*自己/i.test(body)
-      && await visibleInputs.count().catch(() => 0) > 1) return { kind: 'profile' }
+    const phoneInput = await this.#h.firstVisibleInput(page, (s) => /tel|phone|mobile/.test(s) && !/code|otp/.test(s))
+    if (phoneInput && (/\/(?:add-phone|phone-number)(?:\/|$)/i.test(path)
+      || /phone number required|(?:add|enter) your (?:phone|mobile) number|手机号|电话号码/i.test(body))) {
+      if (/phone.*(?:invalid|not valid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)/i.test(body)) return { kind: 'phone_rejected' }
+      return { kind: 'phone' }
+    }
+    if (await profileFormInputs(page)) return { kind: 'profile' }
     const inputs = await this.#h.verificationInputs(page)
     const invalidCode = /incorrect (?:verification )?code|invalid (?:verification )?code|wrong code|code (?:is|was) invalid|验证码.*(?:错误|无效)/i.test(body)
     if (/check your (?:email|inbox)|code (?:we |was )?sent to (?:your )?email|verify your email|邮箱验证码/i.test(body)) {
@@ -430,7 +464,7 @@ export class BatchOAuthRunner {
       return { kind: invalidCode ? 'invalid_email_code' : 'email_code' }
     }
     if (/phone.*(?:invalid|unavailable|used too many)|too many.*phone|手机号.*(?:不可用|次数过多)/i.test(body)) return { kind: 'phone_rejected' }
-    if (await this.#h.firstVisibleInput(page, (s) => /tel|phone|mobile/.test(s) && !/code|otp/.test(s))) return { kind: 'phone' }
+    if (phoneInput) return { kind: 'phone' }
     const emailMatch = body.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
     const email = emailMatch?.[0]?.toLowerCase()
     if (await this.#h.firstVisibleInput(page, (s) => /password/.test(s))) return { kind: 'password', email }
@@ -490,12 +524,9 @@ export class BatchOAuthRunner {
 
   async #profile(page) {
     if (this.#h.fillProfile) return this.#h.fillProfile(page)
-    const visible = page.locator('input:visible')
-    const name = await this.#h.firstVisibleInput(page, (s) => /name|姓名/.test(s))
-      || await firstVisible(visible)
-    let age = await this.#h.firstVisibleInput(page, (s) => /age|birth|年龄|出生/.test(s))
-    if (!age && await visible.count() > 1) age = visible.nth(1)
-    if (!name || !age) throw fail('manual_challenge')
+    const fields = await profileFormInputs(page)
+    if (!fields) throw fail('manual_challenge')
+    const { name, age } = fields
     await name.fill('black')
     await age.fill('26')
     await this.#continue(page)
@@ -503,6 +534,7 @@ export class BatchOAuthRunner {
 
   async #run(task) {
     let requestListener
+    let profileSubmittedAt = null
     const attempted = new Set()
     try {
       if (task.loginMethod === 'email_code') {
@@ -653,6 +685,11 @@ export class BatchOAuthRunner {
           }
           continue
         }
+        if (state.kind === 'profile' && profileSubmittedAt !== null
+          && this.#h.now() - profileSubmittedAt >= PROFILE_TRANSITION_TIMEOUT) {
+          this.#stop(task, 'failed', 'page_interaction_failed')
+          break
+        }
         if (['login', 'email', 'password', 'profile', 'workspace'].includes(state.kind) && !attempted.has(state.kind)) {
           attempted.add(state.kind)
           this.#stage(task, state.kind)
@@ -667,7 +704,10 @@ export class BatchOAuthRunner {
             await this.#fill(page, 'password', task.password)
             task.password = ''
           }
-          if (state.kind === 'profile') await this.#profile(page)
+          if (state.kind === 'profile') {
+            await this.#profile(page)
+            profileSubmittedAt = this.#h.now()
+          }
           if (state.kind === 'workspace') {
             if (!task.emailSubmitted) { this.#stop(task, 'blocked', 'invalid_credentials'); break }
             await this.#workspace(page)

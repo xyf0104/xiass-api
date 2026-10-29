@@ -142,7 +142,7 @@
             </div>
             <div class="col-span-2 flex flex-wrap items-start justify-end gap-2 sm:col-span-1">
               <button v-if="row.task?.browser_mode === 'adspower' && row.task.stage === 'external_browser' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" :data-testid="`launch-adspower-${row.email}`" @click="launchAdsPower(row)"><Icon name="globe" size="sm" />打开固定环境</button>
-              <button v-if="row.task?.browser_mode !== 'adspower' && row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(row.number ? 'change' : 'acquire', row)">{{ row.number ? '更换号码' : '领取号码' }}</button>
+              <button v-if="row.task?.browser_mode !== 'adspower' && row.task?.stage === 'phone_required' && row.task.status === 'running'" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask(needsPhoneReplacement(row) ? 'change' : 'acquire', row)">{{ needsPhoneReplacement(row) ? '更换号码' : '领取号码' }}</button>
               <button v-if="row.task?.status === 'ready' && row.error" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key)" @click="complete(row)">核验并添加</button>
               <button v-if="canRetry(row)" class="btn btn-primary btn-sm" :disabled="busyKeys.has(row.key) || (activeCount >= 3 && row.localStatus !== 'uncertain')" @click="ask('retry', row)"><Icon name="refresh" size="sm" />重新授权</button>
               <button v-if="batchTaskActive(row.task) || row.localStatus === 'pending' || row.localStatus === 'uncertain' || row.retryPending" class="btn btn-secondary btn-sm" :disabled="busyKeys.has(row.key)" @click="ask('stop', row)"><Icon name="x" size="sm" />停止</button>
@@ -335,7 +335,7 @@ async function confirmAction() {
     if (current.action === 'stop') await cancel(current.row)
     else if (current.action === 'retry') await retry(current.row)
     else if (current.action === 'acquire' || current.action === 'change' || current.action === 'cancel') {
-      await sms(current.row, current.action)
+      await sms(current.row, current.action, true)
     }
   }
 }
@@ -350,6 +350,7 @@ function toggleRetry(row: OAuthQueueRow) {
 function toggleAllRetryable() {
   selectedRetryKeys.value = allRetryableSelected.value ? new Set() : new Set(retryableRows.value.map(row => row.key))
 }
+function needsPhoneReplacement(row: OAuthQueueRow) { return Boolean(row.number) || row.task?.reason === 'phone_rejected' }
 function statusText(row: OAuthQueueRow) {
   if (row.retryPending) return '等待重新授权'
   if (row.localStatus) return { pending: '待开始', starting: '正在启动', uncertain: '启动结果待核验', canceled: '已停止' }[row.localStatus]
@@ -361,6 +362,7 @@ function statusText(row: OAuthQueueRow) {
   }
   if (isSkipped(row)) return '已存在，已跳过'
   if (task.status !== 'running') return { queued: '正在启动', ready: '正在核验并添加', completed: '已添加成功', failed: '授权失败', blocked: '授权失败', canceled: '已停止' }[task.status] || task.status
+  if (task.browser_mode !== 'adspower' && task.stage === 'phone_required') return needsPhoneReplacement(row) ? '等待确认更换号码' : '等待确认领取号码'
   return ({ external_browser: '等待打开固定指纹环境', opening: '正在打开隐私授权窗口', login: '正在进入登录页面', email: '正在填写邮箱', password: '正在填写密码', totp: '正在验证 2FA', email_code_waiting: '正在查询邮箱验证码', email_code_submitting: '正在填写邮箱验证码', phone_required: '正在准备手机号', phone_submitting: '正在提交手机号', sms_waiting: '正在等待短信验证码', sms_submitting: '正在提交短信验证码', workspace: '正在确认工作空间', callback_waiting: '正在等待 OAuth 回调', callback_received: '已收到 OAuth 回调' } as Record<string, string>)[task.stage] || '正在授权'
 }
 function reasonText(task?: BatchOAuthTask) {
@@ -368,7 +370,8 @@ function reasonText(task?: BatchOAuthTask) {
   if (reason === 'adspower_profile_busy') return '可复用的 AdsPower 环境正在使用，请等当前授权完成或关闭手动打开的环境后重试。'
   if (reason === 'adspower_profile_limit') return 'AdsPower 浏览器环境名额已满，尚未进入登录。请清理不再使用的环境或扩容后重试；不要删除其他账号的固定环境。'
   if (reason === 'sms_channel_selection_failed') return '无法确认已选择短信验证，未继续发送验证码，请重试。'
-  return ({ sms_timeout: '短信等待超过 3 分钟，已取消旧号码并准备从 OAuth 起点重新授权。', sms_confirmation_timeout: '领号阶段超时，已清理当前隐私会话。', oauth_identity_mismatch: 'OAuth 返回账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '账号创建结果不确定，已禁止重复创建，请核对账号列表。', account_readback_failed: '账号已创建，但读取核验失败。', account_configuration_mismatch: '账号已创建，但分组、代理、并发、优先级或指纹配置不一致。', account_login_credentials_mismatch: '账号已创建，但登录信息的加密保存核验失败。', automation_start_failed: '授权浏览器没有确认启动。', invalid_configuration: '分组、号池或代理配置不可用。', oauth_exchange_failed: 'OAuth 回调已收到，但换取 Token 失败。', manual_challenge: 'OpenAI 页面结构无法识别，当前隐私会话已关闭。', email_code_required: '当前是密码 + 2FA 模式，不能处理 OpenAI 邮箱验证码页面。', email_code_timeout: '等待邮箱验证码超过 2 分钟，已停止该账号。', email_code_access_denied: '邮箱与 64 位 Token 不匹配或 Token 已失效，已停止该账号。', email_code_unavailable: '邮箱验证码服务暂时不可用，已停止该账号。', invalid_email_code: 'OpenAI 拒绝了邮箱验证码，已停止该账号。', captcha_required: 'OpenAI 出现人机验证，当前隐私会话已关闭。', account_blocked: '未知错误，可以恢复状态后重试。', unknown_error: '未知错误，可以恢复状态后重试。', account_banned: 'OpenAI 页面明确显示账号已封禁，不能继续授权。', account_deleted_or_disabled: 'OpenAI 页面明确显示账号已删除或停用，不能继续授权。', authenticator_required: 'OpenAI 要求验证器验证码，但没有可用的 2FA 密钥。', invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。', invalid_totp: 'OpenAI 拒绝了当前 2FA 验证码，请检查密钥与服务器时间。', invalid_sms_code: 'OpenAI 拒绝了短信验证码。', proxy_unavailable: '所选出口代理无法从授权浏览器连接。', navigation_timeout: '打开 OpenAI OAuth 页面超时。', browser_context_lost: '独立隐私浏览器上下文意外关闭。', page_interaction_failed: 'OpenAI 页面控件操作失败或页面结构发生变化。', openai_route_error: 'OpenAI 登录页临时返回 Route Error，当前隐私会话已关闭，请重新授权。', oauth_session_expired: 'OpenAI 登录会话已失效（invalid_state），当前隐私会话已关闭，请重新授权。', phone_rejected: 'OpenAI 拒绝了当前号码，系统将自动更换号码。', task_expired: '本次授权总时长已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
+  if (reason === 'phone_rejected') return 'OpenAI 拒绝了当前号码，请确认更换号码后继续授权。'
+  return ({ sms_timeout: '短信等待超过3分钟，本次授权已停止，请确认接码状态后重新授权。', sms_confirmation_timeout: '领号阶段超时，已清理当前隐私会话。', oauth_identity_mismatch: 'OAuth 返回账号与输入邮箱不一致，未添加。', pool_assignment_failed: '账号已添加，但加入号池失败，请在号池管理中重新分配。', account_creation_requires_review: '账号创建结果不确定，已禁止重复创建，请核对账号列表。', account_readback_failed: '账号已创建，但读取核验失败。', account_configuration_mismatch: '账号已创建，但分组、代理、并发、优先级或指纹配置不一致。', account_login_credentials_mismatch: '账号已创建，但登录信息的加密保存核验失败。', automation_start_failed: '授权浏览器没有确认启动。', invalid_configuration: '分组、号池或代理配置不可用。', oauth_exchange_failed: 'OAuth 回调已收到，但换取 Token 失败。', manual_challenge: 'OpenAI 页面结构无法识别，当前隐私会话已关闭。', email_code_required: '当前是密码 + 2FA 模式，不能处理 OpenAI 邮箱验证码页面。', email_code_timeout: '等待邮箱验证码超过 2 分钟，已停止该账号。', email_code_access_denied: '邮箱与 64 位 Token 不匹配或 Token 已失效，已停止该账号。', email_code_unavailable: '邮箱验证码服务暂时不可用，已停止该账号。', invalid_email_code: 'OpenAI 拒绝了邮箱验证码，已停止该账号。', captcha_required: 'OpenAI 出现人机验证，当前隐私会话已关闭。', account_blocked: '未知错误，可以恢复状态后重试。', unknown_error: '未知错误，可以恢复状态后重试。', account_banned: 'OpenAI 页面明确显示账号已封禁，不能继续授权。', account_deleted_or_disabled: 'OpenAI 页面明确显示账号已删除或停用，不能继续授权。', authenticator_required: 'OpenAI 要求验证器验证码，但没有可用的 2FA 密钥。', invalid_credentials: '邮箱、密码或登录后的账号身份未通过验证。', invalid_totp: 'OpenAI 拒绝了当前 2FA 验证码，请检查密钥与服务器时间。', invalid_sms_code: 'OpenAI 拒绝了短信验证码。', proxy_unavailable: '所选出口代理无法从授权浏览器连接。', navigation_timeout: '打开 OpenAI OAuth 页面超时。', browser_context_lost: '独立隐私浏览器上下文意外关闭。', page_interaction_failed: 'OpenAI 页面控件操作失败或页面结构发生变化。', openai_route_error: 'OpenAI 登录页临时返回 Route Error，当前隐私会话已关闭，请重新授权。', oauth_session_expired: 'OpenAI 登录会话已失效（invalid_state），当前隐私会话已关闭，请重新授权。', sms_delivery_failed: '验证码已收到，但未能确认浏览器接收，已停止本次授权，请重新授权。', task_expired: '本次授权总时长已超时。' } as Record<string, string>)[reason || ''] || (reason ? `授权未完成（${reason}）` : '')
 }
 function normalizedStage(row: OAuthQueueRow) {
   if (row.localStatus) return 'opening'

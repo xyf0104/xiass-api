@@ -17,6 +17,35 @@
     <div class="space-y-5 p-6">
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
         <div>
+          <div class="mb-3 flex flex-wrap items-end gap-3">
+            <label class="block min-w-0 flex-1 text-sm font-medium text-gray-700 dark:text-gray-200">
+              接码商
+              <select v-model="selectedProvider" class="input mt-1.5 w-full" data-testid="sms-provider" :disabled="saving || savingGiemaKey">
+                <option value="pixlab">Pixlab</option>
+                <option value="giema" :disabled="!giemaConfigured || loadingProviderConfig">新接码商 Giema</option>
+              </select>
+            </label>
+            <button v-if="selectedProvider !== 'giema'" type="button" class="btn btn-secondary btn-sm" @click="showGiemaConfig = true">
+              <Icon name="cog" size="xs" class="mr-1" />配置 Giema
+            </button>
+          </div>
+          <div v-if="selectedProvider === 'giema' || showGiemaConfig" class="mb-4 space-y-3 border-y border-gray-200 py-3 dark:border-dark-600" data-testid="giema-config">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Giema API 密钥</span>
+              <span class="text-xs" :class="giemaConfigured ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'" data-testid="giema-config-status">{{ loadingProviderConfig ? '读取中…' : providerConfigError ? '配置状态未知' : giemaConfigured ? '已配置' : '未配置' }}</span>
+              <button v-if="selectedProvider !== 'giema'" type="button" class="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 dark:hover:bg-dark-700" title="关闭 Giema 配置" aria-label="关闭 Giema 配置" :disabled="savingGiemaKey" @click="closeGiemaConfig">
+                <Icon name="x" size="sm" />
+              </button>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <input v-model="giemaAPIKeyInput" type="password" class="input min-w-0 flex-1" aria-label="Giema API 密钥" data-testid="giema-api-key" autocomplete="new-password" autocapitalize="off" :spellcheck="false" :disabled="savingGiemaKey" :placeholder="giemaConfigured ? '输入新密钥以替换' : '输入 Giema API 密钥'" />
+              <button type="button" class="btn btn-secondary btn-sm" data-testid="save-giema-key" :disabled="!giemaAPIKeyInput.trim() || savingGiemaKey || loadingProviderConfig" @click="saveGiemaKey">
+                {{ savingGiemaKey ? '保存中…' : '保存密钥' }}
+              </button>
+            </div>
+            <p v-if="providerConfigError" class="text-xs text-red-600 dark:text-red-300" role="alert">{{ providerConfigError }}</p>
+            <button v-if="providerConfigError" type="button" class="btn btn-secondary btn-sm" :disabled="loadingProviderConfig || savingGiemaKey" @click="loadProviderConfig">重试读取配置</button>
+          </div>
           <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">添加接码卡密</label>
           <textarea
             v-model="cardKeysInput"
@@ -26,7 +55,7 @@
             spellcheck="false"
           />
           <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-            卡密始终加密存储；明文仅会返回到当前已登录的管理员系统设置页面，不会下发给会员或 OAuth 接码页面。重复卡密会自动忽略。
+            卡密始终加密存储；明文仅会返回到当前已登录的管理员系统设置页面，不会下发给会员或 OAuth 接码页面。重新添加已停用的卡密可使其重新入队，在下次领取时向服务商再次核验，并保留历史领号尝试次数；待用或使用中的重复卡密仍会忽略。
           </p>
         </div>
 
@@ -50,7 +79,8 @@
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 class="text-sm font-semibold text-gray-900 dark:text-white">待用卡密队列</h3>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">调度会优先均衡使用次数；相同次数时按这里的顺序领取。</p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">调度会优先均衡本地历史领号尝试次数；相同次数时按这里的顺序领取。次数不代表服务商总额度或剩余次数。</p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">“已停用”表示卡密已退出待用队列，可能因服务商拒绝或不可用，不代表服务商总额度已耗尽。</p>
           </div>
           <span class="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300">
             共 {{ cardKeys.length }} 张
@@ -69,7 +99,7 @@
             <div class="grid grid-cols-[minmax(250px,1fr)_84px_104px_116px_150px_104px] items-center gap-3 bg-gray-50 px-4 py-2 text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
               <span>卡密原文</span>
               <span>状态</span>
-              <span>已使用</span>
+              <span>本地历史领号尝试</span>
               <span>队列顺序</span>
               <span>最后领取</span>
               <span class="text-right">操作</span>
@@ -78,14 +108,18 @@
               v-for="cardKey in cardKeys"
               :key="cardKey.id"
               class="grid grid-cols-[minmax(250px,1fr)_84px_104px_116px_150px_104px] items-center gap-3 px-4 py-3"
+              :data-testid="`sms-card-key-${cardKey.id}`"
             >
-              <code class="min-w-0 select-all truncate rounded bg-gray-50 px-2 py-1.5 font-mono text-sm text-gray-900 dark:bg-dark-800 dark:text-gray-100" :title="cardKey.card_key">
-                {{ cardKey.card_key }}
-              </code>
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-600 dark:border-dark-600 dark:text-gray-300" data-testid="card-provider">{{ providerLabel(cardKey.provider) }}</span>
+                <code class="min-w-0 flex-1 select-all truncate rounded bg-gray-50 px-2 py-1.5 font-mono text-sm text-gray-900 dark:bg-dark-800 dark:text-gray-100" :title="cardKey.card_key">
+                  {{ cardKey.card_key }}
+                </code>
+              </div>
               <span class="w-fit rounded-md px-2 py-1 text-xs font-medium" :class="statusClass(cardKey.status)">
                 {{ statusLabel(cardKey.status) }}
               </span>
-              <span class="font-mono text-sm text-gray-700 dark:text-gray-200">{{ cardKey.claim_count }} / 5</span>
+              <span class="font-mono text-sm text-gray-700 dark:text-gray-200">{{ cardKey.claim_count }} 次</span>
               <span class="font-mono text-sm text-gray-600 dark:text-gray-300">{{ cardKey.status === 'queued' ? `#${queuedPosition(cardKey.id)}` : '-' }}</span>
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatLastClaimedAt(cardKey.last_claimed_at) }}</span>
               <div class="flex items-center justify-end gap-1">
@@ -134,7 +168,7 @@
         >
           {{ clearing ? '清空中…' : '清空待用卡密' }}
         </button>
-        <button type="button" class="btn btn-primary" :disabled="!cardKeysInput.trim() || saving" @click="saveKeys">
+        <button type="button" class="btn btn-primary" :disabled="!cardKeysInput.trim() || saving || (selectedProvider === 'giema' && (!giemaConfigured || loadingProviderConfig || savingGiemaKey))" @click="saveKeys">
           {{ saving ? '保存中…' : '加密保存卡密' }}
         </button>
       </div>
@@ -143,13 +177,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as smsReceiverAPI from '@/api/admin/smsReceiver'
 import { useAppStore } from '@/stores'
 import Icon from '@/components/icons/Icon.vue'
 
 const appStore = useAppStore()
 const cardKeysInput = ref('')
+const selectedProvider = ref<smsReceiverAPI.SMSReceiverProvider>('pixlab')
+const giemaConfigured = ref(false)
+const showGiemaConfig = ref(false)
+const giemaAPIKeyInput = ref('')
+const loadingProviderConfig = ref(false)
+const savingGiemaKey = ref(false)
+const providerConfigError = ref('')
 const cardKeys = ref<smsReceiverAPI.SMSReceiverCardKey[]>([])
 const queuedCount = ref(0)
 const activeCount = ref(0)
@@ -160,6 +201,53 @@ const reordering = ref(false)
 const deletingCardKeyID = ref<number | null>(null)
 
 const queuedCardKeys = computed(() => cardKeys.value.filter((cardKey) => cardKey.status === 'queued'))
+
+function providerLabel(provider?: string): string {
+  if (!provider || provider === 'pixlab') return 'Pixlab'
+  return provider === 'giema' ? 'Giema' : '未知接码商'
+}
+
+async function loadProviderConfig(): Promise<void> {
+  if (typeof smsReceiverAPI.getProviderConfig !== 'function') return
+  if (loadingProviderConfig.value || savingGiemaKey.value) return
+  loadingProviderConfig.value = true
+  providerConfigError.value = ''
+  try {
+    const result = await smsReceiverAPI.getProviderConfig()
+    giemaConfigured.value = result?.giema_api_key_configured === true
+  } catch {
+    giemaConfigured.value = false
+    providerConfigError.value = '暂时无法读取 Giema 配置，Pixlab 仍可使用。'
+  } finally {
+    loadingProviderConfig.value = false
+  }
+}
+
+async function saveGiemaKey(): Promise<void> {
+  if (typeof smsReceiverAPI.updateProviderConfig !== 'function') return
+  if (!giemaAPIKeyInput.value.trim() || savingGiemaKey.value || loadingProviderConfig.value) return
+  savingGiemaKey.value = true
+  try {
+    const result = await smsReceiverAPI.updateProviderConfig(giemaAPIKeyInput.value.trim())
+    giemaConfigured.value = result.giema_api_key_configured === true
+    providerConfigError.value = ''
+    if (giemaConfigured.value) appStore.showSuccess('Giema API 密钥已保存。')
+    else appStore.showError('Giema API 密钥尚未配置，请重试。')
+  } catch {
+    appStore.showError('保存 Giema API 密钥失败，请稍后重试。')
+  } finally {
+    giemaAPIKeyInput.value = ''
+    savingGiemaKey.value = false
+  }
+}
+
+function closeGiemaConfig(): void {
+  giemaAPIKeyInput.value = ''
+  showGiemaConfig.value = false
+}
+
+watch(selectedProvider, () => { closeGiemaConfig() })
+onBeforeUnmount(() => { giemaAPIKeyInput.value = '' })
 
 function describeError(error: unknown, fallback: string): string {
   if (typeof error !== 'object' || error === null) return fallback
@@ -180,7 +268,7 @@ function showError(error: unknown, fallback = '读取接码卡密失败。'): vo
 function statusLabel(status: string): string {
   if (status === 'queued') return '待用'
   if (status === 'active') return '使用中'
-  if (status === 'exhausted') return '已耗尽'
+  if (status === 'exhausted') return '已停用'
   return status || '未知'
 }
 
@@ -232,16 +320,18 @@ async function loadCardKeys(showFeedback = false): Promise<void> {
 }
 
 async function saveKeys(): Promise<void> {
+  if (saving.value || !cardKeysInput.value.trim() || (selectedProvider.value === 'giema' && (!giemaConfigured.value || loadingProviderConfig.value || savingGiemaKey.value))) return
   saving.value = true
   try {
-    const result = await smsReceiverAPI.addCardKeys(cardKeysInput.value)
+    const provider = selectedProvider.value === 'pixlab' ? undefined : selectedProvider.value
+    const result = await smsReceiverAPI.addCardKeys(cardKeysInput.value, provider)
     cardKeysInput.value = ''
     queuedCount.value = result.queued_count
     await loadCardKeys()
     if (result.added_count === 0) {
-      appStore.showInfo('没有发现可添加的新卡密。')
+      appStore.showInfo('没有可新增或重新入队的卡密，待用或使用中的重复卡密已忽略。')
     } else {
-      appStore.showSuccess(`已加密保存 ${result.added_count} 个接码卡密。`)
+      appStore.showSuccess(`已加入待用队列 ${result.added_count} 个接码卡密。`)
     }
   } catch (error) {
     showError(error, '保存接码卡密失败。')
@@ -312,5 +402,5 @@ async function moveCardKey(cardKeyID: number, direction: -1 | 1): Promise<void> 
   }
 }
 
-onMounted(() => { void loadCardKeys() })
+onMounted(() => { void loadCardKeys(); void loadProviderConfig() })
 </script>

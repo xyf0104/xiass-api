@@ -13,6 +13,7 @@ import (
 
 type pixlabSMSCardKeysRequest struct {
 	CardKeys string `json:"card_keys" binding:"required,max=1048576"`
+	Provider string `json:"provider"`
 }
 
 type pixlabSMSMemberFeeRequest struct {
@@ -96,7 +97,11 @@ func (h *SettingHandler) AddPixlabSMSCardKeys(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	added, status, err := svc.AddCardKeys(c.Request.Context(), req.CardKeys)
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" {
+		provider = service.SMSProviderPixlab
+	}
+	added, status, err := svc.AddCardKeysForProvider(c.Request.Context(), req.CardKeys, provider)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

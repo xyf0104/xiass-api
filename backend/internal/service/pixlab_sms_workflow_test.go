@@ -105,7 +105,7 @@ func TestPixlabWorkflowClaimsIndependentCardsForSameAdministrator(t *testing.T) 
 	for _, scope := range []string{"workflow-00000001", "workflow-00000002"} {
 		mock.ExpectQuery(`SELECT session_id FROM xiass_sms_card_keys`).WithArgs(int64(42), scope).
 			WillReturnRows(sqlmock.NewRows([]string{"session_id"}))
-		mock.ExpectQuery(`UPDATE xiass_sms_card_keys AS card`).WithArgs(int64(42), sqlmock.AnyArg(), scope, PixlabSMSCardKeyMaxClaims).
+		mock.ExpectQuery(`UPDATE xiass_sms_card_keys AS card`).WithArgs(int64(42), sqlmock.AnyArg(), scope).
 			WillReturnRows(sqlmock.NewRows([]string{"encrypted_key"}).AddRow("enc:key-" + scope))
 		mock.ExpectExec(`UPDATE xiass_sms_card_keys`).WithArgs(sqlmock.AnyArg(), int64(42)).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`COUNT\(\*\) FILTER`).WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"queued_count", "active_count"}).AddRow(2, 1))

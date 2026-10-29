@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -35,23 +36,22 @@ const (
 	// by Pixlab. It is a local fallback for providers that return an HTTP error
 	// instead of a terminal expiry response after the number has expired.
 	PixlabSMSSessionValidity = 15 * time.Minute
-	// PixlabSMSCardKeyMaxClaims matches the provider's per-card authorization
-	// limit. A card is rotated after every claim and is never claimed a sixth
-	// time, even if its previous sessions were cancelled without a code.
-	PixlabSMSCardKeyMaxClaims = 5
 	// PixlabSMSCleanupInterval keeps abandoned browser sessions from holding a
 	// card or a member balance indefinitely.
 	PixlabSMSCleanupInterval   = 30 * time.Second
 	pixlabSMSTerminalResultTTL = 24 * time.Hour
 	pixlabSMSCleanupLeaseTTL   = time.Minute
+	// Bound one confirmed acquisition even if a retired card is concurrently re-added.
+	pixlabSMSMaxAcquireAttempts = 32
 )
 
 var (
-	ErrPixlabSMSNoCardKey = infraerrors.NotFound("SMS_CARD_KEY_UNAVAILABLE", "暂无待用接码卡密")
-	ErrPixlabSMSSession   = infraerrors.NotFound("SMS_SESSION_NOT_FOUND", "接码会话不存在或已结束")
-	ErrPixlabSMSBalance   = infraerrors.BadRequest("SMS_BALANCE_INSUFFICIENT", "余额不足，无法领取授权接码号码")
-	ErrPixlabSMSActive    = infraerrors.Conflict("SMS_ACTIVE_SESSION_EXISTS", "当前已有进行中的接码会话，请先完成、换号或取消")
-	ErrPixlabSMSLocked    = infraerrors.Conflict("SMS_SESSION_ACTION_LOCKED", "领取号码后需等待 1 分钟才可换号或取消")
+	ErrPixlabSMSNoCardKey    = infraerrors.NotFound("SMS_CARD_KEY_UNAVAILABLE", "暂无待用接码卡密")
+	ErrPixlabSMSSession      = infraerrors.NotFound("SMS_SESSION_NOT_FOUND", "接码会话不存在或已结束")
+	ErrPixlabSMSBalance      = infraerrors.BadRequest("SMS_BALANCE_INSUFFICIENT", "余额不足，无法领取授权接码号码")
+	ErrPixlabSMSActive       = infraerrors.Conflict("SMS_ACTIVE_SESSION_EXISTS", "当前已有进行中的接码会话，请先完成、换号或取消")
+	ErrPixlabSMSLocked       = infraerrors.Conflict("SMS_SESSION_ACTION_LOCKED", "领取号码后需等待 1 分钟才可换号或取消")
+	ErrPixlabSMSAttemptLimit = infraerrors.BadRequest("SMS_CARD_KEY_ATTEMPT_LIMIT", "本次领取尝试的卡密过多，请检查卡密后重试")
 )
 
 // PixlabSMSQueueStatus intentionally contains counters only. Plaintext card
@@ -67,6 +67,7 @@ type PixlabSMSQueueStatus struct {
 type PixlabSMSCardKey struct {
 	ID            int64      `json:"id"`
 	CardKey       string     `json:"card_key"`
+	Provider      string     `json:"provider"`
 	Status        string     `json:"status"`
 	ClaimCount    int        `json:"claim_count"`
 	QueueRank     int64      `json:"queue_rank"`
@@ -77,14 +78,18 @@ type PixlabSMSCardKey struct {
 // PixlabSMSResult is the browser-safe representation of a provider session.
 // SessionID is opaque and is the only locally persisted value used for polling.
 type PixlabSMSResult struct {
-	SessionID   string     `json:"session_id,omitempty"`
-	Status      string     `json:"status"`
-	Number      string     `json:"number,omitempty"`
-	Country     string     `json:"country,omitempty"`
-	Code        string     `json:"code,omitempty"`
-	QueuedCount int64      `json:"queued_count"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	ServerTime  time.Time  `json:"server_time"`
+	SessionID     string     `json:"session_id,omitempty"`
+	Status        string     `json:"status"`
+	Number        string     `json:"number,omitempty"`
+	NumberPending bool       `json:"number_pending,omitempty"`
+	Country       string     `json:"country,omitempty"`
+	Code          string     `json:"code,omitempty"`
+	PollSeconds   int        `json:"poll_seconds,omitempty"`
+	LocalStop     bool       `json:"local_stop,omitempty"`
+	QueuedCount   int64      `json:"queued_count"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	ServerTime    time.Time  `json:"server_time"`
+	provider      string     `json:"-"`
 }
 
 // PixlabSMSMemberStatus intentionally omits global card-key queue totals so
@@ -105,8 +110,11 @@ type PixlabSMSMemberResult struct {
 	SessionID         string     `json:"session_id,omitempty"`
 	Status            string     `json:"status"`
 	Number            string     `json:"number,omitempty"`
+	NumberPending     bool       `json:"number_pending,omitempty"`
 	Country           string     `json:"country,omitempty"`
 	Code              string     `json:"code,omitempty"`
+	PollSeconds       int        `json:"poll_seconds,omitempty"`
+	LocalStop         bool       `json:"local_stop,omitempty"`
 	QueuedCount       int64      `json:"queued_count"`
 	FeeAmount         float64    `json:"fee_amount"`
 	ChargeState       string     `json:"charge_state"`
@@ -125,6 +133,7 @@ type PixlabSMSService struct {
 	billingCache  *BillingCacheService
 	client        *http.Client
 	baseURL       string
+	giemaBaseURL  string
 	sessionLocks  [64]pixlabSMSContextLock
 	workflowLocks [64]pixlabSMSContextLock
 	cleanupMu     sync.Mutex
@@ -162,10 +171,11 @@ func newPixlabSMSService(db *sql.DB, encryptor SecretEncryptor, client *http.Cli
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
 	return &PixlabSMSService{
-		db:        db,
-		encryptor: encryptor,
-		client:    client,
-		baseURL:   strings.TrimRight(baseURL, "/"),
+		db:           db,
+		encryptor:    encryptor,
+		client:       client,
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		giemaBaseURL: giemaSMSAPIBaseURL,
 	}
 }
 
@@ -250,8 +260,8 @@ func pixlabCardKeyFingerprint(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// AddCardKeys stores new keys encrypted at rest. Existing fingerprints are
-// ignored, so accidentally pasting the same batch does not duplicate charges.
+// AddCardKeys stores new keys encrypted at rest. Explicitly re-added exhausted
+// cards are requeued without resetting claim history; other duplicates stay put.
 func (s *PixlabSMSService) AddCardKeys(ctx context.Context, raw string) (int, *PixlabSMSQueueStatus, error) {
 	if s == nil || s.db == nil || s.encryptor == nil {
 		return 0, nil, infraerrors.InternalServer("SMS_RECEIVER_UNAVAILABLE", "接码服务尚未初始化")
@@ -272,13 +282,19 @@ func (s *PixlabSMSService) AddCardKeys(ctx context.Context, raw string) (int, *P
 		}
 		var rowID int64
 		err = s.db.QueryRowContext(ctx, `
-			INSERT INTO xiass_sms_card_keys (encrypted_key, key_fingerprint, queue_rank)
+			INSERT INTO xiass_sms_card_keys AS card (encrypted_key, key_fingerprint, queue_rank)
 			VALUES (
 				$1,
 				$2,
 				(SELECT COALESCE(MAX(queue_rank), 0) + 1 FROM xiass_sms_card_keys)
 			)
-			ON CONFLICT (key_fingerprint) DO NOTHING
+			ON CONFLICT (key_fingerprint) DO UPDATE SET
+				status = 'queued', queue_rank = EXCLUDED.queue_rank,
+				provider_state = '', provider_pending = false,
+				owner_user_id = NULL, session_id = NULL, workflow_scope = '',
+				consumed_at = NULL, cleanup_attempted_at = NULL,
+				cleanup_lease_token = NULL, cleanup_lease_until = NULL, updated_at = NOW()
+			WHERE card.provider = 'pixlab' AND card.status = 'exhausted' AND NOT card.provider_pending
 			RETURNING id`, ciphertext, pixlabCardKeyFingerprint(key)).Scan(&rowID)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -343,7 +359,7 @@ func (s *PixlabSMSService) ListCardKeys(ctx context.Context) ([]PixlabSMSCardKey
 		return nil, nil, infraerrors.InternalServer("SMS_RECEIVER_UNAVAILABLE", "接码服务尚未初始化")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, encrypted_key, status, claim_count, queue_rank, last_claimed_at, created_at
+		SELECT id, encrypted_key, status, claim_count, queue_rank, last_claimed_at, created_at, provider
 		FROM xiass_sms_card_keys
 		ORDER BY
 			CASE status WHEN 'queued' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
@@ -371,12 +387,16 @@ func (s *PixlabSMSService) ListCardKeys(ctx context.Context) ([]PixlabSMSCardKey
 			&entry.QueueRank,
 			&lastClaimed,
 			&entry.CreatedAt,
+			&entry.Provider,
 		); err != nil {
 			return nil, nil, fmt.Errorf("scan sms card key: %w", err)
 		}
-		plainKey, err := s.encryptor.Decrypt(encrypted)
+		provider, plainKey, err := s.decodeSMSCardKey(encrypted)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decrypt sms card key %d: %w", entry.ID, err)
+			return nil, nil, err
+		}
+		if entry.Provider != provider {
+			return nil, nil, infraerrors.Conflict("SMS_CARD_KEY_PROVIDER_CONFLICT", "接码卡密供应商绑定不一致")
 		}
 		entry.CardKey = plainKey
 		if lastClaimed.Valid {
@@ -395,10 +415,9 @@ func (s *PixlabSMSService) ListCardKeys(ctx context.Context) ([]PixlabSMSCardKey
 	return keys, status, nil
 }
 
-// DeleteCardKey permanently removes one operator-selected card. When an active
-// member session still has a held charge, it releases that balance in the same
-// transaction before removing the card. This lets an operator remove a broken
-// active credential without leaving the member's balance in a held state.
+// DeleteCardKey removes one operator-selected card. Unresolved Giema sessions
+// retain their binding and held charge until provider reconciliation finishes.
+// Active Pixlab member sessions are refunded in the deletion transaction.
 func (s *PixlabSMSService) DeleteCardKey(ctx context.Context, cardKeyID int64) (*PixlabSMSQueueStatus, error) {
 	if s == nil || s.db == nil {
 		return nil, infraerrors.InternalServer("SMS_RECEIVER_UNAVAILABLE", "接码服务尚未初始化")
@@ -457,20 +476,25 @@ func (s *PixlabSMSService) deleteCardKey(ctx context.Context, cardKeyID int64, l
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		status      string
-		ownerUserID sql.NullInt64
-		sessionID   sql.NullString
+		status          string
+		ownerUserID     sql.NullInt64
+		sessionID       sql.NullString
+		provider        string
+		providerPending bool
 	)
 	err = tx.QueryRowContext(ctx, `
-		SELECT status, owner_user_id, session_id
+		SELECT status, owner_user_id, session_id, provider, provider_pending
 		FROM xiass_sms_card_keys
 		WHERE id = $1
-		FOR UPDATE`, cardKeyID).Scan(&status, &ownerUserID, &sessionID)
+		FOR UPDATE`, cardKeyID).Scan(&status, &ownerUserID, &sessionID, &provider, &providerPending)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, infraerrors.NotFound("SMS_CARD_KEY_NOT_FOUND", "接码卡密不存在或已被删除")
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("lock sms card key for deletion: %w", err)
+	}
+	if provider == SMSProviderGiema && (status == "active" || providerPending) {
+		return nil, false, infraerrors.Conflict("SMS_CARD_KEY_PROVIDER_PENDING", "Giema 接码会话尚未结束，请等待供应商确认后再删除")
 	}
 	activeSessionID := ""
 	if status == "active" && sessionID.Valid {
@@ -651,8 +675,8 @@ func (s *PixlabSMSService) MemberStatus(ctx context.Context, userID int64) (*Pix
 		SELECT EXISTS(
 			SELECT 1
 			FROM xiass_sms_card_keys
-			WHERE status = 'queued' AND claim_count < $1
-		)`, PixlabSMSCardKeyMaxClaims).Scan(&status.Available); err != nil {
+			WHERE status = 'queued'
+		)`).Scan(&status.Available); err != nil {
 		return nil, fmt.Errorf("check sms card key availability: %w", err)
 	}
 	return status, nil
@@ -660,19 +684,19 @@ func (s *PixlabSMSService) MemberStatus(ctx context.Context, userID int64) (*Pix
 
 // Redeem atomically claims the next queued card before sending it to Pixlab.
 // A card is consumed only after the provider returns a verification code. If
-// this initial request cannot get a number, release it for a later retry.
+// an ambiguous request fails, retain its reservation for recovery.
 func (s *PixlabSMSService) Redeem(ctx context.Context, ownerUserID int64) (*PixlabSMSResult, error) {
 	if ownerUserID <= 0 {
 		return nil, infraerrors.Unauthorized("SMS_OWNER_REQUIRED", "无法识别当前管理员")
 	}
-	for {
+	for attempt := 0; attempt < pixlabSMSMaxAcquireAttempts; attempt++ {
 		sessionID := uuid.NewString()
 		var encryptedKey string
 		err := s.db.QueryRowContext(ctx, `
 			WITH next_key AS (
 				SELECT id
 				FROM xiass_sms_card_keys
-				WHERE status = 'queued' AND claim_count < $3
+				WHERE status = 'queued'
 				ORDER BY claim_count ASC, queue_rank ASC, last_claimed_at NULLS FIRST, id
 				FOR UPDATE SKIP LOCKED
 				LIMIT 1
@@ -684,16 +708,13 @@ func (s *PixlabSMSService) Redeem(ctx context.Context, ownerUserID int64) (*Pixl
 				claim_count = card.claim_count + 1, updated_at = NOW()
 			FROM next_key
 			WHERE card.id = next_key.id
-			RETURNING card.encrypted_key`, ownerUserID, sessionID, PixlabSMSCardKeyMaxClaims).Scan(&encryptedKey)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrPixlabSMSNoCardKey
-		}
+			RETURNING card.encrypted_key`, ownerUserID, sessionID).Scan(&encryptedKey)
 		if err != nil {
 			// The database keeps one live session per user as a final guard
 			// against concurrent browser tabs. OAuth can be opened from a new
 			// tab after the browser-local session ID has been lost, so recover
 			// the existing session instead of surfacing a misleading outage.
-			if isPixlabActiveOwnerConflict(err) {
+			if errors.Is(err, sql.ErrNoRows) || isPixlabActiveOwnerConflict(err) {
 				existingSessionID, lookupErr := s.activeSessionID(ctx, ownerUserID)
 				if lookupErr != nil {
 					return nil, lookupErr
@@ -701,23 +722,15 @@ func (s *PixlabSMSService) Redeem(ctx context.Context, ownerUserID int64) (*Pixl
 				if existingSessionID != "" {
 					result, resumeErr := s.Resume(ctx, ownerUserID, existingSessionID)
 					if resumeErr == nil {
-						if result.SessionID == "" && strings.EqualFold(result.Status, "EXPIRED") {
+						if result.SessionID == "" && !pixlabHasVerificationCode(result.Code) && pixlabTerminalStatus(result.Status, "") != "" {
 							continue
 						}
 						return result, nil
 					}
-					// A Pixlab HTTP rejection is distinct from a network outage. The
-					// former means this provider-side session cannot be resumed, so
-					// release the stale local claim and continue the normal card
-					// rotation. Connection failures remain retryable and keep the
-					// current session intact.
-					if isPixlabProviderHTTPError(resumeErr) {
-						if releaseErr := s.releaseSession(ctx, existingSessionID, ownerUserID); releaseErr != nil {
-							return nil, releaseErr
-						}
-						continue
-					}
 					return nil, resumeErr
+				}
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, ErrPixlabSMSNoCardKey
 				}
 				// The conflicting row belongs to the member site. Never recover or
 				// settle it through an OAuth/admin request.
@@ -726,20 +739,40 @@ func (s *PixlabSMSService) Redeem(ctx context.Context, ownerUserID int64) (*Pixl
 			return nil, fmt.Errorf("claim sms card key: %w", err)
 		}
 
-		key, err := s.encryptor.Decrypt(encryptedKey)
+		providerName, key, err := s.decodeSMSCardKey(encryptedKey)
 		if err != nil {
 			_ = s.releaseSession(ctx, sessionID, ownerUserID)
-			return nil, fmt.Errorf("decrypt claimed sms card key: %w", err)
+			return nil, err
+		}
+		if providerName == SMSProviderGiema {
+			result, giemaErr := s.runGiemaSession(ctx, ownerUserID, sessionID, key, "redeem", false, false)
+			if giemaErr != nil {
+				if isGiemaCardUnusableError(giemaErr) {
+					if settleErr := s.settleGiemaSession(ctx, sessionID, ownerUserID, false, pixlabSettlementExhaust, nil); settleErr != nil {
+						return nil, settleErr
+					}
+					continue
+				}
+				return nil, giemaErr
+			}
+			if result != nil && result.SessionID == "" && !pixlabHasVerificationCode(result.Code) && pixlabTerminalStatus(result.Status, "") != "" {
+				continue
+			}
+			return result, nil
 		}
 		provider, err := s.callProvider(ctx, "redeem", key)
 		if err != nil {
-			if isPixlabCardUsageLimitError(err) {
+			if isPixlabCardUnusableError(err) {
 				if markErr := s.exhaustSession(ctx, sessionID, ownerUserID); markErr != nil {
 					return nil, markErr
 				}
 				continue
 			}
-			_ = s.releaseSession(ctx, sessionID, ownerUserID)
+			if isPixlabProviderSessionExpiredError(err) {
+				if releaseErr := s.releaseSession(ctx, sessionID, ownerUserID); releaseErr != nil {
+					return nil, releaseErr
+				}
+			}
 			return nil, err
 		}
 		if !pixlabHasVerificationCode(provider.Code) && pixlabTerminalStatus(provider.Status, "") == "" {
@@ -749,6 +782,7 @@ func (s *PixlabSMSService) Redeem(ctx context.Context, ownerUserID int64) (*Pixl
 		}
 		return s.finishProviderResponse(ctx, sessionID, ownerUserID, provider, false, false)
 	}
+	return nil, ErrPixlabSMSAttemptLimit
 }
 
 func (s *PixlabSMSService) activeSessionID(ctx context.Context, ownerUserID int64) (string, error) {
@@ -804,8 +838,8 @@ func isPixlabActiveOwnerConflict(err error) bool {
 		pqErr.Constraint == "uq_xiass_sms_card_keys_active_owner"
 }
 
-func isPixlabProviderHTTPError(err error) bool {
-	return infraerrors.Reason(err) == "SMS_PROVIDER_HTTP_ERROR"
+func isPixlabProviderSessionExpiredError(err error) bool {
+	return infraerrors.Reason(err) == "SMS_PROVIDER_SESSION_EXPIRED"
 }
 
 // RedeemForMember reserves ¥2.00 and claims one card in the same database
@@ -836,28 +870,46 @@ func (s *PixlabSMSService) RedeemForMember(ctx context.Context, userID int64) (*
 		// An explicitly terminal session without a code has already been
 		// released and refunded by ResumeForMember, so a new claim may proceed.
 	}
-	for {
+	for attempt := 0; attempt < pixlabSMSMaxAcquireAttempts; attempt++ {
 		sessionID, encryptedKey, err := s.claimMemberSession(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
-		key, err := s.encryptor.Decrypt(encryptedKey)
+		providerName, key, err := s.decodeSMSCardKey(encryptedKey)
 		if err != nil {
 			if settleErr := s.settleSession(ctx, sessionID, userID, true, pixlabSettlementRelease, nil); settleErr != nil {
 				return nil, settleErr
 			}
-			return nil, fmt.Errorf("decrypt claimed member sms card key: %w", err)
+			return nil, err
+		}
+		if providerName == SMSProviderGiema {
+			result, giemaErr := s.runGiemaSession(ctx, userID, sessionID, key, "redeem", true, false)
+			if giemaErr != nil {
+				if isGiemaCardUnusableError(giemaErr) {
+					if settleErr := s.settleGiemaSession(ctx, sessionID, userID, true, pixlabSettlementExhaust, nil); settleErr != nil {
+						return nil, settleErr
+					}
+					continue
+				}
+				return nil, giemaErr
+			}
+			if result != nil && result.SessionID == "" && !pixlabHasVerificationCode(result.Code) && pixlabTerminalStatus(result.Status, "") != "" {
+				continue
+			}
+			return s.memberResult(ctx, userID, sessionID, result)
 		}
 		provider, err := s.callProvider(ctx, "redeem", key)
 		if err != nil {
-			if isPixlabCardUsageLimitError(err) {
+			if isPixlabCardUnusableError(err) {
 				if settleErr := s.settleSession(ctx, sessionID, userID, true, pixlabSettlementExhaust, nil); settleErr != nil {
 					return nil, settleErr
 				}
 				continue
 			}
-			if settleErr := s.settleSession(ctx, sessionID, userID, true, pixlabSettlementRelease, nil); settleErr != nil {
-				return nil, settleErr
+			if isPixlabProviderSessionExpiredError(err) {
+				if settleErr := s.settleSession(ctx, sessionID, userID, true, pixlabSettlementRelease, nil); settleErr != nil {
+					return nil, settleErr
+				}
 			}
 			return nil, err
 		}
@@ -872,6 +924,7 @@ func (s *PixlabSMSService) RedeemForMember(ctx context.Context, userID int64) (*
 		}
 		return s.memberResult(ctx, userID, sessionID, result)
 	}
+	return nil, ErrPixlabSMSAttemptLimit
 }
 
 func (s *PixlabSMSService) ResumeForMember(ctx context.Context, userID int64, sessionID string) (*PixlabSMSMemberResult, error) {
@@ -911,6 +964,16 @@ func (s *PixlabSMSService) ChangeNumberForMember(ctx context.Context, userID int
 			return s.RedeemForMember(ctx, userID)
 		}
 		return s.memberResult(ctx, userID, sessionID, current)
+	}
+	if current.provider == SMSProviderGiema {
+		result, err := s.withActiveSession(ctx, userID, sessionID, "change", true)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil && result.Status == "EXHAUSTED" {
+			return s.RedeemForMember(ctx, userID)
+		}
+		return s.memberResult(ctx, userID, sessionID, result)
 	}
 	if released, err := s.cancel(ctx, userID, sessionID, true); err != nil {
 		return nil, err
@@ -978,6 +1041,9 @@ func (s *PixlabSMSService) cancel(ctx context.Context, ownerUserID int64, sessio
 	if err != nil {
 		return nil, err
 	}
+	if result.provider == SMSProviderGiema {
+		return result, nil
+	}
 	// A received code always wins over cancellation. The provider may deliver
 	// it just as the member clicks the button; preserve it for the caller and
 	// do not overwrite it with a cancelled result.
@@ -1034,10 +1100,23 @@ func (s *PixlabSMSService) requireMemberMutationDelay(ctx context.Context, userI
 	return nil
 }
 
-// ChangeNumber cancels and releases the active number, then redeems again.
-// The released card remains in the rotation and the least-recently-used card
-// is selected next unless the current card has reached its five-claim limit.
+// ChangeNumber uses Giema's direct rotation or Pixlab's cancel-and-redeem flow.
+// Provider-confirmed unusable cards are skipped during acquisition.
 func (s *PixlabSMSService) ChangeNumber(ctx context.Context, ownerUserID int64, sessionID string) (*PixlabSMSResult, error) {
+	provider, err := s.activeSessionProvider(ctx, ownerUserID, sessionID, pixlabWorkflowScope(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if provider == SMSProviderGiema {
+		result, err := s.withActiveSession(ctx, ownerUserID, sessionID, "change", false)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil && result.Status == "EXHAUSTED" {
+			return s.Redeem(ctx, ownerUserID)
+		}
+		return result, nil
+	}
 	cancelled, err := s.Cancel(ctx, ownerUserID, sessionID)
 	if err != nil {
 		return nil, err
@@ -1091,20 +1170,38 @@ func (s *PixlabSMSService) withActiveSessionLocked(ctx context.Context, ownerUse
 	if err != nil {
 		return nil, fmt.Errorf("load sms session: %w", err)
 	}
-	key, err := s.encryptor.Decrypt(encryptedKey)
+	providerName, key, err := s.decodeSMSCardKey(encryptedKey)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt sms session: %w", err)
+		return nil, err
+	}
+	if providerName == SMSProviderGiema {
+		result, giemaErr := s.runGiemaSession(ctx, ownerUserID, sessionID, key, action, settleMemberFee, persistTerminal)
+		if isGiemaCardUnusableError(giemaErr) {
+			if settleErr := s.settleGiemaSession(ctx, sessionID, ownerUserID, settleMemberFee, pixlabSettlementExhaust, nil); settleErr != nil {
+				return nil, settleErr
+			}
+			queue, queueErr := s.queueStatus(ctx, ownerUserID)
+			if queueErr != nil {
+				return nil, queueErr
+			}
+			return &PixlabSMSResult{Status: "EXHAUSTED", QueuedCount: queue.QueuedCount, ServerTime: time.Now().UTC(), provider: SMSProviderGiema}, nil
+		}
+		return result, giemaErr
 	}
 	if !time.Now().Before(consumedAt.Add(PixlabSMSSessionValidity)) {
 		return s.checkExpiredSessionLocked(ctx, sessionID, ownerUserID, key, settleMemberFee, persistTerminal)
 	}
 	provider, err := s.callProvider(ctx, action, key)
 	if err != nil {
+		if isPixlabProviderSessionExpiredError(err) {
+			return s.finishProviderResponse(ctx, sessionID, ownerUserID,
+				&pixlabSMSProviderResponse{Success: json.RawMessage("true"), Status: "EXPIRED"}, settleMemberFee, persistTerminal)
+		}
 		if provider != nil && (pixlabProviderHasTrustedCode(provider) ||
 			(pixlabSuccess(provider.Success) && pixlabTerminalStatus(provider.Status, "") != "")) {
 			return s.finishProviderResponse(ctx, sessionID, ownerUserID, provider, settleMemberFee, persistTerminal)
 		}
-		if isPixlabCardUsageLimitError(err) {
+		if isPixlabCardUnusableError(err) {
 			if settleMemberFee {
 				if err := s.settleSession(ctx, sessionID, ownerUserID, true, pixlabSettlementExhaust, nil); err != nil {
 					return nil, err
@@ -1132,7 +1229,7 @@ func (s *PixlabSMSService) withActiveSessionLocked(ctx context.Context, ownerUse
 func (s *PixlabSMSService) checkExpiredSessionLocked(ctx context.Context, sessionID string, ownerUserID int64, key string, settleMemberFee, persistTerminal bool) (*PixlabSMSResult, error) {
 	provider, err := s.callProvider(ctx, "check", key)
 	if err != nil {
-		if isPixlabCardUsageLimitError(err) {
+		if isPixlabCardUnusableError(err) {
 			if settleMemberFee {
 				if settleErr := s.settleSession(ctx, sessionID, ownerUserID, true, pixlabSettlementExhaust, nil); settleErr != nil {
 					return nil, settleErr
@@ -1333,8 +1430,7 @@ func (s *PixlabSMSService) finishProviderResponse(ctx context.Context, sessionID
 		}
 		responseSessionID = ""
 	} else if pixlabTerminalStatus(provider.Status, "") != "" {
-		// Expiry, cancellation, and provider-side failures return a card to
-		// rotation until it has used all five permitted claims.
+		// A terminal number session does not establish card exhaustion.
 		if settleMemberFee {
 			if err := s.settleSession(ctx, sessionID, ownerUserID, true, pixlabSettlementRelease, nil); err != nil {
 				return nil, err
@@ -1535,6 +1631,14 @@ const (
 // settleSession commits every state transition for one provider session in a
 // single transaction. Member charge state and card state can never diverge.
 func (s *PixlabSMSService) settleSession(ctx context.Context, sessionID string, ownerUserID int64, settleMemberFee bool, settlement pixlabSettlement, encryptedTerminalResult *string) error {
+	return s.settleSessionWithProviderPending(ctx, sessionID, ownerUserID, settleMemberFee, settlement, encryptedTerminalResult, false)
+}
+
+func (s *PixlabSMSService) settleGiemaSession(ctx context.Context, sessionID string, ownerUserID int64, settleMemberFee bool, settlement pixlabSettlement, encryptedTerminalResult *string) error {
+	return s.settleSessionWithProviderPending(ctx, sessionID, ownerUserID, settleMemberFee, settlement, encryptedTerminalResult, true)
+}
+
+func (s *PixlabSMSService) settleSessionWithProviderPending(ctx context.Context, sessionID string, ownerUserID int64, settleMemberFee bool, settlement pixlabSettlement, encryptedTerminalResult *string, clearProviderPending bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin sms session settlement: %w", err)
@@ -1617,20 +1721,37 @@ func (s *PixlabSMSService) settleSession(ctx context.Context, sessionID string, 
 			return fmt.Errorf("finish sms session: %w", err)
 		}
 	case pixlabSettlementExhaust:
-		if err := execExactlyOne(ctx, tx, `
+		query := `
 			UPDATE xiass_sms_card_keys
 			SET status = 'exhausted', owner_user_id = NULL, session_id = NULL,
 				consumed_at = NULL, updated_at = NOW()
-			WHERE id = $1 AND status = 'active'`, cardID); err != nil {
+			WHERE id = $1 AND status = 'active'`
+		if clearProviderPending {
+			query = `
+				UPDATE xiass_sms_card_keys
+				SET status = 'exhausted', provider_state = '', provider_pending = false, owner_user_id = NULL, session_id = NULL,
+					consumed_at = NULL, updated_at = NOW()
+				WHERE id = $1 AND status = 'active' AND provider = 'giema'`
+		}
+		if err := execExactlyOne(ctx, tx, query, cardID); err != nil {
 			return fmt.Errorf("exhaust sms session: %w", err)
 		}
 	case pixlabSettlementRelease:
-		if err := execExactlyOne(ctx, tx, `
+		query := `
 			UPDATE xiass_sms_card_keys
-			SET status = CASE WHEN claim_count >= $2 THEN 'exhausted' ELSE 'queued' END,
+			SET status = 'queued',
 				owner_user_id = NULL, session_id = NULL,
 				consumed_at = NULL, updated_at = NOW()
-			WHERE id = $1 AND status = 'active'`, cardID, PixlabSMSCardKeyMaxClaims); err != nil {
+			WHERE id = $1 AND status = 'active'`
+		if clearProviderPending {
+			query = `
+				UPDATE xiass_sms_card_keys
+				SET status = 'queued', provider_state = '', provider_pending = false,
+					owner_user_id = NULL, session_id = NULL,
+					consumed_at = NULL, updated_at = NOW()
+				WHERE id = $1 AND status = 'active' AND provider = 'giema'`
+		}
+		if err := execExactlyOne(ctx, tx, query, cardID); err != nil {
 			return fmt.Errorf("release sms session: %w", err)
 		}
 	default:
@@ -1678,16 +1799,15 @@ func (s *PixlabSMSService) finishSession(ctx context.Context, sessionID string, 
 	return nil
 }
 
-// releaseSession returns a card that has not received a verification code to
-// the rotation queue. The fifth claim permanently removes it from future
-// claims, matching the provider's five-use card limit.
+// releaseSession returns an unused card to rotation. Claim count is history,
+// not evidence that the provider can no longer use the card.
 func (s *PixlabSMSService) releaseSession(ctx context.Context, sessionID string, ownerUserID int64) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE xiass_sms_card_keys
-		SET status = CASE WHEN claim_count >= $3 THEN 'exhausted' ELSE 'queued' END,
+		SET status = 'queued',
 			owner_user_id = NULL, session_id = NULL,
 			consumed_at = NULL, updated_at = NOW()
-		WHERE session_id = $1 AND owner_user_id = $2 AND status = 'active'`, sessionID, ownerUserID, PixlabSMSCardKeyMaxClaims)
+		WHERE session_id = $1 AND owner_user_id = $2 AND status = 'active'`, sessionID, ownerUserID)
 	if err != nil {
 		return fmt.Errorf("release sms session: %w", err)
 	}
@@ -1761,10 +1881,10 @@ func (s *PixlabSMSService) expireSession(ctx context.Context, sessionID string, 
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE xiass_sms_card_keys
-		SET status = CASE WHEN claim_count >= $3 THEN 'exhausted' ELSE 'queued' END,
+		SET status = 'queued',
 			owner_user_id = NULL, session_id = NULL,
 			consumed_at = NULL, updated_at = NOW()
-		WHERE id = $1 AND owner_user_id = $2 AND status = 'active'`, cardID, ownerUserID, PixlabSMSCardKeyMaxClaims)
+		WHERE id = $1 AND owner_user_id = $2 AND status = 'active'`, cardID, ownerUserID)
 	if err != nil {
 		return false, fmt.Errorf("release expired sms session: %w", err)
 	}
@@ -1784,7 +1904,7 @@ func (s *PixlabSMSService) expireSession(ctx context.Context, sessionID string, 
 	return true, nil
 }
 
-// exhaustSession permanently removes a card from rotation after Pixlab
+// exhaustSession removes a card from rotation after Pixlab
 // explicitly confirms that it has reached its per-card use limit.
 func (s *PixlabSMSService) exhaustSession(ctx context.Context, sessionID string, ownerUserID int64) error {
 	result, err := s.db.ExecContext(ctx, `
@@ -1849,7 +1969,7 @@ func (s *PixlabSMSService) claimMemberSession(ctx context.Context, userID int64)
 		WITH next_key AS (
 			SELECT id
 			FROM xiass_sms_card_keys
-			WHERE status = 'queued' AND claim_count < $3
+			WHERE status = 'queued'
 			ORDER BY claim_count ASC, queue_rank ASC, last_claimed_at NULLS FIRST, id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
@@ -1861,7 +1981,7 @@ func (s *PixlabSMSService) claimMemberSession(ctx context.Context, userID int64)
 			claim_count = card.claim_count + 1, updated_at = NOW()
 		FROM next_key
 		WHERE card.id = next_key.id
-		RETURNING card.encrypted_key`, userID, sessionID, PixlabSMSCardKeyMaxClaims).Scan(&encryptedKey)
+		RETURNING card.encrypted_key`, userID, sessionID).Scan(&encryptedKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrPixlabSMSNoCardKey
 	}
@@ -1940,8 +2060,11 @@ func (s *PixlabSMSService) memberResultWithQueryer(ctx context.Context, queryer 
 		SessionID:         result.SessionID,
 		Status:            result.Status,
 		Number:            result.Number,
+		NumberPending:     result.NumberPending,
 		Country:           result.Country,
 		Code:              result.Code,
+		PollSeconds:       result.PollSeconds,
+		LocalStop:         result.LocalStop,
 		QueuedCount:       0,
 		FeeAmount:         feeAmount,
 		ChargeState:       chargeState,
@@ -2005,6 +2128,18 @@ func (s *PixlabSMSService) callProvider(ctx context.Context, action, cardKey str
 		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_UNAVAILABLE", "接码服务暂时无法连接，请稍后重试")
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Transport, provider authentication and rate limits do not establish card state.
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_AUTH_FAILED", "接码服务认证失败，请联系管理员")
+	case http.StatusTooManyRequests:
+		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_RATE_LIMITED", "接码服务请求过于频繁，请稍后重试")
+	case http.StatusRequestTimeout:
+		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_UNAVAILABLE", "接码服务请求超时，请稍后重试")
+	}
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_HTTP_ERROR", "接码服务请求失败，请稍后重试")
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_UNAVAILABLE", "读取接码服务响应失败，请稍后重试")
@@ -2025,21 +2160,22 @@ func (s *PixlabSMSService) callProvider(ctx context.Context, action, cardKey str
 		Code:      pixlabRawText(payload.Code),
 		CreatedAt: pixlabRawText(payload.CreatedAt),
 	}
+	if pixlabProviderHasTrustedCode(provider) {
+		return provider, nil
+	}
+	definitiveResponse := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError
+	if definitiveResponse && isPixlabCardUnusableResponse(provider, action) {
+		return nil, infraerrors.BadRequest("SMS_PROVIDER_CARD_UNUSABLE", "接码卡密已不可用，请更换卡密")
+	}
+	if definitiveResponse && (resp.StatusCode >= http.StatusMultipleChoices || !pixlabSuccess(provider.Success)) &&
+		isPixlabTerminalSessionMessage(pixlabProviderMessage(provider)) {
+		return provider, infraerrors.BadRequest("SMS_PROVIDER_SESSION_EXPIRED", "接码会话不存在或已结束")
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		// Pixlab returns the per-card sixth-use circuit-breaker as a non-2xx
-		// response. Preserve that signal so Redeem can retire the spent card and
-		// continue with the next card instead of surfacing a generic outage.
-		if message := pixlabProviderMessage(provider); isPixlabCardUsageLimitMessage(message) {
-			return nil, infraerrors.BadRequest("SMS_PROVIDER_REJECTED", message)
-		}
 		return provider, infraerrors.ServiceUnavailable("SMS_PROVIDER_HTTP_ERROR", "接码服务请求失败，请稍后重试")
 	}
 	if !pixlabSuccess(provider.Success) {
-		message := pixlabProviderMessage(provider)
-		if message == "" {
-			message = "接码服务未能完成该操作"
-		}
-		return provider, infraerrors.BadRequest("SMS_PROVIDER_REJECTED", message)
+		return provider, infraerrors.BadRequest("SMS_PROVIDER_REJECTED", "接码服务未能完成该操作，请稍后重试")
 	}
 	provider.Status = strings.ToUpper(strings.TrimSpace(provider.Status))
 	if provider.Status == "" {
@@ -2053,20 +2189,46 @@ func pixlabSuccess(raw json.RawMessage) bool {
 	return value == "true" || value == "1" || value == "ok" || value == "success"
 }
 
-func isPixlabCardUsageLimitError(err error) bool {
+func isPixlabCardUnusableError(err error) bool {
+	if infraerrors.Reason(err) == "SMS_PROVIDER_CARD_UNUSABLE" {
+		return true
+	}
 	if infraerrors.Reason(err) != "SMS_PROVIDER_REJECTED" {
 		return false
 	}
-	return isPixlabCardUsageLimitMessage(infraerrors.Message(err))
+	return isPixlabCardUnusableMessage(infraerrors.Message(err))
 }
 
 func isPixlabCardUsageLimitMessage(raw string) bool {
 	message := strings.ToLower(strings.TrimSpace(raw))
 	compact := strings.NewReplacer(" ", "", "\t", "", "\n", "").Replace(message)
-	return strings.Contains(message, "连续换号上限") ||
-		strings.Contains(message, "单卡连续换号") ||
-		strings.Contains(message, "触发熔断") ||
-		strings.Contains(compact, "6次")
+	return strings.Contains(compact, "连续换号上限") ||
+		strings.Contains(compact, "卡密使用次数上限") ||
+		strings.Contains(message, "card usage limit") ||
+		strings.Contains(message, "card limit reached")
+}
+
+var pixlabUnusableCardPattern = regexp.MustCompile(`(?i)\b(?:(?:card(?:[ _-]*key)?|cdk) (?:is |has been |already )?(?:invalid|expired|exhausted|used|disabled|revoked|not found|does not exist)|(?:invalid|expired|exhausted|used|disabled|revoked) (?:card(?:[ _-]*key)?|cdk))\b`)
+
+func isPixlabCardUnusableMessage(raw string) bool {
+	message := strings.Join(strings.Fields(strings.ToLower(raw)), " ")
+	if isPixlabCardUsageLimitMessage(message) || pixlabUnusableCardPattern.MatchString(message) {
+		return true
+	}
+	for _, marker := range []string{"卡密已耗尽", "卡密已用完", "卡密无效", "无效卡密", "卡密不存在", "卡密已过期", "卡密已失效", "卡密已使用", "卡密已被使用", "卡密已禁用"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPixlabCardUnusableResponse(provider *pixlabSMSProviderResponse, action string) bool {
+	switch strings.ToUpper(strings.TrimSpace(provider.Status)) {
+	case "EXHAUSTED", "CARD_EXHAUSTED", "INVALID_CARD", "CARD_INVALID", "CARD_NOT_FOUND", "CARD_EXPIRED", "CARD_DISABLED", "CARD_USED":
+		return true
+	}
+	return isPixlabCardUnusableMessage(provider.Message) || isPixlabCardUnusableMessage(provider.Error)
 }
 
 func isPixlabTerminalSessionMessage(raw string) bool {
@@ -2074,6 +2236,7 @@ func isPixlabTerminalSessionMessage(raw string) bool {
 	compact := strings.NewReplacer(" ", "", "\t", "", "\n", "").Replace(message)
 	return strings.Contains(message, "session is no longer available") ||
 		strings.Contains(message, "session expired") ||
+		strings.Contains(compact, "订单异常或未提取号码") ||
 		strings.Contains(compact, "会话不存在") ||
 		strings.Contains(compact, "会话已过期") ||
 		strings.Contains(compact, "号码已失效")

@@ -83,15 +83,17 @@ func (s *batchOAuthClientStub) ExchangeCode(ctx context.Context, code, verifier,
 }
 
 type batchOAuthFixture struct {
-	h            *OpenAIOAuthHandler
-	admin        *stubAdminService
-	client       *batchOAuthClientStub
-	mu           sync.Mutex
-	requests     []map[string]any
-	states       map[string]string
-	status       string
-	stage        string
-	sidecarCalls atomic.Int32
+	h             *OpenAIOAuthHandler
+	admin         *stubAdminService
+	client        *batchOAuthClientStub
+	mu            sync.Mutex
+	requests      []map[string]any
+	states        map[string]string
+	status        string
+	stage         string
+	reason        string
+	sidecarAction func(http.ResponseWriter, *http.Request, string, map[string]any) bool
+	sidecarCalls  atomic.Int32
 }
 
 func TestBatchOAuthExistingAccountIsSkippedBeforeAutomation(t *testing.T) {
@@ -174,6 +176,9 @@ func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/batch-oauth/tasks/")
 		id = strings.Split(id, "/")[0]
+		if f.sidecarAction != nil && f.sidecarAction(w, r, id, payload) {
+			return
+		}
 		status, stage := f.status, f.stage
 		if r.URL.Path == "/batch-oauth/tasks" {
 			f.requests = append(f.requests, payload)
@@ -188,7 +193,7 @@ func newBatchOAuthFixture(t *testing.T) *batchOAuthFixture {
 		if strings.HasSuffix(r.URL.Path, "/cancel") {
 			status, stage = "canceled", "canceled"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "owner_id": 42, "status": status, "stage": stage,
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "owner_id": 42, "status": status, "stage": stage, "reason": f.reason,
 			"callback_url": openai.DefaultRedirectURI + "?code=private-code&state=" + f.states[id]})
 	}))
 	t.Cleanup(server.Close)
@@ -612,6 +617,7 @@ type batchSMSStub struct {
 	owners  []int64
 	scopes  []string
 	result  *service.PixlabSMSResult
+	action  func(int64, string, string, string, bool) (*service.PixlabSMSResult, error)
 }
 
 func (s *batchSMSStub) WorkflowSession(_ context.Context, owner int64, scope string) (string, error) {
@@ -623,6 +629,9 @@ func (s *batchSMSStub) WorkflowAction(_ context.Context, owner int64, scope, id,
 	s.calls++
 	s.owners = append(s.owners, owner)
 	s.scopes = append(s.scopes, scope)
+	if s.action != nil {
+		return s.action(owner, scope, id, action, confirmed)
+	}
 	return s.result, nil
 }
 
