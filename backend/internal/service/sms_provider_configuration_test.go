@@ -17,7 +17,7 @@ import (
 func TestSMSProviderSettingsReportsPresenceWithoutSecret(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT EXISTS (
@@ -38,7 +38,7 @@ func TestSMSProviderSettingsReportsPresenceWithoutSecret(t *testing.T) {
 func TestSaveGiemaAPIKeyEncryptsAndUpsertsWithoutReturningPlaintext(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO security_secrets (key, value)
@@ -55,7 +55,7 @@ func TestSaveGiemaAPIKeyEncryptsAndUpsertsWithoutReturningPlaintext(t *testing.T
 func TestGiemaAPIKeyDecryptsStoredSecretAndSanitizesFailures(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM security_secrets WHERE key = $1`)).
 		WithArgs(giemaSMSAPIKeySecretName).
@@ -84,7 +84,7 @@ func TestGiemaAPIKeyDecryptsStoredSecretAndSanitizesFailures(t *testing.T) {
 func TestAddCardKeysForProviderGiemaEncryptsEnvelopeAndBindsProvider(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM security_secrets WHERE key = $1`)).
 		WithArgs(giemaSMSAPIKeySecretName).
@@ -108,7 +108,7 @@ func TestAddCardKeysForProviderGiemaEncryptsEnvelopeAndBindsProvider(t *testing.
 func TestAddCardKeysForProviderRejectsCrossProviderDuplicateAndRollsBack(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO xiass_sms_card_keys AS card").
@@ -131,7 +131,7 @@ func TestAddCardKeysForProviderRejectsCrossProviderDuplicateAndRollsBack(t *test
 func TestAddCardKeysForProviderRequeuesOnlySameProviderExhaustedCard(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO xiass_sms_card_keys AS card").
@@ -151,7 +151,7 @@ func TestAddCardKeysForProviderRequeuesOnlySameProviderExhaustedCard(t *testing.
 func TestAddCardKeysForProviderDoesNotRequeuePendingDuplicate(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO xiass_sms_card_keys AS card").
@@ -176,7 +176,7 @@ func TestAddCardKeysForProviderDoesNotRequeuePendingDuplicate(t *testing.T) {
 func TestAddCardKeysForProviderRequiresGiemaKeyBeforeImport(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM security_secrets WHERE key = $1`)).
 		WithArgs(giemaSMSAPIKeySecretName).
@@ -192,7 +192,7 @@ func TestAddCardKeysForProviderRequiresGiemaKeyBeforeImport(t *testing.T) {
 func TestAddCardKeysForProviderRejectsInvalidProviderWithoutDatabaseAccess(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	svc := newPixlabSMSService(db, pixlabSMSPrefixEncryptor{}, nil, "")
 	_, _, err = svc.AddCardKeysForProvider(context.Background(), "card", "unknown")
