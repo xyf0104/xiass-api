@@ -85,7 +85,7 @@ func expectGiemaRuntimeQueue(mock sqlmock.Sqlmock, ownerID int64, queued, active
 func TestGiemaRuntimeRedeemUsesRealStartAdapterAndEncryptedState(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	encryptor := &giemaRuntimeRecordingEncryptor{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +138,7 @@ func TestGiemaRuntimeRedeemUsesRealStartAdapterAndEncryptedState(t *testing.T) {
 func TestGiemaRuntimeChangeCallsRotateWithoutCancelOrRedeem(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	paths := make([]string, 0, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +179,7 @@ func TestGiemaRuntimeChangeCallsRotateWithoutCancelOrRedeem(t *testing.T) {
 func TestGiemaRuntimeCancelQuarantinesWithoutRelease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/v1/store/status", r.URL.Path)
@@ -219,7 +219,7 @@ func TestGiemaRuntimeCancelQuarantinesWithoutRelease(t *testing.T) {
 func TestGiemaRuntimeRejectsEnvelopeWhenDatabaseProviderIsPixlab(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`SELECT card\.encrypted_key, card\.consumed_at`).
 		WithArgs("giema-session", int64(42), false, "").
@@ -240,7 +240,7 @@ func TestGiemaRuntimeRejectsEnvelopeWhenDatabaseProviderIsPixlab(t *testing.T) {
 func TestGiemaRuntimeStateNeverPersistsVerificationCode(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	encryptor := &giemaRuntimeRecordingEncryptor{}
 	mock.ExpectExec("UPDATE xiass_sms_card_keys").
 		WithArgs("session", int64(42), sqlmock.AnyArg()).
@@ -352,7 +352,7 @@ func TestGiemaRuntimeAmbiguousMutationReconcilesBeforeRetry(t *testing.T) {
 func TestGiemaRuntimeRateLimitPersistsAndBlocksEarlyRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	encryptor := &giemaRuntimeRecordingEncryptor{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/v1/store/status", r.URL.Path)
@@ -389,7 +389,7 @@ func TestGiemaRuntimeRateLimitPersistsAndBlocksEarlyRetry(t *testing.T) {
 func TestGiemaRuntimeHonorsProviderSwitchCountdown(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	encryptor := &giemaRuntimeRecordingEncryptor{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/v1/store/status", r.URL.Path)
@@ -459,7 +459,7 @@ func TestGiemaRuntimeQuarantinedSessionCanOnlyQueryStatus(t *testing.T) {
 func TestGiemaWorkflowChangeSkipsProviderConfirmedUnusableCard(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/v1/store/rotate", r.URL.Path)
 		w.WriteHeader(http.StatusConflict)
