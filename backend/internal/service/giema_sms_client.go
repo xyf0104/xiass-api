@@ -348,7 +348,7 @@ func (c *GiemaSMSClient) request(ctx context.Context, path string, payload *giem
 	if err != nil {
 		return nil, &GiemaSMSError{Kind: GiemaSMSTransport, Ambiguous: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		failure := &GiemaSMSError{Kind: GiemaSMSHTTPError, StatusCode: resp.StatusCode, Ambiguous: resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500}
 		detail := giemaSMSErrorDetail(resp.Body)

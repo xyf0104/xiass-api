@@ -134,7 +134,7 @@ func (s *PixlabSMSService) withGiemaSessionLock(ctx context.Context, sessionID s
 	if err != nil {
 		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_UNAVAILABLE", "接码服务暂时无法连接，请稍后重试")
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext($1))`, sessionID); err != nil {
 		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		return nil, infraerrors.ServiceUnavailable("SMS_PROVIDER_UNAVAILABLE", "接码服务暂时无法锁定当前会话，请稍后重试")

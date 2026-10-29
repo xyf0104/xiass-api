@@ -1695,7 +1695,7 @@ func (h *OpenAIOAuthHandler) batchOAuthSMSAction(c *gin.Context, mode string) {
 			currentPhone := strings.TrimSpace(t.submittedPhone)
 			if t.rejectedPhones[phone] ||
 				(t.Reason == "phone_rejected" && action != "change" &&
-					!(t.replacementConfirmed && phone == currentPhone)) {
+					(!t.replacementConfirmed || phone != currentPhone)) {
 				t.RequiresSMSConfirmation = true
 				response.Error(c, 409, "Confirm a different phone number in XIASS first")
 				return

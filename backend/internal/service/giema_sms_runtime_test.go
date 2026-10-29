@@ -269,7 +269,7 @@ func TestGiemaRuntimeDeliversCodeAndSettlesSession(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			encryptor := &giemaRuntimeRecordingEncryptor{}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/v1/store/status", r.URL.Path)
@@ -314,7 +314,7 @@ func TestGiemaRuntimeAmbiguousMutationReconcilesBeforeRetry(t *testing.T) {
 		t.Run(failedAction, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			encryptor := &giemaRuntimeRecordingEncryptor{}
 			state := emptyGiemaSMSState()
 			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(giemaRuntimeStateFixture("provider-session", 2, 5), "enc:")), state))
@@ -426,7 +426,7 @@ func TestGiemaRuntimeQuarantinedSessionCanOnlyQueryStatus(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/v1/store/status", r.URL.Path, "quarantine must survive missing vendor session data")
 				_, _ = w.Write([]byte(`{"status":"wait","phone":"15550000000","attempt":2}`))
