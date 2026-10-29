@@ -69,7 +69,7 @@ func TestGiemaAPIKeyDecryptsStoredSecretAndSanitizesFailures(t *testing.T) {
 
 	db2, mock2, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	mock2.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM security_secrets WHERE key = $1`)).
 		WithArgs(giemaSMSAPIKeySecretName).
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("enc: "))
