@@ -144,7 +144,7 @@ services:
       - XIASS_EXECUTION_NODE_SOCKS_BIND_HOST=${XIASS_EXECUTION_NODE_SOCKS_BIND_HOST:-0.0.0.0}
       # Browser/automation share their own namespace; subscription SOCKS ports
       # are reachable on the API's private Docker interface, never published.
-      - TEAM_CHILD_BROWSER_PROXY_HOST=${TEAM_CHILD_BROWSER_PROXY_HOST-xiass-api}
+      - TEAM_CHILD_BROWSER_PROXY_HOST=${TEAM_CHILD_BROWSER_PROXY_HOST:-xiass-api}
 
       # =======================================================================
       # Database Configuration (PostgreSQL)
