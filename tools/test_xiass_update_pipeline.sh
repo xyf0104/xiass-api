@@ -526,6 +526,34 @@ printf 'PASS: invalid Team profile ownership rejected before mutation\n'
 )
 printf 'PASS: legacy stop preserves project identity\n'
 
+(
+    XIASS_UPDATE_LIB_ONLY=1 source "$SCRIPT"
+    capture_dir="$TEST_DIR/image-override"
+    mkdir -p "$capture_dir"
+    cat > "$capture_dir/record-compose" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${XIASS_API_IMAGE-}" > "$XIASS_IMAGE_CAPTURE"
+printf '%s\n' "$*" > "$XIASS_ARGS_CAPTURE"
+EOF
+    chmod +x "$capture_dir/record-compose"
+    export XIASS_IMAGE_CAPTURE="$capture_dir/image"
+    export XIASS_ARGS_CAPTURE="$capture_dir/args"
+    unset XIASS_API_IMAGE
+    COMPOSE=("$capture_dir/record-compose")
+    COMPOSE_ARGS=(--project-directory "$capture_dir")
+    TARGET_APP_IMAGE_OVERRIDE=ghcr.io/xyf0104/xiass-api:9.8.7
+    compose pull xiass-api
+    [ "$(cat "$XIASS_IMAGE_CAPTURE")" = ghcr.io/xyf0104/xiass-api:9.8.7 ] \
+        || fail 'target image override was not passed to Compose'
+    [ "$(cat "$XIASS_ARGS_CAPTURE")" = "--project-directory $capture_dir pull xiass-api" ] \
+        || fail 'Compose arguments changed while applying target image override'
+    TARGET_APP_IMAGE_OVERRIDE=""
+    compose pull xiass-api
+    [ "$(cat "$XIASS_IMAGE_CAPTURE")" = "" ] \
+        || fail 'target image override leaked into the rollback/normal Compose path'
+)
+printf 'PASS: custom local image override uses immutable release image\n'
+
 bash "$ROOT_DIR/tools/test_xiass_update_paired_nodes.sh"
 
 printf 'xiass update pipeline tests passed.\n'

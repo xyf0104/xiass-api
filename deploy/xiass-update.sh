@@ -38,6 +38,7 @@ UPDATE_TAG=""
 TARGET_VERSION=""
 TARGET_APP_IMAGE=""
 TARGET_APP_IMAGE_ID=""
+TARGET_APP_IMAGE_OVERRIDE=""
 RUNNING_APP_VERSION=""
 VERSION_PROBE_CONTAINER=""
 UPDATE_STARTED=false
@@ -607,18 +608,34 @@ start_runtime_stack() {
     local skip_core_start="${2:-false}"
     RUNTIME_START_SCRIPT="$DEPLOY_DIR/xiass-runtime-start.sh"
     if [ -x "$RUNTIME_START_SCRIPT" ]; then
-        INSTALL_DIR="$INSTALL_DIR" \
-        DEPLOY_DIR="$DEPLOY_DIR" \
-        COMPOSE_FILE="$COMPOSE_FILE" \
-        COMPOSE_BUILD_FILE="${COMPOSE_FILES[1]:-}" \
-        XIASS_RUNTIME_COMPOSE_FILES="$(printf '%s\n' "${COMPOSE_FILES[@]}")" \
-        XIASS_RUNTIME_PROJECT_NAME="$ACTUAL_COMPOSE_PROJECT_NAME" \
-        XIASS_RUNTIME_TEAM_PROJECT_NAME="$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" \
-        PERSISTENCE_MODE="$PERSISTENCE_MODE" \
-        BUILD_MODE="$(read_env_compat XIASS_BUILD_MODE NOWIND_BUILD_MODE)" \
-        XIASS_RUNTIME_CORE_READY="$core_ready" \
-        XIASS_RUNTIME_SKIP_CORE_START="$skip_core_start" \
-        bash "$RUNTIME_START_SCRIPT"
+        if [ -n "$TARGET_APP_IMAGE_OVERRIDE" ]; then
+            XIASS_API_IMAGE="$TARGET_APP_IMAGE_OVERRIDE" \
+            INSTALL_DIR="$INSTALL_DIR" \
+            DEPLOY_DIR="$DEPLOY_DIR" \
+            COMPOSE_FILE="$COMPOSE_FILE" \
+            COMPOSE_BUILD_FILE="${COMPOSE_FILES[1]:-}" \
+            XIASS_RUNTIME_COMPOSE_FILES="$(printf '%s\n' "${COMPOSE_FILES[@]}")" \
+            XIASS_RUNTIME_PROJECT_NAME="$ACTUAL_COMPOSE_PROJECT_NAME" \
+            XIASS_RUNTIME_TEAM_PROJECT_NAME="$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" \
+            PERSISTENCE_MODE="$PERSISTENCE_MODE" \
+            BUILD_MODE="$(read_env_compat XIASS_BUILD_MODE NOWIND_BUILD_MODE)" \
+            XIASS_RUNTIME_CORE_READY="$core_ready" \
+            XIASS_RUNTIME_SKIP_CORE_START="$skip_core_start" \
+            bash "$RUNTIME_START_SCRIPT"
+        else
+            INSTALL_DIR="$INSTALL_DIR" \
+            DEPLOY_DIR="$DEPLOY_DIR" \
+            COMPOSE_FILE="$COMPOSE_FILE" \
+            COMPOSE_BUILD_FILE="${COMPOSE_FILES[1]:-}" \
+            XIASS_RUNTIME_COMPOSE_FILES="$(printf '%s\n' "${COMPOSE_FILES[@]}")" \
+            XIASS_RUNTIME_PROJECT_NAME="$ACTUAL_COMPOSE_PROJECT_NAME" \
+            XIASS_RUNTIME_TEAM_PROJECT_NAME="$ACTUAL_TEAM_COMPOSE_PROJECT_NAME" \
+            PERSISTENCE_MODE="$PERSISTENCE_MODE" \
+            BUILD_MODE="$(read_env_compat XIASS_BUILD_MODE NOWIND_BUILD_MODE)" \
+            XIASS_RUNTIME_CORE_READY="$core_ready" \
+            XIASS_RUNTIME_SKIP_CORE_START="$skip_core_start" \
+            bash "$RUNTIME_START_SCRIPT"
+        fi
         return $?
     fi
 
@@ -737,6 +754,13 @@ prefetch_target_app_image() {
         compose build xiass-api \
             || die "主应用构建失败；旧容器保持运行，未开始切换。"
     else
+        # Existing local/custom installs may keep XIASS_API_IMAGE pointed at a
+        # private local tag (for example xiass-api:batch-proxy-fix). That tag
+        # is valid for the running container but cannot be pulled from a public
+        # registry. Use the immutable release tag only for this update pass;
+        # rollback restores the original .env and future runs repeat the same
+        # safe resolution.
+        TARGET_APP_IMAGE_OVERRIDE="ghcr.io/xyf0104/xiass-api:${TARGET_VERSION}"
         log "旧服务保持在线，预拉取 XIASS 主应用镜像..."
         compose pull xiass-api \
             || die "无法预拉取 XIASS 主应用镜像；旧容器保持运行，未开始切换。"
@@ -771,7 +795,12 @@ hot_swap_canonical_app() {
 }
 
 compose() {
-    "${COMPOSE[@]}" "${COMPOSE_ARGS[@]}" "$@"
+    if [ -n "$TARGET_APP_IMAGE_OVERRIDE" ]; then
+        XIASS_API_IMAGE="$TARGET_APP_IMAGE_OVERRIDE" \
+            "${COMPOSE[@]}" "${COMPOSE_ARGS[@]}" "$@"
+    else
+        "${COMPOSE[@]}" "${COMPOSE_ARGS[@]}" "$@"
+    fi
 }
 
 capture_previous_image() {
@@ -822,6 +851,9 @@ rollback_update() {
     local image_tag_restored=false
     local rollback_started=false
     set +e
+    # Do not let the target release image override affect restoration of the
+    # user's original Compose/.env configuration.
+    TARGET_APP_IMAGE_OVERRIDE=""
     log "更新失败，正在恢复原 Git 状态和应用配置..."
     if "$APP_REPLACEMENT_STARTED"; then
         log "注意：应用镜像回滚不会撤销已执行的数据库迁移，也不会恢复数据库备份；跨版本数据库兼容性需另行确认。"
