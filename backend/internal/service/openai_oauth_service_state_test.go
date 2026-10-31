@@ -138,6 +138,34 @@ func TestOpenAIOAuthService_ExchangeCode_StateMatch(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestOpenAIOAuthService_ExchangeWorkflowCodeRetainsSessionUntilRevoked(t *testing.T) {
+	client := &openaiOAuthClientStateStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	defer svc.Stop()
+
+	svc.sessionStore.Set("workflow-sid", &openai.OAuthSession{
+		State:        "workflow-state",
+		CodeVerifier: "verifier",
+		RedirectURI:  openai.DefaultRedirectURI,
+		ProxyURL:     "socks5://proxy.example:1080",
+		CreatedAt:    time.Now(),
+	})
+
+	_, err := svc.ExchangeWorkflowCode(context.Background(), &OpenAIExchangeCodeInput{
+		SessionID: "workflow-sid",
+		Code:      "auth-code",
+		State:     "workflow-state",
+	})
+	require.NoError(t, err)
+
+	_, ok := svc.sessionStore.Get("workflow-sid")
+	require.True(t, ok, "workflow callers must enrich through the selected proxy before revoking the session")
+
+	svc.RevokeWorkflowSession("workflow-sid")
+	_, ok = svc.sessionStore.Get("workflow-sid")
+	require.False(t, ok)
+}
+
 func TestOpenAIOAuthService_ExchangeCodeForPublicToolSkipsEnrichment(t *testing.T) {
 	client := &openaiOAuthClientStateStub{}
 	var privacyFactoryCalled int32

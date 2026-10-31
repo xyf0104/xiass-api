@@ -1150,8 +1150,8 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 60*time.Second)
 	defer cancel()
 	token, err := h.openaiOAuthService.ExchangeWorkflowCode(ctx, &service.OpenAIExchangeCodeInput{SessionID: t.sessionID, Code: code, State: t.state})
+	defer h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
 	// Ambiguous token exchange cannot be retried as a second account creation.
-	h.openaiOAuthService.RevokeWorkflowSession(t.sessionID)
 	t.Status, t.Stage, t.Reason = "failed", "failed", "oauth_exchange_failed"
 	if err != nil {
 		response.Success(c, t)
@@ -1171,6 +1171,9 @@ func (h *OpenAIOAuthHandler) CompleteBatchOAuthTask(c *gin.Context) {
 		response.Success(c, t)
 		return
 	}
+	// Identity has been verified above. Enrich only now so the account stores
+	// plan_type and subscription_expires_at through the selected proxy.
+	h.openaiOAuthService.EnrichWorkflowToken(ctx, t.sessionID, token)
 	schedulable := true
 	credentials := h.openaiOAuthService.BuildAccountCredentials(token)
 	credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey] = t.Email

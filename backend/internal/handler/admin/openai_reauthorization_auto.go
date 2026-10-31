@@ -581,7 +581,7 @@ func (h *OpenAIOAuthHandler) completeOpenAIReauthorizationAutomatic(ctx context.
 	exchangeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 	defer cancel()
 	token, err := h.openaiOAuthService.ExchangeWorkflowCode(exchangeCtx, &service.OpenAIExchangeCodeInput{SessionID: task.sessionID, Code: code, State: task.state})
-	h.openaiOAuthService.RevokeWorkflowSession(task.sessionID)
+	defer h.openaiOAuthService.RevokeWorkflowSession(task.sessionID)
 	if err != nil || token == nil || strings.TrimSpace(token.AccessToken) == "" || !strings.EqualFold(strings.TrimSpace(token.Email), task.Email) {
 		task.Status, task.Stage, task.Reason = "failed", "failed", "oauth_identity_mismatch"
 		if err != nil || token == nil || strings.TrimSpace(token.AccessToken) == "" {
@@ -593,6 +593,7 @@ func (h *OpenAIOAuthHandler) completeOpenAIReauthorizationAutomatic(ctx context.
 		task.Status, task.Stage, task.Reason = "failed", "failed", "oauth_identity_mismatch"
 		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, item.expected, item.claim, service.OpenAIReauthorizationStateFromAccount(item.expected), task.Reason, task)
 	}
+	h.openaiOAuthService.EnrichWorkflowToken(exchangeCtx, task.sessionID, token)
 	credentials := service.MergeCredentials(item.expected.Credentials, h.openaiOAuthService.BuildAccountCredentials(token))
 	credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey] = task.Email
 	// The repository CAS protects against stale credentials, while this version

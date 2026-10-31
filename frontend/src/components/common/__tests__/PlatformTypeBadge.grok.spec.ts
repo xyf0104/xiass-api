@@ -53,6 +53,20 @@ describe('PlatformTypeBadge Grok plans', () => {
     expect(wrapper.find('[data-testid="grok-plan-icon"]').exists()).toBe(false)
   })
 
+  it('shows the subscription expiration date and time for paid plans', () => {
+    const expiresAt = '2027-01-01T13:16:00'
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'oauth',
+        planType: 'pro',
+        subscriptionExpiresAt: expiresAt,
+      },
+    })
+
+    expect(wrapper.text()).toContain('admin.accounts.subscriptionExpires 2027-01-01 13:16')
+  })
+
   it('uses a dedicated 12px currentColor Grok mark with a Free sparkle', () => {
     const wrapper = mount(GrokFreeIcon)
 

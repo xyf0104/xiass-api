@@ -424,7 +424,7 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		Code:      code,
 		State:     task.state,
 	})
-	h.openaiOAuthService.RevokeWorkflowSession(task.sessionID)
+	defer h.openaiOAuthService.RevokeWorkflowSession(task.sessionID)
 	task.Status, task.Stage, task.Reason = "failed", "failed", "oauth_exchange_failed"
 	if err != nil || token == nil || token.AccessToken == "" {
 		response.Success(c, task)
@@ -435,6 +435,7 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		response.Success(c, task)
 		return
 	}
+	h.openaiOAuthService.EnrichWorkflowToken(ctx, task.sessionID, token)
 	credentials := service.MergeCredentials(account.Credentials, h.openaiOAuthService.BuildAccountCredentials(token))
 	credentials[service.OpenAIOAuthReauthorizationEmailCredentialKey] = task.Email
 	updated, err := h.adminService.UpdateAccount(ctx, account.ID, &service.UpdateAccountInput{

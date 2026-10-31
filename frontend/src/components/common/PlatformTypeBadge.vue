@@ -283,7 +283,9 @@ const expiresLabel = computed(() => {
     const yyyy = d.getFullYear()
     const mm = String(d.getMonth() + 1).padStart(2, '0')
     const dd = String(d.getDate()).padStart(2, '0')
-    return `${t('admin.accounts.subscriptionExpires')} ${yyyy}-${mm}-${dd}`
+    const hh = String(d.getHours()).padStart(2, '0')
+    const min = String(d.getMinutes()).padStart(2, '0')
+    return `${t('admin.accounts.subscriptionExpires')} ${yyyy}-${mm}-${dd} ${hh}:${min}`
   } catch {
     return ''
   }

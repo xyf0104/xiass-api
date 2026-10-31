@@ -165,27 +165,43 @@ type OpenAITokenInfo struct {
 
 // ExchangeCode exchanges authorization code for tokens
 func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
-	return s.exchangeCode(ctx, input, true, false)
+	return s.exchangeCode(ctx, input, true, false, false)
 }
 
 // ExchangeWorkflowCode leaves identity verification to the owned workflow
 // before any account enrichment, privacy mutation or durable account creation.
+// The workflow session remains available until the caller explicitly revokes it
+// so the verified workflow can reuse its selected proxy for enrichment.
 func (s *OpenAIOAuthService) ExchangeWorkflowCode(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
-	return s.exchangeCode(ctx, input, false, false)
+	return s.exchangeCode(ctx, input, false, false, true)
 }
 
 func (s *OpenAIOAuthService) RevokeWorkflowSession(sessionID string) {
 	s.sessionStore.Delete(sessionID)
 }
 
+// EnrichWorkflowToken performs the best-effort account metadata lookup only
+// after the owning workflow has verified the token identity. It reuses the
+// proxy captured when the OAuth session was created.
+func (s *OpenAIOAuthService) EnrichWorkflowToken(ctx context.Context, sessionID string, tokenInfo *OpenAITokenInfo) {
+	if tokenInfo == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	session, ok := s.sessionStore.Get(sessionID)
+	if !ok || session == nil {
+		return
+	}
+	s.enrichTokenInfo(ctx, tokenInfo, session.ProxyURL)
+}
+
 // ExchangeCodeForPublicTool exchanges an authorization code without account
 // enrichment or privacy-setting side effects. It is used by the public token
 // conversion tool, where tokens must only be returned to the current browser.
 func (s *OpenAIOAuthService) ExchangeCodeForPublicTool(ctx context.Context, input *OpenAIExchangeCodeInput) (*OpenAITokenInfo, error) {
-	return s.exchangeCode(ctx, input, false, true)
+	return s.exchangeCode(ctx, input, false, true, false)
 }
 
-func (s *OpenAIOAuthService) exchangeCode(ctx context.Context, input *OpenAIExchangeCodeInput, enrich, consumeSession bool) (*OpenAITokenInfo, error) {
+func (s *OpenAIOAuthService) exchangeCode(ctx context.Context, input *OpenAIExchangeCodeInput, enrich, consumeSession, retainWorkflowSession bool) (*OpenAITokenInfo, error) {
 	if input.State == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_STATE_REQUIRED", "oauth state is required")
 	}
@@ -263,7 +279,7 @@ func (s *OpenAIOAuthService) exchangeCode(ctx context.Context, input *OpenAIExch
 	}
 
 	// Delete session after successful exchange
-	if !consumeSession {
+	if !consumeSession && !retainWorkflowSession {
 		s.sessionStore.Delete(input.SessionID)
 	}
 
