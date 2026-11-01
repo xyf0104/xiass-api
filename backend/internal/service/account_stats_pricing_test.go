@@ -518,6 +518,28 @@ func TestTryModelFilePricing_AppliesLongContextPricing(t *testing.T) {
 	require.InDelta(t, 0.233, *result, 1e-12)
 }
 
+func TestTryModelFilePricing_LongContextGateDisablesOnlyLongContextTier(t *testing.T) {
+	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"gpt-5.6-sol": {
+			InputPricePerToken:          0.001,
+			OutputPricePerToken:         0.002,
+			CacheReadPricePerToken:      0.0001,
+			LongContextInputThreshold:   100,
+			LongContextInputMultiplier:  2,
+			LongContextOutputMultiplier: 1.5,
+		},
+	})
+	tokens := UsageTokens{InputTokens: 101, OutputTokens: 10, CacheReadTokens: 5}
+
+	enabled := tryModelFilePricingWithLongContextGate(bs, "gpt-5.6-sol", tokens, "", true)
+	disabled := tryModelFilePricingWithLongContextGate(bs, "gpt-5.6-sol", tokens, "", false)
+
+	require.NotNil(t, enabled)
+	require.NotNil(t, disabled)
+	require.InDelta(t, 0.233, *enabled, 1e-12)
+	require.InDelta(t, 0.1215, *disabled, 1e-12)
+}
+
 func TestTryModelFilePricing_AppliesServiceTierPricing(t *testing.T) {
 	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
 		"gpt-5.6-sol": {
@@ -1059,6 +1081,45 @@ func TestApplyAccountStatsCost_UsesUsageLogServiceTier(t *testing.T) {
 
 	require.NotNil(t, usageLog.AccountStatsCost)
 	require.InDelta(t, 0.4, *usageLog.AccountStatsCost, 1e-12)
+}
+
+func TestApplyAccountStatsCostWithLongContextGate(t *testing.T) {
+	channel := &Channel{
+		ID:                         1,
+		Status:                     StatusActive,
+		ApplyPricingToAccountStats: false,
+	}
+	cs := newTestChannelServiceForStats(t, channel, 10, PlatformOpenAI)
+	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"gpt-5.6-sol": {
+			InputPricePerToken:          0.001,
+			OutputPricePerToken:         0.002,
+			CacheReadPricePerToken:      0.0001,
+			LongContextInputThreshold:   100,
+			LongContextInputMultiplier:  2,
+			LongContextOutputMultiplier: 1.5,
+		},
+	})
+	tokens := UsageTokens{InputTokens: 101, OutputTokens: 10, CacheReadTokens: 5}
+
+	for _, tt := range []struct {
+		name string
+		gate bool
+		want float64
+	}{
+		{name: "upstream long context enabled", gate: true, want: 0.233},
+		{name: "upstream long context disabled", gate: false, want: 0.1215},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usageLog := &UsageLog{}
+			applyAccountStatsCostWithLongContextGate(
+				context.Background(), usageLog, cs, bs,
+				1, 10, "gpt-5.6-sol", "gpt-5.6-sol", tokens, 999, tt.gate,
+			)
+			require.NotNil(t, usageLog.AccountStatsCost)
+			require.InDelta(t, tt.want, *usageLog.AccountStatsCost, 1e-12)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

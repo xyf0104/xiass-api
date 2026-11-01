@@ -33,6 +33,31 @@ func resolveAccountStatsCostForModels(
 	serviceTier string,
 	reasoningEfforts ...string,
 ) *float64 {
+	return resolveAccountStatsCostForModelsWithLongContextGate(
+		ctx, channelService, billingService, accountID, groupID, upstreamModel, requestedModel,
+		tokens, requestCount, totalCost, serviceTier, true, reasoningEfforts...,
+	)
+}
+
+// resolveAccountStatsCostForModelsWithLongContextGate is the account-cost
+// variant that carries the upstream account's long-context billing decision.
+// The public/customer group toggle must not be reused here: account statistics
+// represent the cost charged by the upstream account.
+func resolveAccountStatsCostForModelsWithLongContextGate(
+	ctx context.Context,
+	channelService *ChannelService,
+	billingService *BillingService,
+	accountID int64,
+	groupID int64,
+	upstreamModel string,
+	requestedModel string,
+	tokens UsageTokens,
+	requestCount int,
+	totalCost float64,
+	serviceTier string,
+	longContextPricingEnabled bool,
+	reasoningEfforts ...string,
+) *float64 {
 	reasoningEffort := ""
 	if len(reasoningEfforts) > 0 {
 		reasoningEffort = reasoningEfforts[0]
@@ -75,7 +100,9 @@ func resolveAccountStatsCostForModels(
 
 	// 优先级 3：模型定价文件（LiteLLM）默认价格
 	if billingService != nil {
-		return tryModelFilePricing(billingService, upstreamModel, tokens, serviceTier, reasoningEffort)
+		return tryModelFilePricingWithLongContextGate(
+			billingService, upstreamModel, tokens, serviceTier, longContextPricingEnabled, reasoningEffort,
+		)
 	}
 
 	return nil
@@ -83,6 +110,20 @@ func resolveAccountStatsCostForModels(
 
 // tryModelFilePricing 使用模型定价文件（LiteLLM/fallback）中的价格计算费用。
 func tryModelFilePricing(billingService *BillingService, model string, tokens UsageTokens, serviceTier string, reasoningEfforts ...string) *float64 {
+	return tryModelFilePricingWithLongContextGate(billingService, model, tokens, serviceTier, true, reasoningEfforts...)
+}
+
+// tryModelFilePricingWithLongContextGate keeps account statistics on the same
+// pricing pipeline as customer billing while allowing the upstream account
+// long-context switch to be applied independently.
+func tryModelFilePricingWithLongContextGate(
+	billingService *BillingService,
+	model string,
+	tokens UsageTokens,
+	serviceTier string,
+	longContextPricingEnabled bool,
+	reasoningEfforts ...string,
+) *float64 {
 	reasoningEffort := ""
 	if len(reasoningEfforts) > 0 {
 		reasoningEffort = reasoningEfforts[0]
@@ -92,25 +133,39 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 		return nil
 	}
 	normalizedTier := normalizeBillingServiceTier(serviceTier)
-	if normalizedTier == "priority" || normalizedTier == "fast" || normalizedTier == "flex" ||
-		billingService.shouldApplySessionLongContextPricing(tokens, pricing) {
-		breakdown, err := billingService.CalculateCostWithServiceTier(model, tokens, 1, normalizedTier)
-		if err != nil || breakdown == nil || breakdown.TotalCost <= 0 {
+	longContextPricingEligible := longContextPricingEnabled && billingService.shouldApplySessionLongContextPricing(tokens, pricing)
+	if normalizedTier == "" && !longContextPricingEligible {
+		cost := float64(tokens.InputTokens)*pricing.InputPricePerToken +
+			float64(tokens.OutputTokens)*pricing.OutputPricePerToken +
+			float64(tokens.CacheCreationTokens)*pricing.CacheCreationPricePerToken +
+			float64(tokens.CacheReadTokens)*pricing.CacheReadPricePerToken +
+			float64(tokens.ImageOutputTokens)*pricing.ImageOutputPricePerToken
+		if cost <= 0 {
 			return nil
 		}
-		applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(model, reasoningEffort, pricing))
-		return &breakdown.TotalCost
+		cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, pricing)
+		return &cost
 	}
-	cost := float64(tokens.InputTokens)*pricing.InputPricePerToken +
-		float64(tokens.OutputTokens)*pricing.OutputPricePerToken +
-		float64(tokens.CacheCreationTokens)*pricing.CacheCreationPricePerToken +
-		float64(tokens.CacheReadTokens)*pricing.CacheReadPricePerToken +
-		float64(tokens.ImageOutputTokens)*pricing.ImageOutputPricePerToken
-	if cost <= 0 {
+	resolver := NewModelPricingResolver(nil, billingService)
+	resolved := resolver.Resolve(context.Background(), PricingInput{Model: model})
+	if resolved == nil {
 		return nil
 	}
-	cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, pricing)
-	return &cost
+	resolved.longContextPricingEnabled = longContextPricingEnabled
+	breakdown, err := billingService.CalculateCostUnified(CostInput{
+		Ctx:             context.Background(),
+		Model:           model,
+		Tokens:          tokens,
+		RateMultiplier:  1,
+		ServiceTier:     normalizeBillingServiceTier(serviceTier),
+		ReasoningEffort: reasoningEffort,
+		Resolver:        resolver,
+		Resolved:        resolved,
+	})
+	if err != nil || breakdown == nil || breakdown.TotalCost <= 0 {
+		return nil
+	}
+	return &breakdown.TotalCost
 }
 
 // tryCustomRulesForModels 遍历自定义规则，按数组顺序先命中为准。
@@ -280,6 +335,23 @@ func applyAccountStatsCost(
 	tokens UsageTokens,
 	totalCost float64,
 ) {
+	applyAccountStatsCostWithLongContextGate(
+		ctx, usageLog, cs, bs, accountID, groupID, upstreamModel, requestedModel, tokens, totalCost, true,
+	)
+}
+
+func applyAccountStatsCostWithLongContextGate(
+	ctx context.Context,
+	usageLog *UsageLog,
+	cs *ChannelService,
+	bs *BillingService,
+	accountID int64,
+	groupID int64,
+	upstreamModel, requestedModel string,
+	tokens UsageTokens,
+	totalCost float64,
+	longContextPricingEnabled bool,
+) {
 	model := upstreamModel
 	if model == "" {
 		model = requestedModel
@@ -296,7 +368,15 @@ func applyAccountStatsCost(
 	if usageLog != nil && usageLog.ReasoningEffort != nil {
 		reasoningEffort = *usageLog.ReasoningEffort
 	}
-	usageLog.AccountStatsCost = resolveAccountStatsCostForModels(
-		ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier, reasoningEffort,
+	usageLog.AccountStatsCost = resolveAccountStatsCostForModelsWithLongContextGate(
+		ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier,
+		longContextPricingEnabled, reasoningEffort,
 	)
+}
+
+// accountStatsLongContextPricingEnabled converts the optional account-level
+// gate into the default used by non-OpenAI platforms, which have no account
+// switch and therefore continue to use the official model ladder.
+func accountStatsLongContextPricingEnabled(accountGate *bool) bool {
+	return accountGate == nil || *accountGate
 }

@@ -216,9 +216,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
+	longContextBillingGate := openAILongContextBillingGate(billingAccount)
 	longContextBillingEnabled := apiKey.Group != nil && apiKey.Group.LongContextPricingEnabled
-	if billingAccount != nil && billingAccount.IsOpenAI() {
-		longContextBillingEnabled = longContextBillingEnabled || billingAccount.IsOpenAILongContextBillingEnabled()
+	if longContextBillingGate != nil {
+		longContextBillingEnabled = longContextBillingEnabled || *longContextBillingGate
 	}
 	cost, err = s.calculateOpenAIRecordUsageCost(
 		ctx,
@@ -398,9 +399,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
-		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		applyAccountStatsCostWithLongContextGate(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost,
+			accountStatsLongContextPricingEnabled(longContextBillingGate),
 		)
 	}
 
@@ -536,6 +538,17 @@ func isUsagePricingUnavailableError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "no pricing available") || strings.Contains(msg, "pricing not found")
+}
+
+// openAILongContextBillingGate returns the upstream account's optional
+// long-context cost switch. Non-OpenAI callers return nil so their official
+// model pricing ladders remain governed by the group/model catalog rules.
+func openAILongContextBillingGate(account *Account) *bool {
+	if account == nil || !account.IsOpenAI() {
+		return nil
+	}
+	enabled := account.IsOpenAILongContextBillingEnabled()
+	return &enabled
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(

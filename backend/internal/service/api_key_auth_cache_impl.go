@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 23 // v23: include ordered multi-group bindings in auth cache
+const apiKeyAuthSnapshotVersion = 24 // v24: force refresh of pricing-sensitive group snapshots
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
