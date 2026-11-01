@@ -100,6 +100,9 @@ func resolveAccountStatsCostForModelsWithLongContextGate(
 
 	// 优先级 3：模型定价文件（LiteLLM）默认价格
 	if billingService != nil {
+		if longContextPricingEnabled {
+			return tryModelFilePricing(billingService, upstreamModel, tokens, serviceTier, reasoningEffort)
+		}
 		return tryModelFilePricingWithLongContextGate(
 			billingService, upstreamModel, tokens, serviceTier, longContextPricingEnabled, reasoningEffort,
 		)
@@ -368,9 +371,16 @@ func applyAccountStatsCostWithLongContextGate(
 	if usageLog != nil && usageLog.ReasoningEffort != nil {
 		reasoningEffort = *usageLog.ReasoningEffort
 	}
+	if longContextPricingEnabled {
+		usageLog.AccountStatsCost = resolveAccountStatsCostForModels(
+			ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier,
+			reasoningEffort,
+		)
+		return
+	}
 	usageLog.AccountStatsCost = resolveAccountStatsCostForModelsWithLongContextGate(
 		ctx, cs, bs, accountID, groupID, model, requestedModel, tokens, requestCount, totalCost, serviceTier,
-		longContextPricingEnabled, reasoningEffort,
+		false, reasoningEffort,
 	)
 }
 
