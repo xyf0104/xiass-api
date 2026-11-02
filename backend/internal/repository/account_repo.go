@@ -3913,6 +3913,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		} else if snapshotIdentityChanged != "" {
 			extraExpression = "CASE WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' ELSE " + extraExpression + " END"
 		}
+		if updates.ProxyID != nil {
+			// Changing an account's bulk proxy selection leaves explicit direct
+			// egress mode behind; remove that marker atomically with proxy_id.
+			extraExpression = "(" + extraExpression + ") - 'xiass_execution_direct_egress'"
+		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 		}

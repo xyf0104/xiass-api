@@ -1852,7 +1852,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			repoUpdates.Extra = make(map[string]any)
 		}
 		repoUpdates.Extra[AccountExecutionProxyExtraKey] = nil
-		repoUpdates.Extra[AccountExecutionDirectEgressExtraKey] = nil
 		if !managedProxyReset && *input.ProxyID > 0 {
 			repoUpdates.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
