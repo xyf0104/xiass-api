@@ -446,10 +446,18 @@ func (p executionNodeRoutingPolicy) accountEgressIDAllowed(account *Account) boo
 	if !p.enabled {
 		return true
 	}
-	if p.unavailable || account == nil || account.ProxyID == nil || *account.ProxyID <= 0 {
+	if p.unavailable || account == nil {
 		return false
 	}
-	expectedProxyID, ok := p.proxyIDs[p.nodeID(account)]
+	nodeID := p.nodeID(account)
+	if account.hasExplicitExecutionDirectEgress() {
+		weight, ok := p.weights[nodeID]
+		return ok && weight > 0
+	}
+	if account.ProxyID == nil || *account.ProxyID <= 0 {
+		return false
+	}
+	expectedProxyID, ok := p.proxyIDs[nodeID]
 	return ok && expectedProxyID > 0 && (*account.ProxyID == expectedProxyID || account.hasExplicitExecutionProxy())
 }
 
@@ -469,6 +477,9 @@ func (p executionNodeRoutingPolicy) hydratedAccountEgressAllowed(account *Accoun
 	}
 	if !p.nodeHealthy(p.nodeID(account)) {
 		return false
+	}
+	if account.hasExplicitExecutionDirectEgress() {
+		return true
 	}
 	if account.MultiProxyConfigured {
 		return account.MultiProxyConcurrency() > 0

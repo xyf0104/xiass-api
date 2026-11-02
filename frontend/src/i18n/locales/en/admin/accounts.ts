@@ -1006,6 +1006,7 @@ export default {
       systemManagedProxy: 'System Node Egress',
       systemManagedProxyAuto: 'Auto assigned',
       systemManagedProxyHint: 'This account belongs to {node} and defaults to that node\'s private egress. You can select another proxy without changing the account owner.',
+      directEgressHint: 'This account remains on {node}; selecting “No Proxy” sends traffic directly from that server, bypassing proxy nodes.',
       concurrency: 'Concurrency',
       loadFactor: 'Load Factor',
       loadFactorHint: 'Higher load factor increases scheduling frequency',

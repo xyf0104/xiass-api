@@ -467,6 +467,7 @@ type UpdateAccountInput struct {
 	Credentials        map[string]any
 	Extra              map[string]any
 	ProxyID            *int64
+	DirectEgress       bool
 	ProxyBindings      *[]AccountProxyBindingInput
 	Concurrency        *int     // 使用指针区分"未提供"和"设置为0"
 	Priority           *int     // 使用指针区分"未提供"和"设置为0"

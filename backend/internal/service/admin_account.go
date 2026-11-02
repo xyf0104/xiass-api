@@ -228,6 +228,8 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	for key := range duplicateAccountDiscardedExtraKeys {
 		delete(cloned, key)
 	}
+	delete(cloned, AccountExecutionProxyExtraKey)
+	delete(cloned, AccountExecutionDirectEgressExtraKey)
 	for key := range cloned {
 		if IsOpenAICodexTicketPrivateExtraKey(key) {
 			delete(cloned, key)
@@ -924,6 +926,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, infraerrors.BadRequest("INVALID_ACCOUNT_PROXY_BINDINGS", err.Error())
 		}
 	}
+	if input.DirectEgress && input.ProxyID != nil && *input.ProxyID > 0 {
+		return nil, infraerrors.BadRequest("CONFLICTING_ACCOUNT_EGRESS", "direct egress cannot be combined with a proxy selection")
+	}
+	if input.DirectEgress && account.IsCredentialShadow() {
+		return nil, infraerrors.BadRequest("SPARK_SHADOW_PROXY_INHERITED", "spark shadow account egress is inherited from its parent")
+	}
+	if input.DirectEgress && proxyBindingsChanged && len(normalizedBindings) > 0 {
+		return nil, infraerrors.BadRequest("CONFLICTING_ACCOUNT_EGRESS", "direct egress cannot be combined with multiple proxy bindings")
+	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
 	previousOpenAIWeeklyPrincipal := openAIWeeklyJoinPrincipalOf(account)
@@ -1147,10 +1158,23 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
-	if input.ProxyID != nil && !account.IsCredentialShadow() && (!proxyBindingsChanged || len(normalizedBindings) == 0) {
+	if (input.ProxyID != nil || input.DirectEgress) && !account.IsCredentialShadow() && (!proxyBindingsChanged || len(normalizedBindings) == 0) {
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		resetToManagedProxy := false
-		if *input.ProxyID == 0 {
+		if input.DirectEgress {
+			account.ProxyID = nil
+			if s.executionNodeRoutingActive(ctx) {
+				if account.Extra == nil {
+					account.Extra = make(map[string]any)
+				}
+				account.Extra[AccountExecutionDirectEgressExtraKey] = true
+			} else if account.Extra != nil {
+				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
+			}
+		} else if *input.ProxyID == 0 {
+			if account.Extra != nil {
+				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
+			}
 			if s.executionNodeRoutingActive(ctx) {
 				managedProxyID, err := s.executionNodeManagedProxyID(ctx, account)
 				if err != nil {
@@ -1163,12 +1187,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			}
 		} else {
 			account.ProxyID = input.ProxyID
+			if account.Extra != nil {
+				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
+			}
 		}
 		if account.Extra == nil {
 			account.Extra = make(map[string]any)
 		}
 		delete(account.Extra, AccountExecutionProxyExtraKey)
-		if !resetToManagedProxy && *input.ProxyID > 0 {
+		if !resetToManagedProxy && input.ProxyID != nil && *input.ProxyID > 0 {
 			account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
@@ -1298,7 +1325,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 
 	// 将 proxy 变更传播到 spark 影子账号（同步；Update 内部已触发调度快照）。
 	// 影子自身 proxy 不可独立编辑(见上),故对影子的更新不触发传播。
-	if (input.ProxyID != nil || proxyBindingsChanged) && !account.IsCredentialShadow() {
+	if (input.ProxyID != nil || input.DirectEgress || proxyBindingsChanged) && !account.IsCredentialShadow() {
 		if err := s.propagateProxyToShadows(ctx, id, account.ProxyID); err != nil {
 			return nil, err
 		}
@@ -1478,6 +1505,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OpenAIAdsPowerBindingExtraKey)
 	delete(updates, AccountExecutionNodeExtraKey)
 	delete(updates, AccountExecutionProxyExtraKey)
+	delete(updates, AccountExecutionDirectEgressExtraKey)
 	delete(updates, OpenAIOAuthCredentialSourceIDExtraKey)
 	delete(updates, AccountMultiProxyExtraKey)
 	for key := range updates {
@@ -1532,6 +1560,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	delete(input.Extra, AccountExecutionNodeExtraKey)
 	delete(input.Extra, AccountExecutionProxyExtraKey)
+	delete(input.Extra, AccountExecutionDirectEgressExtraKey)
 	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
 	delete(input.Extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	for key := range input.Extra {
@@ -1823,6 +1852,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			repoUpdates.Extra = make(map[string]any)
 		}
 		repoUpdates.Extra[AccountExecutionProxyExtraKey] = nil
+		repoUpdates.Extra[AccountExecutionDirectEgressExtraKey] = nil
 		if !managedProxyReset && *input.ProxyID > 0 {
 			repoUpdates.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
@@ -2396,6 +2426,7 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 		return fmt.Errorf("list spark shadows for proxy propagation: %w", err)
 	}
 	var explicitProxy any
+	var explicitDirect any
 	if len(shadows) > 0 {
 		parent, err := repo.GetByID(ctx, parentID)
 		if err != nil {
@@ -2403,6 +2434,9 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 		}
 		if parent.hasExplicitExecutionProxy() {
 			explicitProxy = parent.Extra[AccountExecutionProxyExtraKey]
+		}
+		if parent.hasExplicitExecutionDirectEgress() {
+			explicitDirect = true
 		}
 	}
 	for _, shadow := range shadows {
@@ -2412,6 +2446,7 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 			shadow.Extra = make(map[string]any)
 		}
 		shadow.Extra[AccountExecutionProxyExtraKey] = explicitProxy
+		shadow.Extra[AccountExecutionDirectEgressExtraKey] = explicitDirect
 		if err := repo.Update(ctx, shadow); err != nil {
 			return fmt.Errorf("update spark shadow %d proxy: %w", shadow.ID, err)
 		}

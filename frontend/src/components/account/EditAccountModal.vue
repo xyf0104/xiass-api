@@ -1528,7 +1528,10 @@
             {{ t('admin.accounts.multiProxy.multiMode') }}
           </button>
         </div>
-        <p v-if="proxyMode === 'single' && isExecutionNodeManaged" class="input-hint mb-2">
+        <p v-if="proxyMode === 'single' && executionNodeID && form.proxy_id === null" class="input-hint mb-2">
+          {{ t('admin.accounts.directEgressHint', { node: executionNodeID }) }}
+        </p>
+        <p v-else-if="proxyMode === 'single' && isExecutionNodeManaged" class="input-hint mb-2">
           {{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}
         </p>
         <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
@@ -2949,7 +2952,11 @@ const hasExplicitExecutionProxy = computed(() => {
   const proxyID = Number(extra?.xiass_execution_proxy_id)
   return Number.isInteger(proxyID) && proxyID > 0
 })
-const isExecutionNodeManaged = computed(() => !isSparkShadow.value && executionNodeID.value !== '' && !hasExplicitExecutionProxy.value)
+const hasExplicitDirectEgress = computed(() => {
+  const extra = props.account?.extra as Record<string, unknown> | undefined
+  return extra?.xiass_execution_direct_egress === true
+})
+const isExecutionNodeManaged = computed(() => !isSparkShadow.value && executionNodeID.value !== '' && !hasExplicitExecutionProxy.value && !hasExplicitDirectEgress.value)
 
 const hideAccountLongContextBilling = computed(() => {
   return allSelectedGroupsEnableLongContextPricing(form.group_ids, props.groups)
@@ -4714,6 +4721,7 @@ const handleSubmit = async () => {
 	    } else if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
     }
+	updatePayload.direct_egress = proxyMode.value === 'single' && form.proxy_id === null
 	if (proxyMode.value === 'single') {
 		updatePayload.proxy_bindings = []
 	}

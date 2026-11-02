@@ -434,7 +434,10 @@ func (r *accountRepository) prepareExecutionNodeRoutingTx(ctx context.Context, t
 			to_jsonb($2::text),
 			true
 		),
-		proxy_id = COALESCE(proxy_id, $3),
+		proxy_id = CASE
+			WHEN COALESCE(extra -> 'xiass_execution_direct_egress', 'false'::jsonb) = 'true'::jsonb THEN NULL
+			ELSE COALESCE(proxy_id, $3)
+		END,
 		updated_at = NOW()
 		WHERE COALESCE(BTRIM(extra ->> $1), '') = ''
 			AND deleted_at IS NULL

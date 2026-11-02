@@ -141,6 +141,10 @@ const AccountExecutionNodeExtraKey = "xiass_execution_node_id"
 // AccountExecutionProxyExtraKey binds an explicit administrator choice to its proxy ID.
 const AccountExecutionProxyExtraKey = "xiass_execution_proxy_id"
 
+// AccountExecutionDirectEgressExtraKey records an explicit request to bypass
+// proxy nodes while keeping the account assigned to its execution node.
+const AccountExecutionDirectEgressExtraKey = "xiass_execution_direct_egress"
+
 // OpenAIOAuthCredentialSourceIDExtraKey links a schedulable OpenAI OAuth copy
 // to the primary account that owns and rotates its credentials. The copy keeps
 // its own scheduling, proxy, fingerprint, billing and group configuration, but
@@ -153,6 +157,14 @@ func (a *Account) hasExplicitExecutionProxy() bool {
 	}
 	id, ok := a.Extra[AccountExecutionProxyExtraKey].(string)
 	return ok && id == strconv.FormatInt(*a.ProxyID, 10)
+}
+
+func (a *Account) hasExplicitExecutionDirectEgress() bool {
+	if a == nil || a.ProxyID != nil || a.Extra == nil {
+		return false
+	}
+	direct, _ := a.Extra[AccountExecutionDirectEgressExtraKey].(bool)
+	return direct
 }
 
 const (
@@ -224,6 +236,7 @@ func (a *Account) ExecutionNodeID(legacyDefault string) string {
 
 func applyExecutionNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
 	delete(extra, AccountExecutionProxyExtraKey)
+	delete(extra, AccountExecutionDirectEgressExtraKey)
 	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	if cfg == nil || !cfg.Gateway.ExecutionNode.Enabled {
 		// The ownership field is always system-managed. Strip untrusted import data
@@ -264,10 +277,14 @@ func preserveExecutionNodeOnUpdate(account *Account, extra map[string]any) map[s
 	}
 	delete(extra, AccountExecutionNodeExtraKey)
 	delete(extra, AccountExecutionProxyExtraKey)
+	delete(extra, AccountExecutionDirectEgressExtraKey)
 	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	if account != nil && account.Extra != nil {
 		if account.hasExplicitExecutionProxy() {
 			extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
+		}
+		if account.hasExplicitExecutionDirectEgress() {
+			extra[AccountExecutionDirectEgressExtraKey] = true
 		}
 		if nodeID, ok := account.Extra[AccountExecutionNodeExtraKey].(string); ok && strings.TrimSpace(nodeID) != "" {
 			extra[AccountExecutionNodeExtraKey] = strings.TrimSpace(nodeID)

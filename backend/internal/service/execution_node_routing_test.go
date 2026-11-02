@@ -203,6 +203,17 @@ func TestExecutionNodeRoutingRequiresValidDurableProxyBinding(t *testing.T) {
 	require.False(t, executionNodeCandidateAllowed(policy, account))
 }
 
+func TestExecutionNodeRoutingAllowsExplicitDirectEgress(t *testing.T) {
+	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
+	account := executionNodeTestAccount(75, "api", 1)
+	account.ProxyID = nil
+	account.Proxy = nil
+	account.Extra[AccountExecutionDirectEgressExtraKey] = true
+
+	require.True(t, executionNodeCandidateAllowed(policy, account))
+	require.True(t, policy.candidateAccountEgressAllowed(account))
+}
+
 func TestExecutionNodeHealthyOwnerNeverChangesEgress(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 1})
 	policy.localNodeID = "api2"

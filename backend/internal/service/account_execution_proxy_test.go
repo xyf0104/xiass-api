@@ -46,6 +46,38 @@ func TestAdminExplicitExecutionProxyUpdate(t *testing.T) {
 	require.False(t, updated.hasExplicitExecutionProxy())
 }
 
+func TestAdminExplicitDirectEgressBypassesManagedProxy(t *testing.T) {
+	ctx := context.Background()
+	proxyID := int64(84)
+	account := executionNodeTestAccount(905, "api", 1)
+	account.ProxyID = &proxyID
+	account.Platform, account.Type = PlatformOpenAI, AccountTypeAPIKey
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	cfg := &config.Config{}
+	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{Enabled: true, ID: "api", LegacyUnassignedNodeID: "api", DefaultProxyID: 84}
+	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
+		SettingKeyExecutionNodeBalancingEnabled: "true",
+		SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
+		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
+	}}, cfg)
+	svc := &adminServiceImpl{accountRepo: &upstreamBillingProbeAdminRepo{repo}, settingService: settings}
+
+	updated, err := svc.UpdateAccount(ctx, account.ID, &UpdateAccountInput{DirectEgress: true})
+	require.NoError(t, err)
+	require.Nil(t, updated.ProxyID)
+	require.True(t, updated.hasExplicitExecutionDirectEgress())
+	require.Empty(t, updated.requestProxyURL())
+
+	policy := executionNodeTestPolicy(map[string]float64{"api": 1, "api2": 0})
+	require.True(t, executionNodeCandidateAllowed(policy, updated))
+
+	selectedProxyID := int64(99)
+	updated, err = svc.UpdateAccount(ctx, account.ID, &UpdateAccountInput{ProxyID: &selectedProxyID})
+	require.NoError(t, err)
+	require.Equal(t, selectedProxyID, *updated.ProxyID)
+	require.False(t, updated.hasExplicitExecutionDirectEgress())
+}
+
 func TestExecutionNodeExplicitProxyPreservesHealthAndOwnerGuards(t *testing.T) {
 	policy := executionNodeTestPolicy(map[string]float64{"api": 9, "api2": 1})
 	account := executionNodeTestAccount(902, "api2", 1)
@@ -74,19 +106,33 @@ func TestExecutionProxyMarkerCannotBeImported(t *testing.T) {
 	proxyID := int64(99)
 	extra, _ := applyExecutionNodeForCreate(&config.Config{}, map[string]any{
 		AccountExecutionProxyExtraKey:         "99",
+		AccountExecutionDirectEgressExtraKey:  true,
 		OpenAIOAuthCredentialSourceIDExtraKey: "888",
 	}, &proxyID)
 	require.NotContains(t, extra, AccountExecutionProxyExtraKey)
+	require.NotContains(t, extra, AccountExecutionDirectEgressExtraKey)
 	require.NotContains(t, extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	copyAccount := &Account{ID: 200, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &proxyID, Extra: map[string]any{
 		OpenAIOAuthCredentialSourceIDExtraKey: "100",
 	}}
 	extra = preserveExecutionNodeOnUpdate(copyAccount, map[string]any{
 		AccountExecutionProxyExtraKey:         "99",
+		AccountExecutionDirectEgressExtraKey:  true,
 		OpenAIOAuthCredentialSourceIDExtraKey: "888",
 	})
 	require.NotContains(t, extra, AccountExecutionProxyExtraKey)
+	require.NotContains(t, extra, AccountExecutionDirectEgressExtraKey)
 	require.Equal(t, "100", extra[OpenAIOAuthCredentialSourceIDExtraKey])
+}
+
+func TestPreserveExplicitDirectEgressOnOrdinaryAccountUpdate(t *testing.T) {
+	account := &Account{Extra: map[string]any{
+		AccountExecutionNodeExtraKey:         "api2",
+		AccountExecutionDirectEgressExtraKey: true,
+	}}
+	updated := preserveExecutionNodeOnUpdate(account, map[string]any{"custom": true})
+	require.Equal(t, "api2", updated[AccountExecutionNodeExtraKey])
+	require.Equal(t, true, updated[AccountExecutionDirectEgressExtraKey])
 }
 
 func TestAdminCreateBindsPrivateEgressFromSharedNodeMapping(t *testing.T) {

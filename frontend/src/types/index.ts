@@ -1729,6 +1729,7 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
 	proxy_id?: number | null
+	direct_egress?: boolean
 	proxy_bindings?: AccountProxyBindingInput[]
   concurrency?: number
   load_factor?: number | null

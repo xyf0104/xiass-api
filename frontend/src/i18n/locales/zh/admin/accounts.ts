@@ -1068,6 +1068,7 @@ export default {
       systemManagedProxy: '系统节点出口',
       systemManagedProxyAuto: '自动绑定',
       systemManagedProxyHint: '账号归属 {node}，当前默认使用该节点私有出口；也可以手动切换代理，切换不会改变账号归属。',
+      directEgressHint: '账号仍归属 {node}；选择“无代理”后将直接使用该服务器出口，不经过日本等代理节点。',
       concurrency: '并发数',
       loadFactor: '负载因子',
       loadFactorHint: '提高负载因子可以提高对账号的调度频率',

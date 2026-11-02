@@ -217,6 +217,7 @@ type UpdateAccountRequest struct {
 	Credentials             map[string]any                      `json:"credentials"`
 	Extra                   map[string]any                      `json:"extra"`
 	ProxyID                 *int64                              `json:"proxy_id"`
+	DirectEgress            bool                                `json:"direct_egress"`
 	ProxyBindings           *[]service.AccountProxyBindingInput `json:"proxy_bindings"`
 	Concurrency             *int                                `json:"concurrency"`
 	Priority                *int                                `json:"priority"`
@@ -1557,6 +1558,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProxyID:               req.ProxyID,
+		DirectEgress:          req.DirectEgress,
 		ProxyBindings:         req.ProxyBindings,
 		Concurrency:           req.Concurrency, // 指针类型，nil 表示未提供
 		Priority:              req.Priority,    // 指针类型，nil 表示未提供

@@ -379,6 +379,32 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it('saves No Proxy as explicit direct egress for a node-owned account', async () => {
+    const account = {
+      ...buildAccount(),
+      execution_node_id: 'api',
+      extra: { xiass_execution_node_id: 'api' },
+      proxy_id: 84,
+    }
+    updateAccountMock.mockReset().mockResolvedValue({ ...account, proxy_id: null, extra: {
+      xiass_execution_node_id: 'api',
+      xiass_execution_direct_egress: true,
+    } })
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', null)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('admin.accounts.directEgressHint')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.proxy_id).toBe(0)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.direct_egress).toBe(true)
+    wrapper.unmount()
+  })
+
   it('round-trips multi-proxy adaptive mode and route ranks without clearing extra', async () => {
     const account = {
       ...buildAccount(),
