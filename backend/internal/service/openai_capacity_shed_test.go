@@ -380,6 +380,12 @@ func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {
 			wantContain: `"code":"server_error"`,
 		},
 		{
+			name:        "Selected model容量文案改写为可重试code",
+			payload:     `{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"invalid_request_error","message":"Selected model is at capacity. Please try a different model."}}}`,
+			wantChanged: true,
+			wantContain: `"code":"server_error"`,
+		},
+		{
 			name:        "rate_limit不改写",
 			payload:     `{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"try again in 3s"}}}`,
 			wantChanged: false,

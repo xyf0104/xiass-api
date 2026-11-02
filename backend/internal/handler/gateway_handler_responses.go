@@ -399,6 +399,17 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
 func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
 	if streamStarted {
+		// Capacity shed can arrive after the HTTP/SSE handshake but before any
+		// semantic output. Do not close the stream without a Responses terminal
+		// event: Codex treats that as a transport failure and retries the same
+		// request with a misleading "stream disconnected" message.
+		if lastErr != nil && lastErr.IsOpenAICapacityShed() {
+			message := service.SanitizeUpstreamErrorMessage(service.ExtractUpstreamErrorMessage(lastErr.ResponseBody))
+			if message == "" {
+				message = "Upstream service is temporarily overloaded, please retry later"
+			}
+			_ = writeResponsesFailedSSE(c, "server_error", "server_error", message)
+		}
 		return // Can't write error after stream started
 	}
 	if lastErr != nil {

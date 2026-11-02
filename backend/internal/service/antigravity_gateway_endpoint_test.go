@@ -118,6 +118,28 @@ func TestConfiguredAntigravityForwardBaseURLs_HardOverrides(t *testing.T) {
 	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLs())
 }
 
+func TestAntigravityArgonUsesProductionEndpointOnly(t *testing.T) {
+	prodURL, dailyURL := withAntigravityEndpointURLs(t)
+	p := antigravityEndpointTestParams(nil)
+	p.requestedModel = "gemini-4-argon-high"
+	p.body = []byte(`{"project":"project-a","model":"gemini-4-argon-high"}`)
+
+	svc := &AntigravityGatewayService{}
+	require.Equal(t, []string{prodURL}, svc.antigravityForwardBaseURLs(p))
+
+	upstream := &sequencedAntigravityEndpointUpstream{steps: []antigravityEndpointStep{
+		{status: http.StatusTooManyRequests, body: bareAntigravityEndpoint429},
+	}}
+	p.httpUpstream = upstream
+	p.readOnlyProbe = true
+	result, err := svc.antigravityRetryLoop(p)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, result.resp.StatusCode)
+	_ = result.resp.Body.Close()
+	require.Equal(t, []string{prodURL + "/v1internal:generateContent"}, upstream.calls)
+	require.NotContains(t, upstream.calls, dailyURL+"/v1internal:generateContent")
+}
+
 func TestAntigravityEndpointPreference_IsolatedByTokenAndModel(t *testing.T) {
 	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	svc := &AntigravityGatewayService{}
