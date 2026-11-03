@@ -5,26 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
-
-func performAccountManagementRequest(t *testing.T, method, route, target, body string, handler gin.HandlerFunc) *httptest.ResponseRecorder {
-	t.Helper()
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Handle(method, route, handler)
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(method, target, strings.NewReader(body))
-	if body != "" {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	router.ServeHTTP(recorder, request)
-	return recorder
-}
 
 func setupAdminRouter() (*gin.Engine, *stubAdminService) {
 	gin.SetMode(gin.TestMode)
