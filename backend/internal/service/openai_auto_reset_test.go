@@ -49,11 +49,9 @@ func (r *resetTestSettings) Set(_ context.Context, key, value string) error {
 
 type resetTestAccounts struct {
 	AccountRepository
-	mu     sync.Mutex
-	a      *Account
-	denied atomic.Bool
-	reads  atomic.Int32
-	checks atomic.Int32
+	mu    sync.Mutex
+	a     *Account
+	reads atomic.Int32
 }
 
 func (r *resetTestAccounts) GetByID(_ context.Context, id int64) (*Account, error) {
@@ -67,13 +65,6 @@ func (r *resetTestAccounts) GetByID(_ context.Context, id int64) (*Account, erro
 	var a Account
 	_ = json.Unmarshal(raw, &a)
 	return &a, nil
-}
-func (r *resetTestAccounts) CheckAccountManagementAccess(context.Context, int64) error {
-	r.checks.Add(1)
-	if r.denied.Load() {
-		return ErrOpenAIResetChanged
-	}
-	return nil
 }
 
 type resetTestQuota struct {
@@ -142,9 +133,9 @@ func (q *resetTestQuota) consumeResetCredit(ctx context.Context, _ int64, credit
 }
 func resetFixture(t *testing.T, enabled bool) (*OpenAIAutoResetService, *resetTestQuota) {
 	t.Helper()
-	accounts := &resetTestAccounts{a: &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"access_token": "synthetic", "chatgpt_account_id": "synthetic-owner", "_token_version": 7}, Extra: map[string]any{"xiass_execution_node_id": "owner.example", "auto_reset_credit_enabled": true, "codex_7d_estimate_baseline": map[string]any{"test": "untouched"}}}}
+	accounts := &resetTestAccounts{a: &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"access_token": "synthetic", "chatgpt_account_id": "synthetic-owner", "_token_version": 7}, Extra: map[string]any{"auto_reset_credit_enabled": true, "codex_7d_estimate_baseline": map[string]any{"test": "untouched"}}}}
 	quota := &resetTestQuota{accounts: accounts}
-	s := &OpenAIAutoResetService{accounts: accounts, settings: &resetTestSettings{values: make(map[string]string)}, ledger: newInMemoryIdempotencyRepo(), access: accounts, quota: quota, recoverer: quota}
+	s := &OpenAIAutoResetService{accounts: accounts, settings: &resetTestSettings{values: make(map[string]string)}, ledger: newInMemoryIdempotencyRepo(), quota: quota, recoverer: quota}
 	if enabled {
 		_, err := s.SetConfig(context.Background(), 42, true, 1, 1)
 		require.NoError(t, err)
@@ -187,7 +178,6 @@ func TestOpenAIAutoResetExplicitConfigScopeAndValidation(t *testing.T) {
 		_, err = s.SetConfig(context.Background(), 42, true, 1, 1)
 		require.Error(t, err)
 	}
-	q.accounts.denied.Store(true)
 	_, err = s.reset(context.Background(), 42, false)
 	require.Error(t, err)
 	require.Zero(t, q.queries.Load())
@@ -223,7 +213,7 @@ func TestOpenAIAutoResetAmbiguousResultBlocksManualAutomaticAndRestart(t *testin
 			require.NoError(t, err)
 			_, err = s.SetConfig(context.Background(), 42, true, .9, .9)
 			require.NoError(t, err)
-			fresh := &OpenAIAutoResetService{accounts: s.accounts, settings: s.settings, ledger: s.ledger, access: s.access, quota: q, recoverer: q}
+			fresh := &OpenAIAutoResetService{accounts: s.accounts, settings: s.settings, ledger: s.ledger, quota: q, recoverer: q}
 			for _, auto := range []bool{false, true} {
 				_, err = fresh.reset(context.Background(), 42, auto)
 				require.ErrorIs(t, err, ErrOpenAIResetPending)
@@ -243,7 +233,7 @@ func TestOpenAIAutoResetManualAndAutomaticShareOneClaim(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { _, err := s.reset(context.Background(), 42, false); result <- err }()
 	<-entered
-	other := &OpenAIAutoResetService{accounts: s.accounts, settings: s.settings, ledger: s.ledger, access: s.access, quota: q, recoverer: q}
+	other := &OpenAIAutoResetService{accounts: s.accounts, settings: s.settings, ledger: s.ledger, quota: q, recoverer: q}
 	_, err := other.reset(context.Background(), 42, true)
 	require.ErrorIs(t, err, ErrOpenAIResetPending)
 	close(release)
@@ -252,7 +242,7 @@ func TestOpenAIAutoResetManualAndAutomaticShareOneClaim(t *testing.T) {
 }
 
 func TestOpenAIAutoResetChecksBeforeSendAndFencesPostProcessing(t *testing.T) {
-	for _, change := range []string{"switch", "credentials", "owner", "permission", "schedulable"} {
+	for _, change := range []string{"switch", "credentials", "proxy", "schedulable"} {
 		for _, during := range []bool{false, true} {
 			t.Run(change+"/"+fmtBool(during), func(t *testing.T) {
 				s, q := resetFixture(t, true)
@@ -260,16 +250,15 @@ func TestOpenAIAutoResetChecksBeforeSendAndFencesPostProcessing(t *testing.T) {
 					switch change {
 					case "switch":
 						_, _ = s.SetConfig(context.Background(), 42, false, 1, 1)
-					case "permission":
-						q.accounts.denied.Store(true)
 					default:
 						q.accounts.mu.Lock()
 						defer q.accounts.mu.Unlock()
 						switch change {
 						case "credentials":
 							q.accounts.a.Credentials["access_token"] = "new-token"
-						case "owner":
-							q.accounts.a.Extra[AccountExecutionNodeExtraKey] = "new-owner.example"
+						case "proxy":
+							proxyID := int64(99)
+							q.accounts.a.ProxyID = &proxyID
 						case "schedulable":
 							q.accounts.a.Schedulable = false
 						}
@@ -380,34 +369,21 @@ func TestOpenAIAutoResetScanAllOffOnlyReadsSettingsOnce(t *testing.T) {
 	s.scan(context.Background())
 	require.Equal(t, int32(1), settings.reads.Load())
 	require.Zero(t, q.accounts.reads.Load())
-	require.Zero(t, q.accounts.checks.Load())
 	require.Zero(t, q.queries.Load())
 	require.Zero(t, q.consumes.Load())
 }
 
-func TestOpenAIAutoResetScanOnlyEnabledOwner(t *testing.T) {
-	for _, denied := range []bool{false, true} {
-		t.Run(fmtBool(denied), func(t *testing.T) {
-			s, q := resetFixture(t, true)
-			settings, ok := s.settings.(*resetTestSettings)
-			require.True(t, ok)
-			settings.values[openAIResetConfigKey(43)] = `{"enabled":false}`
-			settings.values[openAIResetConfigPrefix+"042"] = settings.values[openAIResetConfigKey(42)]
-			q.accounts.denied.Store(denied)
-			q.accounts.reads.Store(0)
-			q.accounts.checks.Store(0)
-			s.scan(context.Background())
-			require.Equal(t, int32(1), settings.reads.Load())
-			if denied {
-				require.Equal(t, int32(1), q.accounts.checks.Load())
-				require.Zero(t, q.accounts.reads.Load())
-				require.Zero(t, q.queries.Load())
-				require.Zero(t, q.consumes.Load())
-			} else {
-				require.Equal(t, int32(1), q.consumes.Load())
-			}
-		})
-	}
+func TestOpenAIAutoResetScanOnlyEnabledAccounts(t *testing.T) {
+	s, q := resetFixture(t, true)
+	settings, ok := s.settings.(*resetTestSettings)
+	require.True(t, ok)
+	settings.values[openAIResetConfigKey(43)] = `{"enabled":false}`
+	settings.values[openAIResetConfigPrefix+"042"] = settings.values[openAIResetConfigKey(42)]
+	q.accounts.reads.Store(0)
+	s.scan(context.Background())
+	require.Equal(t, int32(1), settings.reads.Load())
+	require.GreaterOrEqual(t, q.accounts.reads.Load(), int32(1))
+	require.Equal(t, int32(1), q.consumes.Load())
 }
 
 func TestOpenAIAutoResetManualKeepsExistingConsumeAndPostProcessing(t *testing.T) {
@@ -448,14 +424,13 @@ func TestOpenAIAutoResetOffDuringSendWaitsWithoutPolling(t *testing.T) {
 	q.onConsume = func(ctx context.Context) error {
 		_, err := s.SetConfig(context.Background(), 42, false, 1, 1)
 		require.NoError(t, err)
-		reads, checks := q.accounts.reads.Load(), q.accounts.checks.Load()
+		reads := q.accounts.reads.Load()
 		select {
 		case <-ctx.Done():
 			t.Fatal("OFF cannot retract an already-sent exchange")
 		case <-time.After(650 * time.Millisecond):
 		}
 		require.Equal(t, reads, q.accounts.reads.Load(), "no 4Hz account reads while transport is in flight")
-		require.Equal(t, checks, q.accounts.checks.Load(), "no 4Hz permission checks while transport is in flight")
 		return nil
 	}
 	_, err := s.reset(context.Background(), 42, true)

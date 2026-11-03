@@ -195,10 +195,6 @@ func (h *OpenAIOAuthHandler) authenticateOpenAIAdsPowerHelper(c *gin.Context, de
 		response.BadRequest(c, "Invalid AdsPower helper identity")
 		return openAIAdsPowerHelperDevice{}, false
 	}
-	if environmentKey != openAIAdsPowerLocalEnvironment(c) {
-		response.Unauthorized(c, "AdsPower helper environment does not match this XIASS server")
-		return openAIAdsPowerHelperDevice{}, false
-	}
 	parts := strings.Fields(c.GetHeader("Authorization"))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
 		response.Unauthorized(c, "AdsPower helper device is not paired")
@@ -316,8 +312,8 @@ func (s *openAIAdsPowerLaunchStore) protectedProfileIDs(ctx context.Context, adm
 						active, known := activity.activeByID[record.TaskID]
 						if !known {
 							// Batch tasks are process-local while launch records are
-							// shared in Redis. A restart or another execution node can
-							// therefore make a valid task ID locally unknown. Preserve
+							// stored in Redis. A restart can make a valid task ID
+							// locally unknown. Preserve
 							// its existing profile when present; create-task profiles
 							// are protected by the separately scanned pending binding.
 							if record.Existing != nil {
@@ -393,7 +389,7 @@ func openAIAdsPowerRecordNeedsProtection(record openAIAdsPowerLaunchRecord, admi
 	}
 	active, known := activity.activeByID[record.TaskID]
 	if !known {
-		// The in-memory path follows the same restart/cross-node rule as
+		// The in-memory path follows the same restart rule as
 		// Redis: unknown is not malformed, and only a known existing profile
 		// can be protected directly from the launch record.
 		return record.Existing != nil, true

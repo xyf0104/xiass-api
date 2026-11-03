@@ -22,7 +22,6 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
 export const DEFAULT_PELICAN_MODEL = 'gpt-6-astra'
 
 export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | 'status'> {
-  execution_node_id?: string
   plan_type: string | null
   model_ids: string[]
   can_test: boolean
@@ -31,7 +30,6 @@ export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | '
 export type PelicanBenchmarkStatus = 'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
 
 export interface PelicanBenchmarkRun {
-  execution_node_id?: string
   source_id?: string
   action?: 'continue' | 'retry' | ''
   id: string
@@ -79,7 +77,7 @@ export async function getPelicanAccounts(signal?: AbortSignal): Promise<{ items:
       if (account.platform !== 'openai' || !['oauth', 'apikey'].includes(account.type) || account.parent_account_id || account.extra?.synthetic_ui_test === true) continue
       if (plan === 'free' || (account.type === 'oauth' && (!plan || plan === 'abnormal'))) continue
       result.set(account.id, {
-        id: account.id, name: account.name, status: account.status, execution_node_id: account.execution_node_id, plan_type: plan || null,
+        id: account.id, name: account.name, status: account.status, plan_type: plan || null,
         model_ids: [DEFAULT_PELICAN_MODEL], can_test: true
       })
     }

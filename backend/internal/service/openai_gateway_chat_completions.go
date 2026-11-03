@@ -508,6 +508,9 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.Observe(finalResponse.Model, true)
+	if strings.TrimSpace(finalResponse.Model) != "" {
+		observer.ObserveServiceTier(normalizeObservedOpenAIServiceTier(finalResponse.ServiceTier), true)
+	}
 	guard := openAIModelResponseGuard{}
 	if account != nil && account.Platform == PlatformOpenAI {
 		guard = s.newOpenAIModelResponseGuard(c.Request.Context(), originalModel, upstreamModel)
@@ -693,6 +696,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			UpstreamModel:                 upstreamModel,
 			UpstreamResponseModel:         observedUpstreamResponseModel(c),
 			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,

@@ -278,10 +278,6 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		ProxyBindings:           accountProxyBindingsFromService(a.ProxyBindings),
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,
-		// Leave historical ownership empty here. The admin UI resolves it from
-		// the runtime's configured legacy node instead of assuming a node named
-		// "api", so arbitrary paired XIASS machine names remain correct.
-		ExecutionNodeID:         a.ExecutionNodeID(""),
 		Concurrency:             a.Concurrency,
 		LoadFactor:              a.LoadFactor,
 		Priority:                a.Priority,
@@ -465,7 +461,10 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 		case key == service.OllamaCloudUsageSessionExtraKey,
 			key == service.OllamaCloudUsageAutoRefreshExtraKey,
 			key == service.OllamaCloudUsageSnapshotExtraKey,
-			key == service.AccountMultiProxyExtraKey:
+			key == service.AccountMultiProxyExtraKey,
+			key == "xiass_execution_node_id",
+			key == "xiass_execution_proxy_id",
+			key == "xiass_execution_direct_egress":
 			continue
 		case service.IsOpenAICodexTicketPrivateExtraKey(key):
 			continue
@@ -528,8 +527,7 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		OllamaCloudUsage: a.OllamaCloudUsage, CodexTicketEnabled: a.CodexTicketEnabled, CodexTurnTickets: a.CodexTurnTickets,
 		CodexTicketCaptureProxyIDs: a.CodexTicketCaptureProxyIDs,
 		ProxyID:                    a.ProxyID, ProxyBindings: a.ProxyBindings, ProxyFallbackOriginID: a.ProxyFallbackOriginID, ProxyFallbackOriginName: a.ProxyFallbackOriginName,
-		ExecutionNodeID: a.ExecutionNodeID,
-		Concurrency:     a.Concurrency, LoadFactor: a.LoadFactor, Priority: a.Priority, RateMultiplier: a.RateMultiplier,
+		Concurrency: a.Concurrency, LoadFactor: a.LoadFactor, Priority: a.Priority, RateMultiplier: a.RateMultiplier,
 		Status: a.Status, ErrorMessage: a.ErrorMessage, LastUsedAt: a.LastUsedAt, ExpiresAt: a.ExpiresAt,
 		AutoPauseOnExpired: a.AutoPauseOnExpired, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 		Schedulable: a.Schedulable, RateLimitedAt: a.RateLimitedAt, RateLimitResetAt: a.RateLimitResetAt,
@@ -738,9 +736,8 @@ func AccountSummaryFromService(a *service.Account) *AccountSummary {
 		return nil
 	}
 	return &AccountSummary{
-		ID:              a.ID,
-		Name:            a.Name,
-		ExecutionNodeID: a.ExecutionNodeID(""),
+		ID:   a.ID,
+		Name: a.Name,
 	}
 }
 
@@ -858,13 +855,12 @@ func usageEgressFromService(egress *service.UsageEgress) *UsageEgress {
 		observedAt = &value
 	}
 	return &UsageEgress{
-		Route:           egress.Route,
-		ProxyID:         egress.ProxyID,
-		ProxyName:       egress.ProxyName,
-		ProxyAddress:    egress.ProxyAddress,
-		IPAddress:       egress.IPAddress,
-		IPObservedAt:    observedAt,
-		ExecutionNodeID: egress.ExecutionNodeID,
+		Route:        egress.Route,
+		ProxyID:      egress.ProxyID,
+		ProxyName:    egress.ProxyName,
+		ProxyAddress: egress.ProxyAddress,
+		IPAddress:    egress.IPAddress,
+		IPObservedAt: observedAt,
 	}
 }
 

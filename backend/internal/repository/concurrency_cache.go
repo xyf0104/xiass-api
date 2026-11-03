@@ -943,11 +943,11 @@ func (c *concurrencyCache) ClaimAccountProxyAdaptiveRouteProbe(ctx context.Conte
 }
 
 func accountProxyAdaptiveRouteKey(route service.AccountProxyAdaptiveRouteKey) string {
-	return accountProxyAdaptiveKeyPrefix + route.ExecutionNode + ":" + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":" + route.ProxyHash
+	return accountProxyAdaptiveKeyPrefix + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":" + route.ProxyHash
 }
 
 func accountProxyAdaptiveProbeKey(route service.AccountProxyAdaptiveRouteKey) string {
-	return accountProxyAdaptiveKeyPrefix + route.ExecutionNode + ":" + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":probe"
+	return accountProxyAdaptiveKeyPrefix + strconv.FormatInt(route.AccountID, 10) + ":" + route.ModelHash + ":probe"
 }
 
 func parseAdaptiveInt64(value string) int64 {

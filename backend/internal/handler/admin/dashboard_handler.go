@@ -10,7 +10,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -205,11 +204,6 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id, model, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
-	executionNodeID, err := parseExecutionNodeFilter(c)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	granularity := c.DefaultQuery("granularity", "day")
 
 	// Parse optional filter params
@@ -217,7 +211,6 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	var model string
 	var requestType *int16
 	var stream *bool
-	var nativeCompactionV2 *bool
 	var billingType *int8
 	var upstreamModelMismatch *bool
 
@@ -269,7 +262,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 			return
 		}
 	}
-	nativeCompactionV2, err = parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
 	if err != nil {
 		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
 		return
@@ -280,7 +273,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch, executionNodeID)
+	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -300,18 +293,11 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
-	executionNodeID, err := parseExecutionNodeFilter(c)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
 	// Parse optional filter params
 	var userID, apiKeyID, accountID, groupID int64
 	modelSource := usagestats.ModelSourceRequested
 	var requestType *int16
 	var stream *bool
-	var nativeCompactionV2 *bool
 	var billingType *int8
 	var upstreamModelMismatch *bool
 
@@ -367,7 +353,7 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 			return
 		}
 	}
-	nativeCompactionV2, err = parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
 	if err != nil {
 		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
 		return
@@ -378,7 +364,7 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 		return
 	}
 
-	stats, hit, err := h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch, executionNodeID)
+	stats, hit, err := h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
 		return
@@ -397,16 +383,9 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
-	executionNodeID, err := parseExecutionNodeFilter(c)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
 	var userID, apiKeyID, accountID, groupID int64
 	var requestType *int16
 	var stream *bool
-	var nativeCompactionV2 *bool
 	var billingType *int8
 	var upstreamModelMismatch *bool
 
@@ -455,7 +434,7 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 			return
 		}
 	}
-	nativeCompactionV2, err = parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
 	if err != nil {
 		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
 		return
@@ -466,7 +445,7 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 		return
 	}
 
-	stats, hit, err := h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch, executionNodeID)
+	stats, hit, err := h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get group statistics")
 		return
@@ -720,13 +699,6 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			dim.AccountID = id
 		}
-	}
-	if nodeID, err := parseExecutionNodeFilter(c); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	} else {
-		dim.ExecutionNodeID = nodeID
-		dim.ExecutionNodeLegacyID = middleware.ExecutionNodeLegacyID(c.Request.Context())
 	}
 	if v := strings.TrimSpace(c.Query("request_type")); v != "" {
 		parsed, err := service.ParseUsageRequestType(v)

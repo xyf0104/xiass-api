@@ -51,7 +51,6 @@ func TestReleaseArchivesKeepRuntimeAndExcludeLocalState(t *testing.T) {
 				"deploy/xiass-install.sh", "deploy/xiass-update.sh", "deploy/nowind-update.sh",
 				"deploy/xiass-backup.sh", "deploy/xiass-restore.sh", "deploy/xiass-runtime-start.sh",
 				"deploy/xiass-runtime-export.sh", "deploy/xiass-runtime-restore.sh",
-				"deploy/xiass-cluster-runtime.sh", "deploy/xiass-cluster-join.sh",
 				"deploy/xiass-frps-migrate.sh", "deploy/frps-soft-router-install.sh",
 				"deploy/team-child-automation/package.json", "deploy/team-child-automation/server.mjs",
 				"deploy/team-child-automation/Dockerfile", "deploy/xiass-updater/Dockerfile",
@@ -72,8 +71,13 @@ func TestReleaseArchivesKeepRuntimeAndExcludeLocalState(t *testing.T) {
 				"deploy/team-child-automation/node_modules/playwright/package.json",
 				"deploy/openwrt/xiass-soft-router-agent/tests/fake_uci.py",
 				"artifacts/report.json", "operations/rehearsal.sh", "backend/server", "frontend/node_modules/a.js",
+				"deploy/Caddyfile.multinode.example",
 			} {
 				require.False(t, matches(path), "non-runtime file would enter archive: %s", path)
+			}
+			for _, path := range []string{"deploy/xiass-cluster-runtime.sh", "deploy/xiass-cluster-join.sh", "deploy/Caddyfile.multinode.example"} {
+				require.NotContains(t, patterns, path, "retired node file must not be explicitly packaged")
+				require.NoFileExists(t, filepath.Join(root, path), "retired node file must remain removed")
 			}
 			files := make(map[string]bool)
 			var size int64

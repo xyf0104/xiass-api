@@ -5,13 +5,11 @@ import OpenAIOAuthCredentialLibraryPanel from '../OpenAIOAuthCredentialLibraryPa
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   save: vi.fn(),
-  getExecutionNodeStatus: vi.fn(),
   clipboardWrite: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
   accountsAPI: { list: mocks.list },
-  executionNodesAPI: { getStatus: mocks.getExecutionNodeStatus },
 }))
 vi.mock('@/api/admin/teamChild', () => ({ saveOpenAIAccountReauthorizationCredentials: mocks.save }))
 
@@ -56,15 +54,6 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
   beforeEach(() => {
     mocks.list.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 200, pages: 0 })
     mocks.save.mockReset()
-    mocks.getExecutionNodeStatus.mockReset().mockResolvedValue({
-      admin_write_allowed: true,
-      admin_write_mode: 'single_node',
-      runtime: {
-        enabled: false,
-        node_id: 'api',
-        legacy_unassigned_node_id: 'api',
-      },
-    })
     mocks.clipboardWrite.mockReset().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -86,7 +75,7 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     const wrapper = await mountDialog()
 
     expect(mocks.list).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('当前服务器可管理3')
+    expect(wrapper.text()).toContain('可管理账号3')
     expect(wrapper.text()).toContain('已保存登录资料1')
     expect(wrapper.text()).toContain('待补充登录资料2')
     expect(wrapper.find('[data-testid="credential-mode-missing-accounts"]').exists()).toBe(false)
@@ -117,7 +106,7 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
 
     const wrapper = await mountDialog()
 
-    expect(wrapper.text()).toContain('当前服务器可管理4')
+    expect(wrapper.text()).toContain('可管理账号4')
     expect(wrapper.text()).toContain('已保存登录资料4')
     expect(wrapper.text()).toContain('待补充登录资料0')
     expect(wrapper.get('[data-testid="credential-mode-password"]').text()).toContain('2')
@@ -215,23 +204,14 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     wrapper.unmount()
   })
 
-  it('only edits accounts owned by the current browser node without paired write access', async () => {
-    mocks.getExecutionNodeStatus.mockResolvedValue({
-      admin_write_allowed: false,
-      admin_write_mode: 'secondary_read_only',
-      runtime: {
-        enabled: true,
-        node_id: 'api2',
-        legacy_unassigned_node_id: 'api',
-      },
-    })
-    const primary = { ...account(40, 'primary@example.test'), execution_node_id: 'api' }
-    const secondary = { ...account(41, 'secondary@example.test'), execution_node_id: 'api2' }
+  it('manages all eligible accounts', async () => {
+    const primary = account(40, 'primary@example.test')
+    const secondary = account(41, 'secondary@example.test')
     mocks.list.mockResolvedValue({ items: [primary, secondary], total: 2, page: 1, page_size: 200, pages: 1 })
     mocks.save.mockResolvedValue({ ...secondary, credentials_status: completeStatus })
     const wrapper = await mountDialog()
 
-    expect(wrapper.text()).toContain('当前服务器可管理1')
+    expect(wrapper.text()).toContain('可管理账号2')
     await wrapper.get('[data-testid="credential-library-password-input"]').setValue([
       'primary@example.test----primary-password----JBSWY3DPEHPK3PXP',
       'secondary@example.test----secondary-password----JBSWY3DPEHPK3PXP',
@@ -239,8 +219,13 @@ describe('OpenAIOAuthCredentialLibraryPanel', () => {
     await wrapper.get('[data-testid="save-credential-library"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.save).toHaveBeenCalledTimes(1)
-    expect(mocks.save).toHaveBeenCalledWith(41, {
+    expect(mocks.save).toHaveBeenCalledTimes(2)
+    expect(mocks.save).toHaveBeenNthCalledWith(1, 40, {
+      email: 'primary@example.test',
+      password: 'primary-password',
+      totp_secret: 'JBSWY3DPEHPK3PXP',
+    })
+    expect(mocks.save).toHaveBeenNthCalledWith(2, 41, {
       email: 'secondary@example.test',
       password: 'secondary-password',
       totp_secret: 'JBSWY3DPEHPK3PXP',

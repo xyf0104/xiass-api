@@ -83,7 +83,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" :execution-node-options="executionNodeOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" ref="columnDropdownRef">
               <button
@@ -107,9 +107,6 @@
             :data="usageLogs"
             :loading="loading"
             :columns="visibleColumns"
-            :show-execution-node="showExecutionNodeLabels"
-            :execution-node-local-id="executionNodeLocalID"
-            :execution-node-legacy-id="executionNodeLegacyID"
             :account-pool-lookup="accountPoolLookup"
             :server-side-sort="true"
             :default-sort-key="'created_at'"
@@ -216,33 +213,12 @@ import ModelDistributionChart from '@/components/charts/ModelDistributionChart.v
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
-import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import { buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
 const accountPools = ref<AccountPool[]>([])
 const accountPoolLookup = computed(() => buildAccountPoolLookup(accountPools.value))
-const executionNodeLocalID = computed(() => executionNodeStatus.value?.runtime.node_id || 'api')
-const executionNodeLegacyID = computed(() => executionNodeStatus.value?.runtime.legacy_unassigned_node_id || executionNodeLocalID.value)
-const executionNodeOptions = computed(() => {
-  const status = executionNodeStatus.value
-  if (!status?.runtime.enabled || status.nodes.length === 0) return []
-  const seen = new Set<string>()
-  const options: { value: string; label: string }[] = [{ value: '', label: t('admin.usage.executionNodeAll') }]
-  for (const node of [{ node_id: executionNodeLocalID.value, is_local: true }, ...status.nodes]) {
-    const nodeID = String(node.node_id || '').trim()
-    if (!nodeID || seen.has(nodeID)) continue
-    seen.add(nodeID)
-    options.push({
-      value: nodeID,
-      label: nodeID === executionNodeLocalID.value || node.is_local ? t('admin.usage.executionNodeLocal') : nodeID
-    })
-  }
-  return options
-})
-const showExecutionNodeLabels = computed(() => executionNodeOptions.value.length > 0)
 type DistributionMetric = 'tokens' | 'actual_cost'
 type EndpointSource = 'inbound' | 'upstream' | 'path'
 type ModelDistributionSource = 'requested' | 'upstream' | 'mapping'
@@ -282,7 +258,6 @@ const breakdownFilters = computed(() => {
   if (filters.value.group_id) f.group_id = filters.value.group_id
   if (filters.value.request_type != null) f.request_type = filters.value.request_type
   if (filters.value.billing_type != null) f.billing_type = filters.value.billing_type
-  if (filters.value.execution_node_id) f.execution_node_id = filters.value.execution_node_id
   return f
 })
 
@@ -333,7 +308,7 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 }
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
-const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, execution_node_id: undefined, start_date: startDate.value, end_date: endDate.value })
+const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, start_date: startDate.value, end_date: endDate.value })
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
   sort_by: 'created_at',
@@ -506,7 +481,6 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
       request_type: requestType,
       stream: legacyStream === null ? undefined : legacyStream,
       billing_type: filters.value.billing_type,
-	  execution_node_id: filters.value.execution_node_id,
 	  upstream_model_mismatch: filters.value.upstream_model_mismatch,
     }
 
@@ -557,7 +531,6 @@ const loadChartData = async () => {
       request_type: requestType,
       stream: legacyStream === null ? undefined : legacyStream,
       billing_type: filters.value.billing_type,
-	  execution_node_id: filters.value.execution_node_id,
 	  upstream_model_mismatch: filters.value.upstream_model_mismatch,
       include_stats: false,
       include_trend: true,
@@ -960,14 +933,6 @@ const handleColumnDropdownViewportChange = () => {
 
 onMounted(() => {
   void loadAccountPools()
-  const executionNodeAPI = adminAPI.executionNodes
-  if (executionNodeAPI?.getStatus) {
-    void executionNodeAPI.getStatus().then((status) => {
-      executionNodeStatus.value = status
-    }).catch(() => {
-      // Single-node installations do not expose the optional node status API.
-    })
-  }
   applyRouteQueryFilters()
   void loadRouteUserFilterLabel()
   loadLogs()

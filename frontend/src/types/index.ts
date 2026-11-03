@@ -1421,7 +1421,6 @@ export interface Account {
 	proxy_bindings?: AccountProxyBinding[]
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
-  execution_node_id?: string
   concurrency: number
   load_factor?: number | null
   current_concurrency?: number // Real-time concurrency count from Redis
@@ -2031,7 +2030,6 @@ export interface UsageLog {
 export interface UsageLogAccountSummary {
   id: number
   name: string
-	execution_node_id?: string
 }
 
 export interface AdminUsageLogEgress {
@@ -2042,6 +2040,7 @@ export interface AdminUsageLogEgress {
   proxy_address?: string
   ip_address?: string
   ip_observed_at?: string
+  /** Legacy snapshot field; accepted for old records, never used for routing or display. */
   execution_node_id?: string
 }
 
@@ -2450,7 +2449,6 @@ export interface UsageQueryParams {
   timezone?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
-	execution_node_id?: string
 }
 
 // ==================== Account Usage Statistics ====================

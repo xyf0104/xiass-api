@@ -498,7 +498,7 @@ func TestImportTeamChildMailboxConfigStoresSecretServerSide(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotContains(t, rec.Body.String(), "server-secret")
-	require.Contains(t, rec.Body.String(), `"cluster_shared":true`)
+	require.NotContains(t, rec.Body.String(), "cluster_shared")
 	stored, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(stored), `TEAM_CHILD_MAIL_API_KEY="server-secret"`)
@@ -513,26 +513,26 @@ func TestImportTeamChildMailboxConfigStoresSecretServerSide(t *testing.T) {
 	require.NotEmpty(t, sharedCiphertext)
 	require.NotContains(t, sharedCiphertext, "server-secret")
 
-	// A paired node with no local mailbox file reads the encrypted provider
-	// configuration from the same database settings row.
+	// A fresh handler restores the encrypted provider from database settings
+	// when its local configuration file is absent.
 	t.Setenv("TEAM_CHILD_MAIL_CONFIG_FILE", filepath.Join(t.TempDir(), "missing.env"))
-	paired := &OpenAIOAuthHandler{}
-	paired.ConfigureTeamChildSecrets(teamMailboxShareTestEncryptor{})
-	paired.ConfigureTeamChildSharedSettings(settingRepo)
-	shared, err := paired.loadTeamMailboxProviderConfig(nil)
+	restored := &OpenAIOAuthHandler{}
+	restored.ConfigureTeamChildSecrets(teamMailboxShareTestEncryptor{})
+	restored.ConfigureTeamChildSharedSettings(settingRepo)
+	shared, err := restored.loadTeamMailboxProviderConfig(nil)
 	require.NoError(t, err)
 	require.Equal(t, "https://mail.example.test", shared.baseURL.String())
 	require.Equal(t, "server-secret", shared.apiKey)
 
-	pairedRouter := gin.New()
-	pairedRouter.Use(func(c *gin.Context) {
+	restoredRouter := gin.New()
+	restoredRouter.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
 		c.Set(string(middleware.ContextKeyUserRole), "admin")
 		c.Next()
 	})
-	pairedRouter.GET("/status", paired.TeamChildMailboxStatus)
+	restoredRouter.GET("/status", restored.TeamChildMailboxStatus)
 	statusRec := httptest.NewRecorder()
-	pairedRouter.ServeHTTP(statusRec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	restoredRouter.ServeHTTP(statusRec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	require.Equal(t, http.StatusOK, statusRec.Code)
 	require.Contains(t, statusRec.Body.String(), `"configured":true`)
 }

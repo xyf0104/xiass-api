@@ -29,14 +29,14 @@ func automaticReauthorizationTestClaim() (service.OpenAIReauthorizationAutoClaim
 	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	claim := service.OpenAIReauthorizationAutoClaim{
 		EpisodeKey: "episode-77", ClaimID: "claim-77", BrowserMode: "server",
-		ExecutionNodeID: "api", ClaimedAt: at, LeaseUntil: at.Add(45 * time.Minute),
+		ClaimedAt: at, LeaseUntil: at.Add(45 * time.Minute),
 	}
 	state := service.OpenAIReauthorizationState{
 		LastResult:     service.OpenAIReauthorizationResultRunning,
 		LastInitiator:  service.OpenAIReauthorizationInitiatorAutomatic,
 		AutoEpisodeKey: claim.EpisodeKey, AutoClaimID: claim.ClaimID,
-		AutoBrowserMode: claim.BrowserMode, AutoExecutionNodeID: claim.ExecutionNodeID,
-		AutoClaimedAt: &at, AutoLeaseUntil: func() *time.Time { v := claim.LeaseUntil; return &v }(),
+		AutoBrowserMode: claim.BrowserMode,
+		AutoClaimedAt:   &at, AutoLeaseUntil: func() *time.Time { v := claim.LeaseUntil; return &v }(),
 	}
 	return claim, state
 }

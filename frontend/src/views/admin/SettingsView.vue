@@ -1,7 +1,6 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-6xl space-y-6">
-      <ExecutionNodeAdminAccessNotice />
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <div
@@ -49,7 +48,7 @@
               v-if="activeTab !== 'backup'"
               type="submit"
               data-testid="settings-save-button"
-              :disabled="sharedReadOnly || saving || loadFailed"
+              :disabled="saving || loadFailed"
               class="settings-save-button btn btn-primary flex items-center justify-center gap-2 whitespace-nowrap"
             >
               <Icon :name="saving ? 'refresh' : 'check'" size="sm" :class="saving ? 'animate-spin' : ''" :stroke-width="2.25" />
@@ -4844,6 +4843,8 @@
             </div>
           </div>
 
+          <OpenAIModelPrioritySettings v-if="activeTab === 'gateway'" />
+
           <!-- Gateway Scheduling Settings -->
           <div class="card">
             <div
@@ -4869,44 +4870,6 @@
                   </p>
                 </div>
                 <Toggle v-model="form.allow_ungrouped_key_scheduling" />
-              </div>
-
-              <div
-                class="border-t border-gray-100 pt-5 dark:border-dark-700"
-                data-testid="execution-node-balancing-settings"
-              >
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-                  <div class="min-w-0">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        {{ t("admin.settings.scheduling.executionNodeBalancing") }}
-                      </span>
-                      <span
-                        class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                        :class="form.execution_node_balancing_enabled
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                          : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'"
-                        data-testid="execution-node-balancing-status"
-                      >
-                        {{ form.execution_node_balancing_enabled
-                          ? t("admin.executionNodes.on")
-                          : t("admin.executionNodes.off") }}
-                      </span>
-                    </div>
-                    <p class="mt-0.5 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.scheduling.executionNodePanelHint") }}
-                    </p>
-                  </div>
-                  <RouterLink
-                    to="/admin/execution-nodes"
-                    class="btn btn-secondary btn-sm inline-flex shrink-0 items-center gap-1.5 self-start sm:self-auto"
-                    data-testid="open-execution-node-panel"
-                  >
-                    <Icon name="server" size="sm" />
-                    <span>{{ t("admin.settings.scheduling.openExecutionNodePanel") }}</span>
-                    <Icon name="chevronRight" size="sm" />
-                  </RouterLink>
-                </div>
               </div>
 
               <div
@@ -8602,6 +8565,7 @@
 </template>
 
 <script setup lang="ts">
+import OpenAIModelPrioritySettings from "@/components/admin/account/OpenAIModelPrioritySettings.vue";
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
@@ -8651,8 +8615,6 @@ import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
-import { useExecutionNodeAdminAccess } from "@/composables/useExecutionNodeAdminAccess";
-import ExecutionNodeAdminAccessNotice from "@/components/admin/ExecutionNodeAdminAccessNotice.vue";
 import {
   useStepUp,
   isStepUpCancelled,
@@ -8680,7 +8642,6 @@ import {
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
-const { sharedReadOnly, loadExecutionNodeAdminAccess } = useExecutionNodeAdminAccess();
 // 关闭 step-up 开关是敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 码重试
 const settingsStepUp = useStepUp();
 const adminSettingsStore = useAdminSettingsStore();
@@ -9636,9 +9597,6 @@ const form = reactive<SettingsForm>({
   max_claude_code_version: "",
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
-  execution_node_balancing_enabled: false,
-  execution_node_weights: { api: 9, api2: 1 },
-  execution_node_proxy_ids: {},
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
@@ -10870,10 +10828,6 @@ function findDuplicateDefaultSubscription(
 }
 
 async function saveSettings() {
-  if (sharedReadOnly.value) {
-    appStore.showError(t("admin.executionNodes.sharedAccess.actionBlocked"));
-    return;
-  }
   saving.value = true;
   try {
     const normalizedTableDefaultPageSize = Math.floor(
@@ -12409,7 +12363,6 @@ async function handleDeleteProvider() {
 }
 
 onMounted(() => {
-  void loadExecutionNodeAdminAccess(true);
   loadSettings();
   loadSubscriptionGroups();
   loadAdminApiKey();

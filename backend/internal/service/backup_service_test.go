@@ -651,14 +651,12 @@ func TestBackupService_Schedule_CronValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBackupService_MultiNodeReplicaPersistsScheduleWithoutRunningCron(t *testing.T) {
+func TestBackupServiceUpdateScheduleStartsLocalCron(t *testing.T) {
 	repo := newMockSettingRepo()
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Host: "localhost", Port: 5432, User: "test", DBName: "testdb"},
 		Totp:     config.TotpConfig{EncryptionKeyConfigured: true},
 	}
-	cfg.Gateway.ExecutionNode.Enabled = true
-	cfg.Gateway.ExecutionNode.ControlPlane = false
 	svc := NewBackupService(repo, cfg, &plainEncryptor{}, func(_ context.Context, _ *BackupS3Config) (BackupObjectStore, error) {
 		return newMockObjectStore(), nil
 	}, &mockDumper{})
@@ -670,17 +668,15 @@ func TestBackupService_MultiNodeReplicaPersistsScheduleWithoutRunningCron(t *tes
 	svc.cronMu.Lock()
 	entryID := svc.cronEntryID
 	svc.cronMu.Unlock()
-	require.Zero(t, entryID)
+	require.NotZero(t, entryID)
 }
 
-func TestBackupService_ControlPlaneReconcilesScheduleWrittenByPeer(t *testing.T) {
+func TestBackupServiceReconcilesPersistedSchedule(t *testing.T) {
 	repo := newMockSettingRepo()
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Host: "localhost", Port: 5432, User: "test", DBName: "testdb"},
 		Totp:     config.TotpConfig{EncryptionKeyConfigured: true},
 	}
-	cfg.Gateway.ExecutionNode.Enabled = true
-	cfg.Gateway.ExecutionNode.ControlPlane = true
 	svc := NewBackupService(repo, cfg, &plainEncryptor{}, func(_ context.Context, _ *BackupS3Config) (BackupObjectStore, error) {
 		return newMockObjectStore(), nil
 	}, &mockDumper{})

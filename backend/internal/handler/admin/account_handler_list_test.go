@@ -240,9 +240,9 @@ func TestAccountHandlerListLiteUsesStrictCredentialFreeAllowlist(t *testing.T) {
 				"nested":        map[string]any{"token": "must-not-render"},
 			},
 			Extra: map[string]any{
-				"sessionToken":                       "must-not-render",
-				"custom_headers":                     map[string]any{"Authorization": "must-not-render"},
-				service.AccountExecutionNodeExtraKey: "api2",
+				"sessionToken":            "must-not-render",
+				"custom_headers":          map[string]any{"Authorization": "must-not-render"},
+				"xiass_execution_node_id": "api2",
 			},
 		},
 		{
@@ -255,7 +255,7 @@ func TestAccountHandlerListLiteUsesStrictCredentialFreeAllowlist(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=true&execution_node_id=api2", nil)
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -274,8 +274,8 @@ func TestAccountHandlerListLiteUsesStrictCredentialFreeAllowlist(t *testing.T) {
 	item := payload.Data.Items[0]
 	require.Equal(t, "safe picker entry", item["name"])
 	require.Equal(t, "visible note", item["notes"])
-	require.Equal(t, "api2", item["execution_node_id"])
-	require.Equal(t, "", payload.Data.Items[1]["execution_node_id"])
+	require.NotContains(t, item, "execution_node_id")
+	require.NotContains(t, payload.Data.Items[1], "execution_node_id")
 	for _, listedAccount := range payload.Data.Items {
 		for _, forbidden := range []string{
 			"credentials", "credentials_status", "extra", "proxy", "proxy_id",

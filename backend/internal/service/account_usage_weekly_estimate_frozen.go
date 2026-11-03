@@ -86,7 +86,7 @@ func (s *AccountUsageService) applyOpenAIWeeklyEstimate(ctx context.Context, acc
 	s.setOpenAIWeeklyFrozenEstimate(account, progress, boundedStats.Cost, currentCost, true, snapshotAt, ctx)
 }
 
-// applyOpenAIWeeklyEstimateReadOnly is for passive execution-node reads. It
+// applyOpenAIWeeklyEstimateReadOnly is for passive account reads. It
 // reads shared usage but never writes account extra or advances saved state.
 func (s *AccountUsageService) applyOpenAIWeeklyEstimateReadOnly(ctx context.Context, account *Account, progress *UsageProgress, currentStats *usagestats.AccountStats, now time.Time) {
 	if s == nil || account == nil || progress == nil || progress.WindowStats == nil || currentStats == nil {

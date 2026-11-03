@@ -143,7 +143,6 @@ func (h *OpenAIOAuthHandler) persistOpenAIReauthorizationStart(ctx context.Conte
 	state.AutoEpisodeKey = ""
 	state.AutoClaimID = ""
 	state.AutoBrowserMode = ""
-	state.AutoExecutionNodeID = ""
 	state.AutoClaimedAt = nil
 	state.AutoLeaseUntil = nil
 	state.AutoFinishedAt = nil
@@ -205,7 +204,6 @@ func (h *OpenAIOAuthHandler) persistOpenAIReauthorizationTaskState(ctx context.C
 	state.AutoEpisodeKey = ""
 	state.AutoClaimID = ""
 	state.AutoBrowserMode = ""
-	state.AutoExecutionNodeID = ""
 	state.AutoClaimedAt = nil
 	state.AutoLeaseUntil = nil
 	state.AutoFinishedAt = nil

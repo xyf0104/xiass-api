@@ -120,7 +120,6 @@ type batchOAuthTask struct {
 	loginTOTPEncrypted      string `json:"-"`
 	loginEmailCodeEncrypted string `json:"-"`
 	loginTOTPConfigured     bool
-	executionNodeID         string
 	reauthStateEvent        string
 	publicSnapshot          atomic.Pointer[[]byte]
 }
@@ -494,14 +493,6 @@ func (h *OpenAIOAuthHandler) batchOAuthBrowserProxy(ctx context.Context, proxyID
 	// should configure a browser-facing host; native/shared-namespace use keeps
 	// the original address.
 	browserProxyHost := strings.TrimSpace(os.Getenv("TEAM_CHILD_BROWSER_PROXY_HOST"))
-	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	isLocalExecutionNodeProxy := strings.HasPrefix(p.Name, service.ExecutionNodeBuiltinProxyNamePrefix) &&
-		(protocol == "socks5" || protocol == "socks5h") && p.Host == "127.0.0.1" && p.Port == 19080 && strings.TrimSpace(p.Password) != ""
-	if isLocalExecutionNodeProxy {
-		if localNodeID == "" || p.Name != service.ExecutionNodeBuiltinProxyNamePrefix+localNodeID || p.Username != localNodeID {
-			return nil, errors.New("proxy belongs to another execution node")
-		}
-	}
 	u, err := url.Parse(p.URL())
 	if err != nil || u.Hostname() == "" || p.Port <= 0 || p.Port > 65535 {
 		return nil, errors.New("invalid proxy")

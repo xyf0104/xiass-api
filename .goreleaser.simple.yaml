@@ -73,7 +73,6 @@ archives:
       - deploy/docker-compose.xiass.yml
       - deploy/docker-compose.nowind.yml
       - deploy/Caddyfile
-      - deploy/Caddyfile.multinode.example
       - deploy/codex-instructions.md.tmpl
       - deploy/frps-soft-router.example.toml
       - deploy/Dockerfile

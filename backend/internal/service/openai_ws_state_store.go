@@ -82,7 +82,7 @@ type OpenAIWSStateStore interface {
 	GetSessionConn(groupID int64, sessionHash string) (string, bool)
 	DeleteSessionConn(groupID int64, sessionHash string)
 
-	// This lineage is intentionally local to the account's execution node. The
+	// This lineage is intentionally local to the application process. The
 	// account ID is part of the key so a rejected ciphertext can never affect a
 	// failover account, even when both accounts share a client session hash.
 	MarkSessionInvalidEncryptedContent(groupID, accountID int64, sessionHash string, digests []string, ttl time.Duration)

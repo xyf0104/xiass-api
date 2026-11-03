@@ -169,10 +169,6 @@ func pelicanProbe(c *gin.Context) *openAIPelicanProbe {
 	return probe
 }
 
-func (s *AccountTestService) PelicanExecutionNodeID(account *Account) string {
-	return account.ExecutionNodeID(s.settingService.LegacyExecutionNodeID())
-}
-
 func PelicanBenchmarkEligibility(account *Account, model string) string {
 	if account == nil || account.Platform != PlatformOpenAI ||
 		(account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey) ||
@@ -207,13 +203,9 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	if !benchmark.ValidModel(model) {
 		return benchmark.Output{ErrorCode: "invalid_model"}, errors.New("invalid model")
 	}
-	// Benchmarking must use the account owner's fixed egress and reject offline owners.
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if policy.unavailable || !policy.accountEgressIDAllowed(account) ||
-		(policy.enabled && !policy.nodeHealthy(policy.nodeID(account))) ||
-		(account.ProxyID != nil && (account.Proxy == nil || account.Proxy.ID != *account.ProxyID ||
-			!account.Proxy.IsActive() || account.Proxy.IsExpired(time.Now()))) {
-		return benchmark.Output{ErrorCode: "fixed_egress_unavailable"}, errors.New("fixed egress unavailable")
+	if account.ProxyID != nil && (account.Proxy == nil || account.Proxy.ID != *account.ProxyID ||
+		!account.Proxy.IsActive() || account.Proxy.IsExpired(time.Now())) {
+		return benchmark.Output{ErrorCode: "proxy_unavailable"}, errors.New("proxy unavailable")
 	}
 	local := *account
 	ctx, cancel := context.WithCancel(ctx)

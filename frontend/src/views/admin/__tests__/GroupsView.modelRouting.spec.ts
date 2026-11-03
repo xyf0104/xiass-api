@@ -75,16 +75,6 @@ vi.mock("@/stores/onboarding", () => ({
   useOnboardingStore: () => ({ isCurrentStep: vi.fn(() => false), nextStep: vi.fn() }),
 }));
 
-vi.mock("@/composables/useExecutionNodeAdminAccess", () => ({
-  useExecutionNodeAdminAccess: () => ({
-    executionNodeStatus: { value: null },
-    executionNodeAccessLoading: { value: false },
-    sharedWriteAllowed: { value: true },
-    sharedReadOnly: { value: false },
-    loadExecutionNodeAdminAccess: vi.fn().mockResolvedValue(undefined),
-  }),
-}));
-
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),
 }));

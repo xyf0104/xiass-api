@@ -230,7 +230,6 @@ type Account struct {
 	ProxyBindings              []AccountProxyBinding             `json:"proxy_bindings,omitempty"`
 	ProxyFallbackOriginID      *int64                            `json:"proxy_fallback_origin_id"`
 	ProxyFallbackOriginName    *string                           `json:"proxy_fallback_origin_name,omitempty"`
-	ExecutionNodeID            string                            `json:"execution_node_id,omitempty"`
 	Concurrency                int                               `json:"concurrency"`
 	LoadFactor                 *int                              `json:"load_factor,omitempty"`
 	Priority                   int                               `json:"priority"`
@@ -357,7 +356,6 @@ type AccountListItem struct {
 	ProxyBindings           []AccountProxyBinding `json:"proxy_bindings,omitempty"`
 	ProxyFallbackOriginID   *int64                `json:"proxy_fallback_origin_id"`
 	ProxyFallbackOriginName *string               `json:"proxy_fallback_origin_name,omitempty"`
-	ExecutionNodeID         string                `json:"execution_node_id,omitempty"`
 	Concurrency             int                   `json:"concurrency"`
 	LoadFactor              *int                  `json:"load_factor,omitempty"`
 	Priority                int                   `json:"priority"`
@@ -693,13 +691,12 @@ type UsageLog struct {
 }
 
 type UsageEgress struct {
-	Route           string     `json:"route"`
-	ProxyID         int64      `json:"proxy_id,omitempty"`
-	ProxyName       string     `json:"proxy_name,omitempty"`
-	ProxyAddress    string     `json:"proxy_address,omitempty"`
-	IPAddress       string     `json:"ip_address,omitempty"`
-	IPObservedAt    *time.Time `json:"ip_observed_at,omitempty"`
-	ExecutionNodeID string     `json:"execution_node_id,omitempty"`
+	Route        string     `json:"route"`
+	ProxyID      int64      `json:"proxy_id,omitempty"`
+	ProxyName    string     `json:"proxy_name,omitempty"`
+	ProxyAddress string     `json:"proxy_address,omitempty"`
+	IPAddress    string     `json:"ip_address,omitempty"`
+	IPObservedAt *time.Time `json:"ip_observed_at,omitempty"`
 }
 
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
@@ -768,9 +765,8 @@ type UsageCleanupTask struct {
 // AccountSummary is a minimal account info for usage log display.
 // It intentionally excludes sensitive fields like Credentials, Proxy, etc.
 type AccountSummary struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	ExecutionNodeID string `json:"execution_node_id,omitempty"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type Setting struct {

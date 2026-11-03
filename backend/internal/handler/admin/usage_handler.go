@@ -61,11 +61,6 @@ type CreateUsageCleanupTaskRequest struct {
 // GET /api/v1/admin/usage
 func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	executionNodeID, err := parseExecutionNodeFilter(c)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	exactTotal := false
 	if exactTotalRaw := strings.TrimSpace(c.Query("exact_total")); exactTotalRaw != "" {
 		parsed, err := strconv.ParseBool(exactTotalRaw)
@@ -198,8 +193,6 @@ func (h *UsageHandler) List(c *gin.Context) {
 		APIKeyID:              apiKeyID,
 		AccountID:             accountID,
 		GroupID:               groupID,
-		ExecutionNodeID:       executionNodeID,
-		ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(c.Request.Context()),
 		RequestID:             requestID,
 		Model:                 model,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
@@ -230,11 +223,6 @@ func (h *UsageHandler) List(c *gin.Context) {
 // Stats handles getting usage statistics with filters
 // GET /api/v1/admin/usage/stats
 func (h *UsageHandler) Stats(c *gin.Context) {
-	executionNodeID, err := parseExecutionNodeFilter(c)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	// Parse filters - same as List endpoint
 	var userID, apiKeyID, accountID, groupID int64
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
@@ -365,8 +353,6 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		APIKeyID:              apiKeyID,
 		AccountID:             accountID,
 		GroupID:               groupID,
-		ExecutionNodeID:       executionNodeID,
-		ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(c.Request.Context()),
 		Model:                 model,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
 		RequestType:           requestType,

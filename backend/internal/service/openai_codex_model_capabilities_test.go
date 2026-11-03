@@ -45,7 +45,7 @@ func (p *codexSearchCapabilityPolicy) RequireCandidate(context.Context, *int64, 
 	return nil
 }
 
-func newCodexSearchCapabilityAccount(id int64, bridge bool, nodeID string, supportedModels ...string) Account {
+func newCodexSearchCapabilityAccount(id int64, bridge bool, supportedModels ...string) Account {
 	mapping := make(map[string]any, len(supportedModels))
 	for _, model := range supportedModels {
 		mapping[model] = model
@@ -60,7 +60,6 @@ func newCodexSearchCapabilityAccount(id int64, bridge bool, nodeID string, suppo
 		},
 		Extra: map[string]any{
 			"openai_responses_supported": !bridge,
-			"xiass_execution_node_id":    nodeID,
 		},
 	}
 }
@@ -76,26 +75,26 @@ func decodeOpenAICodexCapabilityModels(t *testing.T, body []byte) []map[string]a
 
 func TestAllPersistentModelCandidatesUseChatCompletionsBridge(t *testing.T) {
 	const model = "company-coding-model"
-	localBridge := newCodexSearchCapabilityAccount(1, true, "api", model)
-	remoteBridge := newCodexSearchCapabilityAccount(2, true, "api2", model)
-	native := newCodexSearchCapabilityAccount(3, false, "api2", model)
-	unrelatedNative := newCodexSearchCapabilityAccount(4, false, "api2", "other-model")
+	firstBridge := newCodexSearchCapabilityAccount(1, true, model)
+	secondBridge := newCodexSearchCapabilityAccount(2, true, model)
+	native := newCodexSearchCapabilityAccount(3, false, model)
+	unrelatedNative := newCodexSearchCapabilityAccount(4, false, "other-model")
 
-	require.True(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{localBridge, remoteBridge}, model))
-	require.True(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{localBridge, unrelatedNative}, model), "account whitelist must exclude unrelated native routes")
-	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{localBridge, native}, model), "mixed routes must fail closed")
+	require.True(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{firstBridge, secondBridge}, model))
+	require.True(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{firstBridge, unrelatedNative}, model), "account whitelist must exclude unrelated native routes")
+	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{firstBridge, native}, model), "mixed routes must fail closed")
 	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{native}, model), "native route must rely on upstream metadata")
 	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge(nil, model), "empty candidate sets must fail closed")
 
 	oauth := Account{ID: 5, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{localBridge, oauth}, model), "OAuth/native candidates must fail closed")
+	require.False(t, allPersistentModelCandidatesUseChatCompletionsBridge([]Account{firstBridge, oauth}, model), "OAuth/native candidates must fail closed")
 }
 
 func TestApplyCodexBridgedRouteSearchCapability(t *testing.T) {
 	const model = "company-coding-model"
-	selected := newCodexSearchCapabilityAccount(1, true, "api", model)
-	remote := newCodexSearchCapabilityAccount(2, true, "api2", model)
-	svc := &OpenAIGatewayService{accountRepo: codexSearchCapabilityAccountRepo{accounts: []Account{selected, remote}}}
+	selected := newCodexSearchCapabilityAccount(1, true, model)
+	alternate := newCodexSearchCapabilityAccount(2, true, model)
+	svc := &OpenAIGatewayService{accountRepo: codexSearchCapabilityAccountRepo{accounts: []Account{selected, alternate}}}
 	originalBody := []byte(`{"models":[{"slug":"company-coding-model"},{"slug":"provider-declared","supports_search_tool":true}]}`)
 	manifest := &CodexModelsManifest{Body: append([]byte(nil), originalBody...)}
 
@@ -114,15 +113,15 @@ func TestApplyCodexBridgedRouteSearchCapability(t *testing.T) {
 
 func TestApplyCodexBridgedRouteSearchCapabilityFailsClosed(t *testing.T) {
 	const model = "company-coding-model"
-	bridge := newCodexSearchCapabilityAccount(1, true, "api", model)
-	native := newCodexSearchCapabilityAccount(2, false, "api2", model)
+	bridge := newCodexSearchCapabilityAccount(1, true, model)
+	native := newCodexSearchCapabilityAccount(2, false, model)
 	body := []byte(`{"models":[{"slug":"company-coding-model"},{"slug":"provider-declared","supports_search_tool":true}]}`)
 
 	for _, tc := range []struct {
 		name string
 		repo codexSearchCapabilityAccountRepo
 	}{
-		{name: "mixed nodes", repo: codexSearchCapabilityAccountRepo{accounts: []Account{bridge, native}}},
+		{name: "mixed protocol capabilities", repo: codexSearchCapabilityAccountRepo{accounts: []Account{bridge, native}}},
 		{name: "candidate query error", repo: codexSearchCapabilityAccountRepo{err: errors.New("database unavailable")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,8 +143,8 @@ func TestApplyCodexBridgedRouteSearchCapabilityFailsClosed(t *testing.T) {
 
 func TestApplyCodexBridgedRouteSearchCapabilityUsesRequestAccountAllowlist(t *testing.T) {
 	const model = "company-coding-model"
-	bridge := newCodexSearchCapabilityAccount(1, true, "api", model)
-	native := newCodexSearchCapabilityAccount(2, false, "api2", model)
+	bridge := newCodexSearchCapabilityAccount(1, true, model)
+	native := newCodexSearchCapabilityAccount(2, false, model)
 	body := []byte(`{"models":[{"slug":"company-coding-model"}]}`)
 
 	policy := &codexSearchCapabilityPolicy{allowed: map[int64]struct{}{bridge.ID: {}}}
@@ -168,7 +167,7 @@ func TestApplyCodexBridgedRouteSearchCapabilityUsesRequestAccountAllowlist(t *te
 
 func TestApplyCodexBridgedRouteSearchCapabilityKeepsExplicitManifestFieldsAuthoritative(t *testing.T) {
 	const model = "company-coding-model"
-	account := newCodexSearchCapabilityAccount(1, false, "api", model)
+	account := newCodexSearchCapabilityAccount(1, false, model)
 	metadata := completeUpstreamModelCapability(model, 128000, 32000)
 	metadata.DisplayName = "Persisted display name"
 	metadata.Description = "Persisted description"
@@ -192,8 +191,8 @@ func TestApplyCodexBridgedRouteSearchCapabilityKeepsExplicitManifestFieldsAuthor
 
 func TestApplyCodexBridgedRouteSearchCapabilityUsesPersistentCandidateIntersection(t *testing.T) {
 	const model = "company-coding-model"
-	first := newCodexSearchCapabilityAccount(1, false, "api", model)
-	second := newCodexSearchCapabilityAccount(2, false, "api2", model)
+	first := newCodexSearchCapabilityAccount(1, false, model)
+	second := newCodexSearchCapabilityAccount(2, false, model)
 	firstMetadata := completeUpstreamModelCapability(model, 128000, 32000)
 	firstMetadata.DisplayName = "Provider A"
 	firstMetadata.Description = "Shared description"
@@ -233,8 +232,8 @@ func TestApplyCodexBridgedRouteSearchCapabilityUsesPersistentCandidateIntersecti
 
 func TestApplyCodexBridgedRouteSearchCapabilityRequiresCompleteSnapshotForEveryCandidate(t *testing.T) {
 	const model = "company-coding-model"
-	withSnapshot := newCodexSearchCapabilityAccount(1, false, "api", model)
-	withoutSnapshot := newCodexSearchCapabilityAccount(2, false, "api2", model)
+	withSnapshot := newCodexSearchCapabilityAccount(1, false, model)
+	withoutSnapshot := newCodexSearchCapabilityAccount(2, false, model)
 	metadata := completeUpstreamModelCapability(model, 128000, 32000)
 	withSnapshot.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{
 		Identity: upstreamModelCapabilityIdentity(&withSnapshot),

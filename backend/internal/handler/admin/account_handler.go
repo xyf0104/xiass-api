@@ -89,11 +89,6 @@ type activeConcurrencyAccountLister interface {
 	ListAccountsByIDs(ctx context.Context, page, pageSize int, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]service.Account, int64, error)
 }
 
-type executionNodeAccountLister interface {
-	ListAccountsWithExecutionNode(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]service.Account, int64, error)
-	ListAccountsByIDsWithExecutionNode(ctx context.Context, page, pageSize int, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]service.Account, int64, error)
-}
-
 type accountPoolGetter interface {
 	GetAccountPool(context.Context, int64) (*service.AccountPool, error)
 }
@@ -261,7 +256,6 @@ type BulkUpdateAccountFilters struct {
 	AccountPool      string `json:"account_pool"`
 	Search           string `json:"search"`
 	PrivacyMode      string `json:"privacy_mode"`
-	ExecutionNodeID  string `json:"execution_node_id"`
 }
 
 // CheckMixedChannelRequest represents check mixed channel risk request
@@ -289,17 +283,16 @@ type AccountWithConcurrency struct {
 // need credential-bearing account details. Keep this separate from dto.Account:
 // adding a field to the full account response must never expose it here.
 type AccountListLiteItem struct {
-	ID              int64   `json:"id"`
-	Name            string  `json:"name"`
-	Notes           *string `json:"notes"`
-	Platform        string  `json:"platform"`
-	Type            string  `json:"type"`
-	Concurrency     int     `json:"concurrency"`
-	Priority        int     `json:"priority"`
-	Status          string  `json:"status"`
-	Schedulable     bool    `json:"schedulable"`
-	ExecutionNodeID string  `json:"execution_node_id"`
-	GroupIDs        []int64 `json:"group_ids,omitempty"`
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	Notes       *string `json:"notes"`
+	Platform    string  `json:"platform"`
+	Type        string  `json:"type"`
+	Concurrency int     `json:"concurrency"`
+	Priority    int     `json:"priority"`
+	Status      string  `json:"status"`
+	Schedulable bool    `json:"schedulable"`
+	GroupIDs    []int64 `json:"group_ids,omitempty"`
 }
 
 type simpleModeGroupReference struct {
@@ -466,22 +459,6 @@ func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *
 
 func (h *AccountHandler) isSimpleMode() bool {
 	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
-}
-
-// ensureAccountManagementAccess protects specialized admin endpoints that do
-// not mutate through AdminService directly. The production service implements
-// this optional interface; older test doubles and single-node integrations
-// intentionally keep the existing behavior.
-func ensureAdminAccountManagementAccess(ctx context.Context, adminService service.AdminService, accountID int64) error {
-	checker, ok := adminService.(service.AccountManagementAccessChecker)
-	if !ok {
-		return nil
-	}
-	return checker.CheckAccountManagementAccess(ctx, accountID)
-}
-
-func (h *AccountHandler) ensureAccountManagementAccess(ctx context.Context, accountID int64) error {
-	return ensureAdminAccountManagementAccess(ctx, h.adminService, accountID)
 }
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
@@ -793,11 +770,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_ACCOUNT_FILTER", "invalid account classification filter"))
 		return
 	}
-	executionNodeID, executionNodeErr := parseExecutionNodeFilter(c)
-	if executionNodeErr != nil {
-		response.ErrorFrom(c, executionNodeErr)
-		return
-	}
 	// Keep OpenAI OAuth plans at the top in the preferred Pro, Team, Plus order,
 	// then use recent activity. Explicit table sorting still takes precedence.
 	sortBy := c.DefaultQuery("sort_by", service.AccountSortRecentActivity)
@@ -943,18 +915,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	var accounts []service.Account
 	var total int64
 	var err error
-	if executionNodeID != "" {
-		nodeLister, ok := h.adminService.(executionNodeAccountLister)
-		if !ok {
-			response.ErrorFrom(c, infraerrors.ServiceUnavailable("ACCOUNT_NODE_FILTER_UNAVAILABLE", "account node filtering is temporarily unavailable"))
-			return
-		}
-		if filterByAccountIDs {
-			accounts, total, err = nodeLister.ListAccountsByIDsWithExecutionNode(c.Request.Context(), page, pageSize, filteredAccountIDs, platform, accountType, status, search, listGroupID, privacyMode, executionNodeID, sortBy, sortOrder)
-		} else {
-			accounts, total, err = nodeLister.ListAccountsWithExecutionNode(c.Request.Context(), page, pageSize, platform, accountType, status, search, listGroupID, privacyMode, executionNodeID, sortBy, sortOrder)
-		}
-	} else if filterByAccountIDs {
+	if filterByAccountIDs {
 		lister, ok := h.adminService.(activeConcurrencyAccountLister)
 		if !ok {
 			response.ErrorFrom(c, infraerrors.ServiceUnavailable("ACCOUNT_FILTER_UNAVAILABLE", "account filtering is temporarily unavailable"))
@@ -977,17 +938,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 				groupIDs = filterSimpleModeGroupIDs(groupIDs, simpleModeCompositeServiceGroupIDs(account))
 			}
 			items[i] = AccountListLiteItem{
-				ID:              account.ID,
-				Name:            account.Name,
-				Notes:           account.Notes,
-				Platform:        account.Platform,
-				Type:            account.Type,
-				Concurrency:     account.Concurrency,
-				Priority:        account.Priority,
-				Status:          account.Status,
-				Schedulable:     account.Schedulable,
-				ExecutionNodeID: account.ExecutionNodeID(""),
-				GroupIDs:        groupIDs,
+				ID:          account.ID,
+				Name:        account.Name,
+				Notes:       account.Notes,
+				Platform:    account.Platform,
+				Type:        account.Type,
+				Concurrency: account.Concurrency,
+				Priority:    account.Priority,
+				Status:      account.Status,
+				Schedulable: account.Schedulable,
+				GroupIDs:    groupIDs,
 			}
 		}
 		etag := buildAccountsListETag(items, total, page, pageSize, platform, accountType, status, search, subscriptionPlan, loginMethod, focusedAccountID, activeConcurrencyGroupID, groupConcurrencyCounts, true)
@@ -1040,9 +1000,6 @@ func (h *AccountHandler) List(c *gin.Context) {
 		schedulerFilterPool := h.listAccountSchedulerScoreFilterPool(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
 		if subscriptionPlan != "" || loginMethod != "" {
 			schedulerFilterPool = filterAccountsByIDList(schedulerFilterPool, classificationAccountIDs)
-		}
-		if executionNodeID != "" {
-			schedulerFilterPool = filterAccountsByExecutionNode(schedulerFilterPool, executionNodeID)
 		}
 		if activeConcurrencyGroupID > 0 {
 			schedulerFilterPool = filterAccountsByConcurrencySnapshot(schedulerFilterPool, groupConcurrencyCounts)
@@ -1474,10 +1431,6 @@ func (h *AccountHandler) Duplicate(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	actorScope := adminActorScope(c)
 
 	result, err := executeAdminIdempotent(
@@ -1523,10 +1476,6 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -1629,10 +1578,6 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	err = h.adminService.DeleteAccount(c.Request.Context(), accountID)
 	if err != nil {
@@ -1672,10 +1617,6 @@ func (h *AccountHandler) Test(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	var req TestAccountRequest
 	// Allow empty body, model_id is optional
@@ -1700,10 +1641,6 @@ func (h *AccountHandler) RecoverState(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -1975,11 +1912,6 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
 	updatedAccount, warning, err := h.refreshSingleAccount(c.Request.Context(), account)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -2022,10 +1954,6 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -2215,10 +2143,6 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	account, err := h.adminService.ClearAccountError(c.Request.Context(), accountID)
 	if err != nil {
@@ -2243,10 +2167,6 @@ func (h *AccountHandler) RevertProxyFallback(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), id); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if err := h.adminService.RevertAccountProxyFallback(c.Request.Context(), id); err != nil {
@@ -2298,14 +2218,6 @@ func (h *AccountHandler) BatchDelete(c *gin.Context) {
 	requestedIDs := make(map[int64]struct{}, len(accountIDs))
 	for _, accountID := range accountIDs {
 		if accountsByID[accountID] == nil {
-			continue
-		}
-		if accessErr := h.ensureAccountManagementAccess(c.Request.Context(), accountID); accessErr != nil {
-			failedIDs = append(failedIDs, accountID)
-			errorsByAccount = append(errorsByAccount, deleteError{
-				AccountID: accountID,
-				Error:     accessErr.Error(),
-			})
 			continue
 		}
 		requestedIDs[accountID] = struct{}{}
@@ -2434,16 +2346,6 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 	for _, id := range req.AccountIDs {
 		accountID := id // 闭包捕获
 		g.Go(func() error {
-			if accessErr := h.ensureAccountManagementAccess(gctx, accountID); accessErr != nil {
-				mu.Lock()
-				failedCount++
-				errors = append(errors, gin.H{
-					"account_id": accountID,
-					"error":      accessErr.Error(),
-				})
-				mu.Unlock()
-				return nil
-			}
 			account, err := h.adminService.ClearAccountError(gctx, accountID)
 			if err != nil {
 				mu.Lock()
@@ -2538,16 +2440,6 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 	for _, account := range accounts {
 		acc := account // 闭包捕获
 		if acc == nil {
-			continue
-		}
-		if accessErr := h.ensureAccountManagementAccess(ctx, acc.ID); accessErr != nil {
-			mu.Lock()
-			failedCount++
-			errors = append(errors, gin.H{
-				"account_id": acc.ID,
-				"error":      accessErr.Error(),
-			})
-			mu.Unlock()
 			continue
 		}
 		g.Go(func() error {
@@ -2767,10 +2659,6 @@ func (h *AccountHandler) BatchUpdateCredentials(c *gin.Context) {
 	}
 	updates := make([]accountUpdate, 0, len(req.AccountIDs))
 	for _, accountID := range req.AccountIDs {
-		if err := h.ensureAccountManagementAccess(ctx, accountID); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
 		account, err := h.adminService.GetAccount(ctx, accountID)
 		if err != nil {
 			response.Error(c, 404, fmt.Sprintf("Account %d not found", accountID))
@@ -2925,7 +2813,6 @@ func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *servi
 		AccountPool:      filters.AccountPool,
 		Search:           filters.Search,
 		PrivacyMode:      filters.PrivacyMode,
-		ExecutionNodeID:  filters.ExecutionNodeID,
 	}
 }
 
@@ -3082,25 +2969,8 @@ func (h *AccountHandler) GetUsage(c *gin.Context) {
 		return
 	}
 
-	source, explicitSource := c.GetQuery("source")
+	source := c.Query("source")
 	force := c.Query("force") == "true"
-	if source != "passive" || force {
-		if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-			switch infraerrors.Reason(err) {
-			case "ACCOUNT_REMOTE_NODE_READ_ONLY", "ACCOUNT_NODE_ACCESS_UNAVAILABLE":
-				// Older clients omit source. An unavailable management path must
-				// never turn a display request into an upstream probe or write.
-				if !explicitSource && !force {
-					source = "passive"
-					break
-				}
-				fallthrough
-			default:
-				response.ErrorFrom(c, err)
-				return
-			}
-		}
-	}
 
 	var usage *service.UsageInfo
 	if source == "passive" {
@@ -3122,10 +2992,6 @@ func (h *AccountHandler) ClearRateLimit(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -3150,10 +3016,6 @@ func (h *AccountHandler) ResetQuota(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -3203,10 +3065,6 @@ func (h *AccountHandler) ClearTempUnschedulable(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -3298,10 +3156,6 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -3523,10 +3377,6 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
@@ -3636,10 +3486,6 @@ func (h *AccountHandler) SetPrivacy(c *gin.Context) {
 		response.NotFound(c, "Account not found")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if account.Type != service.AccountTypeOAuth {
 		response.BadRequest(c, "Only OAuth accounts support privacy setting")
 		return
@@ -3689,10 +3535,6 @@ func (h *AccountHandler) RefreshTier(c *gin.Context) {
 	account, err := h.adminService.GetAccount(ctx, accountID)
 	if err != nil {
 		response.NotFound(c, "Account not found")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(ctx, accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -3792,16 +3634,6 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 
 	for _, account := range accounts {
 		acc := account // 闭包捕获
-		if accessErr := h.ensureAccountManagementAccess(ctx, acc.ID); accessErr != nil {
-			mu.Lock()
-			failedCount++
-			errors = append(errors, gin.H{
-				"account_id": acc.ID,
-				"error":      accessErr.Error(),
-			})
-			mu.Unlock()
-			continue
-		}
 		g.Go(func() error {
 			_, extra, creds, err := h.geminiOAuthService.RefreshAccountGoogleOneTier(gctx, acc)
 			if err != nil {

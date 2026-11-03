@@ -9,20 +9,19 @@
             :filters="params"
             :groups="groups"
             :pools="accountPools"
-            :execution-node-options="executionNodeOptions"
             @update:filters="(newFilters) => Object.assign(params, newFilters)"
             @change="debouncedReload"
             @update:searchQuery="debouncedReload"
           />
           <AccountTableActions
             class="accounts-actions-compact"
-            v-if="accountActionsReady && !pairingUnavailable"
+            v-if="accountActionsReady"
             :loading="loading"
             @refresh="handleManualRefresh"
-            @create="allowAccountWrite() && (showCreate = true)"
+            @create="showCreate = true"
           >
             <template #beforeCreate>
-              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-pools" @click="allowAccountWrite() && (showAccountPools = true)">
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-pools" @click="showAccountPools = true">
                 <Icon name="users" size="sm" /><span>号池管理</span>
               </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="batch-openai-oauth" @click="openOpenAIAccountWorkbench">
@@ -179,10 +178,6 @@
               </div>
             </template>
           </AccountTableActions>
-          <div v-else-if="pairingUnavailable" class="flex flex-wrap items-center gap-2 text-sm text-amber-700 dark:text-amber-300" data-testid="account-pairing-unavailable">
-            <span>{{ t('admin.accounts.executionNodePairingUnavailable') }}</span>
-            <button type="button" class="btn btn-secondary" :disabled="loading" :title="t('common.refresh')" @click="handleManualRefresh"><Icon name="refresh" size="sm" /></button>
-          </div>
           <div
             v-else
             data-testid="account-toolbar-loading"
@@ -292,7 +287,7 @@
               type="checkbox"
               class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               :checked="allVisibleSelected"
-              :disabled="selectableVisibleAccounts.length === 0"
+              :disabled="accounts.length === 0"
               @click.stop
               @change="toggleSelectAllVisible($event)"
             />
@@ -301,8 +296,6 @@
             <input
               type="checkbox"
               :checked="isSelected(row.id)"
-              :disabled="isAccountReadOnly(row)"
-              :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : undefined"
               @change="toggleSel(row.id)"
               class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40"
             />
@@ -338,25 +331,9 @@
                 {{ accountDisplayEmail(row) }}
               </span>
               <div
-                v-if="showExecutionNodeLabels || accountPoolForAccount(row.id)"
+                v-if="accountPoolForAccount(row.id)"
                 class="mt-1 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden"
               >
-                <span
-                  v-if="showExecutionNodeLabels"
-                  :class="[
-                    'inline-flex w-fit shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium leading-4',
-                    isAccountRemote(row)
-                      ? 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
-                      : 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-                  ]"
-                  :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : t('admin.accounts.columns.executionNodeHint')"
-                >
-                  <Icon :name="isAccountReadOnly(row) ? 'lock' : 'server'" size="xs" :stroke-width="2" />
-                  <span>{{ executionNodeLabel(row) }}</span>
-                  <span v-if="isAccountRemote(row)" class="border-l border-current/25 pl-1">
-                    {{ isAccountReadOnly(row) ? t('admin.accounts.executionNodeReadOnlyBadge') : t('admin.accounts.executionNodeManageableBadge') }}
-                  </span>
-                </span>
                 <AccountPoolBadge
                   v-if="accountPoolForAccount(row.id)"
                   class="min-w-0 shrink whitespace-nowrap"
@@ -406,7 +383,7 @@
             </div>
           </template>
           <template #cell-schedulable="{ row }">
-            <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id || isAccountReadOnly(row)" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : (row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled'))">
+            <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="(row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled'))">
               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
             </button>
           </template>
@@ -429,7 +406,6 @@
           <template #cell-usage="{ row }">
             <AccountUsageCell
               :account="row"
-              :read-only="isAccountReadOnly(row)"
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
               :today-stats-loading="todayStatsLoading"
               :manual-refresh-token="usageManualRefreshToken"
@@ -455,7 +431,7 @@
                 <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :title="t('admin.accounts.fallbackActiveTip', { origin: row.proxy_fallback_origin_name })">
                   {{ t('admin.accounts.fallbackActive') }}
                 </span>
-                <button :disabled="isAccountReadOnly(row)" :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : undefined" class="text-xs px-1.5 py-0.5 rounded border border-gray-300 dark:border-dark-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-700 disabled:cursor-not-allowed disabled:opacity-50" @click="onRevertFallback(row)">{{ t('admin.accounts.revertProxy') }}</button>
+                <button class="text-xs px-1.5 py-0.5 rounded border border-gray-300 dark:border-dark-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-700 disabled:cursor-not-allowed disabled:opacity-50" @click="onRevertFallback(row)">{{ t('admin.accounts.revertProxy') }}</button>
               </div>
             </div>
           </template>
@@ -546,11 +522,11 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button @click="handleEdit(row)" :disabled="isAccountReadOnly(row)" :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : t('common.edit')" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-primary-400">
+              <button @click="handleEdit(row)" :title="t('common.edit')" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-primary-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
-              <button @click="handleDelete(row)" :disabled="isAccountReadOnly(row)" :title="isAccountReadOnly(row) ? accountManagementBlockReason(row) : t('common.delete')" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/20 dark:hover:text-red-400">
+              <button @click="handleDelete(row)" :title="t('common.delete')" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/20 dark:hover:text-red-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 <span class="text-xs">{{ t('common.delete') }}</span>
               </button>
@@ -585,7 +561,7 @@
       @close="closeOAuthBillingDetails"
     />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" :can-manage="menu.acc ? !isAccountReadOnly(menu.acc) : true" :management-block-reason="menu.acc ? accountManagementBlockReason(menu.acc) : ''" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @codex-ticket="openCodexTicket" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @codex-ticket="openCodexTicket" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <BaseDialog
       :show="showAccountAllowlistGroupPicker"
       :title="t('admin.groups.userAccountAllowlist.title')"
@@ -706,7 +682,6 @@ import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
-import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import { buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 
 const loadCreateAccountModal = () => import('@/components/account/CreateAccountModal.vue')
@@ -724,7 +699,6 @@ const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const router = useRouter() as ReturnType<typeof useRouter> | undefined
 
 function openOpenAIAccountWorkbench() {
-  if (!allowAccountWrite()) return
   void router?.push({
     name: 'AdminOpenAIReauthorization',
     query: { workspace: 'reauthorization' }
@@ -732,7 +706,6 @@ function openOpenAIAccountWorkbench() {
 }
 
 function openOpenAIReauthorizationManagement() {
-  if (!allowAccountWrite()) return
   const accountIDs = openAI401Accounts.value.map(account => account.id).join(',')
   void router?.push({
     name: 'AdminOpenAIReauthorization',
@@ -784,7 +757,6 @@ type AccountBulkEditTarget =
         status?: string
         group?: string
         account_pool?: string
-        execution_node_id?: string
         search?: string
         privacy_mode?: string
         sort_by?: string
@@ -814,64 +786,6 @@ const showCreate = ref(false)
 const usageReauthAccountIDs = ref(new Set<number>())
 const announcedReauthAccountIDs = new Set<number>()
 const accountActionsReady = ref(false)
-const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
-const pairedFullAccess = computed(() => executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && executionNodeStatus.value.admin_write_allowed === true)
-const pairingUnavailable = computed(() => executionNodeStatus.value?.admin_write_mode === 'pairing_unavailable' || (executionNodeStatus.value?.admin_write_mode === 'paired_full_access' && !pairedFullAccess.value))
-const executionNodeOptions = computed<SelectOption[]>(() => {
-  const status = executionNodeStatus.value
-  if (!status?.runtime.enabled || status.nodes.length === 0) return []
-  const localNodeID = status.runtime.node_id || 'api'
-  const seen = new Set<string>()
-  const options: SelectOption[] = [{ value: '', label: t('admin.accounts.executionNodeAll') }]
-  for (const node of [{ node_id: localNodeID, is_local: true }, ...status.nodes]) {
-    const nodeID = String(node.node_id || '').trim()
-    if (!nodeID || seen.has(nodeID)) continue
-    seen.add(nodeID)
-    options.push({
-      value: nodeID,
-      label: nodeID === localNodeID || node.is_local ? t('admin.accounts.executionNodeLocal') : nodeID
-    })
-  }
-  return options
-})
-const showExecutionNodeLabels = computed(() => executionNodeOptions.value.length > 0)
-const accountExecutionNodeID = (account: Account): string => {
-  const owner = account.execution_node_id?.trim()
-  return owner || executionNodeStatus.value?.runtime.legacy_unassigned_node_id || 'api'
-}
-const executionNodeLabel = (account: Account): string => {
-  const localNodeID = executionNodeStatus.value?.runtime.node_id || 'api'
-  const owner = accountExecutionNodeID(account)
-  return owner === localNodeID ? t('admin.accounts.executionNodeLocal') : owner
-}
-const isExecutionNodeOwnerReadOnly = (owner: string): boolean => {
-  const status = executionNodeStatus.value
-  if (pairingUnavailable.value) return true
-  if (!status?.runtime.enabled) return false
-  const localNodeID = status.runtime.node_id || 'api'
-  if (owner === localNodeID) return false
-  return !pairedFullAccess.value
-}
-const isAccountRemote = (account: Account): boolean => {
-  const status = executionNodeStatus.value
-  if (!status?.runtime.enabled) return false
-  return accountExecutionNodeID(account) !== (status.runtime.node_id || 'api')
-}
-const isAccountReadOnly = (account: Account): boolean => {
-  return isExecutionNodeOwnerReadOnly(accountExecutionNodeID(account))
-}
-const accountManagementBlockReason = (account: Account): string => {
-  if (pairingUnavailable.value) return t('admin.accounts.executionNodePairingUnavailable')
-  const owner = accountExecutionNodeID(account)
-  return t('admin.accounts.executionNodeRemoteReadOnly', { node: owner })
-}
-function allowAccountWrite(account?: Account): boolean {
-  if (pairingUnavailable.value || (account && isAccountReadOnly(account))) {
-    appStore.showError(account ? accountManagementBlockReason(account) : t('admin.accounts.executionNodePairingUnavailable'))
-    return false
-  }
-  return true
-}
 const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
@@ -1204,7 +1118,6 @@ const {
     privacy_mode: '',
     group: '',
     account_pool: '',
-    execution_node_id: '',
     active_concurrency_group: initialActiveConcurrencyGroup,
     account_id: initialFocusedAccountID,
     search: '',
@@ -1282,11 +1195,10 @@ const {
   getId: (account) => account.id
 })
 
-const selectableVisibleAccounts = computed(() => accounts.value.filter(account => !isAccountReadOnly(account)))
-const allVisibleSelected = computed(() => selectableVisibleAccounts.value.length > 0 && selectableVisibleAccounts.value.every(account => isSelected(account.id)))
+const allVisibleSelected = computed(() => accounts.value.length > 0 && accounts.value.every(account => isSelected(account.id)))
 const select = (id: number) => {
   const account = accounts.value.find(item => item.id === id)
-  if (account && !isAccountReadOnly(account)) selectRaw(id)
+  if (account) selectRaw(id)
 }
 const deselect = (id: number) => deselectRaw(id)
 const toggleSel = (id: number) => {
@@ -1298,7 +1210,7 @@ const toggleSel = (id: number) => {
 }
 const toggleVisible = (checked: boolean) => {
   batchUpdate((draft) => {
-    selectableVisibleAccounts.value.forEach((account) => {
+    accounts.value.forEach((account) => {
       if (checked) draft.add(account.id)
       else draft.delete(account.id)
     })
@@ -1655,7 +1567,6 @@ const refreshAccountsIncrementally = async () => {
         privacy_mode?: string
         group?: string
         account_pool?: string
-        execution_node_id?: string
         active_concurrency_group?: string
         account_id?: string
         search?: string
@@ -1726,13 +1637,11 @@ const toggleAccountToolsDropdown = () => {
 }
 
 const openSyncFromCrs = () => {
-  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showSync.value = true
 }
 
 const openImportData = () => {
-  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showImportData.value = true
 }
@@ -1743,13 +1652,11 @@ const openExportDataDialogFromMenu = () => {
 }
 
 const openErrorPassthrough = () => {
-  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showErrorPassthrough.value = true
 }
 
 const openTLSFingerprintProfiles = () => {
-  if (!allowAccountWrite()) return
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
 }
@@ -1952,7 +1859,7 @@ const cols = computed(() =>
   )
 )
 
-const handleEdit = (a: Account) => { if (!allowAccountWrite(a)) return; edAcc.value = a; showEdit.value = true }
+const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
 const accountAllowlistGroups = computed<AdminGroup[]>(() => {
   const account = accountAllowlistAccount.value
   if (!account) return []
@@ -1975,7 +1882,6 @@ const openGroupUserAllowlist = async (group: AdminGroup) => {
 }
 
 const openAccountUserAllowlist = (account: Account) => {
-  if (!allowAccountWrite(account)) return
   accountAllowlistAccount.value = account
   if (accountAllowlistGroups.value.length === 1) {
     void openGroupUserAllowlist(accountAllowlistGroups.value[0])
@@ -2044,7 +1950,6 @@ const toggleSelectAllVisible = (event: Event) => {
   toggleVisible(target.checked)
 }
 const handleBulkDelete = async () => {
-  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   if (!confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length }))) return
   try {
@@ -2066,7 +1971,6 @@ const handleBulkDelete = async () => {
   }
 }
 const handleBulkResetStatus = async () => {
-  if (!allowAccountWrite()) return
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
@@ -2083,7 +1987,6 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
-  if (!allowAccountWrite()) return
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchRefresh(selIds.value)
@@ -2100,7 +2003,6 @@ const handleBulkRefreshToken = async () => {
   }
 }
 const handleBulkProbeUpstreamBilling = async () => {
-  if (!allowAccountWrite()) return
   const accountIDs = [...selIds.value]
   if (accountIDs.length === 0) {
     appStore.showError(t('admin.accounts.upstreamBilling.noEligibleAccounts'))
@@ -2200,7 +2102,6 @@ const normalizeBulkSchedulableResult = (
   }
 }
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
-  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
@@ -2248,7 +2149,6 @@ const buildBulkEditFilterSnapshot = () => {
     status: typeof rawParams.status === 'string' ? rawParams.status : '',
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
     account_pool: typeof rawParams.account_pool === 'string' ? rawParams.account_pool : '',
-    execution_node_id: typeof rawParams.execution_node_id === 'string' ? rawParams.execution_node_id : '',
     search: typeof rawParams.search === 'string' ? rawParams.search : '',
     privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
     account_id: typeof rawParams.account_id === 'string' ? rawParams.account_id : '',
@@ -2270,25 +2170,9 @@ const handleSelectAllResults = async () => {
     )
     if (requestVersion !== selectionRequestVersion.value) return
 
-    const manageableAccounts = snapshot.accounts.filter((account) => {
-      const owner = account.execution_node_id?.trim()
-        || executionNodeStatus.value?.runtime.legacy_unassigned_node_id
-        || 'api'
-      return !isExecutionNodeOwnerReadOnly(owner)
-    })
-    const manageableSnapshot: AccountSelectionSnapshot = {
-      accounts: manageableAccounts,
-      ids: manageableAccounts.map(account => account.id),
-      selectedPlatforms: Array.from(new Set(manageableAccounts.map(account => account.platform))),
-      selectedTypes: Array.from(new Set(manageableAccounts.map(account => account.type)))
-    }
-    setSelectedIds(manageableSnapshot.ids)
-    selectedAllResultIDs.value = new Set(manageableSnapshot.ids)
-    selectedAllResultSnapshot.value = manageableSnapshot
-    const excluded = snapshot.ids.length - manageableSnapshot.ids.length
-    if (excluded > 0) {
-      appStore.showWarning(t('admin.accounts.executionNodeBulkExcluded', { count: excluded }))
-    }
+    setSelectedIds(snapshot.ids)
+    selectedAllResultIDs.value = new Set(snapshot.ids)
+    selectedAllResultSnapshot.value = snapshot
   } catch (error) {
     if (requestVersion !== selectionRequestVersion.value) return
     console.error('Failed to select all account results:', error)
@@ -2307,7 +2191,6 @@ const collectSelectionMetadata = (rows: Array<Pick<Account, 'platform' | 'type'>
 }
 
 const openBulkEditSelected = async () => {
-  if (!allowAccountWrite()) return
   const accountIds = [...selIds.value]
   const selectedIDSet = new Set(accountIds)
 
@@ -2353,19 +2236,8 @@ const openBulkEditSelected = async () => {
 }
 
 const openBulkEditFiltered = async () => {
-  if (!allowAccountWrite()) return
   try {
     const filters = buildBulkEditFilterSnapshot()
-    const status = executionNodeStatus.value
-    if (status?.runtime.enabled && !pairedFullAccess.value) {
-      const localNodeID = status.runtime.node_id || 'api'
-      if (filters.execution_node_id && isExecutionNodeOwnerReadOnly(filters.execution_node_id)) {
-        appStore.showError(t('admin.accounts.executionNodeBulkRemoteReadOnly'))
-        return
-      }
-      // Without verified pairing, filter-wide writes stay on the local machine.
-      if (!filters.execution_node_id) filters.execution_node_id = localNodeID
-    }
     const snapshot = await fetchAllAccountSelection(
       (page, pageSize, requestFilters) => adminAPI.accounts.list(page, pageSize, requestFilters),
       filters
@@ -2405,7 +2277,6 @@ const buildAccountQueryFilters = () => ({
   status: params.status || '',
   group: params.group || '',
   account_pool: params.account_pool || '',
-  execution_node_id: params.execution_node_id || '',
   privacy_mode: params.privacy_mode || '',
   search: params.search || '',
   account_id: params.account_id || '',
@@ -2487,10 +2358,6 @@ const accountMatchesCurrentFilters = (account: Account) => {
     }
   }
   if (filters.account_pool && accountPoolForAccount(account.id)?.id !== Number(filters.account_pool)) return false
-  if (filters.execution_node_id) {
-    const owner = accountExecutionNodeID(account)
-    if (owner !== filters.execution_node_id) return false
-  }
   const privacyMode = typeof account.extra?.privacy_mode === 'string' ? account.extra.privacy_mode : ''
   if (filters.privacy_mode) {
     if (filters.privacy_mode === ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE) {
@@ -2561,7 +2428,6 @@ const refreshAccountsAfterUpstreamBillingProbe = async () => {
   }
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
-  if (!allowAccountWrite(account)) return
   if (probingUpstreamBilling.has(account.id)) return
   probingUpstreamBilling.add(account.id)
   try {
@@ -2646,7 +2512,7 @@ const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeCodexTicket = () => { showCodexTicket.value = false; codexTicketAcc.value = null }
 const closeOAuthBillingDetails = () => { showOAuthBillingDetails.value = false; oauthBillingAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
-const handleTest = (a: Account) => { if (!allowAccountWrite(a)) return; testingAcc.value = a; showTest.value = true }
+const handleTest = (a: Account) => { testingAcc.value = a; showTest.value = true }
 const handleViewStats = (a: Account) => { statsAcc.value = a; showStats.value = true }
 const openCodexTicket = (a: Account) => { codexTicketAcc.value = a; showCodexTicket.value = true }
 const handleCodexTicketUpdated = (payload: { enabled: boolean; statuses: NonNullable<Account['codex_turn_tickets']>; codex_ticket_capture_proxy_ids?: number[] }) => {
@@ -2671,7 +2537,6 @@ const handleOpenBillingDetails = (payload: { account: Account; windowLabel: stri
   showOAuthBillingDetails.value = true
 }
 const handleSchedule = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   scheduleAcc.value = a
   scheduleModelOptions.value = []
   showSchedulePanel.value = true
@@ -2684,7 +2549,6 @@ const handleSchedule = async (a: Account) => {
 }
 const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.value = null; scheduleModelOptions.value = [] }
 const handleReAuth = (a: Account) => {
-  if (!allowAccountWrite(a)) return
   if (accountNeedsOpenAIReauthorization(a)) {
     void router?.push({
       name: 'AdminOpenAIReauthorization',
@@ -2697,7 +2561,6 @@ const handleReAuth = (a: Account) => {
 }
 const duplicatingAccountIDs = new Set<number>()
 const handleDuplicateAccount = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   if (duplicatingAccountIDs.has(a.id)) return
   duplicatingAccountIDs.add(a.id)
   try {
@@ -2715,7 +2578,6 @@ const handleDuplicateAccount = async (a: Account) => {
   }
 }
 const handleRefresh = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   try {
     const result = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(result.account)
@@ -2726,7 +2588,6 @@ const handleRefresh = async (a: Account) => {
   }
 }
 const handleRecoverState = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.recoverState(a.id)
     patchAccountInList(updated)
@@ -2738,7 +2599,6 @@ const handleRecoverState = async (a: Account) => {
   }
 }
 const handleResetQuota = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.resetAccountQuota(a.id)
     patchAccountInList(updated)
@@ -2771,7 +2631,6 @@ const privacyResultMessageKey = (account: Account): { type: 'success' | 'error';
 }
 
 const handleSetPrivacy = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   try {
     const updated = await adminAPI.accounts.setPrivacy(a.id)
     patchAccountInList(updated)
@@ -2788,7 +2647,6 @@ const handleSetPrivacy = async (a: Account) => {
   }
 }
 const onRevertFallback = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   try {
     await adminAPI.accounts.revertProxyFallback(a.id)
     appStore.showSuccess(t('admin.accounts.revertProxySuccess'))
@@ -2799,12 +2657,10 @@ const onRevertFallback = async (a: Account) => {
   }
 }
 const handleCreateSparkShadow = (a: Account) => {
-  if (!allowAccountWrite(a)) return
   creatingShadowAcc.value = a
   showCreateShadowDialog.value = true
 }
 const confirmCreateSparkShadow = async () => {
-  if (!allowAccountWrite(creatingShadowAcc.value ?? undefined)) return
   const a = creatingShadowAcc.value
   if (!a) return
   try {
@@ -2818,10 +2674,9 @@ const confirmCreateSparkShadow = async () => {
     appStore.showError(error?.response?.data?.message || t('admin.accounts.createSparkShadowFailed'))
   }
 }
-const handleDelete = (a: Account) => { if (!allowAccountWrite(a)) return; deletingAcc.value = a; showDeleteDialog.value = true }
-const confirmDelete = async () => { if(!deletingAcc.value || !allowAccountWrite(deletingAcc.value)) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
+const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
+const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
-  if (!allowAccountWrite(a)) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {
@@ -2835,7 +2690,7 @@ const handleToggleSchedulable = async (a: Account) => {
     togglingSchedulable.value = null
   }
 }
-const handleShowTempUnsched = (a: Account) => { if (!allowAccountWrite(a)) return; tempUnschedAcc.value = a; showTempUnsched.value = true }
+const handleShowTempUnsched = (a: Account) => { tempUnschedAcc.value = a; showTempUnsched.value = true }
 const handleTempUnschedReset = async (updated: Account) => {
   showTempUnsched.value = false
   tempUnschedAcc.value = null
@@ -2911,14 +2766,12 @@ onMounted(async () => {
   void loadAccountPools()
   loadUpstreamBillingProbeGlobalState()
   try {
-    const [p, g, executionNodes] = await Promise.allSettled([
+    const [p, g] = await Promise.allSettled([
       adminAPI.proxies.getAll(),
-      adminAPI.groups.getAll(),
-      adminAPI.executionNodes?.getStatus?.()
+      adminAPI.groups.getAll()
     ])
     if (p.status === 'fulfilled') proxies.value = p.value
     if (g.status === 'fulfilled') groups.value = g.value
-    if (executionNodes.status === 'fulfilled') executionNodeStatus.value = executionNodes.value
   } catch (error) {
     console.error('Failed to load proxies/groups:', error)
   } finally {

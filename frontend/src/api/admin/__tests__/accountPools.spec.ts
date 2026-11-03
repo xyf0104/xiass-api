@@ -75,7 +75,7 @@ describe('account pools API contract', () => {
   it('fetches every full page, keeps pro/plus/team and other platforms, and never requests lite or secrets', async () => {
     const rows = ['pro', 'plus', 'team'].map((plan, index) => ({
       id: index + 1, name: plan, proxy_id: 9, platform: 'openai', type: 'oauth',
-      credentials: { plan_type: plan }, execution_node_id: 'node-a'
+      credentials: { plan_type: plan }
     }))
     const other = { id: 4, name: 'Claude', platform: 'anthropic', type: 'apikey', proxy_id: null }
     list.mockResolvedValueOnce({ items: rows.slice(0, 2), pages: 2, total: 4, page_size: 2 })

@@ -105,13 +105,6 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if err != nil {
 		return nil, err
 	}
-	if s.executionNodeProxyMapped(ctx, id) {
-		if (input.Status != "" && input.Status != StatusActive) ||
-			(input.ExpiresAt != nil && !input.ExpiresAt.After(time.Now())) {
-			return nil, ErrExecutionNodeProxyProtected
-		}
-	}
-
 	// Merge only supplied fields, then validate the resulting fallback configuration.
 	mode := proxy.FallbackMode
 	if input.FallbackMode != "" {
@@ -165,9 +158,6 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
-	if s.executionNodeProxyMapped(ctx, id) {
-		return ErrExecutionNodeProxyProtected
-	}
 	count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 	if err != nil {
 		return err
@@ -185,13 +175,6 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 	}
 
 	for _, id := range ids {
-		if s.executionNodeProxyMapped(ctx, id) {
-			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
-				ID:     id,
-				Reason: ErrExecutionNodeProxyProtected.Error(),
-			})
-			continue
-		}
 		count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 		if err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
@@ -218,28 +201,6 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 	}
 
 	return result, nil
-}
-
-func (s *adminServiceImpl) executionNodeProxyMapped(ctx context.Context, proxyID int64) bool {
-	if proxyID <= 0 || s == nil || s.settingService == nil ||
-		s.settingService.cfg == nil || !s.settingService.cfg.Gateway.ExecutionNode.Enabled {
-		return false
-	}
-	settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
-	if !settings.Available {
-		// The node is configured for shared routing, so an unreadable policy must
-		// not become permission to mutate a potentially critical fixed egress.
-		return true
-	}
-	if !settings.Enabled {
-		return false
-	}
-	for _, mappedProxyID := range settings.ProxyIDs {
-		if mappedProxyID == proxyID {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *adminServiceImpl) GetProxyAccounts(ctx context.Context, proxyID int64) ([]ProxyAccountSummary, error) {

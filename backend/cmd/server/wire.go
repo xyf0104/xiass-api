@@ -92,7 +92,6 @@ func provideCleanup(
 	apiKeyService *service.APIKeyService,
 	authCacheInvalidationWorker *service.AuthCacheInvalidationWorker,
 	schedulerSnapshot *service.SchedulerSnapshotService,
-	executionNodeHeartbeat *service.ExecutionNodeHeartbeatService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
@@ -154,9 +153,9 @@ func provideCleanup(
 				return nil
 			}},
 			{"OpenAIQuotaAutoReset", func() error { openaiQuota.Stop(); return nil }},
-			{"ExecutionNodeHeartbeatService", func() error {
-				if executionNodeHeartbeat != nil {
-					executionNodeHeartbeat.Stop()
+			{"OpenAIReauthorizationAutoWorker", func() error {
+				if adminHandlers != nil && adminHandlers.OpenAIOAuth != nil {
+					adminHandlers.OpenAIOAuth.StopOpenAIReauthorizationAutoWorker()
 				}
 				return nil
 			}},

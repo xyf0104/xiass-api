@@ -293,33 +293,39 @@ func calculatePerRequestStatsCost(pricing *ChannelModelPricing, requestCount int
 }
 
 // calculateTokenStatsCost Token 计费。
-// If the pricing has intervals, find the matching interval by total token count
-// and use its prices instead of the flat pricing fields.
+// Intervals use input context, including caches but excluding output. Nil
+// interval prices inherit the base card, except an explicit 5m price also
+// supplies a missing interval 1h price, matching customer billing.
 func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *float64 {
-	p := pricing
-	if len(pricing.Intervals) > 0 {
-		totalTokens := tokens.InputTokens + tokens.OutputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens
-		if iv := FindMatchingInterval(pricing.Intervals, totalTokens); iv != nil {
-			p = &ChannelModelPricing{
-				InputPrice:      iv.InputPrice,
-				OutputPrice:     iv.OutputPrice,
-				CacheWritePrice: iv.CacheWritePrice,
-				CacheReadPrice:  iv.CacheReadPrice,
-				PerRequestPrice: iv.PerRequestPrice,
-			}
-		}
-	}
 	deref := func(ptr *float64) float64 {
 		if ptr == nil {
 			return 0
 		}
 		return *ptr
 	}
-	cost := float64(tokens.InputTokens)*deref(p.InputPrice) +
-		float64(tokens.OutputTokens)*deref(p.OutputPrice) +
-		float64(tokens.CacheCreationTokens)*deref(p.CacheWritePrice) +
-		float64(tokens.CacheReadTokens)*deref(p.CacheReadPrice) +
-		float64(tokens.ImageOutputTokens)*deref(p.ImageOutputPrice)
+	p := &ModelPricing{
+		InputPricePerToken:         deref(pricing.InputPrice),
+		OutputPricePerToken:        deref(pricing.OutputPrice),
+		CacheCreationPricePerToken: deref(pricing.CacheWritePrice),
+		CacheCreation5mPrice:       deref(pricing.CacheWritePrice),
+		CacheCreation1hPrice:       deref(pricing.CacheWritePrice),
+		CacheReadPricePerToken:     deref(pricing.CacheReadPrice),
+		ImageOutputPricePerToken:   deref(pricing.ImageOutputPrice),
+	}
+	if pricing.CacheWrite1hPrice != nil {
+		p.CacheCreation1hPrice = *pricing.CacheWrite1hPrice
+	}
+	contextTokens := tokens.InputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens
+	if iv := FindMatchingInterval(pricing.Intervals, contextTokens); iv != nil {
+		p = intervalToModelPricing(iv, p, pricing)
+	}
+	cacheCost, _, _ := (&BillingService{}).computeCacheCreationBreakdownCosts(p, tokens, 1)
+	// Reuse interval/cache semantics without applying customer tier policies or
+	// changing the legacy account-statistics image-output calculation.
+	cost := float64(tokens.InputTokens)*p.InputPricePerToken +
+		float64(tokens.OutputTokens)*p.OutputPricePerToken +
+		cacheCost + float64(tokens.CacheReadTokens)*p.CacheReadPricePerToken +
+		float64(tokens.ImageOutputTokens)*p.ImageOutputPricePerToken
 	if cost <= 0 {
 		return nil
 	}

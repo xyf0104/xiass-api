@@ -92,7 +92,7 @@ describe('AccountUsageCell', () => {
     })
   })
 
-  it('remote OpenAI usage and manual refresh stay passive while billing remains clickable', async () => {
+  it('keeps passive usage billing clickable and allows active and manual refresh', async () => {
     getUsage.mockResolvedValue({
       source: 'passive',
       seven_day: {
@@ -105,7 +105,6 @@ describe('AccountUsageCell', () => {
     const wrapper = mount(AccountUsageCell, {
       props: {
         account: makeAccount({ id: 9101, platform: 'openai', type: 'oauth' }),
-        readOnly: true,
         manualRefreshToken: 0
       },
       global: {
@@ -113,67 +112,38 @@ describe('AccountUsageCell', () => {
           UsageProgressBar: billingUsageProgressBarStub,
           OpenAIQuotaResetCell: {
             name: 'OpenAIQuotaResetCell',
-            props: ['account', 'readOnly'],
+            props: ['account'],
             template: '<div><slot name="pre-actions" /></div>'
           }
         }
       }
     })
     await flushPromises()
-    expect(getUsage).toHaveBeenCalledWith(9101, 'passive', undefined)
-    expect(wrapper.findComponent({ name: 'OpenAIQuotaResetCell' }).props('readOnly')).toBe(true)
+    expect(getUsage).toHaveBeenCalledWith(9101)
     expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$0.00')
     const activeButton = wrapper.findAll('button').find(button => button.text().includes('usageWindow.activeQuery'))!
-    expect(activeButton.attributes('disabled')).toBeDefined()
+    expect(activeButton.attributes('disabled')).toBeUndefined()
     await activeButton.trigger('click')
-    expect(getUsage).toHaveBeenCalledTimes(1)
+    await flushPromises()
+    expect(getUsage).toHaveBeenCalledTimes(2)
+    expect(getUsage).toHaveBeenLastCalledWith(9101, 'active', true)
     await wrapper.get('[data-window="7d"]').trigger('click')
     expect(wrapper.emitted('open-billing-details')).toHaveLength(1)
 
     await wrapper.setProps({ manualRefreshToken: 1 })
     await flushPromises()
-    expect(getUsage).toHaveBeenCalledTimes(2)
-    expect(getUsage).toHaveBeenLastCalledWith(9101, 'passive', undefined)
-    wrapper.unmount()
-  })
-
-  it('permission changes invalidate cached usage and reject stale active responses', async () => {
-    const snapshot = (estimate: number) => ({
-      seven_day: { utilization: 25, weekly_estimate_usd: estimate, resets_at: '2099-03-13T12:00:00Z' }
-    })
-    let resolveActive!: (value: unknown) => void
-    getUsage
-      .mockImplementationOnce(() => new Promise(resolve => { resolveActive = resolve }))
-      .mockResolvedValueOnce(snapshot(2400))
-      .mockResolvedValueOnce(snapshot(2500))
-    const wrapper = mount(AccountUsageCell, {
-      props: { account: makeAccount({ id: 9102, platform: 'openai', type: 'oauth' }) },
-      global: { stubs: { UsageProgressBar: billingUsageProgressBarStub, OpenAIQuotaResetCell: true } }
-    })
-    await flushPromises()
-    expect(getUsage).toHaveBeenNthCalledWith(1, 9102)
-    await wrapper.setProps({ readOnly: true })
-    await flushPromises()
-    expect(getUsage).toHaveBeenNthCalledWith(2, 9102, 'passive', undefined)
-    expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$2,400.00')
-    resolveActive(snapshot(9900))
-    await flushPromises()
-    expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$2,400.00')
-    await wrapper.setProps({ readOnly: false })
-    await flushPromises()
     expect(getUsage).toHaveBeenCalledTimes(3)
-    expect(getUsage).toHaveBeenLastCalledWith(9102)
-    expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$2,500.00')
+    expect(getUsage).toHaveBeenLastCalledWith(9101, undefined, true)
     wrapper.unmount()
   })
 
-  it('a reused account row cannot receive the previous account passive result', async () => {
+  it('a reused account row cannot receive the previous account usage result', async () => {
     let resolveOld!: (value: unknown) => void
     getUsage
       .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
       .mockResolvedValueOnce({ seven_day: { utilization: 25, weekly_estimate_usd: 2400 } })
     const wrapper = mount(AccountUsageCell, {
-      props: { account: makeAccount({ id: 9103, platform: 'openai', type: 'oauth' }), readOnly: true },
+      props: { account: makeAccount({ id: 9103, platform: 'openai', type: 'oauth' }) },
       global: { stubs: { UsageProgressBar: billingUsageProgressBarStub, OpenAIQuotaResetCell: true } }
     })
     await flushPromises()
@@ -181,7 +151,7 @@ describe('AccountUsageCell', () => {
     await flushPromises()
     resolveOld({ seven_day: { utilization: 25, weekly_estimate_usd: 9900 } })
     await flushPromises()
-    expect(getUsage).toHaveBeenLastCalledWith(9104, 'passive', undefined)
+    expect(getUsage).toHaveBeenLastCalledWith(9104)
     expect(wrapper.get('[data-test="oauth-weekly-estimate"]').text()).toContain('$2,400.00')
     wrapper.unmount()
   })
@@ -441,19 +411,6 @@ describe('AccountUsageCell', () => {
       [{ accountId: 9108, needsReauth: true }],
       [{ accountId: 9108, needsReauth: false }]
     ])
-    wrapper.unmount()
-  })
-
-  it.each(['antigravity', 'gemini', 'grok'] as const)('does not actively probe unsupported remote %s usage', async platform => {
-    const wrapper = mount(AccountUsageCell, {
-      props: { account: makeAccount({ id: 9105, platform, type: 'oauth' }), readOnly: true },
-      global: { stubs: { UsageProgressBar: true, AccountQuotaInfo: true, GrokQuotaProbeCell: true } }
-    })
-    await flushPromises()
-    await wrapper.setProps({ manualRefreshToken: 1 })
-    await flushPromises()
-    expect(getUsage).not.toHaveBeenCalled()
-    expect(wrapper.findComponent({ name: 'GrokQuotaProbeCell' }).exists()).toBe(false)
     wrapper.unmount()
   })
 

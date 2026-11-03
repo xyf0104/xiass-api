@@ -229,9 +229,6 @@ type SystemSettings struct {
 	// 分组隔离：允许未分组 Key 调度（默认 false → 403）
 	AllowUngroupedKeyScheduling bool
 	// 多节点执行调度。节点身份与私网出口由各实例本地配置，权重由共享设置统一管理。
-	ExecutionNodeBalancingEnabled bool
-	ExecutionNodeWeights          map[string]float64
-	ExecutionNodeProxyIDs         map[string]int64
 
 	// Backend 模式：禁用用户注册和自助服务，仅管理员可登录
 	BackendModeEnabled bool

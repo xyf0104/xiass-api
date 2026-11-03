@@ -1528,12 +1528,6 @@
             {{ t('admin.accounts.multiProxy.multiMode') }}
           </button>
         </div>
-        <p v-if="proxyMode === 'single' && executionNodeID && form.proxy_id === null" class="input-hint mb-2">
-          {{ t('admin.accounts.directEgressHint', { node: executionNodeID }) }}
-        </p>
-        <p v-else-if="proxyMode === 'single' && isExecutionNodeManaged" class="input-hint mb-2">
-          {{ t('admin.accounts.systemManagedProxyHint', { node: executionNodeID }) }}
-        </p>
         <ProxySelector v-if="proxyMode === 'single'" v-model="form.proxy_id" :proxies="proxies" />
         <MultiProxySelector
           v-else
@@ -2941,22 +2935,6 @@ const authStore = useAuthStore()
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
-const executionNodeID = computed(() => {
-  const direct = props.account?.execution_node_id?.trim()
-  if (direct) return direct
-  const extra = props.account?.extra as Record<string, unknown> | undefined
-  return typeof extra?.xiass_execution_node_id === 'string' ? extra.xiass_execution_node_id.trim() : ''
-})
-const hasExplicitExecutionProxy = computed(() => {
-  const extra = props.account?.extra as Record<string, unknown> | undefined
-  const proxyID = Number(extra?.xiass_execution_proxy_id)
-  return Number.isInteger(proxyID) && proxyID > 0
-})
-const hasExplicitDirectEgress = computed(() => {
-  const extra = props.account?.extra as Record<string, unknown> | undefined
-  return extra?.xiass_execution_direct_egress === true
-})
-const isExecutionNodeManaged = computed(() => !isSparkShadow.value && executionNodeID.value !== '' && !hasExplicitExecutionProxy.value && !hasExplicitDirectEgress.value)
 
 const hideAccountLongContextBilling = computed(() => {
   return allSelectedGroupsEnableLongContextPricing(form.group_ids, props.groups)
@@ -4711,9 +4689,6 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
-    // Keep the execution-node ownership metadata independent from the selected
-    // egress. A node-owned account may still use an explicitly selected proxy;
-    // sending 0 remains the explicit way to restore the node's default egress.
     if (proxyMode.value === 'multi') {
 		updatePayload.proxy_id = proxyBindings.value[0]?.proxy_id ?? 0
 		updatePayload.proxy_bindings = normalizedProxyBindings()

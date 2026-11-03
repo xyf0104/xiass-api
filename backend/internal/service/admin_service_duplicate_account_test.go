@@ -203,59 +203,31 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 	require.Equal(t, "remote-42", storedSource.Extra["crs_account_id"])
 }
 
-func TestDuplicateAccountUsesReceivingExecutionNode(t *testing.T) {
-	ctx := context.Background()
-	repo := newDuplicateAccountRepoStub()
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:        true,
-		ID:             "api2",
-		DefaultProxyID: 83,
+func TestDuplicateAccountPreservesDirectOrSelectedProxy(t *testing.T) {
+	proxyID := int64(84)
+	for _, tc := range []struct {
+		name    string
+		proxyID *int64
+	}{
+		{name: "direct"},
+		{name: "selected proxy", proxyID: &proxyID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := newDuplicateAccountRepoStub()
+			svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
+			source := &Account{
+				Name: "source", Platform: PlatformAnthropic, Type: AccountTypeAPIKey, ProxyID: tc.proxyID,
+				Extra: map[string]any{"custom": "preserved"}, Credentials: map[string]any{"api_key": "secret"},
+			}
+			require.NoError(t, repo.Create(ctx, source))
+			duplicate, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
+			require.NoError(t, err)
+			require.Equal(t, tc.proxyID, duplicate.ProxyID)
+			require.Equal(t, "preserved", duplicate.Extra["custom"])
+			require.Len(t, repo.accounts, 2)
+		})
 	}
-	svc := &adminServiceImpl{
-		accountRepo:          repo,
-		accountDuplicateRepo: repo,
-		settingService:       &SettingService{cfg: cfg},
-	}
-
-	apiProxyID := int64(84)
-	source := &Account{
-		Name:     "source",
-		Platform: PlatformAnthropic,
-		Type:     AccountTypeAPIKey,
-		ProxyID:  &apiProxyID,
-		Extra: map[string]any{
-			AccountExecutionNodeExtraKey: "api",
-			"custom":                     "preserved",
-		},
-		Credentials: map[string]any{"api_key": "secret"},
-	}
-	require.NoError(t, repo.Create(ctx, source))
-
-	_, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
-	require.Equal(t, "ACCOUNT_REMOTE_NODE_READ_ONLY", infraerrors.Reason(err))
-	require.Len(t, repo.accounts, 1)
-
-	svc.settingService = executionNodeAdminAccessService("api2", true, "true")
-	svc.settingService.cfg.Gateway.ExecutionNode.DefaultProxyID = 83
-	_, err = svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
-	require.Equal(t, "ACCOUNT_REMOTE_NODE_READ_ONLY", infraerrors.Reason(err))
-	require.Len(t, repo.accounts, 1)
-
-	svc.settingService.SetExecutionNodeHealthReader(executionNodeAdminAccessHealth{values: map[string]bool{"api": false}})
-	_, err = svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
-	require.Equal(t, "ACCOUNT_REMOTE_NODE_READ_ONLY", infraerrors.Reason(err))
-	require.Len(t, repo.accounts, 1)
-
-	svc.settingService, _ = verifiedPairedAdminService(t, "api2")
-	svc.settingService.cfg.Gateway.ExecutionNode.DefaultProxyID = 83
-	duplicate, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
-
-	require.NoError(t, err)
-	require.Equal(t, "api2", duplicate.Extra[AccountExecutionNodeExtraKey])
-	require.NotNil(t, duplicate.ProxyID)
-	require.Equal(t, int64(83), *duplicate.ProxyID)
-	require.Equal(t, "preserved", duplicate.Extra["custom"])
 }
 
 func TestDuplicateAccountRejectsCredentialShadow(t *testing.T) {

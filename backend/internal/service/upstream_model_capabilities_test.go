@@ -64,11 +64,10 @@ func upstreamModelCapabilityAccount(baseURL string, mapping map[string]any) *Acc
 		Type:        AccountTypeAPIKey,
 		Credentials: credentials,
 		Extra: map[string]any{
-			"xiass_execution_node_id": "api2",
-			"codex_fingerprint_seed":  "keep-fingerprint-seed",
-			"proxy_url":               "socks5://proxy.example:1080",
-			"schedulable":             false,
-			"custom_xiass_field":      map[string]any{"keep": true},
+			"codex_fingerprint_seed": "keep-fingerprint-seed",
+			"proxy_url":              "socks5://proxy.example:1080",
+			"schedulable":            false,
+			"custom_xiass_field":     map[string]any{"keep": true},
 		},
 	}
 }
@@ -127,7 +126,6 @@ func TestSyncUpstreamModelCatalogPersistsOnlyCapabilitySnapshot(t *testing.T) {
 	require.Len(t, repo.updates[0], 1, "atomic update must not submit a stale copy of accounts.extra")
 	require.Contains(t, repo.updates[0], UpstreamModelMetadataExtraKey)
 
-	require.Equal(t, "api2", account.Extra["xiass_execution_node_id"])
 	require.Equal(t, "keep-fingerprint-seed", account.Extra["codex_fingerprint_seed"])
 	require.Equal(t, "socks5://proxy.example:1080", account.Extra["proxy_url"])
 	require.Equal(t, false, account.Extra["schedulable"])

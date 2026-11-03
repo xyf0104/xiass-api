@@ -68,7 +68,6 @@ type Handlers struct {
 	SMSReceiver          *SMSReceiverHandler
 	AsyncImage           *AsyncImageHandler
 	BatchImage           *BatchImageHandler
-	ExecutionNodePairing *ExecutionNodePairingHandler
 }
 
 // BuildInfo contains build-time information

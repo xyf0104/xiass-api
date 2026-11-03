@@ -1076,9 +1076,6 @@ type GatewayConfig struct {
 	// Scheduling: 账号调度相关配置
 	Scheduling GatewaySchedulingConfig `mapstructure:"scheduling"`
 
-	// ExecutionNode: XIASS 多节点执行出口配置。默认关闭，保持单节点安装原有行为。
-	ExecutionNode GatewayExecutionNodeConfig `mapstructure:"execution_node"`
-
 	// TLSFingerprint: TLS指纹伪装配置
 	TLSFingerprint TLSFingerprintConfig `mapstructure:"tls_fingerprint"`
 
@@ -1100,28 +1097,6 @@ type GatewayConfig struct {
 	// CNProviders: 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）的余额检测配置。
 	// 仅作用于 payg（按量付费）账号：周期探测余额，低于阈值则临时停调。
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
-}
-
-// GatewayExecutionNodeConfig identifies the XIASS instance that owns newly
-// created accounts. DefaultProxyID points at a private node-egress proxy, so an
-// account keeps the same public upstream exit regardless of which gateway
-// instance receives the customer request.
-type GatewayExecutionNodeConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	ID             string `mapstructure:"id"`
-	DefaultProxyID int64  `mapstructure:"default_proxy_id"`
-	// ControlPlane starts singleton-style periodic workers on one instance,
-	// including expiry scans, scheduled tests/backups, channel monitoring, and
-	// proactive token/quota maintenance. It does not restrict HTTP gateway,
-	// admin, Team, OAuth, or request-time token refresh routes; every application
-	// instance remains an active-active request peer.
-	ControlPlane bool `mapstructure:"control_plane"`
-	// LegacyUnassignedNodeID owns accounts created before node attribution was
-	// introduced. It is shared by every replica and normally points at `api`.
-	LegacyUnassignedNodeID string `mapstructure:"legacy_unassigned_node_id"`
-	// LegacyUnassignedProxyID is the durable private egress assigned to legacy
-	// accounts when multi-node routing is activated for the first time.
-	LegacyUnassignedProxyID int64 `mapstructure:"legacy_unassigned_proxy_id"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.
@@ -2586,12 +2561,6 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.outbox_lag_rebuild_failures", 3)
 	viper.SetDefault("gateway.scheduling.outbox_backlog_rebuild_rows", 10000)
 	viper.SetDefault("gateway.scheduling.full_rebuild_interval_seconds", 300)
-	viper.SetDefault("gateway.execution_node.enabled", false)
-	viper.SetDefault("gateway.execution_node.id", "")
-	viper.SetDefault("gateway.execution_node.default_proxy_id", int64(0))
-	viper.SetDefault("gateway.execution_node.control_plane", true)
-	viper.SetDefault("gateway.execution_node.legacy_unassigned_node_id", "api")
-	viper.SetDefault("gateway.execution_node.legacy_unassigned_proxy_id", int64(0))
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
@@ -3780,20 +3749,6 @@ func (c *Config) Validate() error {
 	if c.Gateway.Scheduling.FullRebuildIntervalSeconds < 0 {
 		return fmt.Errorf("gateway.scheduling.full_rebuild_interval_seconds must be non-negative")
 	}
-	if c.Gateway.ExecutionNode.Enabled {
-		if !isValidExecutionNodeID(c.Gateway.ExecutionNode.ID) {
-			return fmt.Errorf("gateway.execution_node.id must contain only letters, numbers, dots, underscores, or hyphens")
-		}
-		if c.Gateway.ExecutionNode.DefaultProxyID <= 0 {
-			return fmt.Errorf("gateway.execution_node.default_proxy_id must be positive when enabled")
-		}
-		if !isValidExecutionNodeID(c.Gateway.ExecutionNode.LegacyUnassignedNodeID) {
-			return fmt.Errorf("gateway.execution_node.legacy_unassigned_node_id must contain only letters, numbers, dots, underscores, or hyphens")
-		}
-		if c.Gateway.ExecutionNode.LegacyUnassignedProxyID <= 0 {
-			return fmt.Errorf("gateway.execution_node.legacy_unassigned_proxy_id must be positive when enabled")
-		}
-	}
 	if c.Gateway.Scheduling.OutboxLagWarnSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds < c.Gateway.Scheduling.OutboxLagWarnSeconds {
@@ -3838,21 +3793,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("dingtalk_connect: %w", err)
 	}
 	return nil
-}
-
-func isValidExecutionNodeID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func normalizeStringSlice(values []string) []string {

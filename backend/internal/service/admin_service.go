@@ -73,9 +73,6 @@ type AdminService interface {
 
 	// Account management
 	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error)
-	// ListAccountsWithExecutionNode is implemented by the production service as
-	// an optional admin-only extension; callers should type-assert it so older
-	// test doubles and integrations remain source compatible.
 	// ListAccountsForSchedulerScoreFilter 返回符合过滤条件的全部账号（不分页），
 	// 作为账号列表页计算 OpenAI 调度分数的过滤范围池。
 	ListAccountsForSchedulerScoreFilter(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error)
@@ -519,7 +516,6 @@ type BulkUpdateAccountFilters struct {
 	AccountPool      string
 	Search           string
 	PrivacyMode      string
-	ExecutionNodeID  string
 }
 
 // BulkUpdateAccountResult captures the result for a single account update.

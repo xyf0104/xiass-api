@@ -70,7 +70,7 @@ func TestSchedulerCacheSetAccountClearsUnencodablePayload(t *testing.T) {
 	require.Nil(t, cached)
 }
 
-func TestSchedulerCacheSnapshotRoundTripKeepsExecutionNodeOwnership(t *testing.T) {
+func TestSchedulerCacheSnapshotRoundTripOmitsRetiredOwnership(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
 	bucket := service.SchedulerBucket{GroupID: 26, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
@@ -82,8 +82,8 @@ func TestSchedulerCacheSnapshotRoundTripKeepsExecutionNodeOwnership(t *testing.T
 		Schedulable: true,
 		GroupIDs:    []int64{bucket.GroupID},
 		Extra: map[string]any{
-			service.AccountExecutionNodeExtraKey: "api2",
-			"unused_large_field":                 "drop-me",
+			"xiass_execution_node_id": "api2",
+			"unused_large_field":      "drop-me",
 		},
 	}
 
@@ -95,13 +95,13 @@ func TestSchedulerCacheSnapshotRoundTripKeepsExecutionNodeOwnership(t *testing.T
 	require.NoError(t, err)
 	require.True(t, hit)
 	require.Len(t, snapshot, 1)
-	require.Equal(t, "api2", snapshot[0].ExecutionNodeID("api"))
+	require.NotContains(t, snapshot[0].Extra, "xiass_execution_node_id")
 	require.NotContains(t, snapshot[0].Extra, "unused_large_field")
 
 	full, err := cache.GetAccount(ctx, account.ID)
 	require.NoError(t, err)
 	require.NotNil(t, full)
-	require.Equal(t, "api2", full.ExecutionNodeID("api"))
+	require.Equal(t, "api2", full.Extra["xiass_execution_node_id"], "legacy data remains inert in full account storage")
 }
 
 func TestSchedulerCacheUpdateLastUsedClearsUnencodablePayload(t *testing.T) {

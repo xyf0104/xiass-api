@@ -805,12 +805,11 @@ func TestBatchOAuthConfigurationRejectsInvalidReferencesBeforeAutomation(t *test
 	require.Zero(t, f.sidecarCalls.Load())
 }
 
-func TestBatchOAuthBrowserProxyKeepsAccountProxyAndUsesLocalNodeEgress(t *testing.T) {
+func TestBatchOAuthBrowserProxyKeepsSelectedAccountProxy(t *testing.T) {
 	t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "")
-	t.Run("local built-in execution node in a shared namespace", func(t *testing.T) {
+	t.Run("authenticated local proxy in a shared namespace", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
-		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
-		f.admin.proxies = []service.Proxy{{ID: 85, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+		f.admin.proxies = []service.Proxy{{ID: 85, Name: "local-socks", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
 			Username: "api2", Password: strings.Repeat("a", 64), Status: service.StatusActive}}
 		proxyID := int64(85)
 		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 3, Priority: 1, FingerprintMode: "off"}
@@ -823,11 +822,10 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyAndUsesLocalNodeEgress(t *testin
 		require.Equal(t, int64(85), *cfg.ProxyID)
 	})
 
-	t.Run("Docker uses the existing authenticated built-in port", func(t *testing.T) {
+	t.Run("Docker uses the existing authenticated proxy port", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
-		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 		t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "xiass-api")
-		f.admin.proxies = []service.Proxy{{ID: 85, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+		f.admin.proxies = []service.Proxy{{ID: 85, Name: "local-socks", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
 			Username: "api2", Password: strings.Repeat("a", 64), Status: service.StatusActive}}
 		proxyID := int64(85)
 		proxy, err := f.h.batchOAuthBrowserProxy(context.Background(), &proxyID)
@@ -870,7 +868,6 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyAndUsesLocalNodeEgress(t *testin
 
 	t.Run("ordinary proxy", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
-		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 		t.Setenv("TEAM_CHILD_BROWSER_PROXY_HOST", "xiass-api")
 		f.admin.proxies = []service.Proxy{{ID: 9, Name: "external", Protocol: "http", Host: "proxy.example.test", Port: 8080,
 			Username: "user", Password: "password", Status: service.StatusActive}}
@@ -883,15 +880,14 @@ func TestBatchOAuthBrowserProxyKeepsAccountProxyAndUsesLocalNodeEgress(t *testin
 		require.Equal(t, "password", proxy["password"])
 	})
 
-	t.Run("remote built-in execution node", func(t *testing.T) {
+	t.Run("disabled proxy", func(t *testing.T) {
 		f := newBatchOAuthFixture(t)
-		t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
-		f.admin.proxies = []service.Proxy{{ID: 86, Name: service.ExecutionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
-			Username: "api2", Password: strings.Repeat("b", 64), Status: service.StatusActive}}
+		f.admin.proxies = []service.Proxy{{ID: 86, Name: "disabled-socks", Protocol: "socks5", Host: "127.0.0.1", Port: 19080,
+			Username: "user", Password: strings.Repeat("b", 64), Status: service.StatusDisabled}}
 		proxyID := int64(86)
 		cfg := batchOAuthConfig{ProxyID: &proxyID, Concurrency: 1, Priority: 1, FingerprintMode: "off"}
 		_, err := f.h.validateBatchConfig(context.Background(), &cfg)
-		require.ErrorContains(t, err, "another execution node")
+		require.ErrorContains(t, err, "proxy unavailable")
 	})
 }
 

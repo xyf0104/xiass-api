@@ -93,16 +93,6 @@ vi.mock("@/stores/onboarding", () => ({
   useOnboardingStore: () => ({ isCurrentStep, nextStep }),
 }));
 
-vi.mock("@/composables/useExecutionNodeAdminAccess", () => ({
-  useExecutionNodeAdminAccess: () => ({
-    executionNodeStatus: { value: null },
-    executionNodeAccessLoading: { value: false },
-    sharedWriteAllowed: { value: true },
-    sharedReadOnly: { value: false },
-    loadExecutionNodeAdminAccess: vi.fn().mockResolvedValue(undefined),
-  }),
-}));
-
 vi.mock("vue-i18n", async () => {
   const actual = await vi.importActual<typeof import("vue-i18n")>("vue-i18n");
   return {

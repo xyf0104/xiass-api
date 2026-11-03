@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -36,6 +37,8 @@ var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+
+	testClaudeHTMLResponseError = "Upstream returned HTML instead of a Claude model response; check the account Base URL"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -496,6 +499,11 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		}
 
 		return s.sendErrorAndEnd(c, errMsg)
+	}
+
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if contentType == "text/html" || contentType == "application/xhtml+xml" {
+		return s.sendErrorAndEnd(c, testClaudeHTMLResponseError)
 	}
 
 	// Process SSE stream
@@ -1749,34 +1757,56 @@ func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[s
 // processClaudeStream processes the SSE stream from Claude API
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
 	reader := bufio.NewReader(body)
+	var streamEvent string
+	const incompleteResponseError = "Claude stream ended without message_stop (empty, incomplete or non-model response); check the account Base URL"
 
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil {
+		// ReadString can return the final event together with EOF, without a newline.
+		if err != nil && (err != io.EOF || len(line) == 0) {
 			if err == io.EOF {
-				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-				return nil
+				return s.sendErrorAndEnd(c, incompleteResponseError)
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
 		}
 
-		line = strings.TrimSpace(line)
-		if line == "" || !sseDataPrefix.MatchString(line) {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "\ufeff"))
+		if line == "" {
+			streamEvent = ""
+			continue
+		}
+		// Detect HTML even when a proxy omits or mislabels Content-Type.
+		if strings.HasPrefix(line, "<") {
+			return s.sendErrorAndEnd(c, testClaudeHTMLResponseError)
+		}
+		if strings.HasPrefix(line, "event:") {
+			streamEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if !sseDataPrefix.MatchString(line) {
 			continue
 		}
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
-			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-			return nil
+			return s.sendErrorAndEnd(c, incompleteResponseError)
 		}
 
 		var data map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-			continue
+			return s.sendErrorAndEnd(c, "Invalid Claude stream event (non-model response); check the account Base URL")
 		}
 
 		eventType, _ := data["type"].(string)
+		if streamEvent == "error" || eventType == "error" || data["error"] != nil {
+			errorMsg := "Unknown error"
+			if errData, ok := data["error"].(map[string]any); ok {
+				if msg, ok := errData["message"].(string); ok && msg != "" {
+					errorMsg = msg
+				}
+			}
+			return s.sendErrorAndEnd(c, errorMsg)
+		}
 
 		switch eventType {
 		case "content_block_delta":
@@ -1786,16 +1816,9 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 				}
 			}
 		case "message_stop":
+			// A completed message may contain only image or tool blocks, with no text.
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
-		case "error":
-			errorMsg := "Unknown error"
-			if errData, ok := data["error"].(map[string]any); ok {
-				if msg, ok := errData["message"].(string); ok {
-					errorMsg = msg
-				}
-			}
-			return s.sendErrorAndEnd(c, errorMsg)
 		}
 	}
 }

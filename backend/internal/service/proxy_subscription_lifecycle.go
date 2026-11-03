@@ -23,7 +23,7 @@ func (s *ProxySubscriptionService) Start() {
 			// Every instance restores only its own loopback engine from the same
 			// encrypted snapshot; routine recovery never rewrites shared proxies.
 			_ = s.reconcile(ctx)
-			if executionNodeControlPlaneEnabled(s.cfg) && time.Now().After(nextRefresh) {
+			if time.Now().After(nextRefresh) {
 				_, _ = s.Refresh(ctx)
 				nextRefresh = time.Now().Add(30 * time.Minute)
 			}

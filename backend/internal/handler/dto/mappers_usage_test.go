@@ -201,6 +201,8 @@ func TestUsageLogFromService_ExposesEgressToAdminsOnlyAndCopiesSnapshot(t *testi
 	require.NoError(t, err)
 	require.Contains(t, string(adminJSON), `"egress":{"route":"proxy"`)
 	require.Contains(t, string(adminJSON), `"proxy_address":"proxy.example:1080"`)
+	require.Contains(t, string(adminJSON), `"ip_address":"203.0.113.17"`)
+	require.NotContains(t, string(adminJSON), "execution_node_id")
 	require.NotContains(t, string(adminJSON), "proxy_updated_at")
 	require.NotContains(t, string(adminJSON), "captured_at")
 }

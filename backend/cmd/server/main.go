@@ -21,7 +21,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
@@ -79,14 +78,6 @@ func main() {
 	if *showVersion {
 		fmt.Printf("XIASS API %s (commit: %s, built: %s)\n", Version, Commit, Date)
 		return
-	}
-
-	tunnelRuntime, err := service.StartExecutionNodeTunnelRuntimeFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to start execution-node tunnel runtime: %v", err)
-	}
-	if tunnelRuntime != nil {
-		defer func() { _ = tunnelRuntime.Close() }()
 	}
 
 	// CLI setup mode

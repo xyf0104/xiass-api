@@ -18,14 +18,14 @@ run_fixture() {
     LOCK_DIR="$fixture/maintenance.lock"
     export CALLS="$fixture/calls"
     mkdir -p "$INSTALL_DIR/.git" "$DEPLOY_DIR/data" "$DEPLOY_DIR/postgres_data" "$DEPLOY_DIR/redis_data"
-    printf 'GATEWAY_EXECUTION_NODE_ID=node-two\nXIASS_CLUSTER_TUNNEL_TOKEN=fixture-pairing-token\nJWT_SECRET=fixture-jwt\nTOTP_ENCRYPTION_KEY=fixture-totp\nDATABASE_HOST=control-plane\nTEAM_CHILD_AUTOMATION_TOKEN=fixture-team\nTEAM_CHILD_BROWSER_ENABLED=false\n' > "$DEPLOY_DIR/.env"
+    printf 'JWT_SECRET=fixture-jwt\nTOTP_ENCRYPTION_KEY=fixture-totp\nDATABASE_HOST=control-plane\nTEAM_CHILD_AUTOMATION_TOKEN=fixture-team\nTEAM_CHILD_BROWSER_ENABLED=false\n' > "$DEPLOY_DIR/.env"
     if [ "$preparation" = source ] || [ "$preparation" = build-failure ]; then
         printf 'XIASS_BUILD_MODE=source\n' >> "$DEPLOY_DIR/.env"
         printf 'original-build\n' > "$DEPLOY_DIR/docker-compose.build.yml"
     fi
     cp "$DEPLOY_DIR/.env" "$fixture/env.original"
     printf 'original-compose\n' > "$DEPLOY_DIR/docker-compose.local.yml"
-    printf 'node-override\n' > "$DEPLOY_DIR/node.yml"
+    printf 'local-override\n' > "$DEPLOY_DIR/local-override.yml"
     printf 'proxy-override\n' > "$DEPLOY_DIR/proxy.yml"
     printf 'app-session-state\n' > "$DEPLOY_DIR/data/sentinel"
     printf 'postgres-state\n' > "$DEPLOY_DIR/postgres_data/sentinel"
@@ -56,7 +56,7 @@ run_fixture() {
         if "$legacy"; then APP_CONTAINER=nowind-api; fi
         PERSISTENCE_MODE=local
         ACTUAL_COMPOSE_FILE="$DEPLOY_DIR/docker-compose.local.yml"
-        ACTUAL_COMPOSE_FILES=("$ACTUAL_COMPOSE_FILE" "$DEPLOY_DIR/node.yml" "$DEPLOY_DIR/proxy.yml")
+        ACTUAL_COMPOSE_FILES=("$ACTUAL_COMPOSE_FILE" "$DEPLOY_DIR/local-override.yml" "$DEPLOY_DIR/proxy.yml")
         if [ "$(deployment_build_mode)" = source ]; then
             ACTUAL_COMPOSE_FILES+=("$DEPLOY_DIR/docker-compose.build.yml")
         fi
@@ -72,7 +72,7 @@ run_fixture() {
             'remote get-url origin') printf 'https://github.com/xyf0104/xiass-api.git\n' ;;
             'fetch --no-tags origin refs/tags/v9.8.7') event fetch ;;
             'ls-files --error-unmatch -- '*) return 0 ;;
-            'diff HEAD --quiet -- '*node.yml) [ "$scenario" = clean-config ] ;;
+            'diff HEAD --quiet -- '*local-override.yml) [ "$scenario" = clean-config ] ;;
             'diff --quiet previous-ref target-ref -- backend/migrations')
                 [ "$scenario" != migration ] ;;
             diff*) return 0 ;;
@@ -80,7 +80,7 @@ run_fixture() {
                 event sync-target
                 printf 'target-compose\n' > "$DEPLOY_DIR/docker-compose.local.yml"
                 if [ "$scenario" != clean-config ]; then
-                    printf 'target-node-overwrite\n' > "$DEPLOY_DIR/node.yml"
+                    printf 'target-local-overwrite\n' > "$DEPLOY_DIR/local-override.yml"
                 fi
                 ;;
             'reset --hard previous-ref') event restore-git ;;
@@ -158,7 +158,7 @@ run_fixture() {
                 case "$preparation" in
                     runtime-readiness-failure) return 22 ;;
                     runtime-readiness-json-failure) printf '{"status":"ok","checks":{"redis":"unavailable"}}\n' ;;
-                    *) printf '{"status":"ok","checks":{"postgres":"ok","redis":"ok","execution_node":"ok"}}\n' ;;
+                    *) printf '{"status":"ok","checks":{"postgres":"ok","redis":"ok"}}\n' ;;
                 esac
                 return 0 ;;
         esac
@@ -212,7 +212,7 @@ run_fixture() {
             'up -d --no-deps --no-build --pull never --force-recreate xiass-api')
                 switch_count=$((switch_count + 1))
                 if [ "$switch_count" = 1 ]; then
-                    [ "$(cat "$DEPLOY_DIR/node.yml")" = node-override ] || fail 'node-specific Compose modification was lost'
+                    [ "$(cat "$DEPLOY_DIR/local-override.yml")" = local-override ] || fail 'local Compose modification was lost'
                     [ "${#COMPOSE_FILES[@]}" -ge 3 ] || fail 'Compose overlays were discarded'
                 fi
                 ;;
@@ -333,7 +333,7 @@ for scenario in image clean-config source pull-failure build-failure config-fail
     [ "$(cat "$deploy/postgres_data/sentinel")" = postgres-state ] || fail 'PostgreSQL data changed'
     [ "$(cat "$deploy/redis_data/sentinel")" = redis-state ] || fail 'Redis data changed'
     while IFS= read -r value; do
-        grep -Fqx -- "$value" "$deploy/.env" || fail 'existing env or node identity changed'
+        grep -Fqx -- "$value" "$deploy/.env" || fail 'existing environment value changed'
     done < "$fixture/env.original"
     snapshot=$(find "$fixture/backups/update-config" -name env.before-update -print)
     [ -f "$snapshot" ] || fail 'configuration snapshot was not retained'
@@ -421,15 +421,15 @@ done
     printf 'TEAM_CHILD_AUTOMATION_TOKEN=fixture-team\n' > "$DEPLOY_DIR/.env"
     printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$XIASS_RUNTIME_COMPOSE_FILES" > "$DEPLOY_DIR/received"' 'printf "%s\n" "$XIASS_RUNTIME_PROJECT_NAME" > "$DEPLOY_DIR/project"' 'printf "%s\n" "$XIASS_RUNTIME_TEAM_PROJECT_NAME" > "$DEPLOY_DIR/team-project"' 'exit 7' > "$DEPLOY_DIR/xiass-runtime-start.sh"
     chmod +x "$DEPLOY_DIR/xiass-runtime-start.sh"
-    COMPOSE_FILES=("$DEPLOY_DIR/base.yml" "$DEPLOY_DIR/node.yml" "$DEPLOY_DIR/proxy.yml")
+    COMPOSE_FILES=("$DEPLOY_DIR/base.yml" "$DEPLOY_DIR/proxy.yml")
     COMPOSE_FILE="${COMPOSE_FILES[0]}"
-    ACTUAL_COMPOSE_PROJECT_NAME=paired-primary
+    ACTUAL_COMPOSE_PROJECT_NAME=xiass-api
     ACTUAL_TEAM_COMPOSE_PROJECT_NAME=xiass-api
     status=0
     start_runtime_stack true true || status=$?
     [ "$status" = 7 ] || fail 'runtime helper failure was swallowed'
     [ "$(cat "$DEPLOY_DIR/received")" = "$(printf '%s\n' "${COMPOSE_FILES[@]}")" ] || fail 'runtime helper did not receive every overlay'
-    [ "$(cat "$DEPLOY_DIR/project")" = paired-primary ] || fail 'runtime helper did not receive running project identity'
+    [ "$(cat "$DEPLOY_DIR/project")" = xiass-api ] || fail 'runtime helper did not receive running project identity'
     [ "$(cat "$DEPLOY_DIR/team-project")" = xiass-api ] || fail 'runtime helper did not receive existing Team profile project identity'
     rm "$DEPLOY_DIR/xiass-runtime-start.sh"
     compose() { fail 'missing helper must not restart any core service after a hot update'; }
@@ -517,11 +517,11 @@ printf 'PASS: invalid Team profile ownership rejected before mutation\n'
 (
     XIASS_UPDATE_LIB_ONLY=1 source "$SCRIPT"
     DEPLOY_DIR="$TEST_DIR/legacy-project"
-    PREVIOUS_COMPOSE_FILES=("/fixture/base.yml" "/fixture/node.yml")
+    PREVIOUS_COMPOSE_FILES=("/fixture/base.yml" "/fixture/local-override.yml")
     ACTUAL_COMPOSE_PROJECT_NAME=existing-legacy-project
     record_compose() { printf '%s\n' "$@"; }
     COMPOSE=(record_compose)
-    expected=$(printf '%s\n' -f /fixture/base.yml -f /fixture/node.yml --project-directory "$DEPLOY_DIR" --project-name existing-legacy-project down)
+    expected=$(printf '%s\n' -f /fixture/base.yml -f /fixture/local-override.yml --project-directory "$DEPLOY_DIR" --project-name existing-legacy-project down)
     [ "$(stop_previous_runtime)" = "$expected" ] || fail 'legacy stop lost original Compose project identity'
 )
 printf 'PASS: legacy stop preserves project identity\n'
@@ -553,7 +553,5 @@ EOF
         || fail 'target image override leaked into the rollback/normal Compose path'
 )
 printf 'PASS: custom local image override uses immutable release image\n'
-
-bash "$ROOT_DIR/tools/test_xiass_update_paired_nodes.sh"
 
 printf 'xiass update pipeline tests passed.\n'

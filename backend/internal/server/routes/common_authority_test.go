@@ -55,11 +55,10 @@ func assertAuthorityReadiness(t *testing.T, router *gin.Engine, status int) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	require.Equal(t, status, recorder.Code, recorder.Body.String())
 	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
-	require.Equal(t, "api2", recorder.Header().Get("X-XIASS-Execution-Node"))
+	require.Empty(t, recorder.Header().Get("X-XIASS-Execution-Node"))
 	var payload struct {
-		Status        string            `json:"status"`
-		ExecutionNode string            `json:"execution_node"`
-		Checks        map[string]string `json:"checks"`
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
 	want := "ok"
@@ -67,14 +66,14 @@ func assertAuthorityReadiness(t *testing.T, router *gin.Engine, status int) {
 		want = "unavailable"
 	}
 	require.Equal(t, want, payload.Status)
-	require.Equal(t, "api2", payload.ExecutionNode)
-	require.Equal(t, map[string]string{"postgres": want, "redis": "ok", "execution_node": "ok"}, payload.Checks)
+	require.Equal(t, map[string]string{"postgres": want, "redis": "ok"}, payload.Checks)
+	require.NotContains(t, recorder.Body.String(), "execution_node")
 	for _, private := range []string{"synthetic-secret", "refresh_token", "permission denied", "postgres://", "does not exist"} {
 		require.NotContains(t, recorder.Body.String(), private)
 	}
 }
 
-func TestClusterReadinessRefreshAuthority(t *testing.T) {
+func TestReadinessRefreshAuthority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, store string
@@ -119,11 +118,7 @@ func TestClusterReadinessRefreshAuthority(t *testing.T) {
 					query.WillReturnRows(rows)
 				}
 			}
-			mock.ExpectQuery("SELECT value FROM settings WHERE key = 'execution_node_balancing_enabled'").
-				WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("false"))
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenStore: tc.store}}
-			cfg.Gateway.ExecutionNode.Enabled = true
-			cfg.Gateway.ExecutionNode.ID = " api2 "
 			router := gin.New()
 			RegisterCommonRoutes(router, db, readinessAuthorityRedis(t), cfg)
 			status := tc.wantStatus
@@ -136,7 +131,7 @@ func TestClusterReadinessRefreshAuthority(t *testing.T) {
 	}
 }
 
-func TestClusterReadinessRefreshAuthorityKeepsStartupStore(t *testing.T) {
+func TestReadinessRefreshAuthorityKeepsStartupStore(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, store := range []string{"redis", "postgres"} {
 		t.Run(store, func(t *testing.T) {
@@ -145,8 +140,6 @@ func TestClusterReadinessRefreshAuthorityKeepsStartupStore(t *testing.T) {
 			t.Cleanup(func() { _ = db.Close() })
 			mock.MatchExpectationsInOrder(false)
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenStore: store}}
-			cfg.Gateway.ExecutionNode.Enabled = true
-			cfg.Gateway.ExecutionNode.ID = "api2"
 			router := gin.New()
 			RegisterCommonRoutes(router, db, readinessAuthorityRedis(t), cfg)
 			other := "postgres"
@@ -161,8 +154,6 @@ func TestClusterReadinessRefreshAuthorityKeepsStartupStore(t *testing.T) {
 				}
 				mock.ExpectQuery(readinessAuthorityQuery(store)).
 					WillReturnRows(sqlmock.NewRows([]string{"writable", "backend", "schema_ready"}).AddRow(true, authority, true))
-				mock.ExpectQuery("SELECT value FROM settings WHERE key = 'execution_node_balancing_enabled'").
-					WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("false"))
 				status := http.StatusOK
 				if i == 1 {
 					status = http.StatusServiceUnavailable
@@ -174,7 +165,7 @@ func TestClusterReadinessRefreshAuthorityKeepsStartupStore(t *testing.T) {
 	}
 }
 
-func TestClusterReadinessRefreshAuthorityHonorsContext(t *testing.T) {
+func TestReadinessRefreshAuthorityHonorsContext(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
@@ -188,7 +179,7 @@ func TestClusterReadinessRefreshAuthorityHonorsContext(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestClusterReadinessUsesRunningRefreshProvider(t *testing.T) {
+func TestReadinessUsesRunningRefreshProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, authority string
@@ -207,8 +198,6 @@ func TestClusterReadinessUsesRunningRefreshProvider(t *testing.T) {
 			provider, err := repository.NewRefreshTokenStore(db, client, &config.Config{})
 			require.NoError(t, err)
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenStore: "postgres"}}
-			cfg.Gateway.ExecutionNode.Enabled = true
-			cfg.Gateway.ExecutionNode.ID = "api2"
 			router := gin.New()
 			RegisterCommonRoutes(router, db, client, cfg, provider)
 			cfg.JWT.RefreshTokenStore = "redis"
@@ -216,15 +205,13 @@ func TestClusterReadinessUsesRunningRefreshProvider(t *testing.T) {
 			mock.MatchExpectationsInOrder(false)
 			mock.ExpectQuery("SELECT backend, pg_is_in_recovery").
 				WillReturnRows(sqlmock.NewRows([]string{"backend", "recovery", "read_only"}).AddRow(tc.authority, false, false))
-			mock.ExpectQuery("SELECT value FROM settings").
-				WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("false"))
 			assertAuthorityReadiness(t, router, tc.wantStatus)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
 
-func TestClusterReadinessMigrationRequiresRunningProvider(t *testing.T) {
+func TestReadinessMigrationRequiresRunningProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, withLegacyCache := range []bool{false, true} {
 		t.Run(map[bool]string{false: "provider absent", true: "unguarded legacy cache"}[withLegacyCache], func(t *testing.T) {
@@ -232,8 +219,6 @@ func TestClusterReadinessMigrationRequiresRunningProvider(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenMigrationReadiness: true}}
-			cfg.Gateway.ExecutionNode.Enabled = true
-			cfg.Gateway.ExecutionNode.ID = "api2"
 			client := readinessAuthorityRedis(t)
 			router := gin.New()
 			if withLegacyCache {
@@ -241,8 +226,6 @@ func TestClusterReadinessMigrationRequiresRunningProvider(t *testing.T) {
 			} else {
 				RegisterCommonRoutes(router, db, client, cfg)
 			}
-			mock.ExpectQuery("SELECT value FROM settings").
-				WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("false"))
 			assertAuthorityReadiness(t, router, http.StatusServiceUnavailable)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})

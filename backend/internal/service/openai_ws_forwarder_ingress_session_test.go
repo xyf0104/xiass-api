@@ -113,7 +113,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
 			[]byte(`{"type":"response.output_item.done","item":{"id":"ig_ingress_1","type":"image_generation_call","status":"generating","result":"iVBORw0KGgoAAAANSUhEUg/+=="}}`),
-			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_1","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_1","model":"gpt-5.1","service_tier":"ultrafast","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_turn_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
@@ -147,11 +147,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	}
 
 	serverErrCh := make(chan error, 1)
-	turnTerminalCh := make(chan string, 2)
+	turnResultCh := make(chan *OpenAIForwardResult, 2)
 	hooks := &OpenAIWSIngressHooks{
 		AfterTurn: func(_ int, result *OpenAIForwardResult, turnErr error) {
 			if turnErr == nil && result != nil {
-				turnTerminalCh <- result.UpstreamTerminalEvent
+				turnResultCh <- result
 			}
 		},
 	}
@@ -225,8 +225,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	secondTurnEvent := readMessage()
 	require.Equal(t, "response.completed", gjson.GetBytes(secondTurnEvent, "type").String())
 	require.Equal(t, "resp_ingress_turn_2", gjson.GetBytes(secondTurnEvent, "response.id").String())
-	require.Equal(t, "response.completed", <-turnTerminalCh, "首轮 turn 应保留成功终态")
-	require.Equal(t, "response.completed", <-turnTerminalCh, "第二轮 turn 应保留成功终态")
+	firstResult, secondResult := <-turnResultCh, <-turnResultCh
+	require.Equal(t, "response.completed", firstResult.UpstreamTerminalEvent)
+	require.Equal(t, "response.completed", secondResult.UpstreamTerminalEvent)
+	require.Equal(t, "ultrafast", firstResult.UpstreamResponseServiceTier)
+	require.Empty(t, secondResult.UpstreamResponseServiceTier)
 
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
@@ -975,7 +978,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 
 	upstreamConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.1","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"gpt-5.1","service_tier":"ultrafast","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
 		},
 	}
 	captureDialer := &openAIWSCaptureDialer{conn: upstreamConn}
@@ -1086,6 +1089,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	select {
 	case result := <-resultCh:
 		require.Equal(t, "resp_passthrough_turn_1", result.RequestID)
+		require.Equal(t, "ultrafast", result.UpstreamResponseServiceTier)
 		require.True(t, result.OpenAIWSMode)
 		require.Equal(t, 2, result.Usage.InputTokens)
 		require.Equal(t, 3, result.Usage.OutputTokens)

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -141,6 +140,12 @@ func (r *openAIReauthorizationAutoRuntime) enqueue(accountID int64) {
 	select {
 	case r.queue <- accountID:
 	case <-r.ctx.Done():
+		r.mu.Lock()
+		delete(r.pending, accountID)
+		r.mu.Unlock()
+	default:
+		// The periodic scan retries overflow; never block a customer request or
+		// the startup scan while the worker is draining its bounded queue.
 		r.mu.Lock()
 		delete(r.pending, accountID)
 		r.mu.Unlock()
@@ -281,11 +286,6 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 		return nil
 	}
 	mode := openAIReauthorizationBrowserMode(account)
-	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
-	if accountNodeID != "" && localNodeID != "" && accountNodeID != localNodeID {
-		return nil
-	}
 	if mode == batchOAuthBrowserAdsPower && service.OpenAIAdsPowerBindingFromAccount(account) == nil {
 		return nil
 	}
@@ -310,8 +310,8 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 			}
 			claim := service.OpenAIReauthorizationAutoClaim{
 				EpisodeKey: state.AutoEpisodeKey, ClaimID: state.AutoClaimID,
-				BrowserMode: state.AutoBrowserMode, ExecutionNodeID: state.AutoExecutionNodeID,
-				ClaimedAt: dereferenceTime(state.AutoClaimedAt, now), LeaseUntil: leaseUntil,
+				BrowserMode: state.AutoBrowserMode,
+				ClaimedAt:   dereferenceTime(state.AutoClaimedAt, now), LeaseUntil: leaseUntil,
 				RestoreSchedulable: state.AutoRestoreSchedulable,
 			}
 			next := state
@@ -333,7 +333,7 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 	restoreSchedulable := !account.Schedulable && account.Status == service.StatusError
 	claim := service.OpenAIReauthorizationAutoClaim{
 		EpisodeKey: episodeKey, ClaimID: claimID, BrowserMode: mode,
-		ExecutionNodeID: accountNodeID, ClaimedAt: now,
+		ClaimedAt:  now,
 		LeaseUntil: now.Add(openAIReauthorizationAutoLease), RestoreSchedulable: restoreSchedulable,
 	}
 	claimedState, claimed, err := store.ClaimOpenAIReauthorizationAutoAttempt(ctx, account, claim)
@@ -348,9 +348,13 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 		claimState = service.OpenAIReauthorizationStateFromAccount(account)
 	}
 
+	expected := account
 	account, login, proxy, err := h.openAIReauthorizationLogin(ctx, accountID, mode)
 	if err != nil {
-		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, account, claim, claimState, "saved_login_unavailable", nil)
+		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, expected, claim, claimState, "saved_login_unavailable", nil)
+	}
+	if openAIReauthorizationAutoEpisodeKey(account) != claim.EpisodeKey || !batchProxyEqual(expected.ProxyID, account.ProxyID) {
+		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, expected, claim, claimState, "account_configuration_changed", nil)
 	}
 	ownerID := account.ID
 	if mode == batchOAuthBrowserAdsPower {
@@ -358,6 +362,9 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 			return h.finishOpenAIReauthorizationAutoFailure(ctx, store, account, claim, claimState, "adspower_helper_offline", nil)
 		}
 		binding := service.OpenAIAdsPowerBindingFromAccount(account)
+		if binding == nil {
+			return h.finishOpenAIReauthorizationAutoFailure(ctx, store, account, claim, claimState, "adspower_binding_unavailable", nil)
+		}
 		device, deviceOK, deviceErr := h.adsPowerLaunchStore.device(ctx, binding.DeviceID, binding.EnvironmentKey)
 		if deviceErr != nil || !deviceOK || device.LastSeenAt.IsZero() || time.Since(device.LastSeenAt) > openAIReauthorizationAutoHelperFresh {
 			return h.finishOpenAIReauthorizationAutoFailure(ctx, store, account, claim, claimState, "adspower_helper_offline", nil)
@@ -380,7 +387,7 @@ func (h *OpenAIOAuthHandler) runOpenAIReauthorizationAutomatic(ctx context.Conte
 	task := &batchOAuthTask{
 		ID: taskID, Mode: batchOAuthModeReauthorization, Email: login.Email, LoginMethod: login.Method,
 		TargetAccountID: account.ID, ownerID: ownerID, sidecarID: taskID, config: taskConfig,
-		BrowserMode: mode, executionNodeID: accountNodeID, Status: "queued", Stage: "queued",
+		BrowserMode: mode, Status: "queued", Stage: "queued",
 		CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute), ReauthorizationNumber: max(1, claimState.AttemptCount),
 		reauthStateEvent: claimState.LastEventKey,
 	}
@@ -564,7 +571,7 @@ func (h *OpenAIOAuthHandler) completeOpenAIReauthorizationAutomatic(ctx context.
 		task.Status, task.Stage, task.Reason = "failed", "failed", "account_update_failed"
 		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, item.expected, item.claim, service.OpenAIReauthorizationStateFromAccount(item.expected), task.Reason, task)
 	}
-	if openAIReauthorizationAutoEpisodeKey(account) != item.claim.EpisodeKey || openAIReauthorizationConfigurationChanged(task, account, strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))) {
+	if openAIReauthorizationAutoEpisodeKey(account) != item.claim.EpisodeKey || openAIReauthorizationConfigurationChanged(task, account) {
 		task.Status, task.Stage, task.Reason = "failed", "failed", "account_configuration_changed"
 		return h.finishOpenAIReauthorizationAutoFailure(ctx, store, item.expected, item.claim, service.OpenAIReauthorizationStateFromAccount(item.expected), task.Reason, task)
 	}
@@ -708,10 +715,16 @@ func (h *OpenAIOAuthHandler) startOpenAIReauthorizationAutoAdsPower(ctx context.
 		return err
 	}
 	defer unlock()
+	current, err := h.adminService.GetAccount(ctx, account.ID)
+	currentBinding := service.OpenAIAdsPowerBindingFromAccount(current)
+	if err != nil || currentBinding == nil || currentBinding.DeviceID != binding.DeviceID ||
+		currentBinding.EnvironmentKey != binding.EnvironmentKey || currentBinding.ProfileID != binding.ProfileID {
+		return errors.New("AdsPower profile binding changed before launch")
+	}
 	if err := h.adsPowerLaunchStore.create(ctx, ticket, record); err != nil {
 		return err
 	}
-	queued, err := h.adsPowerLaunchStore.enqueueHelperCommand(ctx, record, ticket, binding.EnvironmentKey)
+	queued, err := h.adsPowerLaunchStore.enqueueHelperCommand(ctx, record, ticket)
 	if err != nil || !queued {
 		return errors.New("AdsPower helper command could not be queued")
 	}

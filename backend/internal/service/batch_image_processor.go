@@ -50,10 +50,6 @@ func (r *BatchImageAccountRepositoryResolver) ResolveBatchImageAccount(ctx conte
 	if err != nil || account == nil {
 		return account, err
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, r.Config, r.SettingService)
-	if !policy.hydratedAccountEgressAllowed(account) {
-		return nil, ErrNoAvailableAccounts
-	}
 	return account, nil
 }
 

@@ -125,7 +125,7 @@
       <SearchInput
         v-model="workbenchSearch"
         class="min-w-0 flex-1 sm:max-w-sm"
-        placeholder="搜索账号名称、邮箱、ID、节点或号池"
+        placeholder="搜索账号名称、邮箱、ID 或号池"
         data-testid="authorization-account-search"
       />
       <Select
@@ -212,7 +212,6 @@
                 </div>
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span v-if="account.execution_node_id" class="oauth-mini-tag">{{ account.execution_node_id }}</span>
                 <span class="oauth-mini-tag" :class="loginMethodClass(account)">{{ loginMethodLabel(account) }}</span>
                 <span v-if="adsPowerBindingLabel(account)" class="oauth-mini-tag oauth-mini-tag-fingerprint">{{ adsPowerBindingLabel(account) }}</span>
               </div>
@@ -384,7 +383,7 @@ import Select from '@/components/common/Select.vue'
 import BatchOpenAIOAuthModal from '@/components/account/BatchOpenAIOAuthModal.vue'
 import AdsPowerHelperSetupDialog from '@/components/admin/account/AdsPowerHelperSetupDialog.vue'
 import OpenAIOAuthCredentialLibraryPanel from '@/components/admin/account/OpenAIOAuthCredentialLibraryPanel.vue'
-import { accountsAPI, executionNodesAPI, groupsAPI, proxiesAPI } from '@/api/admin'
+import { accountsAPI, groupsAPI, proxiesAPI } from '@/api/admin'
 import { accountPoolsAPI, buildAccountPoolLookup, type AccountPool } from '@/api/admin/accountPools'
 import {
   openAIReauthorizationAPI,
@@ -620,16 +619,6 @@ async function loadBatchOptions() {
   }
 }
 
-async function loadAdsPowerEnvironment() {
-  try {
-    const status = await executionNodesAPI.getStatus()
-    const nodeID = String(status.runtime?.node_id || status.runtime?.legacy_unassigned_node_id || '').trim()
-    if (nodeID) adsPowerEnvironmentKey.value = nodeID
-  } catch {
-    // The built-in authorization path remains available when node metadata cannot be read.
-  }
-}
-
 function workbenchAccountMatches(account: Account): boolean {
   const pool = accountPoolLookup.value[String(account.id)]
   if (workbenchPoolFilter.value === '__none__') {
@@ -645,7 +634,6 @@ function workbenchAccountMatches(account: Account): boolean {
     account.name,
     accountEmail(account),
     account.notes || '',
-    account.execution_node_id || '',
     pool?.name || '',
   ]
   return values.some(value => String(value).toLowerCase().includes(query))
@@ -816,7 +804,7 @@ const reasonLabels: Record<string, string> = {
   oauth_exchange_failed: 'OAuth 回调换取凭据失败。',
   oauth_identity_mismatch: '授权完成后的 OpenAI 身份与目标账号不一致。',
   account_update_failed: 'OAuth 已完成，但凭据未能保存到原账号。',
-  account_configuration_changed: '授权期间账号的所属服务器或代理发生变化，请按当前配置重新授权。',
+  account_configuration_changed: '授权期间账号代理配置发生变化，请按当前配置重新授权。',
   account_state_recovery_failed: '新 OAuth 凭据已保存，但账号错误状态尚未清理，请重试恢复状态。',
   sms_timeout: '等待短信验证码超过 3 分钟。',
   sms_confirmation_timeout: '等待手机号处理超时。',
@@ -1331,7 +1319,7 @@ function openTeamChildCreation() {
 onMounted(async () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
   try {
-    await Promise.all([loadAccounts(), syncTasks(), loadBatchOptions(), loadAdsPowerEnvironment()])
+    await Promise.all([loadAccounts(), syncTasks(), loadBatchOptions()])
   } catch (error) {
     loadError.value = extractApiErrorMessage(error, '读取待授权账号失败。')
   } finally {

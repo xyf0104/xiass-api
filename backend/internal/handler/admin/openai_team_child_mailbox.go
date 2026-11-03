@@ -199,7 +199,7 @@ func (h *OpenAIOAuthHandler) ImportTeamChildMailboxConfig(c *gin.Context) {
 	}
 	shared, err := h.persistTeamMailboxSharedConfig(c.Request.Context(), values)
 	if err != nil {
-		response.InternalError(c, "无法保存集群共享邮箱配置")
+		response.InternalError(c, "无法保存邮箱配置")
 		return
 	}
 	localErr := writeTeamMailboxConfigFile(values)
@@ -213,7 +213,6 @@ func (h *OpenAIOAuthHandler) ImportTeamChildMailboxConfig(c *gin.Context) {
 	h.ensureTeamMailboxShareStore().reset()
 	response.Success(c, gin.H{
 		"configured":        true,
-		"cluster_shared":    shared,
 		"auth_mode":         config.authMode,
 		"domain":            config.domain,
 		"local_cache_saved": localErr == nil,
@@ -522,9 +521,8 @@ func loadTeamMailboxProviderConfigShared(c *gin.Context, settingRepo service.Set
 		}
 		return teamMailboxProviderConfig{}, err
 	}
-	// Existing single-node installations already have a persistent local file.
-	// Publish it lazily after upgrade so the paired node can use the same rules
-	// without asking the administrator to upload the secret a second time.
+	// Persist an existing local configuration in encrypted database settings so
+	// it remains available after a restart without uploading the secret again.
 	if sharedErr == nil {
 		_, _ = persistTeamMailboxSharedConfig(ctx, settingRepo, encryptor, values)
 	}

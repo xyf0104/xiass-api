@@ -20,10 +20,6 @@ func (h *OpenAIOAuthHandler) AutoResetConfig(c *gin.Context) {
 		response.BadRequest(c, "invalid account id")
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, id); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	svc, ok := h.quotaService.(openAIAutoResetConfigService)
 	if !ok {
 		response.ErrorFrom(c, service.ErrOpenAIResetUnavailable)

@@ -107,8 +107,8 @@ func (h *SettingHandler) SetPixlabSMSService(pixlabSMSService *service.PixlabSMS
 	h.pixlabSMSService = pixlabSMSService
 }
 
-// SetTeamChildSharedSettings lets either paired node validate the encrypted
-// shared mailbox provider before enabling the Team child workflow.
+// SetTeamChildSharedSettings attaches the encrypted database mailbox settings
+// used to validate the provider before enabling the Team child workflow.
 func (h *SettingHandler) SetTeamChildSharedSettings(settingRepo service.SettingRepository, encryptor service.SecretEncryptor) {
 	h.teamChildSettingRepo = settingRepo
 	h.teamChildSecretEncryptor = encryptor
@@ -304,9 +304,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		MinClaudeCodeVersion:                                   settings.MinClaudeCodeVersion,
 		MaxClaudeCodeVersion:                                   settings.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:                            settings.AllowUngroupedKeyScheduling,
-		ExecutionNodeBalancingEnabled:                          settings.ExecutionNodeBalancingEnabled,
-		ExecutionNodeWeights:                                   settings.ExecutionNodeWeights,
-		ExecutionNodeProxyIDs:                                  settings.ExecutionNodeProxyIDs,
 		BackendModeEnabled:                                     settings.BackendModeEnabled,
 		OpenAITTFTMode:                                         settings.OpenAITTFTMode,
 		EnableFingerprintUnification:                           settings.EnableFingerprintUnification,
@@ -435,94 +432,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	}
 
 	response.Success(c, systemSettingsResponseData(payload, authSourceDefaults))
-}
-
-// GetExecutionNodeStatus returns the effective local runtime and shared
-// scheduling state used by the XIASS load-balancing control panel.
-func (h *SettingHandler) GetExecutionNodeStatus(c *gin.Context) {
-	status, err := h.settingService.GetExecutionNodeAdminStatus(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, status)
-}
-
-// InitializeExecutionNodeRuntime prepares the local fixed egress and asks the
-// host updater to write the node runtime into .env. It deliberately does not
-// enable shared account balancing.
-func (h *SettingHandler) InitializeExecutionNodeRuntime(c *gin.Context) {
-	var req struct {
-		NodeID string `json:"node_id"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid execution-node runtime request")
-		return
-	}
-	runtime, err := h.settingService.InitializeExecutionNodeRuntime(c.Request.Context(), req.NodeID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	// The token is a long-lived host runtime secret. The updater receives it
-	// through Docker's private control path; it must not be sent back to a web
-	// browser or retained in the frontend state.
-	response.Success(c, gin.H{
-		"node_id":                    runtime.NodeID,
-		"default_proxy_id":           runtime.DefaultProxyID,
-		"legacy_unassigned_node_id":  runtime.LegacyUnassignedNodeID,
-		"legacy_unassigned_proxy_id": runtime.LegacyUnassignedProxyID,
-	})
-}
-
-// GetExecutionNodePairingStatus reports whether the local instance has a
-// verified peer using the same PostgreSQL and Redis state.
-func (h *SettingHandler) GetExecutionNodePairingStatus(c *gin.Context) {
-	status, err := h.settingService.GetExecutionNodePairingStatus(c.Request.Context())
-	if err != nil {
-		if response.ErrorFrom(c, err) {
-			return
-		}
-	}
-	response.Success(c, status)
-}
-
-// GenerateExecutionNodePairingInvite returns the raw one-time invite only in
-// this response. The database stores its hash and expiry, never the token.
-func (h *SettingHandler) GenerateExecutionNodePairingInvite(c *gin.Context) {
-	invite, err := h.settingService.GenerateExecutionNodePairingInvite(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, invite)
-}
-
-func (h *SettingHandler) PairExecutionNode(c *gin.Context) {
-	var req struct {
-		PeerURL   string `json:"peer_url"`
-		Token     string `json:"token"`
-		TargetID  string `json:"target_node_id"`
-		TargetURL string `json:"target_url"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid pairing request")
-		return
-	}
-	status, err := h.settingService.PairExecutionNodeWithTarget(c.Request.Context(), req.PeerURL, req.Token, req.TargetID, req.TargetURL)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, status)
-}
-
-func (h *SettingHandler) UnpairExecutionNode(c *gin.Context) {
-	if err := h.settingService.UnpairExecutionNode(c.Request.Context()); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, gin.H{"paired": false})
 }
 
 // openaiFastPolicySettingsToDTO converts service -> dto for OpenAI fast policy.

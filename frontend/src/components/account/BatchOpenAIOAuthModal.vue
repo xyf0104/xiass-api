@@ -53,7 +53,7 @@
             </button>
           </div>
           <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-            {{ settings.browser_mode === 'adspower' ? '一个账号固定一个 AdsPower 环境，出口跟随账号所属 XIASS 节点。' : '沿用 XIASS 服务器端自动授权流程。' }}
+            {{ settings.browser_mode === 'adspower' ? '一个账号固定一个 AdsPower 环境，出口使用该账号当前选择的代理。' : '沿用 XIASS 服务器端自动授权流程。' }}
           </p>
         </div>
         <div v-if="credentials.length" class="max-h-28 overflow-y-auto border-y border-gray-200 py-2 dark:border-dark-700">

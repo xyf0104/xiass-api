@@ -11,6 +11,29 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func TestAccountMappersOmitLegacyNodeMetadata(t *testing.T) {
+	t.Parallel()
+	src := &service.Account{
+		ID:   42,
+		Name: "legacy account",
+		Extra: map[string]any{
+			"xiass_execution_node_id":       "api2",
+			"xiass_execution_proxy_id":      "17",
+			"xiass_execution_direct_egress": true,
+			"custom":                        "keep",
+		},
+	}
+	account := AccountFromService(src)
+	for _, result := range []any{account, AccountListItemFromAccount(account), AccountSummaryFromService(src)} {
+		raw, err := json.Marshal(result)
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), "execution_node")
+		require.NotContains(t, string(raw), "xiass_execution_")
+	}
+	require.Equal(t, "keep", account.Extra["custom"])
+	require.Equal(t, "api2", src.Extra["xiass_execution_node_id"])
+}
+
 func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	src := &service.Account{
 		ID:       42,

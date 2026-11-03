@@ -4,7 +4,6 @@ interface AccountSelectionRow {
   id: number
   platform?: AccountPlatform
   type?: AccountType
-  execution_node_id?: string
 }
 
 interface AccountListPage {
@@ -54,7 +53,6 @@ export interface AccountSelectionSnapshot {
     id: number
     platform: AccountPlatform
     type: AccountType
-    execution_node_id?: string
   }>
   ids: number[]
   selectedPlatforms: AccountPlatform[]
@@ -74,7 +72,6 @@ export async function fetchAllAccountSelection(
     id: account.id,
     platform: account.platform as AccountPlatform,
     type: account.type as AccountType,
-    execution_node_id: account.execution_node_id
   }))
 
   return {

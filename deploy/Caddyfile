@@ -53,17 +53,11 @@ xiass.example.com {
 	# =========================================================================
 	reverse_proxy localhost:8080 {
 		# 健康检查
-		# Only route traffic to instances whose shared PostgreSQL and Redis are
-		# ready. /health remains the container liveness probe.
+		# PostgreSQL and Redis must be ready; /health remains the liveness probe.
 		health_uri /readyz
 		health_interval 30s
 		health_timeout 10s
 		health_status 200
-
-		# 负载均衡策略（单节点可忽略，多节点时有用）
-		lb_policy round_robin
-		lb_try_duration 5s
-		lb_try_interval 250ms
 
 		# 仅从实际 TCP 对端生成转发头，避免透传客户端伪造值。
 		header_up X-Real-IP {remote_host}

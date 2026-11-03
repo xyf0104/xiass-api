@@ -151,8 +151,6 @@ type BackupService struct {
 	cronEntryID cron.EntryID
 	cronExpr    string
 
-	scheduleOwner        bool
-	multiNode            bool
 	schedulePollInterval time.Duration
 	scheduleStopCh       chan struct{}
 	scheduleStopOnce     sync.Once
@@ -181,8 +179,6 @@ func NewBackupService(
 		dumper:                  dumper,
 		bgCtx:                   bgCtx,
 		bgCancel:                bgCancel,
-		scheduleOwner:           executionNodeControlPlaneEnabled(cfg),
-		multiNode:               cfg.Gateway.ExecutionNode.Enabled,
 		schedulePollInterval:    backupScheduleReconcileInterval,
 		scheduleStopCh:          make(chan struct{}),
 	}
@@ -192,15 +188,7 @@ func NewBackupService(
 func (s *BackupService) Start() {
 	s.cronSched = cron.New()
 	s.cronSched.Start()
-	if !s.scheduleOwner {
-		return
-	}
-
-	// A running record can belong to another active application instance. Until
-	// records carry an owner lease, multi-node startup must not mark it failed.
-	if !s.multiNode {
-		s.recoverStaleRecords()
-	}
+	s.recoverStaleRecords()
 
 	if err := s.reconcileSchedule(); err != nil {
 		logger.LegacyPrintf("service.backup", "[Backup] 加载定时备份配置失败: %v", err)
@@ -393,16 +381,12 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 		return nil, fmt.Errorf("save schedule config: %w", err)
 	}
 
-	// Only the configured control-plane instance owns periodic execution. Other
-	// peers persist the shared setting; the owner reconciles it within seconds.
-	if s.scheduleOwner {
-		if cfg.Enabled {
-			if err := s.applyCronSchedule(&cfg); err != nil {
-				return nil, err
-			}
-		} else {
-			s.removeCronSchedule()
+	if cfg.Enabled {
+		if err := s.applyCronSchedule(&cfg); err != nil {
+			return nil, err
 		}
+	} else {
+		s.removeCronSchedule()
 	}
 
 	return &cfg, nil

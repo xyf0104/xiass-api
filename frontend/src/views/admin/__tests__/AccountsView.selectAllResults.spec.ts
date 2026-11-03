@@ -11,9 +11,7 @@ const {
   getAllProxies,
   getAllGroups,
   getSettings,
-  getExecutionNodeStatus,
-  showError,
-  showWarning
+  showError
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
@@ -22,9 +20,7 @@ const {
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
   getSettings: vi.fn(),
-  getExecutionNodeStatus: vi.fn(),
-  showError: vi.fn(),
-  showWarning: vi.fn()
+  showError: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -45,8 +41,7 @@ vi.mock('@/api/admin', () => ({
     groups: {
       getAll: getAllGroups
     },
-    settings: { getSettings },
-    executionNodes: { getStatus: getExecutionNodeStatus }
+    settings: { getSettings }
   }
 }))
 
@@ -54,8 +49,7 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
     showSuccess: vi.fn(),
-    showInfo: vi.fn(),
-    showWarning
+    showInfo: vi.fn()
   })
 }))
 
@@ -109,7 +103,6 @@ const BulkEditAccountModalStub = {
     <div v-if="show" data-test="bulk-edit-modal">
       <span data-test="bulk-edit-platforms">{{ target?.selectedPlatforms?.join(',') }}</span>
       <span data-test="bulk-edit-types">{{ target?.selectedTypes?.join(',') }}</span>
-      <span data-test="bulk-edit-owner">{{ target?.filters?.execution_node_id || 'all' }}</span>
     </div>
   `
 }
@@ -179,9 +172,7 @@ describe('admin AccountsView select all filtered results', () => {
     getAllProxies.mockReset()
     getAllGroups.mockReset()
     getSettings.mockReset()
-    getExecutionNodeStatus.mockReset()
     showError.mockReset()
-    showWarning.mockReset()
 
     listWithEtag.mockResolvedValue({
       notModified: true,
@@ -193,24 +184,6 @@ describe('admin AccountsView select all filtered results', () => {
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
     getSettings.mockResolvedValue({ team_child_creation_enabled: false })
-    getExecutionNodeStatus.mockResolvedValue({
-      balancing_enabled: false,
-      can_enable: true,
-      admin_write_allowed: true,
-      admin_write_mode: 'single_node',
-      database_reachable: true,
-      heartbeat_store_reachable: true,
-      runtime: {
-        enabled: false,
-        node_id: '',
-        default_proxy_id: 0,
-        control_plane: true,
-        legacy_unassigned_node_id: 'api',
-        legacy_unassigned_proxy_id: 0
-      },
-      nodes: [],
-      issues: []
-    })
   })
 
   it('selects all matching IDs in one commit and clears the selection when filters change', async () => {
@@ -415,145 +388,6 @@ describe('admin AccountsView select all filtered results', () => {
     }))
   })
 
-  it.each([true, false, undefined])('keeps an unpaired remote api2 account read-only and unselectable with online=%s', async online => {
-    const localAccount = { ...makeAccounts(1)[0], id: 1, name: 'local', execution_node_id: 'api' }
-    const remoteAccount = { ...makeAccounts(1)[0], id: 2, name: 'remote', execution_node_id: 'api2' }
-    const accounts = [localAccount, remoteAccount]
-    listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
-    getExecutionNodeStatus.mockResolvedValue({
-      balancing_enabled: true,
-      can_enable: true,
-      admin_write_allowed: true,
-      admin_write_mode: 'primary',
-      database_reachable: true,
-      heartbeat_store_reachable: true,
-      runtime: {
-        enabled: true,
-        node_id: 'api',
-        default_proxy_id: 84,
-        control_plane: true,
-        legacy_unassigned_node_id: 'api',
-        legacy_unassigned_proxy_id: 84
-      },
-      nodes: [
-        { node_id: 'api', online: true, is_local: true },
-        ...(online === undefined ? [] : [{ node_id: 'api2', online, is_local: false }])
-      ],
-      issues: []
-    })
-
-    const wrapper = mountView()
-    await flushPromises()
-
-    const remoteRow = wrapper.get('[data-test="account-row-2"]')
-    const remoteCheckbox = remoteRow.get('input[type="checkbox"]')
-    const remoteBadge = remoteRow.get('span[title="admin.accounts.executionNodeRemoteReadOnly"]')
-    expect(remoteCheckbox.attributes('disabled')).toBeDefined()
-    expect(remoteBadge.classes()).toEqual(expect.arrayContaining([
-      'bg-amber-50',
-      'text-amber-700',
-      'whitespace-nowrap',
-      'shrink-0'
-    ]))
-    expect(remoteBadge.text()).toContain('api2')
-    expect(remoteBadge.text()).toContain('admin.accounts.executionNodeReadOnlyBadge')
-
-    await wrapper.get('[data-test="select-page"]').trigger('click')
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('1')
-
-    await wrapper.get('[data-test="select-all-results"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('1')
-    expect(showWarning).toHaveBeenCalledWith('admin.accounts.executionNodeBulkExcluded')
-    wrapper.unmount()
-  })
-
-  it.each([
-    ['api', 'api2', true],
-    ['api2', 'api', true],
-    ['api', 'api2', false],
-    ['api2', 'api', false]
-  ])('allows paired management from %s of %s with peer online=%s', async (local, remote, online) => {
-    const accounts = [
-      { ...makeAccounts(1)[0], id: 1, execution_node_id: local },
-      { ...makeAccounts(1)[0], id: 2, execution_node_id: remote }
-    ]
-    listAccounts.mockResolvedValue({ items: accounts, total: 2, page: 1, page_size: 20, pages: 1 })
-    getExecutionNodeStatus.mockResolvedValue({
-      admin_write_mode: 'paired_full_access', admin_write_allowed: true,
-      runtime: { enabled: true, node_id: local, legacy_unassigned_node_id: 'api' },
-      nodes: [{ node_id: local, online: true, is_local: true }, { node_id: remote, online, is_local: false }]
-    })
-    const wrapper = mountView()
-    await flushPromises()
-    const row = wrapper.get('[data-test="account-row-2"]')
-    expect(row.get('input[type="checkbox"]').attributes('disabled')).toBeUndefined()
-    const badge = row.get('span[title="admin.accounts.columns.executionNodeHint"]')
-    expect(badge.classes()).toEqual(expect.arrayContaining(['bg-amber-50', 'text-amber-700']))
-    expect(badge.get('[data-icon="server"]').exists()).toBe(true)
-    expect(badge.text()).toContain(remote)
-    expect(badge.text()).toContain('admin.accounts.executionNodeManageableBadge')
-    expect(badge.text()).not.toContain('executionNodeTakeoverBadge')
-    expect(badge.text()).not.toContain('executionNodeReadOnlyBadge')
-    await wrapper.get('[data-test="select-page"]').trigger('click')
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('2')
-    await wrapper.get('[data-test="clear"]').trigger('click')
-    await wrapper.get('[data-test="select-all-results"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('2')
-    expect(showWarning).not.toHaveBeenCalled()
-    await wrapper.get('[data-test="edit-selected"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="bulk-edit-modal"]').exists()).toBe(true)
-    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="bulk-edit-owner"]').text()).toBe('all')
-    wrapper.unmount()
-  })
-
-  it.each([false, undefined])('does not grant paired access without explicit write permission (%s)', async allowed => {
-    const account = { ...makeAccounts(1)[0], execution_node_id: 'api2' }
-    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
-    getExecutionNodeStatus.mockResolvedValue({
-      admin_write_mode: 'paired_full_access', admin_write_allowed: allowed,
-      runtime: { enabled: true, node_id: 'api' },
-      nodes: [{ node_id: 'api2', online: true, is_local: false }]
-    })
-    const wrapper = mountView()
-    await flushPromises()
-    const row = wrapper.get('[data-test="account-row-1"]')
-    expect(row.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
-    expect(row.text()).toContain('executionNodeReadOnlyBadge')
-    expect(row.text()).not.toContain('executionNodeManageableBadge')
-    await wrapper.get('[data-test="select-all-results"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
-    wrapper.unmount()
-  })
-
-  it('denies local, legacy-unassigned and remote writes when pairing is unavailable', async () => {
-    const accounts = ['api', '', 'api2'].map((owner, i) => ({ ...makeAccounts(1)[0], id: i + 1, execution_node_id: owner }))
-    listAccounts.mockResolvedValue({ items: accounts, total: 3, page: 1, page_size: 20, pages: 1 })
-    getExecutionNodeStatus.mockResolvedValue({
-      admin_write_mode: 'pairing_unavailable', admin_write_allowed: false,
-      runtime: { enabled: true, node_id: 'api', legacy_unassigned_node_id: 'api' },
-      nodes: [{ node_id: 'api', online: true, is_local: true }, { node_id: 'api2', online: false, is_local: false }]
-    })
-    const wrapper = mountView()
-    await flushPromises()
-    for (let i = 1; i <= 3; i++) expect(wrapper.get(`[data-test="account-row-${i}"] input[type="checkbox"]`).attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="account-pairing-unavailable"]').text()).toContain('executionNodePairingUnavailable')
-    expect(wrapper.find('[data-testid="pelican-benchmark"]').exists()).toBe(false)
-    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="bulk-edit-modal"]').exists()).toBe(false)
-    expect(showError).toHaveBeenCalledWith('admin.accounts.executionNodePairingUnavailable')
-    await wrapper.get('[data-test="select-all-results"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
-    wrapper.unmount()
-  })
-
   it('opens and closes the benchmark without changing list requests, selection or pagination', async () => {
     const accounts = makeAccounts(45)
     listAccounts.mockResolvedValue({ items: accounts.slice(0, 20), total: 45, page: 1, page_size: 20, pages: 3 })
@@ -572,55 +406,4 @@ describe('admin AccountsView select all filtered results', () => {
     wrapper.unmount()
   })
 
-  it('ignores legacy takeover flags and keeps an offline unpaired account read-only', async () => {
-    const remoteAccount = { ...makeAccounts(1)[0], id: 2, name: 'remote', execution_node_id: 'api2' }
-    listAccounts.mockResolvedValue({ items: [remoteAccount], total: 1, page: 1, page_size: 20, pages: 1 })
-    getExecutionNodeStatus.mockResolvedValue({
-      balancing_enabled: true,
-      can_enable: true,
-      admin_write_allowed: true,
-      admin_write_mode: 'emergency_takeover',
-      database_reachable: true,
-      heartbeat_store_reachable: true,
-      runtime: {
-        enabled: true,
-        node_id: 'api',
-        default_proxy_id: 84,
-        emergency_local_egress: true,
-        control_plane: true,
-        legacy_unassigned_node_id: 'api',
-        legacy_unassigned_proxy_id: 84
-      },
-      nodes: [
-        { node_id: 'api', online: true, is_local: true },
-        { node_id: 'api2', online: false, is_local: false }
-      ],
-      issues: []
-    })
-
-    const wrapper = mountView()
-    await flushPromises()
-
-    const remoteRow = wrapper.get('[data-test="account-row-2"]')
-    const remoteCheckbox = remoteRow.get('input[type="checkbox"]')
-    const remoteBadge = remoteRow.get('span[title="admin.accounts.executionNodeRemoteReadOnly"]')
-    expect(remoteCheckbox.attributes('disabled')).toBeDefined()
-    expect(remoteBadge.classes()).toEqual(expect.arrayContaining([
-      'bg-amber-50',
-      'text-amber-700',
-      'whitespace-nowrap',
-      'shrink-0'
-    ]))
-    expect(remoteBadge.text()).toContain('api2')
-    expect(remoteBadge.text()).toContain('admin.accounts.executionNodeReadOnlyBadge')
-    expect(remoteBadge.text()).not.toContain('admin.accounts.executionNodeTakeoverBadge')
-    expect(remoteBadge.get('[data-icon="lock"]').exists()).toBe(true)
-
-    await wrapper.get('[data-test="select-page"]').trigger('click')
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
-    await wrapper.get('[data-test="select-all-results"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('[data-test="selected-count"]').text()).toBe('0')
-    wrapper.unmount()
-  })
 })

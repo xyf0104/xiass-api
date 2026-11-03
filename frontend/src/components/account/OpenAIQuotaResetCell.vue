@@ -29,7 +29,7 @@
           'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30',
           hasVisibleCodexCredits ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
         ]"
-        :disabled="readOnly || loading || resetting"
+        :disabled="loading || resetting"
         :title="countButtonTitle"
         @click="handleQuery()"
       >
@@ -141,7 +141,7 @@
         type="button"
         data-testid="reset-pending-reconcile"
         class="ml-1 inline-flex items-center rounded px-1 py-0.5 font-medium text-blue-600 underline decoration-dotted underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400"
-        :disabled="reconciling || resetting || loading || readOnly"
+        :disabled="reconciling || resetting || loading"
         @click="handleReconcile"
       >
         {{ reconciling ? t('admin.accounts.autoResetCredit.reconciling') : t('admin.accounts.autoResetCredit.reconcile') }}
@@ -192,7 +192,6 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const props = defineProps<{
   account: Account
-  readOnly?: boolean
   spreadActions?: boolean
 }>()
 
@@ -346,7 +345,7 @@ const resetCreditExpirations = computed(() =>
 )
 const primaryResetCreditExpiry = computed(() => resetCreditExpirations.value[0] ?? '')
 const hiddenResetCreditCount = computed(() => Math.max(resetCreditExpirations.value.length - 1, 0))
-const canReset = computed(() => !props.readOnly && availableResetCount.value > 0 && !isShadow.value)
+const canReset = computed(() => availableResetCount.value > 0 && !isShadow.value)
 
 const resetCreditDetailsTitle = computed(() =>
   resetCreditExpirations.value
@@ -464,7 +463,7 @@ const applyCodexCreditsFromUsage = (
 }
 
 const handleQuery = async () => {
-  if (props.readOnly || loading.value || resetting.value) return
+  if (loading.value || resetting.value) return
   const generation = ++requestGeneration
   loading.value = true
   error.value = null
@@ -473,7 +472,7 @@ const handleQuery = async () => {
   showResetCreditDetails.value = false
   try {
     const result = await refreshOpenAIQuota(props.account.id)
-    if (generation !== requestGeneration || props.readOnly) return
+    if (generation !== requestGeneration) return
     // The upstream read succeeded even when the snapshot write was rejected, so
     // the live count is always adopted. Only the persisted view is left alone,
     // which keeps the displayed expirations consistent with what is stored.
@@ -496,7 +495,7 @@ const handleQuery = async () => {
 }
 
 const openResetConfirm = () => {
-  if (props.readOnly || resetting.value || loading.value) return
+  if (resetting.value || loading.value) return
   if (!canReset.value) {
     error.value = t('admin.accounts.openaiQuotaReset.noCreditsAvailable')
     return
@@ -506,7 +505,7 @@ const openResetConfirm = () => {
 
 const confirmReset = async () => {
   showResetConfirm.value = false
-  if (props.readOnly || resetting.value || loading.value) return
+  if (resetting.value || loading.value) return
   if (!canReset.value) {
     error.value = t('admin.accounts.openaiQuotaReset.noCreditsAvailable')
     return
@@ -518,7 +517,7 @@ const confirmReset = async () => {
   resetWarning.value = null
   try {
     const result: OpenAIQuotaResetResult = await resetOpenAIQuota(props.account.id)
-    if (generation !== requestGeneration || props.readOnly) return
+    if (generation !== requestGeneration) return
     showResetCreditDetails.value = false
     if (result.cache_refreshed && result.quota) {
       data.value = result.quota
@@ -555,7 +554,7 @@ const confirmReset = async () => {
 }
 
 const handleReconcile = async () => {
-  if (props.readOnly || resetting.value || loading.value || reconciling.value) return
+  if (resetting.value || loading.value || reconciling.value) return
   reconciling.value = true
   const generation = ++requestGeneration
   error.value = null
@@ -563,7 +562,7 @@ const handleReconcile = async () => {
   resetWarning.value = null
   try {
     const result: OpenAIQuotaResetResult = await reconcileOpenAIQuotaReset(props.account.id)
-    if (generation !== requestGeneration || props.readOnly) return
+    if (generation !== requestGeneration) return
     if (result.cache_refreshed && result.quota) {
       data.value = result.quota
       cachedData.value = result.quota
@@ -587,15 +586,14 @@ const handleReconcile = async () => {
 watch(
   [
     () => props.account.id,
-    () => props.readOnly,
     () => props.account.extra?.codex_reset_credit_snapshot,
     () => props.account.extra?.codex_credits_snapshot,
     () => credentialGenerationKey.value
   ],
-  ([accountID, , , , generationKey], previous) => {
+  ([accountID, , , generationKey], previous) => {
     requestGeneration++
     const previousAccountID = previous?.[0]
-    const previousGenerationKey = previous?.[4]
+    const previousGenerationKey = previous?.[3]
     if (previousAccountID !== accountID) {
       reportedReauthAccountID = Number(accountID)
       reportedNeedsReauth = false

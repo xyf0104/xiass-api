@@ -12,9 +12,6 @@ const mocks = vi.hoisted(() => ({
   },
   groupsAPI: { getAll: vi.fn() },
   proxiesAPI: { getAll: vi.fn() },
-  executionNodesAPI: {
-    getStatus: vi.fn(),
-  },
   accountPoolsAPI: {
     list: vi.fn(),
   },
@@ -37,7 +34,6 @@ const { accountsAPI, openAIReauthorizationAPI } = mocks
 
 vi.mock('@/api/admin', () => ({
   accountsAPI: mocks.accountsAPI,
-  executionNodesAPI: mocks.executionNodesAPI,
   groupsAPI: mocks.groupsAPI,
   proxiesAPI: mocks.proxiesAPI,
 }))
@@ -69,8 +65,7 @@ function account(id: number) {
       has_xiass_openai_oauth_reauth_password_encrypted: true,
       has_xiass_openai_oauth_reauth_totp_secret_encrypted: true,
     },
-    extra: { error_code: 'unauthenticated', xiass_execution_node_id: 'api2' },
-    execution_node_id: 'api2',
+    extra: { error_code: 'unauthenticated' },
     concurrency: 1,
     priority: 2,
     group_ids: [],
@@ -171,11 +166,6 @@ describe('OpenAIReauthorizationView', () => {
     accountsAPI.delete.mockReset().mockResolvedValue({ message: 'deleted' })
     mocks.groupsAPI.getAll.mockReset().mockResolvedValue([])
     mocks.proxiesAPI.getAll.mockReset().mockResolvedValue([])
-    mocks.executionNodesAPI.getStatus.mockReset().mockResolvedValue({
-      admin_write_allowed: true,
-      admin_write_mode: 'single_node',
-      runtime: { enabled: false, node_id: 'api', legacy_unassigned_node_id: 'api' },
-    })
     mocks.accountPoolsAPI.list.mockReset().mockResolvedValue({ items: [] })
     openAIReauthorizationAPI.list.mockReset().mockResolvedValue({ items: [], max_concurrency: 3, max_restarts: 2 })
     openAIReauthorizationAPI.accounts.mockReset().mockResolvedValue({ items: [], cooldown_seconds: 604800 })
@@ -238,7 +228,6 @@ describe('OpenAIReauthorizationView', () => {
     expect(wrapper.get('[data-testid="openai-credential-library"]').isVisible()).toBe(true)
     expect(wrapper.text()).toContain('OpenAI 账号登录资料')
     expect(wrapper.text()).toContain('密码 + 2FA 与邮箱验证码 Token 分开保存')
-    expect(mocks.executionNodesAPI.getStatus).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 

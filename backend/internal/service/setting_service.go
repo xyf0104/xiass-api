@@ -169,40 +169,6 @@ type SettingRepository interface {
 	Delete(ctx context.Context, key string) error
 }
 
-// ExecutionNodeDefaultWeightsMigrator upgrades the former two-node 1:1
-// default only on the authoritative source node. The repository implementation
-// performs the marker claim and settings update in one transaction.
-type ExecutionNodeDefaultWeightsMigrator interface {
-	MigrateExecutionNodeDefaultWeights(ctx context.Context, sourceNodeID string) (bool, error)
-}
-
-// ExecutionNodeAccountPreparer performs the one-time, idempotent account
-// attribution required before shared multi-node scheduling can be enabled.
-type ExecutionNodeAccountPreparer interface {
-	PrepareExecutionNodeRouting(ctx context.Context, legacyNodeID string, legacyProxyID int64, allowedNodeIDs []string) (int64, error)
-}
-
-// ExecutionNodeRoutingActivator atomically attributes legacy accounts and
-// enables the shared routing policy. Implementations must use one database
-// transaction so a failed activation cannot leave a half-migrated instance.
-type ExecutionNodeRoutingActivator interface {
-	PrepareAndEnableExecutionNodeRouting(ctx context.Context, legacyNodeID string, legacyProxyID int64, allowedNodeIDs []string, weights map[string]float64) (int64, error)
-}
-
-// ExecutionNodeRoutingProxyMapActivator is the strict activation contract.
-// Implementations must validate every durable account against the shared
-// node-to-proxy map before making the shared switch visible.
-type ExecutionNodeRoutingProxyMapActivator interface {
-	PrepareAndEnableExecutionNodeRoutingWithProxyIDs(ctx context.Context, legacyNodeID string, legacyProxyID int64, allowedNodeIDs []string, weights map[string]float64, proxyIDs map[string]int64) (int64, error)
-}
-
-// ExecutionNodeJoinTargetInspector prevents a source-authoritative join from
-// silently replacing an already-used target ledger. A target with business
-// data must be migrated explicitly before it can be joined.
-type ExecutionNodeJoinTargetInspector interface {
-	IsExecutionNodeJoinTargetEmpty(ctx context.Context) (bool, error)
-}
-
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
@@ -251,21 +217,10 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 
-	executionNodeRoutingCache       atomic.Value // *cachedExecutionNodeRoutingSettings
-	executionNodeRoutingSF          singleflight.Group
 	openAIModelPriorityCache        atomic.Value // *cachedOpenAIModelPrioritySettings
 	openAIModelPrioritySF           singleflight.Group
 	openAIModelPriorityRefreshing   atomic.Bool
 	openAIModelPriorityMu           sync.Mutex
-	executionNodeActivationMu       sync.Mutex
-	executionNodeAccountPreparer    ExecutionNodeAccountPreparer
-	executionNodeRoutingActivator   ExecutionNodeRoutingActivator
-	executionNodeHealthReader       ExecutionNodeHealthReader
-	executionNodeAccountStats       ExecutionNodeAccountStatsReader
-	executionNodePairingState       ExecutionNodePairingStateReader
-	executionNodeJoinApplier        ExecutionNodeJoinApplier
-	executionNodeRuntimeInitializer ExecutionNodeRuntimeInitializer
-	executionNodeJoinInspector      ExecutionNodeJoinTargetInspector
 
 	// grokRuntimeSettingsCache keeps the Grok model-mapping and default endpoint
 	// settings off the request hot path.  It is deliberately per SettingService
@@ -273,48 +228,6 @@ type SettingService struct {
 	// leak configuration into one another.
 	grokRuntimeSettingsCache atomic.Value // *cachedGrokRuntimeSettings
 	grokRuntimeSettingsSF    singleflight.Group
-}
-
-func (s *SettingService) SetExecutionNodeAccountPreparer(preparer ExecutionNodeAccountPreparer) {
-	if s != nil {
-		s.executionNodeAccountPreparer = preparer
-	}
-}
-
-func (s *SettingService) SetExecutionNodeRoutingActivator(activator ExecutionNodeRoutingActivator) {
-	if s != nil {
-		s.executionNodeRoutingActivator = activator
-	}
-}
-
-func (s *SettingService) SetExecutionNodeHealthReader(reader ExecutionNodeHealthReader) {
-	if s != nil {
-		s.executionNodeHealthReader = reader
-	}
-}
-
-func (s *SettingService) SetExecutionNodeAccountStatsReader(reader ExecutionNodeAccountStatsReader) {
-	if s != nil {
-		s.executionNodeAccountStats = reader
-	}
-}
-
-func (s *SettingService) SetExecutionNodeJoinApplier(applier ExecutionNodeJoinApplier) {
-	if s != nil {
-		s.executionNodeJoinApplier = applier
-	}
-}
-
-func (s *SettingService) SetExecutionNodeRuntimeInitializer(initializer ExecutionNodeRuntimeInitializer) {
-	if s != nil {
-		s.executionNodeRuntimeInitializer = initializer
-	}
-}
-
-func (s *SettingService) SetExecutionNodeJoinInspector(inspector ExecutionNodeJoinTargetInspector) {
-	if s != nil {
-		s.executionNodeJoinInspector = inspector
-	}
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

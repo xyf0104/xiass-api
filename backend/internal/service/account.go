@@ -124,6 +124,13 @@ func (a *Account) requestProxyURL() string {
 	return ""
 }
 
+func stripRetiredExecutionNodeMetadata(extra map[string]any) map[string]any {
+	delete(extra, "xiass_execution_node_id")
+	delete(extra, "xiass_execution_proxy_id")
+	delete(extra, "xiass_execution_direct_egress")
+	return extra
+}
+
 // AccountSortRecentActivity is the account-management landing order. OpenAI
 // OAuth plans are grouped Pro, Team, Plus first, then recent activity is used
 // before pagination. Explicit column sorting remains independent.
@@ -133,39 +140,11 @@ type OpenAIEndpointCapability string
 
 const openAILongContextBillingEnabledKey = "openai_long_context_billing_enabled"
 
-// AccountExecutionNodeExtraKey is system-managed account ownership metadata.
-// It identifies the scheduling owner and default private egress. An explicit
-// administrator proxy selection does not transfer this ownership.
-const AccountExecutionNodeExtraKey = "xiass_execution_node_id"
-
-// AccountExecutionProxyExtraKey binds an explicit administrator choice to its proxy ID.
-const AccountExecutionProxyExtraKey = "xiass_execution_proxy_id"
-
-// AccountExecutionDirectEgressExtraKey records an explicit request to bypass
-// proxy nodes while keeping the account assigned to its execution node.
-const AccountExecutionDirectEgressExtraKey = "xiass_execution_direct_egress"
-
 // OpenAIOAuthCredentialSourceIDExtraKey links a schedulable OpenAI OAuth copy
 // to the primary account that owns and rotates its credentials. The copy keeps
 // its own scheduling, proxy, fingerprint, billing and group configuration, but
 // every upstream credential read is resolved through this source account.
 const OpenAIOAuthCredentialSourceIDExtraKey = "xiass_openai_oauth_credential_source_id"
-
-func (a *Account) hasExplicitExecutionProxy() bool {
-	if a == nil || a.ProxyID == nil || *a.ProxyID <= 0 {
-		return false
-	}
-	id, ok := a.Extra[AccountExecutionProxyExtraKey].(string)
-	return ok && id == strconv.FormatInt(*a.ProxyID, 10)
-}
-
-func (a *Account) hasExplicitExecutionDirectEgress() bool {
-	if a == nil || a.ProxyID != nil || a.Extra == nil {
-		return false
-	}
-	direct, _ := a.Extra[AccountExecutionDirectEgressExtraKey].(bool)
-	return direct
-}
 
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
@@ -216,84 +195,6 @@ type TempUnschedulableRule struct {
 
 func (a *Account) IsActive() bool {
 	return a.Status == StatusActive
-}
-
-// ExecutionNodeID returns the persisted owner, or legacyDefault for accounts
-// created before multi-node attribution. Malformed values fail back to the
-// legacy owner instead of creating an unrouteable third node.
-func (a *Account) ExecutionNodeID(legacyDefault string) string {
-	legacyDefault = strings.TrimSpace(legacyDefault)
-	if a == nil || a.Extra == nil {
-		return legacyDefault
-	}
-	nodeID, ok := a.Extra[AccountExecutionNodeExtraKey].(string)
-	nodeID = strings.TrimSpace(nodeID)
-	if !ok || !validExecutionNodeID(nodeID) {
-		return legacyDefault
-	}
-	return nodeID
-}
-
-func applyExecutionNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
-	delete(extra, AccountExecutionProxyExtraKey)
-	delete(extra, AccountExecutionDirectEgressExtraKey)
-	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
-	if cfg == nil || !cfg.Gateway.ExecutionNode.Enabled {
-		// The ownership field is always system-managed. Strip untrusted import data
-		// even while multi-node routing is disabled so a later activation cannot
-		// reinterpret a forged node assignment.
-		delete(extra, AccountExecutionNodeExtraKey)
-		return extra, proxyID
-	}
-	if extra == nil {
-		extra = make(map[string]any, 1)
-	}
-	// Ownership is derived from the accepting instance and is never trusted from
-	// imported/admin-supplied JSON.
-	extra[AccountExecutionNodeExtraKey] = strings.TrimSpace(cfg.Gateway.ExecutionNode.ID)
-	if cfg.Gateway.ExecutionNode.DefaultProxyID > 0 {
-		// In multi-node mode the accepting instance owns the account's egress.
-		// Do not let an imported JSON or an admin form carry a proxy from a
-		// different node into the shared account pool.
-		id := cfg.Gateway.ExecutionNode.DefaultProxyID
-		proxyID = &id
-	}
-	return extra, proxyID
-}
-
-func applyOAuthWorkflowNodeForCreate(cfg *config.Config, extra map[string]any, proxyID *int64) (map[string]any, *int64) {
-	// Keep the accepting node as owner while preserving the proxy explicitly
-	// selected and verified by this trusted OAuth workflow.
-	extra, _ = applyExecutionNodeForCreate(cfg, extra, proxyID)
-	if cfg != nil && cfg.Gateway.ExecutionNode.Enabled && proxyID != nil && *proxyID > 0 {
-		extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*proxyID, 10)
-	}
-	return extra, cloneInt64Pointer(proxyID)
-}
-
-func preserveExecutionNodeOnUpdate(account *Account, extra map[string]any) map[string]any {
-	if extra == nil {
-		extra = make(map[string]any)
-	}
-	delete(extra, AccountExecutionNodeExtraKey)
-	delete(extra, AccountExecutionProxyExtraKey)
-	delete(extra, AccountExecutionDirectEgressExtraKey)
-	delete(extra, OpenAIOAuthCredentialSourceIDExtraKey)
-	if account != nil && account.Extra != nil {
-		if account.hasExplicitExecutionProxy() {
-			extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*account.ProxyID, 10)
-		}
-		if account.hasExplicitExecutionDirectEgress() {
-			extra[AccountExecutionDirectEgressExtraKey] = true
-		}
-		if nodeID, ok := account.Extra[AccountExecutionNodeExtraKey].(string); ok && strings.TrimSpace(nodeID) != "" {
-			extra[AccountExecutionNodeExtraKey] = strings.TrimSpace(nodeID)
-		}
-		if sourceID := account.OpenAIOAuthCredentialSourceID(); sourceID > 0 {
-			extra[OpenAIOAuthCredentialSourceIDExtraKey] = strconv.FormatInt(sourceID, 10)
-		}
-	}
-	return extra
 }
 
 // IsSyntheticUITest reports whether the account belongs to an isolated UI load-test

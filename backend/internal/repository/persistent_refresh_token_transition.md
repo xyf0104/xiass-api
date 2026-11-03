@@ -6,8 +6,8 @@ The server's offline migration CLI and its runtime credential-provisioning phase
 have been removed. This document is a historical reference for the retained
 repository transition contracts and persisted evidence, not an operator runbook
 or an available server command. XIASS does not provide built-in whole-host disaster
-recovery, Witness arbitration, or Redis Sentinel discovery. See
-`deploy/MULTI_NODE.md` for the current shared-state/load-balancing boundary.
+recovery, Witness arbitration, or Redis Sentinel discovery. XIASS runs as a
+single application with its configured PostgreSQL and Redis services.
 
 Existing installations must retain their selected refresh-session authority,
 session data, issuance/revocation records, signing keys, deployed Redis credentials

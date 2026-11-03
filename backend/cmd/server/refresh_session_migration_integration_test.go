@@ -327,9 +327,8 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		require.NoError(t, err)
 		var servers []*httptest.Server
 		var stores []service.RefreshTokenCache
-		for _, nodeID := range []string{"main", "api2"} {
+		for range 1 {
 			cfg := &config.Config{JWT: config.JWTConfig{RefreshTokenMigrationReadiness: true}}
-			cfg.Gateway.ExecutionNode.Enabled, cfg.Gateway.ExecutionNode.ID = true, nodeID
 			store, err := repository.NewRefreshTokenStore(db, rdb, cfg)
 			require.NoError(t, err)
 			stores = append(stores, store)
@@ -451,7 +450,7 @@ func testRefreshMigrationRealOfflineCommand(t *testing.T, withReplica, withBacku
 		}
 		stopTraffic()
 		require.Positive(t, cycles.Load())
-		t.Logf("slow real import >11s: %d dual HTTP readiness rounds; normal observations all 200, missing schema/reverse authority both 503; old authenticated billing/concurrency cycles=%d, zero errors", probeRounds, cycles.Load())
+		t.Logf("slow real import >11s: %d single-instance HTTP readiness rounds; normal observations all 200, missing schema/reverse authority both 503; old authenticated billing/concurrency cycles=%d, zero errors", probeRounds, cycles.Load())
 	} else {
 		err = migrateRefreshSessions(ctx, path, &output)
 	}

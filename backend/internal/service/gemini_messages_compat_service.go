@@ -382,8 +382,6 @@ func (s *GeminiMessagesCompatService) selectBestGeminiAccount(
 
 		eligible = append(eligible, acc)
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	eligible = filterExecutionNodeCandidates(eligible, func(account *Account) *Account { return account }, policy)
 	if len(eligible) == 0 {
 		return nil
 	}
@@ -402,15 +400,7 @@ func (s *GeminiMessagesCompatService) selectBestGeminiAccount(
 			highestPriority = append(highestPriority, account)
 		}
 	}
-	eligible = firstExecutionNodeCandidateGroup(
-		highestPriority,
-		func(account *Account) *Account { return account },
-		policy,
-		executionNodeSelectionAnchor(sessionHash),
-	)
-	if len(eligible) == 0 {
-		return nil
-	}
+	eligible = highestPriority
 	selected := eligible[0]
 	for _, account := range eligible[1:] {
 		if s.isBetterGeminiAccount(account, selected) {
@@ -498,10 +488,6 @@ func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context,
 	if err != nil || account == nil {
 		return account, err
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(account) {
-		return nil, nil
-	}
 	return account, nil
 }
 
@@ -519,10 +505,6 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 		if hydrated == nil {
 			return nil, fmt.Errorf("selected gemini account %d not found during hydration", account.ID)
 		}
-	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(hydrated) {
-		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
 	}
 	return hydrated, nil
 }
@@ -610,8 +592,6 @@ func (s *GeminiMessagesCompatService) HasAntigravityAccounts(ctx context.Context
 	if err != nil {
 		return false, err
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	accounts = filterExecutionNodeCandidates(accounts, func(account Account) *Account { return &account }, policy)
 	return len(accounts) > 0, nil
 }
 
@@ -667,8 +647,6 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 			eligible = append(eligible, acc)
 		}
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	eligible = filterExecutionNodeCandidates(eligible, func(account *Account) *Account { return account }, policy)
 	if len(eligible) == 0 {
 		return nil, errors.New("no available Gemini accounts")
 	}
@@ -699,12 +677,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 			highestPriority = append(highestPriority, account)
 		}
 	}
-	eligible = firstExecutionNodeCandidateGroup(
-		highestPriority,
-		func(account *Account) *Account { return account },
-		policy,
-		"",
-	)
+	eligible = highestPriority
 	var selected *Account
 	if len(eligible) > 0 {
 		selected = eligible[0]

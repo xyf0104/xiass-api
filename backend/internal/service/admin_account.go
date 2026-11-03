@@ -36,37 +36,6 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 	return accounts, result.Total, nil
 }
 
-// ListAccountsWithExecutionNode applies the ownership filter in the
-// repository before pagination, so the displayed total and page boundaries
-// remain correct for a paired XIASS installation.
-func (s *adminServiceImpl) ListAccountsWithExecutionNode(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]Account, int64, error) {
-	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
-	lister, ok := s.accountRepo.(AccountExecutionNodeFilteredLister)
-	if !ok {
-		return nil, 0, errors.New("account repository does not support execution-node filtering")
-	}
-	accounts, result, err := lister.ListWithFiltersByExecutionNode(ctx, params, platform, accountType, status, search, groupID, privacyMode, executionNodeID, s.legacyExecutionNodeID())
-	if err != nil {
-		return nil, 0, err
-	}
-	return accounts, result.Total, nil
-}
-
-// ListAccountsByIDsWithExecutionNode combines the focused-account path with
-// the same ownership predicate used by the regular list.
-func (s *adminServiceImpl) ListAccountsByIDsWithExecutionNode(ctx context.Context, page, pageSize int, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode, executionNodeID, sortBy, sortOrder string) ([]Account, int64, error) {
-	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
-	lister, ok := s.accountRepo.(AccountExecutionNodeFilteredLister)
-	if !ok {
-		return nil, 0, errors.New("account repository does not support execution-node filtering")
-	}
-	accounts, result, err := lister.ListWithFiltersByIDsAndExecutionNode(ctx, params, accountIDs, platform, accountType, status, search, groupID, privacyMode, executionNodeID, s.legacyExecutionNodeID())
-	if err != nil {
-		return nil, 0, err
-	}
-	return accounts, result.Total, nil
-}
-
 func (s *adminServiceImpl) ListAccountsByIDs(ctx context.Context, page, pageSize int, accountIDs []int64, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	lister, ok := s.accountRepo.(AccountIDFilteredLister)
@@ -228,8 +197,7 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	for key := range duplicateAccountDiscardedExtraKeys {
 		delete(cloned, key)
 	}
-	delete(cloned, AccountExecutionProxyExtraKey)
-	delete(cloned, AccountExecutionDirectEgressExtraKey)
+	cloned = stripRetiredExecutionNodeMetadata(cloned)
 	for key := range cloned {
 		if IsOpenAICodexTicketPrivateExtraKey(key) {
 			delete(cloned, key)
@@ -333,9 +301,6 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureAccountManagementAccess(ctx, source); err != nil {
-		return nil, err
-	}
 	if source.IsCredentialShadow() {
 		return nil, infraerrors.BadRequest(
 			"ACCOUNT_DUPLICATE_SHADOW_UNSUPPORTED",
@@ -431,15 +396,6 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, fmt.Errorf("normalize duplicate account credits extra: %w", err)
 	}
-	// A duplicate is a new account created by the instance receiving this
-	// request. In multi-node mode it must use that instance's durable node and
-	// private egress instead of inheriting the source account's ownership.
-	if s.settingService != nil {
-		accountExtra, input.ProxyID, err = s.applyManagedExecutionNodeForCreate(ctx, accountExtra, input.ProxyID)
-		if err != nil {
-			return nil, err
-		}
-	}
 	preserveBindingsCtx := WithPreservedAccountProxyBindings(ctx, proxyBindings)
 	normalizedBindings, totalProxyConcurrency, proxyMap, err := s.validateAccountProxyBindings(preserveBindingsCtx, input.ProxyBindings)
 	if err != nil {
@@ -450,9 +406,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		input.ProxyBindings = normalizedBindings
 		input.Concurrency = totalProxyConcurrency
 		accountExtra = setAccountProxyBindingsExtra(accountExtra, normalizedBindings)
-		if !s.executionNodeRoutingActive(ctx) {
-			input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
-		}
+		input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
@@ -779,36 +733,10 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		input.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
 		input.Concurrency = totalProxyConcurrency
 		accountExtra = setAccountProxyBindingsExtra(accountExtra, normalizedBindings)
-		if s.executionNodeRoutingActive(ctx) {
-			accountExtra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
-		}
 	}
-	if s.settingService != nil {
-		if input.PreserveOAuthWorkflowProxy {
-			accountExtra, input.ProxyID = applyOAuthWorkflowNodeForCreate(s.settingService.cfg, accountExtra, input.ProxyID)
-			// A trusted OAuth workflow may have already selected and verified an
-			// explicit proxy. When it did not, bind the resulting account to the
-			// accepting node's managed private egress just like every other create
-			// path, instead of forcing the administrator to choose one manually.
-			if input.ProxyID == nil || *input.ProxyID <= 0 {
-				managedProxyID, managedErr := s.executionNodeManagedProxyID(ctx, &Account{Extra: accountExtra})
-				if managedErr != nil {
-					return nil, managedErr
-				}
-				if managedProxyID > 0 {
-					input.ProxyID = &managedProxyID
-				}
-			}
-		} else {
-			accountExtra, input.ProxyID, err = s.applyManagedExecutionNodeForCreate(ctx, accountExtra, input.ProxyID)
-			if err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		delete(accountExtra, AccountExecutionNodeExtraKey)
-		delete(accountExtra, AccountExecutionProxyExtraKey)
-	}
+	delete(accountExtra, "xiass_execution_node_id")
+	delete(accountExtra, "xiass_execution_proxy_id")
+	delete(accountExtra, "xiass_execution_direct_egress")
 
 	// 绑定分组
 	groupIDs := input.GroupIDs
@@ -893,9 +821,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureAccountManagementAccess(ctx, account); err != nil {
-		return nil, err
-	}
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -910,7 +835,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err != nil {
 			return nil, err
 		}
-		normalizedExtra = preserveExecutionNodeOnUpdate(account, normalizedExtra)
+		if sourceID := account.OpenAIOAuthCredentialSourceID(); sourceID > 0 {
+			normalizedExtra[OpenAIOAuthCredentialSourceIDExtraKey] = strconv.FormatInt(sourceID, 10)
+		}
 		delete(normalizedExtra, AccountMultiProxyExtraKey)
 	}
 	var (
@@ -1117,10 +1044,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if proxyBindingsChanged {
 		account.Extra = setAccountProxyBindingsExtra(account.Extra, normalizedBindings)
 		if len(normalizedBindings) > 0 {
-			if !s.executionNodeRoutingActive(ctx) {
-				account.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
-				account.Proxy = nil
-			}
+			account.ProxyID = cloneAccountValuePointer(&normalizedBindings[0].ProxyID)
+			account.Proxy = nil
 			account.Concurrency = totalProxyConcurrency
 		} else {
 			account.ProxyBindings = nil
@@ -1160,43 +1085,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
 	if (input.ProxyID != nil || input.DirectEgress) && !account.IsCredentialShadow() && (!proxyBindingsChanged || len(normalizedBindings) == 0) {
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
-		resetToManagedProxy := false
 		if input.DirectEgress {
 			account.ProxyID = nil
-			if s.executionNodeRoutingActive(ctx) {
-				if account.Extra == nil {
-					account.Extra = make(map[string]any)
-				}
-				account.Extra[AccountExecutionDirectEgressExtraKey] = true
-			} else if account.Extra != nil {
-				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
-			}
 		} else if *input.ProxyID == 0 {
-			if account.Extra != nil {
-				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
-			}
-			if s.executionNodeRoutingActive(ctx) {
-				managedProxyID, err := s.executionNodeManagedProxyID(ctx, account)
-				if err != nil {
-					return nil, err
-				}
-				account.ProxyID = &managedProxyID
-				resetToManagedProxy = true
-			} else {
-				account.ProxyID = nil
-			}
+			account.ProxyID = nil
 		} else {
 			account.ProxyID = input.ProxyID
-			if account.Extra != nil {
-				delete(account.Extra, AccountExecutionDirectEgressExtraKey)
-			}
-		}
-		if account.Extra == nil {
-			account.Extra = make(map[string]any)
-		}
-		delete(account.Extra, AccountExecutionProxyExtraKey)
-		if !resetToManagedProxy && input.ProxyID != nil && *input.ProxyID > 0 {
-			account.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
@@ -1433,9 +1327,6 @@ func (s *adminServiceImpl) ApplyAntigravityOAuthCredentials(
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureAccountManagementAccess(ctx, account); err != nil {
-		return nil, err
-	}
 	if account.Platform != PlatformAntigravity || account.Type != AccountTypeOAuth {
 		return nil, infraerrors.BadRequest("NOT_ANTIGRAVITY_OAUTH", "account is not an Antigravity OAuth account")
 	}
@@ -1503,9 +1394,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	updates = stripOpenAIQuotaRuntimeExtra(updates)
 	delete(updates, OpenAIReauthorizationStateExtraKey)
 	delete(updates, OpenAIAdsPowerBindingExtraKey)
-	delete(updates, AccountExecutionNodeExtraKey)
-	delete(updates, AccountExecutionProxyExtraKey)
-	delete(updates, AccountExecutionDirectEgressExtraKey)
+	updates = stripRetiredExecutionNodeMetadata(updates)
 	delete(updates, OpenAIOAuthCredentialSourceIDExtraKey)
 	delete(updates, AccountMultiProxyExtraKey)
 	for key := range updates {
@@ -1520,11 +1409,6 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
-	if len(updates) > 0 {
-		if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-			return err
-		}
-	}
 	_, hasLongContextBillingUpdate := updates[openAILongContextBillingEnabledKey]
 	_, hasCreditsEnabledUpdate := updates[OpenAICreditsEnabledExtraKey]
 	if hasLongContextBillingUpdate || hasCreditsEnabledUpdate {
@@ -1558,9 +1442,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Credentials = stripOpenAIReauthorizationCredentials(input.Credentials)
 	input.Extra = stripOpenAIQuotaRuntimeExtra(input.Extra)
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
-	delete(input.Extra, AccountExecutionNodeExtraKey)
-	delete(input.Extra, AccountExecutionProxyExtraKey)
-	delete(input.Extra, AccountExecutionDirectEgressExtraKey)
+	input.Extra = stripRetiredExecutionNodeMetadata(input.Extra)
 	delete(input.Extra, OpenAIAdsPowerBindingExtraKey)
 	delete(input.Extra, OpenAIOAuthCredentialSourceIDExtraKey)
 	for key := range input.Extra {
@@ -1616,12 +1498,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	_, hasLongContextBillingUpdate := input.Extra[openAILongContextBillingEnabledKey]
 	_, hasCreditsEnabledUpdate := input.Extra[OpenAICreditsEnabledExtraKey]
 
-	// 仅在需要读取账号内容时预取目标账号，供凭据守卫/代理守卫/混合
-	// 渠道检查共用，避免多次 DB 查询。节点管理模式即使只是改调度开关，
-	// 也必须先读取归属以阻止跨节点修改；单机模式保留原有轻量批量更新路径。
+	// 仅在校验凭据、代理或渠道配置需要账号内容时预取，避免重复查询。
 	var cachedTargets []*Account
-	needCachedTargets := s.executionNodeManagementAccessEnforced() ||
-		len(input.Credentials) > 0 ||
+	needCachedTargets := len(input.Credentials) > 0 ||
 		input.ProxyID != nil ||
 		needMixedChannelCheck ||
 		hasLongContextBillingUpdate ||
@@ -1635,17 +1514,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			return nil, err
 		}
 		cachedTargets = loaded
-	}
-	if s.executionNodeManagementAccessEnforced() {
-		for _, accountID := range input.AccountIDs {
-			account, found := findAccountByID(cachedTargets, accountID)
-			if !found {
-				return nil, ErrAccountNotFound
-			}
-			if err := s.ensureAccountManagementAccess(ctx, account); err != nil {
-				return nil, err
-			}
-		}
 	}
 	if hasFingerprintModeUpdate {
 		targetsByID := make(map[int64]*Account, len(cachedTargets))
@@ -1729,42 +1597,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 影子账号 proxy 恒继承母账号(与单账号 UpdateAccount 守卫对齐——外审第4轮 P1):批量携带 proxy
 	// 时目标不得含影子,否则影子会获得独立 proxy、破坏继承不变量(网关按所选影子自身 proxy 出站,
 	// 要等母账号下次改 proxy 才覆盖→漂移)。含影子即整体拒绝,提示从选择中剔除影子。
-	// 多节点模式下 proxy_id=0 不再表示真正清空代理，而是按每个账号自己的节点归属恢复系统出口；
-	// 一批账号可能属于不同节点，因此先逐账号解析，再按目标 proxy 分组持久化。
-	managedProxyReset := false
-	managedProxyByAccount := make(map[int64]int64)
 	if input.ProxyID != nil {
-		managedProxyReset = *input.ProxyID <= 0 && s.executionNodeRoutingActive(ctx)
-		if managedProxyReset {
-			targetsByID := make(map[int64]*Account, len(cachedTargets))
-			for _, account := range cachedTargets {
-				if account != nil {
-					targetsByID[account.ID] = account
-				}
+		for _, acc := range cachedTargets {
+			if acc == nil || !acc.IsCredentialShadow() {
+				continue
 			}
-			for _, accountID := range input.AccountIDs {
-				acc, ok := targetsByID[accountID]
-				if !ok {
-					return nil, ErrAccountNotFound
-				}
-				if acc.IsCredentialShadow() {
-					return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
-						"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
-				}
-				managedProxyID, err := s.executionNodeManagedProxyID(ctx, acc)
-				if err != nil {
-					return nil, err
-				}
-				managedProxyByAccount[accountID] = managedProxyID
-			}
-		} else {
-			for _, acc := range cachedTargets {
-				if acc == nil || !acc.IsCredentialShadow() {
-					continue
-				}
-				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
-					"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
-			}
+			return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
+				"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
 		}
 	}
 
@@ -1845,16 +1684,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Name = &input.Name
 	}
 	if input.ProxyID != nil {
-		if !managedProxyReset {
-			repoUpdates.ProxyID = input.ProxyID
-		}
-		if repoUpdates.Extra == nil {
-			repoUpdates.Extra = make(map[string]any)
-		}
-		repoUpdates.Extra[AccountExecutionProxyExtraKey] = nil
-		if !managedProxyReset && *input.ProxyID > 0 {
-			repoUpdates.Extra[AccountExecutionProxyExtraKey] = strconv.FormatInt(*input.ProxyID, 10)
-		}
+		repoUpdates.ProxyID = input.ProxyID
 	}
 	if input.Concurrency != nil {
 		repoUpdates.Concurrency = input.Concurrency
@@ -1885,40 +1715,8 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
-	if managedProxyReset {
-		type proxyAccountGroup struct {
-			proxyID    int64
-			accountIDs []int64
-		}
-		groups := make([]proxyAccountGroup, 0, len(managedProxyByAccount))
-		groupIndex := make(map[int64]int, len(managedProxyByAccount))
-		for _, accountID := range input.AccountIDs {
-			proxyID := managedProxyByAccount[accountID]
-			index, exists := groupIndex[proxyID]
-			if !exists {
-				index = len(groups)
-				groupIndex[proxyID] = index
-				groups = append(groups, proxyAccountGroup{proxyID: proxyID})
-			}
-			groups[index].accountIDs = append(groups[index].accountIDs, accountID)
-		}
-		for i := range groups {
-			proxyID := groups[i].proxyID
-			if _, err := s.accountRepo.BulkUpdate(ctx, groups[i].accountIDs, AccountBulkUpdate{ProxyID: &proxyID}); err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
-	if managedProxyReset {
-		for _, accountID := range input.AccountIDs {
-			proxyID := managedProxyByAccount[accountID]
-			if err := s.propagateProxyToShadows(ctx, accountID, &proxyID); err != nil {
-				return nil, err
-			}
-		}
-	} else if repoUpdates.ProxyID != nil {
+	if repoUpdates.ProxyID != nil {
 		var effectiveProxyID *int64
 		if *repoUpdates.ProxyID != 0 {
 			effectiveProxyID = repoUpdates.ProxyID
@@ -1952,63 +1750,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	return result, nil
-}
-
-func (s *adminServiceImpl) executionNodeRoutingActive(ctx context.Context) bool {
-	if s == nil || s.settingService == nil || s.settingService.cfg == nil || !s.settingService.cfg.Gateway.ExecutionNode.Enabled {
-		return false
-	}
-	settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
-	// Once an instance is configured for multi-node execution, an unreadable
-	// shared policy is not evidence that routing is disabled. Keep the durable
-	// proxy immutable until storage can confirm the shared switch is off.
-	return !settings.Available || settings.Enabled
-}
-
-func (s *adminServiceImpl) executionNodeManagedProxyID(ctx context.Context, account *Account) (int64, error) {
-	if s == nil || s.settingService == nil || s.settingService.cfg == nil || !s.executionNodeRoutingActive(ctx) {
-		return 0, nil
-	}
-	cfg := s.settingService.cfg.Gateway.ExecutionNode
-	nodeID := strings.TrimSpace(cfg.ID)
-	if account != nil {
-		nodeID = account.ExecutionNodeID(cfg.LegacyUnassignedNodeID)
-	}
-	settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
-	if settings.Available {
-		if proxyID := settings.ProxyIDs[nodeID]; proxyID > 0 {
-			return proxyID, nil
-		}
-	}
-	if nodeID == strings.TrimSpace(cfg.ID) && cfg.DefaultProxyID > 0 {
-		return cfg.DefaultProxyID, nil
-	}
-	if nodeID == strings.TrimSpace(cfg.LegacyUnassignedNodeID) && cfg.LegacyUnassignedProxyID > 0 {
-		return cfg.LegacyUnassignedProxyID, nil
-	}
-	return 0, infraerrors.BadRequest(
-		"EXECUTION_NODE_PROXY_MAPPING_INCOMPLETE",
-		fmt.Sprintf("execution node %s does not have a private egress proxy", nodeID),
-	)
-}
-
-func (s *adminServiceImpl) applyManagedExecutionNodeForCreate(
-	ctx context.Context,
-	extra map[string]any,
-	proxyID *int64,
-) (map[string]any, *int64, error) {
-	extra, proxyID = applyExecutionNodeForCreate(s.settingService.cfg, extra, proxyID)
-	if !s.executionNodeRoutingActive(ctx) {
-		return extra, proxyID, nil
-	}
-	managedProxyID, err := s.executionNodeManagedProxyID(ctx, &Account{Extra: extra})
-	if err != nil {
-		return nil, nil, err
-	}
-	if managedProxyID > 0 {
-		proxyID = &managedProxyID
-	}
-	return extra, proxyID, nil
 }
 
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {
@@ -2088,19 +1829,7 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 		var accounts []Account
 		var total int64
 		var err error
-		if strings.TrimSpace(filters.ExecutionNodeID) != "" {
-			if filterByAccountIDs {
-				accounts, total, err = s.ListAccountsByIDsWithExecutionNode(
-					ctx, page, pageSize, filteredAccountIDs, filters.Platform, filters.Type, filters.Status,
-					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
-				)
-			} else {
-				accounts, total, err = s.ListAccountsWithExecutionNode(
-					ctx, page, pageSize, filters.Platform, filters.Type, filters.Status,
-					filters.Search, groupID, filters.PrivacyMode, filters.ExecutionNodeID, "", "",
-				)
-			}
-		} else if filterByAccountIDs {
+		if filterByAccountIDs {
 			accounts, total, err = s.ListAccountsByIDs(
 				ctx, page, pageSize, filteredAccountIDs, filters.Platform, filters.Type, filters.Status,
 				filters.Search, groupID, filters.PrivacyMode, "", "",
@@ -2147,9 +1876,6 @@ func intersectBulkUpdateAccountIDs(current []int64, currentSet bool, next []int6
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return err
-	}
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
 	if err != nil {
@@ -2184,17 +1910,11 @@ func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureAccountManagementAccess(ctx, account); err != nil {
-		return nil, err
-	}
 	// TODO: Implement refresh logic
 	return account, nil
 }
 
 func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Account, error) {
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return nil, err
-	}
 	if err := s.accountRepo.ClearError(ctx, id); err != nil {
 		return nil, err
 	}
@@ -2221,9 +1941,6 @@ func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorM
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return nil, err
-	}
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
@@ -2235,38 +1952,6 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 }
 
 func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id int64) error {
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return err
-	}
-	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.ExecutionNode.Enabled {
-		account, err := s.accountRepo.GetByID(ctx, id)
-		if err != nil {
-			return err
-		}
-		if account.ProxyFallbackOriginID != nil {
-			settings := s.settingService.GetExecutionNodeRoutingSettings(ctx)
-			if !settings.Available {
-				return infraerrors.BadRequest("EXECUTION_NODE_POLICY_UNAVAILABLE", "shared execution node policy is unavailable; proxy fallback cannot be reverted safely")
-			}
-			if settings.Enabled {
-				legacyNodeID := strings.TrimSpace(s.settingService.cfg.Gateway.ExecutionNode.LegacyUnassignedNodeID)
-				if legacyNodeID == "" {
-					legacyNodeID = "api"
-				}
-				nodeID := account.ExecutionNodeID(legacyNodeID)
-				originNodeID := ""
-				for mappedNodeID, mappedProxyID := range settings.ProxyIDs {
-					if mappedProxyID == *account.ProxyFallbackOriginID {
-						originNodeID = strings.TrimSpace(mappedNodeID)
-						break
-					}
-				}
-				if originNodeID == "" || originNodeID != nodeID {
-					return infraerrors.BadRequest("EXECUTION_NODE_PROXY_FALLBACK_ORIGIN_INVALID", "proxy fallback origin does not belong to the account execution node")
-				}
-			}
-		}
-	}
 	if err := s.accountRepo.RevertProxyFallback(ctx, id); err != nil {
 		return err
 	}
@@ -2285,9 +1970,6 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 	parent, err := s.accountRepo.GetByID(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("get parent account: %w", err)
-	}
-	if err := s.ensureAccountManagementAccess(ctx, parent); err != nil {
-		return nil, err
 	}
 	if !parent.IsOpenAIOAuth() {
 		return nil, infraerrors.New(http.StatusBadRequest, "SPARK_SHADOW_INVALID_PARENT",
@@ -2362,9 +2044,9 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 	if priority <= 0 {
 		priority = parent.Priority
 	}
-	shadowExtra := preserveExecutionNodeOnUpdate(parent, map[string]any{
+	shadowExtra := map[string]any{
 		openAILongContextBillingEnabledKey: parent.IsOpenAILongContextBillingEnabled(),
-	})
+	}
 	shadow := &Account{
 		Name:            name,
 		Platform:        PlatformOpenAI,
@@ -2424,28 +2106,9 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 	if err != nil {
 		return fmt.Errorf("list spark shadows for proxy propagation: %w", err)
 	}
-	var explicitProxy any
-	var explicitDirect any
-	if len(shadows) > 0 {
-		parent, err := repo.GetByID(ctx, parentID)
-		if err != nil {
-			return fmt.Errorf("read parent proxy selection: %w", err)
-		}
-		if parent.hasExplicitExecutionProxy() {
-			explicitProxy = parent.Extra[AccountExecutionProxyExtraKey]
-		}
-		if parent.hasExplicitExecutionDirectEgress() {
-			explicitDirect = true
-		}
-	}
 	for _, shadow := range shadows {
 		shadow.ProxyID = proxyID
 		shadow.Proxy = nil
-		if shadow.Extra == nil {
-			shadow.Extra = make(map[string]any)
-		}
-		shadow.Extra[AccountExecutionProxyExtraKey] = explicitProxy
-		shadow.Extra[AccountExecutionDirectEgressExtraKey] = explicitDirect
 		if err := repo.Update(ctx, shadow); err != nil {
 			return fmt.Errorf("update spark shadow %d proxy: %w", shadow.ID, err)
 		}
@@ -2594,9 +2257,6 @@ func (e *MixedChannelError) Error() string {
 }
 
 func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) error {
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return err
-	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return err

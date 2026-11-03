@@ -543,18 +543,6 @@ gateway:
     # 全量重建周期（秒），0 表示禁用
     full_rebuild_interval_seconds: 300
 
-  # Multi-node account egress ownership. Disabled by default so existing
-  # single-node installations retain their original behavior.
-  execution_node:
-    enabled: false
-    id: ""
-    default_proxy_id: 0
-    # Only singleton periodic workers are gated by this flag. Every instance
-    # remains an active-active HTTP gateway and admin surface.
-    # Exactly one shared-state instance should set this to true.
-    control_plane: true
-    legacy_unassigned_node_id: "api"
-    legacy_unassigned_proxy_id: 0
   # TLS fingerprint simulation / TLS 指纹伪装
   # Default profile "claude_cli_v2" simulates Node.js 20.x
   # 默认模板 "claude_cli_v2" 模拟 Node.js 20.x 指纹

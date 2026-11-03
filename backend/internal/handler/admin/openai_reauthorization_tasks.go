@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -54,16 +53,11 @@ func openAIReauthorizationAccountConfig(account *service.Account) batchOAuthConf
 	}
 }
 
-func openAIReauthorizationConfigurationChanged(task *batchOAuthTask, account *service.Account, localNodeID string) bool {
+func openAIReauthorizationConfigurationChanged(task *batchOAuthTask, account *service.Account) bool {
 	if task == nil || account == nil {
 		return true
 	}
-	currentNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
-	if currentNodeID != task.executionNodeID || !batchProxyEqual(account.ProxyID, task.config.ProxyID) {
-		return true
-	}
-	localNodeID = strings.TrimSpace(localNodeID)
-	return !task.usesAdsPower() && localNodeID != "" && currentNodeID != "" && currentNodeID != localNodeID
+	return !batchProxyEqual(account.ProxyID, task.config.ProxyID)
 }
 
 func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, accountID int64, browserMode string) (*service.Account, *openAIReauthorizationLoginMaterial, map[string]string, error) {
@@ -76,11 +70,6 @@ func (h *OpenAIOAuthHandler) openAIReauthorizationLogin(ctx context.Context, acc
 	}
 	if !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 		return nil, nil, nil, errors.New("only OpenAI OAuth accounts can be reauthorized")
-	}
-	localNodeID := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID"))
-	accountNodeID := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
-	if normalizeBatchOAuthBrowserMode(browserMode) != batchOAuthBrowserAdsPower && localNodeID != "" && accountNodeID != "" && accountNodeID != localNodeID {
-		return nil, nil, nil, errors.New("open this account on its assigned XIASS server")
 	}
 	email, ciphertext, _ := openAIAccountReauthorizationLogin(account)
 	if email == "" {
@@ -179,10 +168,6 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	var req openAIReauthorizationStartRequest
 	if c.ShouldBindJSON(&req) != nil || req.AccountID <= 0 {
 		response.BadRequest(c, "A valid OpenAI account is required")
-		return
-	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, req.AccountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	browserMode := normalizeBatchOAuthBrowserMode(req.BrowserMode)
@@ -309,8 +294,7 @@ func (h *OpenAIOAuthHandler) StartOpenAIReauthorizationTask(c *gin.Context) {
 	task := &batchOAuthTask{
 		ID: id, Mode: batchOAuthModeReauthorization, Email: login.Email, LoginMethod: login.Method, TargetAccountID: req.AccountID,
 		ownerID: owner, sidecarID: id, config: taskConfig, BrowserMode: browserMode,
-		executionNodeID: strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)),
-		Status:          "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
+		Status: "queued", Stage: "queued", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute),
 		ReauthorizationNumber: authorizationNumber,
 	}
 	task.snapshotJSONLocked()
@@ -400,14 +384,14 @@ func (h *OpenAIOAuthHandler) CompleteOpenAIReauthorizationTask(c *gin.Context) {
 		response.Success(c, task)
 		return
 	}
-	if openAIReauthorizationConfigurationChanged(task, account, os.Getenv("GATEWAY_EXECUTION_NODE_ID")) {
+	if openAIReauthorizationConfigurationChanged(task, account) {
 		task.Status, task.Stage, task.Reason = "failed", "failed", "account_configuration_changed"
 		response.Success(c, task)
 		return
 	}
 	if task.usesAdsPower() {
 		binding := service.OpenAIAdsPowerBindingFromAccount(account)
-		if binding == nil || binding.EnvironmentKey != openAIAdsPowerAccountEnvironment(account) {
+		if binding == nil {
 			response.Error(c, http.StatusConflict, "AdsPower browser binding has not been verified")
 			return
 		}
@@ -510,10 +494,6 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, "Stop the current task before restarting")
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, task.TargetAccountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	account, login, proxy, err := h.openAIReauthorizationLogin(c.Request.Context(), task.TargetAccountID, browserMode)
 	if err != nil {
 		response.Error(c, http.StatusConflict, err.Error())
@@ -556,7 +536,6 @@ func (h *OpenAIOAuthHandler) RestartOpenAIReauthorizationTask(c *gin.Context) {
 	task.config = openAIReauthorizationAccountConfig(account)
 	task.config.BrowserMode = browserMode
 	task.BrowserMode = browserMode
-	task.executionNodeID = strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey))
 	task.submittedPhone = ""
 	task.RestartCount++
 	task.RequiresSMSConfirmation = false

@@ -1301,8 +1301,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		return nil
 	}
 	keys := []string{
-		service.AccountExecutionNodeExtraKey,
-		service.AccountExecutionProxyExtraKey,
 		service.AccountMultiProxyExtraKey,
 		"session_window_utilization",
 		"passive_usage_7d_utilization",

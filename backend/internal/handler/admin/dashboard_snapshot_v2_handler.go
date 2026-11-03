@@ -11,7 +11,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -48,7 +47,6 @@ type dashboardSnapshotV2Filters struct {
 	NativeCompactionV2    *bool
 	BillingType           *int8
 	UpstreamModelMismatch *bool
-	ExecutionNodeID       string
 }
 
 type dashboardSnapshotV2CacheKey struct {
@@ -65,8 +63,6 @@ type dashboardSnapshotV2CacheKey struct {
 	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
-	ExecutionNodeID       string `json:"execution_node_id,omitempty"`
-	ExecutionNodeLegacyID string `json:"execution_node_legacy_id,omitempty"`
 	IncludeStats          bool   `json:"include_stats"`
 	IncludeTrend          bool   `json:"include_trend"`
 	IncludeModels         bool   `json:"include_models"`
@@ -114,8 +110,6 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		NativeCompactionV2:    filters.NativeCompactionV2,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
-		ExecutionNodeID:       filters.ExecutionNodeID,
-		ExecutionNodeLegacyID: middleware.ExecutionNodeLegacyID(c.Request.Context()),
 		IncludeStats:          includeStats,
 		IncludeTrend:          includeTrend,
 		IncludeModels:         includeModels,
@@ -198,7 +192,6 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
-			filters.ExecutionNodeID,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get usage trend")
@@ -221,7 +214,6 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
-			filters.ExecutionNodeID,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get model statistics")
@@ -243,7 +235,6 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.NativeCompactionV2,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
-			filters.ExecutionNodeID,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get group statistics")
@@ -266,12 +257,6 @@ func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filter
 	filters := &dashboardSnapshotV2Filters{
 		Model: strings.TrimSpace(c.Query("model")),
 	}
-	var err error
-	filters.ExecutionNodeID, err = parseExecutionNodeFilter(c)
-	if err != nil {
-		return nil, err
-	}
-
 	if userIDStr := strings.TrimSpace(c.Query("user_id")); userIDStr != "" {
 		id, err := strconv.ParseInt(userIDStr, 10, 64)
 		if err != nil {

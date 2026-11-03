@@ -98,9 +98,6 @@ func (s *adminServiceImpl) UpdateOpenAIAdsPowerBinding(ctx context.Context, id i
 	if s == nil || s.accountRepo == nil {
 		return errors.New("account repository is unavailable")
 	}
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return err
-	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -108,24 +105,36 @@ func (s *adminServiceImpl) UpdateOpenAIAdsPowerBinding(ctx context.Context, id i
 	return s.persistOpenAIAdsPowerBinding(ctx, account, binding)
 }
 
-// UpdateOpenAIAdsPowerBindingFromLaunch is the narrow capability used after a
-// one-time local-helper ticket has been redeemed. The public helper request has
-// no administrator cookie, so it verifies the execution-node identity captured
-// in the authenticated launch ticket instead of re-running browser-session
-// authorization.
-func (s *adminServiceImpl) UpdateOpenAIAdsPowerBindingFromLaunch(ctx context.Context, id int64, expectedExecutionNodeID string, binding *OpenAIAdsPowerBinding) error {
+// UpdateOpenAIAdsPowerBindingFromLaunch applies a one-time helper report only
+// while the account still has the profile identity captured by its launch ticket.
+func (s *adminServiceImpl) UpdateOpenAIAdsPowerBindingFromLaunch(ctx context.Context, id int64, expected *OpenAIAdsPowerBinding, binding *OpenAIAdsPowerBinding) error {
 	if s == nil || s.accountRepo == nil {
 		return errors.New("account repository is unavailable")
+	}
+	if binding == nil {
+		return errors.New("AdsPower launch must report a verified profile binding")
 	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	expectedExecutionNodeID = strings.TrimSpace(expectedExecutionNodeID)
-	if expectedExecutionNodeID == "" || account == nil || account.ExecutionNodeID(s.legacyExecutionNodeID()) != expectedExecutionNodeID {
-		return errors.New("AdsPower launch ticket does not match the account execution node")
+	if account == nil || !sameOpenAIAdsPowerBindingIdentity(OpenAIAdsPowerBindingFromAccount(account), expected) {
+		return errors.New("AdsPower profile binding changed after the launch ticket was created")
+	}
+	if expected != nil && !sameOpenAIAdsPowerBindingIdentity(binding, expected) {
+		return errors.New("AdsPower launch cannot change the account profile identity")
 	}
 	return s.persistOpenAIAdsPowerBinding(ctx, account, binding)
+}
+
+func sameOpenAIAdsPowerBindingIdentity(left, right *OpenAIAdsPowerBinding) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	l, r := *left, *right
+	l.Normalize()
+	r.Normalize()
+	return l.DeviceID == r.DeviceID && l.EnvironmentKey == r.EnvironmentKey && l.ProfileID == r.ProfileID
 }
 
 func (s *adminServiceImpl) persistOpenAIAdsPowerBinding(ctx context.Context, account *Account, binding *OpenAIAdsPowerBinding) error {

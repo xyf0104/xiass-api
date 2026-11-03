@@ -17,7 +17,7 @@ run, and is cleared when the run finishes.
 - XIASS stores only the AdsPower device/profile IDs, public proxy address, exit
   IP, WebRTC policy, and verification timestamps.
 - A XIASS launch ticket is random, short-lived, single-use, and bound to one
-  OAuth session and one execution-node environment.
+  OAuth session and one XIASS server environment.
 - Existing account bindings cannot silently move to another device or profile.
 - New profiles use randomized AdsPower fingerprint defaults, automatic
   IP-based timezone/language, and disabled WebRTC. Chromium is also launched
@@ -33,7 +33,7 @@ http://127.0.0.1:34987/setup
 ```
 
 The local setup page accepts the AdsPower Local API key and one SOCKS5 route
-for each XIASS server/execution-node environment. It checks the AdsPower API
+for each XIASS server environment. It checks the AdsPower API
 and the real SOCKS5 exit IP before saving. A missing config file is created
 automatically on first launch; administrators do not need to create JSON by
 hand.

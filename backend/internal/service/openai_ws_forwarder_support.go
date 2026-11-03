@@ -585,9 +585,6 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	}
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
-	if errors.Is(err, errOpenAIExecutionNodeEgressUnavailable) {
-		return 0, nil, "", store, openAIPreviousResponseAffinityBlocked(accountID, "execution_node_egress")
-	}
 	if err != nil || account == nil {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil, nil
@@ -664,13 +661,6 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if requireCompact && openAICompactSupportTier(account) == 0 {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil, nil
-	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(account) {
-		// This chain is not migratable. Preserve the affinity key and report a
-		// bounded unavailable error instead of silently moving continuation state
-		// to a different account.
-		return 0, nil, "", store, openAIPreviousResponseAffinityBlocked(accountID, "execution_node_egress")
 	}
 	return accountID, account, responseID, store, nil
 }

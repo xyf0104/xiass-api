@@ -36,7 +36,6 @@ import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import teamChildAPI from './teamChild'
-import executionNodesAPI from './executionNodes'
 import { accountPoolsAPI } from './accountPools'
 import openAIReauthorizationAPI from './openaiReauthorization'
 import adsPowerAPI from './adspower'
@@ -79,7 +78,6 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   audit: auditAPI,
   teamChild: teamChildAPI,
-  executionNodes: executionNodesAPI,
   accountPools: accountPoolsAPI,
   openAIReauthorization: openAIReauthorizationAPI,
   adsPower: adsPowerAPI,
@@ -120,7 +118,6 @@ export {
   adminComplianceAPI,
   auditAPI,
   teamChildAPI,
-  executionNodesAPI,
   accountPoolsAPI,
   openAIReauthorizationAPI,
   adsPowerAPI,

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,7 +73,7 @@ type AccountProxyConcurrencyCache interface {
 }
 
 // AccountProxyAdaptiveRouteCache is an optional distributed observation store.
-// Implementations must isolate records by execution node, account, requested
+// Implementations must isolate records by account, requested
 // model, and proxy identity, and must not persist proxy credentials.
 type AccountProxyAdaptiveRouteCache interface {
 	GetAccountProxyAdaptiveRouteStats(ctx context.Context, routes []AccountProxyAdaptiveRouteKey) (map[string]AccountProxyAdaptiveRouteStats, error)
@@ -309,19 +308,12 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache           ConcurrencyCache
-	executionNodeID string
+	cache ConcurrencyCache
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
 	accountLoadCache    map[string]cachedAccountLoadBatch
 	accountLoadGroup    singleflight.Group
-}
-
-func (s *ConcurrencyService) SetExecutionNodeID(nodeID string) {
-	if s != nil {
-		s.executionNodeID = strings.TrimSpace(nodeID)
-	}
 }
 
 type cachedAccountLoadBatch struct {

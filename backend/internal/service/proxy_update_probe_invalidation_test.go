@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,58 +16,52 @@ type updatingProxyRepoStub struct {
 	updateCalls int
 }
 
-func executionNodeProxyProtectionService(repo ProxyRepository) *adminServiceImpl {
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode.Enabled = true
-	return &adminServiceImpl{
-		proxyRepo: repo,
-		settingService: NewSettingService(&executionNodeSettingRepo{values: map[string]string{
-			SettingKeyExecutionNodeBalancingEnabled: "true",
-			SettingKeyExecutionNodeWeights:          `{"api":1,"api2":1}`,
-			SettingKeyExecutionNodeProxyIDs:         `{"api":9,"api2":10}`,
-		}}, cfg),
-	}
-}
-
-func TestExecutionNodeMappedProxyCannotBeDisabledExpiredOrDeleted(t *testing.T) {
+func TestProxyCanBeDisabledExpiredAndDeletedWhenUnused(t *testing.T) {
 	warnDays := 7
 	repo := &updatingProxyRepoStub{
 		proxyRepoStub: &proxyRepoStub{},
 		proxy: &Proxy{
 			ID:             9,
 			Protocol:       "socks5",
-			Host:           "api.internal",
+			Host:           "proxy.example",
 			Port:           1080,
 			Status:         StatusActive,
 			FallbackMode:   FallbackModeNone,
 			ExpiryWarnDays: 7,
 		},
 	}
-	svc := executionNodeProxyProtectionService(repo)
+	svc := &adminServiceImpl{proxyRepo: repo}
 
-	_, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
+	updated, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		Status:         StatusDisabled,
 		FallbackMode:   FallbackModeNone,
 		ExpiryWarnDays: &warnDays,
 	})
-	require.ErrorIs(t, err, ErrExecutionNodeProxyProtected)
-	require.Zero(t, repo.updateCalls)
+	require.NoError(t, err)
+	require.Equal(t, StatusDisabled, updated.Status)
+	require.Equal(t, 1, repo.updateCalls)
 
 	expired := time.Now().Add(-time.Minute)
-	_, err = svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
+	updated, err = svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		ExpiresAt:      &expired,
 		FallbackMode:   FallbackModeNone,
 		ExpiryWarnDays: &warnDays,
 	})
-	require.ErrorIs(t, err, ErrExecutionNodeProxyProtected)
-	require.Zero(t, repo.updateCalls)
+	require.NoError(t, err)
+	require.Equal(t, &expired, updated.ExpiresAt)
+	require.Equal(t, StatusDisabled, updated.Status)
+	require.Equal(t, 2, repo.updateCalls)
 
+	repo.accountCount = 1
 	err = svc.DeleteProxy(context.Background(), 9)
-	require.ErrorIs(t, err, ErrExecutionNodeProxyProtected)
+	require.ErrorIs(t, err, ErrProxyInUse)
 	require.Empty(t, repo.deletedIDs)
+	repo.accountCount = 0
+	require.NoError(t, svc.DeleteProxy(context.Background(), 9))
+	require.Equal(t, []int64{9}, repo.deletedIDs)
 }
 
-func TestExecutionNodeMappedProxyCanBeRepairedWhileRemainingActive(t *testing.T) {
+func TestProxyCanBeRepairedWhileRemainingActive(t *testing.T) {
 	warnDays := 7
 	repo := &updatingProxyRepoStub{
 		proxyRepoStub: &proxyRepoStub{},
@@ -82,7 +75,7 @@ func TestExecutionNodeMappedProxyCanBeRepairedWhileRemainingActive(t *testing.T)
 			ExpiryWarnDays: 7,
 		},
 	}
-	svc := executionNodeProxyProtectionService(repo)
+	svc := &adminServiceImpl{proxyRepo: repo}
 
 	updated, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{
 		Host:           "new.internal",

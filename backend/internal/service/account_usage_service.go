@@ -648,10 +648,8 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 		if observedAt, ok := openAICodexSnapshotObservationAt(account, now); ok {
 			info.UpdatedAt = &observedAt
 		}
-		// Passive execution-node views use the same aligned estimator as the
-		// active owner, but keep the calculation in memory so a read-only node
-		// never mutates the account state. This also lets a newer 1% endpoint be
-		// displayed before the owner has persisted its next snapshot.
+		// Passive queries keep the aligned estimate in memory without advancing
+		// persisted sampling state or triggering an upstream probe.
 		if stats := s.addOpenAIWindowStats(ctx, account, info, now); stats != nil &&
 			openAIWeeklyPassiveObservationIsOrdered(account, info.SevenDay, now) {
 			s.applyOpenAIWeeklyEstimateReadOnly(ctx, account, info.SevenDay, stats, now)

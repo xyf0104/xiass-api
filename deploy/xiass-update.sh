@@ -729,10 +729,10 @@ verify_running_target() {
         || { log "服务实际返回版本 ${version}，目标为 ${TARGET_VERSION}；不能仅凭健康检查判定更新成功。"; return 1; }
     response=$(curl -fsS --noproxy '*' --max-time 3 \
         "http://127.0.0.1:${port}/readyz") || {
-        log "新版应用尚未满足数据库、Redis 或节点调度就绪条件；不能报告更新成功。"
+        log "新版应用尚未满足数据库或 Redis 就绪条件；不能报告更新成功。"
         return 1
     }
-    printf '%s' "$response" | jq -e '.status == "ok" and .checks.postgres == "ok" and .checks.redis == "ok" and .checks.execution_node == "ok"' >/dev/null \
+    printf '%s' "$response" | jq -e '.status == "ok" and .checks.postgres == "ok" and .checks.redis == "ok"' >/dev/null \
         || { log "新版应用依赖就绪检查未通过。"; return 1; }
     current_container_id=$(compose ps -q xiass-api) || return 1
     [ "$current_container_id" = "$container_id" ] || return 1
@@ -908,7 +908,7 @@ rollback_update() {
             return 1
         fi
         if compose up -d --no-deps --no-build --pull never --force-recreate xiass-api && wait_for_health; then
-            log "旧应用容器已恢复，PostgreSQL、Redis 和节点配对数据未重启或回退。"
+            log "旧应用容器已恢复，PostgreSQL、Redis 和持久化数据未重启或回退。"
         else
             log "旧应用未通过健康检查，请检查日志；数据库和缓存保持在线。"
         fi

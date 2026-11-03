@@ -43,13 +43,13 @@ func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullAccount(t *testing.T)
 			"huge_blob":     strings.Repeat("x", 4096),
 		},
 		Extra: map[string]any{
-			service.AccountExecutionNodeExtraKey: "api2",
-			"mixed_scheduling":                   true,
-			"window_cost_limit":                  12.5,
-			"window_cost_sticky_reserve":         8.0,
-			"max_sessions":                       4,
-			"session_idle_timeout_minutes":       11,
-			"unused_large_field":                 strings.Repeat("y", 4096),
+			"xiass_execution_node_id":      "api2",
+			"mixed_scheduling":             true,
+			"window_cost_limit":            12.5,
+			"window_cost_sticky_reserve":   8.0,
+			"max_sessions":                 4,
+			"session_idle_timeout_minutes": 11,
+			"unused_large_field":           strings.Repeat("y", 4096),
 		},
 		RateLimitResetAt:       &limitReset,
 		OverloadUntil:          &overloadUntil,
@@ -86,7 +86,7 @@ func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullAccount(t *testing.T)
 	require.Empty(t, got.GetCredential("access_token"))
 	require.Empty(t, got.GetCredential("huge_blob"))
 	require.Equal(t, true, got.Extra["mixed_scheduling"])
-	require.Equal(t, "api2", got.ExecutionNodeID("api"))
+	require.NotContains(t, got.Extra, "xiass_execution_node_id")
 	require.Equal(t, 12.5, got.GetWindowCostLimit())
 	require.Equal(t, 8.0, got.GetWindowCostStickyReserve())
 	require.Equal(t, 4, got.GetMaxSessions())

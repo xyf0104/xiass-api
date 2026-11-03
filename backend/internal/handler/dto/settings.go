@@ -197,9 +197,6 @@ type SystemSettings struct {
 
 	// 分组隔离
 	AllowUngroupedKeyScheduling   bool               `json:"allow_ungrouped_key_scheduling"`
-	ExecutionNodeBalancingEnabled bool               `json:"execution_node_balancing_enabled"`
-	ExecutionNodeWeights          map[string]float64 `json:"execution_node_weights"`
-	ExecutionNodeProxyIDs         map[string]int64   `json:"execution_node_proxy_ids"`
 
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`

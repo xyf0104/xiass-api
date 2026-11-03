@@ -26,8 +26,6 @@ jobs:
           bash -n deploy/xiass-update.sh
           bash -n deploy/xiass-runtime-export.sh
           bash -n deploy/xiass-runtime-restore.sh
-          bash -n deploy/xiass-cluster-join.sh
-          bash -n deploy/xiass-cluster-runtime.sh
           bash -n deploy/install.sh
           bash -n deploy/docker-deploy.sh
           tools/test_xiass_update_origin.sh
@@ -40,7 +38,6 @@ jobs:
           bash deploy/tests/docker-entrypoint-socket-group-test.sh
           bash deploy/tests/update-script-portability-test.sh
           bash deploy/tests/runtime-export-scripts-test.sh
-          bash deploy/tests/execution-node-runtime-scripts-test.sh
           bash deploy/test-install-download-integrity.sh
           bash deploy/tests/install-github-token-test.sh
           bash deploy/test-docker-deploy-existing-install.sh

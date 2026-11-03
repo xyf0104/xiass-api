@@ -601,25 +601,6 @@ const (
 
 	// SettingKeyAllowUngroupedKeyScheduling 允许未分组 API Key 调度（默认 false：未分组 Key 返回 403）
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
-	// SettingKeyExecutionNodeBalancingEnabled enables weighted selection between
-	// account execution nodes. The local gateway.execution_node switch remains
-	// the deployment-level safety gate.
-	SettingKeyExecutionNodeBalancingEnabled = "execution_node_balancing_enabled"
-	// SettingKeyExecutionNodeWeights stores a JSON object of node ID -> weight.
-	SettingKeyExecutionNodeWeights = "execution_node_weights"
-	// SettingKeyExecutionNodeDefaultWeightsMigrated records the one-time upgrade
-	// from the former two-node 1:1 default.
-	SettingKeyExecutionNodeDefaultWeightsMigrated = "execution_node_default_weights_v2_migrated"
-	// SettingKeyExecutionNodeProxyIDs stores a JSON object of node ID -> private
-	// egress proxy ID. The mapping is shared so every replica can validate that
-	// an account keeps the proxy belonging to its execution node.
-	SettingKeyExecutionNodeProxyIDs = "execution_node_proxy_ids"
-	// The following settings are owned by the execution-node pairing protocol.
-	// Pairing is deliberately separate from the routing policy so a failed or
-	// incomplete handshake can never enable scheduling by itself.
-	SettingKeyExecutionNodeClusterID         = "execution_node_cluster_id"
-	SettingKeyExecutionNodePairingInvite     = "execution_node_pairing_invite"
-	SettingKeyExecutionNodePairingPeerPrefix = "execution_node_pairing_peer:"
 	// SettingKeyOpenAIModelPrioritySettings stores global model-to-account
 	// preference rules. The compiled policy is kept in memory on the request hot
 	// path; the settings table is never queried while selecting an account.

@@ -39,7 +39,7 @@ const (
 
 type openAIAdsPowerBindingUpdater interface {
 	UpdateOpenAIAdsPowerBinding(ctx context.Context, id int64, binding *service.OpenAIAdsPowerBinding) error
-	UpdateOpenAIAdsPowerBindingFromLaunch(ctx context.Context, id int64, expectedExecutionNodeID string, binding *service.OpenAIAdsPowerBinding) error
+	UpdateOpenAIAdsPowerBindingFromLaunch(ctx context.Context, id int64, expected *service.OpenAIAdsPowerBinding, binding *service.OpenAIAdsPowerBinding) error
 }
 
 type openAIAdsPowerLaunchStore struct {
@@ -475,7 +475,7 @@ func (h *OpenAIOAuthHandler) issueOpenAIAdsPowerLaunch(ctx context.Context, c *g
 		return nil, errors.New("AdsPower launch ticket could not be stored")
 	}
 	delivery := "local"
-	if queued, queueErr := h.adsPowerLaunchStore.enqueueHelperCommand(ctx, record, ticket, openAIAdsPowerLocalEnvironment(c)); queueErr != nil {
+	if queued, queueErr := h.adsPowerLaunchStore.enqueueHelperCommand(ctx, record, ticket); queueErr != nil {
 		return nil, errors.New("AdsPower helper command could not be queued")
 	} else if queued {
 		delivery = "queued"
@@ -520,10 +520,6 @@ func (h *OpenAIOAuthHandler) CreateOpenAIAdsPowerLaunchTicket(c *gin.Context) {
 		AccountName: sanitizeOpenAIAdsPowerLabel(req.ProfileLabel),
 	}
 	if req.AccountID > 0 {
-		if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, req.AccountID); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
 		account, err := h.adminService.GetAccount(c.Request.Context(), req.AccountID)
 		if err != nil || account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || account.IsOpenAIOAuthCredentialCopy() {
 			response.BadRequest(c, "Only primary OpenAI OAuth accounts can use AdsPower")
@@ -532,11 +528,7 @@ func (h *OpenAIOAuthHandler) CreateOpenAIAdsPowerLaunchTicket(c *gin.Context) {
 		record.AccountID = account.ID
 		record.AccountName = sanitizeOpenAIAdsPowerLabel(account.Name)
 		record.Existing = service.OpenAIAdsPowerBindingFromAccount(account)
-		record.EnvironmentKey = openAIAdsPowerAccountEnvironment(account)
-		if record.EnvironmentKey != openAIAdsPowerLocalEnvironment(c) {
-			response.Error(c, http.StatusConflict, "Open this account from its assigned XIASS server before launching AdsPower")
-			return
-		}
+		record.EnvironmentKey = openAIAdsPowerAccountEnvironment(account, c)
 	} else {
 		record.EnvironmentKey = openAIAdsPowerLocalEnvironment(c)
 	}
@@ -603,7 +595,7 @@ func (h *OpenAIOAuthHandler) launchBatchOAuthTaskInAdsPower(c *gin.Context, mode
 		record.AccountID = account.ID
 		record.AccountName = sanitizeOpenAIAdsPowerLabel(account.Name)
 		record.Existing = service.OpenAIAdsPowerBindingFromAccount(account)
-		record.EnvironmentKey = openAIAdsPowerAccountEnvironment(account)
+		record.EnvironmentKey = openAIAdsPowerAccountEnvironment(account, c)
 	} else {
 		record.EnvironmentKey = openAIAdsPowerLocalEnvironment(c)
 		pending, err := h.adsPowerLaunchStore.pendingBinding(c.Request.Context(), task.sessionID, task.ownerID)
@@ -958,7 +950,7 @@ func (h *OpenAIOAuthHandler) ReportOpenAIAdsPowerBinding(c *gin.Context) {
 			response.Error(c, http.StatusServiceUnavailable, "AdsPower binding storage is unavailable")
 			return
 		}
-		if err := updater.UpdateOpenAIAdsPowerBindingFromLaunch(c.Request.Context(), record.AccountID, record.EnvironmentKey, binding); err != nil {
+		if err := updater.UpdateOpenAIAdsPowerBindingFromLaunch(c.Request.Context(), record.AccountID, record.Existing, binding); err != nil {
 			response.Error(c, http.StatusConflict, err.Error())
 			return
 		}
@@ -973,10 +965,6 @@ func (h *OpenAIOAuthHandler) DeleteOpenAIAdsPowerBinding(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || accountID <= 0 {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	updater, ok := h.adminService.(openAIAdsPowerBindingUpdater)
@@ -1001,10 +989,6 @@ func (h *OpenAIOAuthHandler) ClaimOpenAIAdsPowerBinding(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	var req openAIAdsPowerBindingClaimRequest
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
 	if c.ShouldBindJSON(&req) != nil || !validOpenAIAdsPowerSessionID(strings.TrimSpace(req.SessionID)) {
@@ -1026,8 +1010,9 @@ func (h *OpenAIOAuthHandler) ClaimOpenAIAdsPowerBinding(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "AdsPower browser binding is temporarily unavailable")
 		return
 	}
-	if binding == nil || binding.EnvironmentKey != openAIAdsPowerAccountEnvironment(account) {
-		response.Error(c, http.StatusConflict, "AdsPower browser binding does not match this account server")
+	current := service.OpenAIAdsPowerBindingFromAccount(account)
+	if binding == nil || (current != nil && (current.DeviceID != binding.DeviceID || current.ProfileID != binding.ProfileID || current.EnvironmentKey != binding.EnvironmentKey)) {
+		response.Error(c, http.StatusConflict, "AdsPower browser binding does not match this account environment")
 		return
 	}
 	updater, ok := h.adminService.(openAIAdsPowerBindingUpdater)
@@ -1139,32 +1124,16 @@ func sanitizeOpenAIAdsPowerLabel(value string) string {
 	}, value)
 }
 
-func openAIAdsPowerAccountEnvironment(account *service.Account) string {
+func openAIAdsPowerAccountEnvironment(account *service.Account, c *gin.Context) string {
 	if account != nil {
-		if value := strings.TrimSpace(account.GetExtraString(service.AccountExecutionNodeExtraKey)); value != "" {
-			return value
+		if binding := service.OpenAIAdsPowerBindingFromAccount(account); binding != nil {
+			return binding.EnvironmentKey
 		}
 	}
-	if value := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID")); value != "" {
-		return value
-	}
-	return "api"
+	return openAIAdsPowerLocalEnvironment(c)
 }
 
-func openAIAdsPowerLocalEnvironment(c *gin.Context) string {
-	if value := strings.TrimSpace(os.Getenv("GATEWAY_EXECUTION_NODE_ID")); value != "" {
-		return value
-	}
-	if c != nil {
-		host := c.Request.Host
-		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-			host = parsedHost
-		}
-		host = strings.ToLower(strings.TrimSpace(host))
-		if strings.HasPrefix(host, "api2.") {
-			return "api2"
-		}
-	}
+func openAIAdsPowerLocalEnvironment(_ *gin.Context) string {
 	return "api"
 }
 

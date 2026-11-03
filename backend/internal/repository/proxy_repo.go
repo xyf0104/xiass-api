@@ -3,8 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -697,93 +695,6 @@ func (r *proxyRepository) ListAllForFallback(ctx context.Context) ([]service.Pro
 	return out, nil
 }
 
-// executionNodeProxyFallbackPolicy is intentionally read from the shared
-// settings table instead of local process configuration. Every replica must
-// make the same decision when an expired proxy is swept.
-type executionNodeProxyFallbackPolicy struct {
-	enabled       bool
-	valid         bool
-	nodeByProxyID map[int64]string
-}
-
-func (r *proxyRepository) loadExecutionNodeProxyFallbackPolicy(ctx context.Context) executionNodeProxyFallbackPolicy {
-	policy := executionNodeProxyFallbackPolicy{}
-	if r == nil || r.sql == nil {
-		return policy
-	}
-	rows, err := r.sql.QueryContext(ctx, `
-		SELECT key, value FROM settings
-		WHERE key IN ($1, $2)
-	`, service.SettingKeyExecutionNodeBalancingEnabled, service.SettingKeyExecutionNodeProxyIDs)
-	if err != nil {
-		// A settings read failure must fail closed for account movement. The
-		// proxy itself can still be marked expired, but no account is moved to
-		// an unverified egress.
-		return executionNodeProxyFallbackPolicy{enabled: true}
-	}
-	defer func() { _ = rows.Close() }()
-
-	var enabledRaw, proxyIDsRaw string
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return executionNodeProxyFallbackPolicy{enabled: true}
-		}
-		switch key {
-		case service.SettingKeyExecutionNodeBalancingEnabled:
-			enabledRaw = value
-		case service.SettingKeyExecutionNodeProxyIDs:
-			proxyIDsRaw = value
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return executionNodeProxyFallbackPolicy{enabled: true}
-	}
-	if !strings.EqualFold(strings.TrimSpace(enabledRaw), "true") {
-		return policy
-	}
-	policy.enabled = true
-	var proxyIDs map[string]int64
-	if err := json.Unmarshal([]byte(proxyIDsRaw), &proxyIDs); err != nil || len(proxyIDs) == 0 {
-		return policy
-	}
-	policy.nodeByProxyID = make(map[int64]string, len(proxyIDs))
-	for rawNodeID, proxyID := range proxyIDs {
-		nodeID := strings.TrimSpace(rawNodeID)
-		if nodeID == "" || proxyID <= 0 {
-			return executionNodeProxyFallbackPolicy{enabled: true}
-		}
-		if _, exists := policy.nodeByProxyID[proxyID]; exists {
-			return executionNodeProxyFallbackPolicy{enabled: true}
-		}
-		policy.nodeByProxyID[proxyID] = nodeID
-	}
-	policy.valid = true
-	return policy
-}
-
-// restrictExecutionNodeProxyFallback keeps an expired account on its own
-// node's egress contract. In shared mode, direct fallback and a backup proxy
-// belonging to another node are both unsafe because they silently change the
-// public exit used by that account.
-func restrictExecutionNodeProxyFallback(policy executionNodeProxyFallbackPolicy, proxyID int64, target *int64, change bool) (string, *int64, bool) {
-	if !policy.enabled {
-		return "", target, change
-	}
-	if !policy.valid {
-		return "", nil, false
-	}
-	nodeID, mapped := policy.nodeByProxyID[proxyID]
-	if !mapped || !change || target == nil {
-		return "", nil, false
-	}
-	targetNodeID, targetMapped := policy.nodeByProxyID[*target]
-	if !targetMapped || targetNodeID != nodeID {
-		return "", nil, false
-	}
-	return nodeID, target, true
-}
-
 // SweepExpiredProxies 扫描到期 active 代理，标记 expired 并按 fallback 策略改写绑定账号的 proxy_id，
 // 最终触发 scheduler outbox 使 Redis 快照缓存失效。返回受影响的账号行数。
 // 原子性边界：每个过期代理的「标记 expired + 改投账号」在各自子事务内原子执行（见 sweepOneExpiredProxy）；
@@ -802,21 +713,18 @@ func (r *proxyRepository) SweepExpiredProxies(ctx context.Context, now time.Time
 
 	var totalChanged int64
 	allChangedAccountIDs := make([]int64, 0)
-	executionNodePolicy := r.loadExecutionNodeProxyFallbackPolicy(ctx)
-
 	for _, p := range all {
 		if p.Status != service.StatusActive || !p.IsExpired(now) {
 			continue
 		}
 
 		target, change := service.ResolveProxyFallbackTarget(p, byID, now)
-		executionNodeID, target, change := restrictExecutionNodeProxyFallback(executionNodePolicy, p.ID, target, change)
 		if !change && p.FallbackMode == service.FallbackModeProxy {
 			// 配置了 proxy 回退但链路无解（成环或全部已过期），记录告警日志
 			logger.LegacyPrintf("repository.proxy", "[ProxyExpiry] proxy %d expired but fallback chain unresolved (cycle/all-expired); accounts kept", p.ID)
 		}
 
-		changedAccountIDs, sweepErr := r.sweepOneExpiredProxy(ctx, p, now, target, change, executionNodeID)
+		changedAccountIDs, sweepErr := r.sweepOneExpiredProxy(ctx, p, now, target, change)
 		if sweepErr != nil {
 			return totalChanged, sweepErr
 		}
@@ -854,7 +762,7 @@ func sortedUniqueAccountIDs(accountIDs []int64) []int64 {
 
 // sweepOneExpiredProxy 在单事务内原子执行：标记代理 expired + 改投绑定账号。
 // 若 r.client 已绑定事务（测试注入场景），直接在 r.sql 上执行，由外层事务保证原子性。
-func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, snapshot service.Proxy, now time.Time, target *int64, change bool, executionNodeID string) ([]int64, error) {
+func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, snapshot service.Proxy, now time.Time, target *int64, change bool) ([]int64, error) {
 	// 尝试开启子事务；若 r.client 已是事务 client，则返回 ErrTxStarted，退回使用 r.sql。
 	tx, txErr := r.client.Tx(ctx)
 	if txErr != nil {
@@ -862,13 +770,13 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, snapshot ser
 			return nil, txErr
 		}
 		// 已在外层事务中（集成测试场景），直接用 r.sql 执行
-		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, snapshot, now, target, change, executionNodeID)
+		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, snapshot, now, target, change)
 	}
 
 	// 使用新事务执行
 	var accountIDs []int64
 	var err error
-	accountIDs, err = r.sweepOneExpiredProxyOnExec(ctx, tx, snapshot, now, target, change, executionNodeID)
+	accountIDs, err = r.sweepOneExpiredProxyOnExec(ctx, tx, snapshot, now, target, change)
 	if err != nil {
 		_ = tx.Rollback()
 		return nil, err
@@ -880,7 +788,7 @@ func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, snapshot ser
 }
 
 // sweepOneExpiredProxyOnExec 在给定的 sqlExecutor 上执行：标记 expired + 改投账号。
-func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, snapshot service.Proxy, now time.Time, target *int64, change bool, executionNodeID string) ([]int64, error) {
+func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, snapshot service.Proxy, now time.Time, target *int64, change bool) ([]int64, error) {
 	proxyID := snapshot.ID
 	var snapshotExpiresAt any
 	if snapshot.ExpiresAt != nil {
@@ -926,16 +834,8 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 	var (
 		rows *sql.Rows
 	)
-	nodeFilter := ""
-	if executionNodeID != "" {
-		if target == nil {
-			nodeFilter = " AND COALESCE(BTRIM(extra ->> $2), '') = $3"
-		} else {
-			nodeFilter = " AND COALESCE(BTRIM(extra ->> $3), '') = $4"
-		}
-	}
 	if target == nil {
-		query := fmt.Sprintf(`
+		query := `
 			UPDATE accounts SET proxy_id=NULL, proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id,$1),
 				extra=CASE
 					WHEN type='apikey' AND extra ? 'upstream_billing_probe'
@@ -943,15 +843,11 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND deleted_at IS NULL%s
-			RETURNING id`, nodeFilter)
-		args := []any{proxyID}
-		if executionNodeID != "" {
-			args = append(args, service.AccountExecutionNodeExtraKey, executionNodeID)
-		}
-		rows, err = exec.QueryContext(ctx, query, args...)
+			WHERE proxy_id=$1 AND deleted_at IS NULL
+			RETURNING id`
+		rows, err = exec.QueryContext(ctx, query, proxyID)
 	} else {
-		query := fmt.Sprintf(`
+		query := `
 			UPDATE accounts SET proxy_id=$2, proxy_fallback_origin_id=COALESCE(proxy_fallback_origin_id,$1),
 				extra=CASE
 					WHEN type='apikey' AND extra ? 'upstream_billing_probe'
@@ -959,13 +855,9 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND deleted_at IS NULL%s
-			RETURNING id`, nodeFilter)
-		args := []any{proxyID, *target}
-		if executionNodeID != "" {
-			args = append(args, service.AccountExecutionNodeExtraKey, executionNodeID)
-		}
-		rows, err = exec.QueryContext(ctx, query, args...)
+			WHERE proxy_id=$1 AND deleted_at IS NULL
+			RETURNING id`
+		rows, err = exec.QueryContext(ctx, query, proxyID, *target)
 	}
 	if err != nil {
 		return nil, err

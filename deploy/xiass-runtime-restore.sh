@@ -241,6 +241,12 @@ wait_for_health() {
     return 1
 }
 
+restore_environment() {
+    awk '!/^[[:space:]]*(export[[:space:]]+)?(GATEWAY_EXECUTION_NODE_|XIASS_CLUSTER_)[A-Z0-9_]*[[:space:]]*=/' \
+        "$PACKAGE_DIR/payload/.env" > "$DEPLOY_DIR/.env"
+    chmod 600 "$DEPLOY_DIR/.env"
+}
+
 prepare_restored_runtime() {
     [ "$(manifest_value format_version)" = "2" ] || return 0
     local source="$PACKAGE_DIR/payload/runtime-context.json" password app_image redis_image
@@ -248,30 +254,26 @@ prepare_restored_runtime() {
     app_image=$(manifest_value app_image)
     redis_image=$(manifest_value redis_image)
     [ -n "$app_image" ] && [ -n "$redis_image" ] || die "missing source image identity"
-    if [ "$(jq -r '.config.gateway.execution_node.enabled' "$source")" = "true" ]; then
-        warn "此压缩包恢复为独立实例；业务数据与账号归属记录保留，恢复后需重新配对其他节点，不会自动连接旧集群。"
-    fi
     XIASS_RESTORE_PG_PASSWORD="$password" jq '
         .config | .database.host="postgres" | .database.port=5432 | .database.sslmode="disable"
         | .database.password=env.XIASS_RESTORE_PG_PASSWORD
         | .redis.host="redis" | .redis.port=6379 | .redis.enable_tls=false
         | del(.redis.sentinel_addrs, .redis.sentinel_master_name, .redis.sentinel_username, .redis.sentinel_password)
         | .server.host="0.0.0.0" | .server.port=8080
-        | .gateway.execution_node.enabled=false
-        | del(.gateway.execution_node.witness, .gateway.execution_node.emergency_local_egress)
+        | del(.gateway.execution_node)
         | .gateway.forced_codex_instructions_template_file=""
     ' "$source" > "$DEPLOY_DIR/data/xiass-restored-config.json"
-    # Config values come from the effective snapshot. Empty optional env values
-    # leave that snapshot authoritative, while later .env edits/pairing still work.
+    # Keep the effective snapshot authoritative and omit retired node bindings.
     jq '[.config | (paths(scalars), paths(type=="array")) | map(tostring|ascii_upcase) | join("_")]
         + [.environment | keys[]] | unique
         | map(. as $key | select(test("^[A-Z_][A-Z0-9_]*$") and
+          (startswith("GATEWAY_EXECUTION_NODE_") | not) and (startswith("XIASS_CLUSTER_") | not) and
           (["HOSTNAME","HOME","PATH","PWD","SHLVL","USER","LOGNAME","SHELL","_"] | index($key) | not)))' \
         "$source" > "$DEPLOY_DIR/.restore-bindings.json"
     jq --slurpfile effective "$DEPLOY_DIR/data/xiass-restored-config.json" --slurpfile keys "$DEPLOY_DIR/.restore-bindings.json" --arg install "$INSTALL_DIR" '
         . as $source | $effective[0] as $cfg | (.config|keys|map(ascii_upcase)) as $prefixes
         | reduce $keys[0][] as $key ({};
-            .[$key] = (if any($prefixes[]; . as $p | $key==$p or ($key|startswith($p+"_"))) or ($key|startswith("XIASS_CLUSTER_"))
+            .[$key] = (if any($prefixes[]; . as $p | $key==$p or ($key|startswith($p+"_")))
                        then "" else ($source.environment[$key] // "") end))
         | del(.SERVER_PORT)
         | . + {CONFIG_FILE:"/app/data/xiass-restored-config.json", DATA_DIR:"/app/data",
@@ -281,8 +283,7 @@ prepare_restored_runtime() {
             REDIS_HOST:"redis", REDIS_PORT:"6379", REDIS_USERNAME:$cfg.redis.username, REDIS_PASSWORD:$cfg.redis.password,
             REDIS_DB:($cfg.redis.db|tostring), REDIS_ENABLE_TLS:"false", JWT_SECRET:$cfg.jwt.secret,
             JWT_REFRESH_TOKEN_STORE:$cfg.jwt.refresh_token_store, TOTP_ENCRYPTION_KEY:$cfg.totp.encryption_key,
-            GATEWAY_EXECUTION_NODE_ENABLED:"false", XIASS_CLUSTER_STATE_SOURCE_URL:"", XIASS_CLUSTER_TUNNEL_TOKEN:"",
-            XIASS_CLUSTER_NODE_URLS_JSON:"{}", XIASS_REDIS_BACKUP_CREDENTIALS_FILE:($install+"/deploy/ha/secrets/redis-backup.json")}
+            XIASS_REDIS_BACKUP_CREDENTIALS_FILE:($install+"/deploy/ha/secrets/redis-backup.json")}
     ' "$source" > "$DEPLOY_DIR/.restore-environment.json"
     local name value escaped
     while IFS= read -r -d '' name && IFS= read -r -d '' value; do
@@ -413,8 +414,7 @@ trap rollback EXIT INT TERM
 DEPLOY_DIR="$INSTALL_DIR/deploy"
 mkdir -p "$DEPLOY_DIR"
 cp -a "$PACKAGE_DIR/deploy/." "$DEPLOY_DIR/"
-cp "$PACKAGE_DIR/payload/.env" "$DEPLOY_DIR/.env"
-chmod 600 "$DEPLOY_DIR/.env"
+restore_environment
 
 rm -rf "$DEPLOY_DIR/data" "$DEPLOY_DIR/redis_data" "$DEPLOY_DIR/team_child_browser_data" "$DEPLOY_DIR/team_child_automation_data"
 mkdir -p "$DEPLOY_DIR/data" "$DEPLOY_DIR/redis_data"

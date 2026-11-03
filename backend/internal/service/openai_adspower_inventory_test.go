@@ -16,11 +16,11 @@ type openAIAdsPowerInventoryRepoStub struct {
 	released bool
 }
 
-func (s *openAIAdsPowerInventoryRepoStub) ListOpenAIAdsPowerBindingAccounts(context.Context, string, string, string, int) ([]OpenAIAdsPowerBindingAccountRecord, bool, error) {
+func (s *openAIAdsPowerInventoryRepoStub) ListOpenAIAdsPowerBindingAccounts(context.Context, string, int) ([]OpenAIAdsPowerBindingAccountRecord, bool, error) {
 	return s.records, s.complete, s.err
 }
 
-func (s *openAIAdsPowerInventoryRepoStub) ReleaseOpenAIAdsPowerProfileBindings(context.Context, string, string, string, string, []string) ([]int64, bool, error) {
+func (s *openAIAdsPowerInventoryRepoStub) ReleaseOpenAIAdsPowerProfileBindings(context.Context, string, string, string, []string) ([]int64, bool, error) {
 	return nil, s.released, s.err
 }
 
@@ -92,8 +92,8 @@ func TestOpenAIAdsPowerBindingExplicitlyBlockedRequiresCurrentEvidence(t *testin
 func TestListOpenAIAdsPowerProfileInventorySeparatesDeletedRows(t *testing.T) {
 	binding := OpenAIAdsPowerBinding{Version: 1, DeviceID: "device-1", ProfileID: "profile-1", EnvironmentKey: "api2", WebRTCDisabled: true, FingerprintRandomized: true, FingerprintSlot: 7, SharedProfile: true}
 	repo := &openAIAdsPowerInventoryRepoStub{complete: true, records: []OpenAIAdsPowerBindingAccountRecord{
-		{Account: Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusError, Extra: map[string]any{"error_code": "account_banned"}}, Binding: binding, ExecutionNodeID: "api2"},
-		{Account: Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: OpenAIAdsPowerBinding{Version: 1, DeviceID: "device-1", ProfileID: "released-1", EnvironmentKey: "api2", WebRTCDisabled: true, FingerprintRandomized: true}, ExecutionNodeID: "api2", Deleted: true},
+		{Account: Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusError, Extra: map[string]any{"error_code": "account_banned"}}, Binding: binding},
+		{Account: Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: OpenAIAdsPowerBinding{Version: 1, DeviceID: "device-1", ProfileID: "released-1", EnvironmentKey: "api2", WebRTCDisabled: true, FingerprintRandomized: true}, Deleted: true},
 	}}
 	svc := &adminServiceImpl{accountRepo: repo}
 	got, err := svc.ListOpenAIAdsPowerProfileInventory(context.Background(), "device-1", "api2")
@@ -115,8 +115,8 @@ func TestListOpenAIAdsPowerProfileInventoryRejectsSharedCrossEnvironmentProfile(
 	remote := binding
 	remote.EnvironmentKey = "api"
 	repo := &openAIAdsPowerInventoryRepoStub{complete: true, records: []OpenAIAdsPowerBindingAccountRecord{
-		{Account: Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: binding, ExecutionNodeID: "api2"},
-		{Account: Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: remote, ExecutionNodeID: "api"},
+		{Account: Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: binding},
+		{Account: Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, Binding: remote},
 	}}
 	svc := &adminServiceImpl{accountRepo: repo}
 	got, err := svc.ListOpenAIAdsPowerProfileInventory(context.Background(), "device-1", "api2")

@@ -23,7 +23,7 @@
 
     <div v-if="credentialLibraryView === 'manage'" class="grid border-b border-gray-200 dark:border-dark-700 sm:grid-cols-3">
       <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
-        <p class="text-xs text-gray-500 dark:text-gray-400">当前服务器可管理</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">可管理账号</p>
         <p class="mt-0.5 text-lg font-semibold text-gray-900 dark:text-gray-100">{{ manageableAccounts.length }}</p>
       </div>
       <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:border-b-0 sm:border-r">
@@ -168,10 +168,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
-import { accountsAPI, executionNodesAPI } from '@/api/admin'
+import { accountsAPI } from '@/api/admin'
 import { saveOpenAIAccountReauthorizationCredentials } from '@/api/admin/teamChild'
 import type { OpenAIAccountReauthorizationCredentialsRequest } from '@/api/admin/teamChild'
-import type { ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import { parseAccountCredentials } from '@/features/token-converter/accountCredentials'
 import { OPENAI_EMAIL_CODE_PROVIDER, parseOpenAIEmailCodeCredentials } from '@/features/token-converter/openAIEmailCodeCredentials'
 import { normalizeBase32Secret } from '@/features/token-converter/totp'
@@ -222,7 +221,6 @@ const loading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
 const lastResult = ref<ImportResult | null>(null)
-const executionNodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
 const loaded = ref(false)
 const credentialLibraryView = ref<'manage' | 'missing'>('manage')
 const copiedMissingAccountID = ref<number | null>(null)
@@ -387,18 +385,11 @@ function loginEmail(account: Account, importedIdentity: string): string {
 
 function canStoreCredentials(account: Account): boolean {
   const extra = account.extra as Record<string, unknown> | undefined
-  const status = executionNodeStatus.value
-  const localNodeID = status?.runtime.node_id || 'api'
-  const legacyNodeID = status?.runtime.legacy_unassigned_node_id || localNodeID
-  const owner = account.execution_node_id?.trim() || legacyNodeID
-  const pairedFullAccess = status?.admin_write_mode === 'paired_full_access' && status.admin_write_allowed === true
-  const nodeWritable = status?.runtime.enabled !== true || pairedFullAccess || owner === localNodeID
   return account.platform === 'openai'
     && account.type === 'oauth'
     && account.parent_account_id == null
     && !extra?.xiass_openai_oauth_credential_source_id
     && extra?.xiass_team_child !== true
-    && nodeWritable
 }
 
 function hasCompleteCredentials(account: Account, mode: LoginMode): boolean {
@@ -478,26 +469,19 @@ async function loadAccounts() {
   loading.value = true
   loadError.value = ''
   try {
-    const [status, found] = await Promise.all([
-      executionNodesAPI.getStatus(),
-      (async () => {
-        const resultAccounts: Account[] = []
-        let page = 1
-        while (true) {
-          const result = await accountsAPI.list(page, 200, {
-            platform: 'openai',
-            type: 'oauth',
-            sort_by: 'id',
-            sort_order: 'asc',
-          })
-          resultAccounts.push(...result.items)
-          if (page >= result.pages || result.items.length === 0) break
-          page++
-        }
-        return resultAccounts
-      })(),
-    ])
-    executionNodeStatus.value = status
+    const found: Account[] = []
+    let page = 1
+    while (true) {
+      const result = await accountsAPI.list(page, 200, {
+        platform: 'openai',
+        type: 'oauth',
+        sort_by: 'id',
+        sort_order: 'asc',
+      })
+      found.push(...result.items)
+      if (page >= result.pages || result.items.length === 0) break
+      page++
+    }
     accounts.value = found
     loaded.value = true
   } catch (error) {

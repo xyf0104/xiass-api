@@ -108,9 +108,8 @@ func TestAdaptiveRouteDisabledLeavesLegacyPrioritiesUntouched(t *testing.T) {
 	require.Equal(t, []AccountProxySlotSpec{{ProxyID: 1, MaxConcurrency: 2}, {ProxyID: 2, MaxConcurrency: 2}}, slots)
 }
 
-func adaptiveOutcomeTestService(cache *adaptiveRouteCacheStub, nodeID string) (*OpenAIGatewayService, *Account) {
+func adaptiveOutcomeTestService(cache *adaptiveRouteCacheStub) (*OpenAIGatewayService, *Account) {
 	concurrency := NewConcurrencyService(cache)
-	concurrency.SetExecutionNodeID(nodeID)
 	account := &Account{
 		ID: 301, Extra: map[string]any{AccountMultiProxyAdaptiveEnabledExtraKey: true}, MultiProxyConfigured: true,
 		RequestProxy: &Proxy{ID: 41, Status: StatusActive, UpdatedAt: time.Unix(100, 0)},
@@ -120,7 +119,7 @@ func adaptiveOutcomeTestService(cache *adaptiveRouteCacheStub, nodeID string) (*
 
 func TestReportOpenAIAccountProxyRouteOutcomeRecordsStreamingExactUsingContextModel(t *testing.T) {
 	cache := &adaptiveRouteCacheStub{}
-	svc, account := adaptiveOutcomeTestService(cache, "api-node-a")
+	svc, account := adaptiveOutcomeTestService(cache)
 	ttft := 145
 	ctx := context.WithValue(context.Background(), ctxkey.Model, "public-model-alias")
 	result := &OpenAIForwardResult{
@@ -143,7 +142,7 @@ func TestReportOpenAIAccountProxyRouteOutcomeRecordsStreamingExactUsingContextMo
 
 func TestReportOpenAIAccountProxyRouteOutcomeSkipsClientCancellationAndDisconnect(t *testing.T) {
 	cache := &adaptiveRouteCacheStub{}
-	svc, account := adaptiveOutcomeTestService(cache, "api-node-a")
+	svc, account := adaptiveOutcomeTestService(cache)
 	ttft := 80
 	result := &OpenAIForwardResult{Stream: true, FirstTokenMs: &ttft}
 
@@ -158,7 +157,7 @@ func TestReportOpenAIAccountProxyRouteOutcomeSkipsClientCancellationAndDisconnec
 
 func TestReportOpenAIAccountProxyRouteOutcomeTreatsConflictAsUnknown(t *testing.T) {
 	cache := &adaptiveRouteCacheStub{}
-	svc, account := adaptiveOutcomeTestService(cache, "api-node-a")
+	svc, account := adaptiveOutcomeTestService(cache)
 	ttft := 95
 	result := &OpenAIForwardResult{
 		Stream: true, FirstTokenMs: &ttft, UpstreamResponseModel: "model", UpstreamResponseModelConflict: true,
@@ -173,7 +172,7 @@ func TestReportOpenAIAccountProxyRouteOutcomeTreatsConflictAsUnknown(t *testing.
 
 func TestReportOpenAIAccountProxyRouteOutcomeRecordsHTTP200TerminalFailure(t *testing.T) {
 	cache := &adaptiveRouteCacheStub{}
-	svc, account := adaptiveOutcomeTestService(cache, "api-node-a")
+	svc, account := adaptiveOutcomeTestService(cache)
 	ttft := 110
 	result := &OpenAIForwardResult{
 		Stream: true, OpenAIWSMode: true, UpstreamTerminalEvent: "response.failed", FirstTokenMs: &ttft,
@@ -187,19 +186,32 @@ func TestReportOpenAIAccountProxyRouteOutcomeRecordsHTTP200TerminalFailure(t *te
 	require.True(t, cache.outcomes[0].TransientFailure)
 }
 
-func TestReportOpenAIAccountProxyRouteOutcomeIsolatesExecutionNodeAndProxyRevision(t *testing.T) {
+func TestReportOpenAIAccountProxyRouteOutcomeIsolatesAccountModelAndProxyRevision(t *testing.T) {
 	cache := &adaptiveRouteCacheStub{}
-	svcA, account := adaptiveOutcomeTestService(cache, "api-node-a")
+	svc, account := adaptiveOutcomeTestService(cache)
 	ttft := 70
 	result := &OpenAIForwardResult{Stream: true, FirstTokenMs: &ttft}
-	svcA.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
-
-	svcB, _ := adaptiveOutcomeTestService(cache, "api-node-b")
-	svcB.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
+	svc.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
+	svc.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "other-model", true, false, result)
+	otherAccount := *account
+	otherAccount.ID++
+	svc.ReportOpenAIAccountProxyRouteOutcome(context.Background(), &otherAccount, "model", true, false, result)
+	otherProxy := *account.RequestProxy
+	otherProxy.ID++
+	account.RequestProxy = &otherProxy
+	svc.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
 	account.RequestProxy.UpdatedAt = time.Unix(101, 0)
-	svcB.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
+	svc.ReportOpenAIAccountProxyRouteOutcome(context.Background(), account, "model", true, false, result)
 
-	require.Len(t, cache.outcomes, 3)
-	require.NotEqual(t, cache.outcomes[0].Route.ExecutionNode, cache.outcomes[1].Route.ExecutionNode)
-	require.NotEqual(t, cache.outcomes[1].Route.ProxyHash, cache.outcomes[2].Route.ProxyHash)
+	require.Len(t, cache.outcomes, 5)
+	require.NotEqual(t, cache.outcomes[0].Route.ModelHash, cache.outcomes[1].Route.ModelHash)
+	require.NotEqual(t, cache.outcomes[0].Route.AccountID, cache.outcomes[2].Route.AccountID)
+	require.NotEqual(t, cache.outcomes[0].Route.ProxyHash, cache.outcomes[3].Route.ProxyHash)
+	require.NotEqual(t, cache.outcomes[3].Route.ProxyHash, cache.outcomes[4].Route.ProxyHash)
+	cacheIDs := make(map[string]bool)
+	for _, outcome := range cache.outcomes {
+		require.False(t, cacheIDs[outcome.Route.CacheID()], "observations must not share a cache key")
+		cacheIDs[outcome.Route.CacheID()] = true
+		require.Equal(t, accountProxyAdaptiveStatsTTL, outcome.TTL)
+	}
 }

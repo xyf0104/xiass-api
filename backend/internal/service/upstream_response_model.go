@@ -132,7 +132,7 @@ func normalizeObservedOpenAIServiceTier(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "priority", "fast":
 		return OpenAIFastTierPriority
-	case "default", "flex", "scale":
+	case "default", "flex", "scale", OpenAIFastTierUltrafast:
 		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return ""

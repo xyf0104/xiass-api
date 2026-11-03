@@ -13,7 +13,7 @@ import (
 	"github.com/lib/pq"
 )
 
-func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Context, deviceID, environmentKey, legacyNodeID string, limit int) ([]service.OpenAIAdsPowerBindingAccountRecord, bool, error) {
+func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Context, deviceID string, limit int) ([]service.OpenAIAdsPowerBindingAccountRecord, bool, error) {
 	if r == nil || limit <= 0 {
 		return nil, false, errors.New("AdsPower inventory query is unavailable")
 	}
@@ -22,14 +22,12 @@ func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Contex
 		return nil, false, errors.New("account repository SQL executor is unavailable")
 	}
 	rows, err := exec.QueryContext(ctx, `
-		SELECT id, platform, type, parent_account_id, status, error_message, extra, deleted_at IS NOT NULL,
-		       COALESCE(NULLIF(BTRIM(extra ->> $3), ''), $4)
+		SELECT id, platform, type, parent_account_id, status, error_message, extra, deleted_at IS NOT NULL
 		FROM accounts
 		WHERE BTRIM(COALESCE(extra -> $1 ->> 'device_id', '')) = $2
 		ORDER BY id ASC
-		LIMIT $5`,
-		service.OpenAIAdsPowerBindingExtraKey, strings.TrimSpace(deviceID), service.AccountExecutionNodeExtraKey,
-		strings.TrimSpace(legacyNodeID), limit+1,
+		LIMIT $3`,
+		service.OpenAIAdsPowerBindingExtraKey, strings.TrimSpace(deviceID), limit+1,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("query AdsPower inventory: %w", err)
@@ -45,8 +43,7 @@ func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Contex
 		var errorMessage sql.NullString
 		var rawExtra []byte
 		var deleted bool
-		var executionNodeID string
-		if err := rows.Scan(&id, &platform, &accountType, &parentAccountID, &status, &errorMessage, &rawExtra, &deleted, &executionNodeID); err != nil {
+		if err := rows.Scan(&id, &platform, &accountType, &parentAccountID, &status, &errorMessage, &rawExtra, &deleted); err != nil {
 			return nil, false, fmt.Errorf("scan AdsPower inventory: %w", err)
 		}
 		if len(result) >= limit {
@@ -69,7 +66,7 @@ func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Contex
 			account.ErrorMessage = errorMessage.String
 		}
 		result = append(result, service.OpenAIAdsPowerBindingAccountRecord{
-			Account: account, Binding: *binding, ExecutionNodeID: strings.TrimSpace(executionNodeID), Deleted: deleted,
+			Account: account, Binding: *binding, Deleted: deleted,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -78,7 +75,7 @@ func (r *accountRepository) ListOpenAIAdsPowerBindingAccounts(ctx context.Contex
 	return result, true, nil
 }
 
-func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Context, deviceID, environmentKey, profileID, legacyNodeID string, blockedCodes []string) ([]int64, bool, error) {
+func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Context, deviceID, environmentKey, profileID string, blockedCodes []string) ([]int64, bool, error) {
 	if r == nil || r.client == nil {
 		return nil, false, errors.New("AdsPower binding release is unavailable")
 	}
@@ -94,8 +91,7 @@ func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Con
 		return nil, false, errors.New("account repository transaction is unavailable")
 	}
 	rows, err := exec.QueryContext(txCtx, `
-		SELECT id, platform, type, parent_account_id, status, error_message, extra,
-		       COALESCE(NULLIF(BTRIM(extra ->> $4), ''), $5)
+		SELECT id, platform, type, parent_account_id, status, error_message, extra
 		FROM accounts
 		WHERE deleted_at IS NULL
 		  AND BTRIM(COALESCE(extra -> $1 ->> 'device_id', '')) = $2
@@ -103,7 +99,6 @@ func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Con
 		ORDER BY id ASC
 		FOR UPDATE`,
 		service.OpenAIAdsPowerBindingExtraKey, strings.TrimSpace(deviceID), strings.TrimSpace(profileID),
-		service.AccountExecutionNodeExtraKey, strings.TrimSpace(legacyNodeID),
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("lock AdsPower bindings: %w", err)
@@ -121,8 +116,7 @@ func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Con
 		var status string
 		var errorMessage sql.NullString
 		var rawExtra []byte
-		var executionNodeID string
-		if err := rows.Scan(&id, &platform, &accountType, &parentAccountID, &status, &errorMessage, &rawExtra, &executionNodeID); err != nil {
+		if err := rows.Scan(&id, &platform, &accountType, &parentAccountID, &status, &errorMessage, &rawExtra); err != nil {
 			return nil, false, fmt.Errorf("scan AdsPower binding: %w", err)
 		}
 		var extra map[string]any
@@ -138,7 +132,7 @@ func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Con
 			account.ErrorMessage = errorMessage.String
 		}
 		binding := service.ParseOpenAIAdsPowerBinding(extra[service.OpenAIAdsPowerBindingExtraKey])
-		if binding == nil || binding.EnvironmentKey != strings.TrimSpace(environmentKey) || strings.TrimSpace(executionNodeID) != strings.TrimSpace(environmentKey) ||
+		if binding == nil || binding.DeviceID != strings.TrimSpace(deviceID) || binding.EnvironmentKey != strings.TrimSpace(environmentKey) || binding.ProfileID != strings.TrimSpace(profileID) ||
 			account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeOAuth || account.ParentAccountID != nil ||
 			!service.OpenAIAdsPowerBindingExplicitlyBlockedWithCodes(account, binding, allowed) {
 			return nil, false, nil
@@ -160,9 +154,8 @@ func (r *accountRepository) ReleaseOpenAIAdsPowerProfileBindings(ctx context.Con
 		WHERE id = ANY($2) AND deleted_at IS NULL
 		  AND BTRIM(COALESCE(extra -> $1 ->> 'device_id', '')) = $3
 		  AND BTRIM(COALESCE(extra -> $1 ->> 'environment_key', '')) = $4
-		  AND BTRIM(COALESCE(extra -> $1 ->> 'profile_id', '')) = $5
-		  AND COALESCE(NULLIF(BTRIM(extra ->> $6), ''), $4) = $4`,
-		service.OpenAIAdsPowerBindingExtraKey, pq.Array(ids), strings.TrimSpace(deviceID), strings.TrimSpace(environmentKey), strings.TrimSpace(profileID), service.AccountExecutionNodeExtraKey,
+		  AND BTRIM(COALESCE(extra -> $1 ->> 'profile_id', '')) = $5`,
+		service.OpenAIAdsPowerBindingExtraKey, pq.Array(ids), strings.TrimSpace(deviceID), strings.TrimSpace(environmentKey), strings.TrimSpace(profileID),
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("clear AdsPower bindings: %w", err)

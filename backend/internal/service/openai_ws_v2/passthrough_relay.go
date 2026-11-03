@@ -33,6 +33,7 @@ type RelayResult struct {
 	RequestModel            string
 	ResponseModel           string
 	ResponseModelConflict   bool
+	ResponseServiceTier     string
 	Usage                   Usage
 	RequestID               string
 	TerminalEventType       string
@@ -47,6 +48,7 @@ type RelayTurnResult struct {
 	RequestModel          string
 	ResponseModel         string
 	ResponseModelConflict bool
+	ResponseServiceTier   string
 	Usage                 Usage
 	RequestID             string
 	TerminalEventType     string
@@ -90,16 +92,17 @@ type RelayTraceEvent struct {
 }
 
 type relayState struct {
-	usage             Usage
-	requestModelMu    sync.RWMutex
-	requestModel      string
-	lastResponseID    string
-	lastResponseModel string
-	responseConflict  bool
-	terminalEventType string
-	firstTokenMs      *int
-	turnTimingByID    map[string]*relayTurnTiming
-	activeTurn        *relayTurnTiming
+	usage                   Usage
+	requestModelMu          sync.RWMutex
+	requestModel            string
+	lastResponseID          string
+	lastResponseModel       string
+	lastResponseServiceTier string
+	responseConflict        bool
+	terminalEventType       string
+	firstTokenMs            *int
+	turnTimingByID          map[string]*relayTurnTiming
+	activeTurn              *relayTurnTiming
 }
 
 type relayExitSignal struct {
@@ -110,14 +113,15 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal         bool
-	eventType        string
-	responseID       string
-	usage            Usage
-	responseModel    string
-	responseConflict bool
-	duration         time.Duration
-	firstToken       *int
+	terminal            bool
+	eventType           string
+	responseID          string
+	usage               Usage
+	responseModel       string
+	responseServiceTier string
+	responseConflict    bool
+	duration            time.Duration
+	firstToken          *int
 }
 
 type relayTurnTiming struct {
@@ -720,8 +724,19 @@ func observeUpstreamMessage(
 	}
 	observed.terminal = true
 	state.terminalEventType = eventType
+	// Like the HTTP observer, trust only a terminal response envelope with
+	// an explicit model. Never carry a previous turn's tier into a missing one.
+	if gjson.ValidBytes(message) && firstRelayResponseModel(message) != "" {
+		for _, value := range gjson.GetManyBytes(message, "response.service_tier", "service_tier") {
+			if value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
+				observed.responseServiceTier = strings.TrimSpace(value.String())
+				break
+			}
+		}
+	}
 	if responseID != "" {
 		state.lastResponseID = responseID
+		state.lastResponseServiceTier = observed.responseServiceTier
 		if turnTiming, ok := openAIWSRelayDeleteTurnTiming(state, responseID); ok {
 			observed.responseModel = relayTurnResponseModel(&turnTiming)
 			observed.responseConflict = turnTiming.responseModelConflict
@@ -758,6 +773,7 @@ func emitTurnComplete(
 		RequestModel:          requestModel,
 		ResponseModel:         observed.responseModel,
 		ResponseModelConflict: observed.responseConflict,
+		ResponseServiceTier:   observed.responseServiceTier,
 		Usage:                 observed.usage,
 		RequestID:             responseID,
 		TerminalEventType:     observed.eventType,
@@ -977,6 +993,7 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.RequestModel = state.currentRequestModel()
 	result.ResponseModel = state.lastResponseModel
 	result.ResponseModelConflict = state.responseConflict
+	result.ResponseServiceTier = state.lastResponseServiceTier
 	result.Usage = state.usage
 	result.RequestID = state.lastResponseID
 	result.TerminalEventType = state.terminalEventType

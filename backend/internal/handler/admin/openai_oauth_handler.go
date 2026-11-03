@@ -55,7 +55,7 @@ func (h *OpenAIOAuthHandler) ConfigureTokenCacheInvalidator(invalidator service.
 }
 
 // ConfigureTeamChildSharedSettings attaches the database-backed configuration
-// store shared by paired execution nodes. Provider credentials remain encrypted
+// store for Team child workflows. Provider credentials remain encrypted
 // and are never returned by an admin status endpoint.
 func (h *OpenAIOAuthHandler) ConfigureTeamChildSharedSettings(settingRepo service.SettingRepository) {
 	if h != nil {
@@ -402,10 +402,6 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -794,10 +790,6 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if h.quotaService == nil {
 		response.BadRequest(c, "openai quota service is not enabled")
 		return
@@ -857,10 +849,6 @@ func (h *OpenAIOAuthHandler) CreateShadow(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, parentID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	var req CreateShadowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -888,10 +876,6 @@ func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if h.quotaService == nil {
@@ -989,10 +973,6 @@ func (h *OpenAIOAuthHandler) ReconcileReset(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.adminService, accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if h.quotaService == nil {

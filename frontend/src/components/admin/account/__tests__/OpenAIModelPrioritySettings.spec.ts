@@ -63,7 +63,7 @@ const VueDraggableStub = {
 function account(id: number, name: string, plan: string, groupIDs: number[], status = 'active', priority = id) {
   return {
     id, name, platform: 'openai', type: 'oauth', credentials: { email: `${name}@example.com`, plan_type: plan },
-    extra: {}, group_ids: groupIDs, execution_node_id: 'api', concurrency: 3, priority,
+    extra: {}, group_ids: groupIDs, concurrency: 3, priority,
     status, schedulable: true, error_message: null, last_used_at: null, expires_at: null,
     auto_pause_on_expired: false, created_at: '', updated_at: '', proxy_id: null,
     rate_limited_at: null, rate_limit_reset_at: null, overload_until: null,

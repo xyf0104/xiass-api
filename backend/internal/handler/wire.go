@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/redisclient"
@@ -213,6 +215,7 @@ func ProvideOpenAIOAuthHandler(
 	pixlabSMSService *service.PixlabSMSService,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 	auditLogService *service.AuditLogService,
+	accountUsageService *service.AccountUsageService,
 ) *admin.OpenAIOAuthHandler {
 	h := admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
 	h.ConfigureTeamChildSessionStore(redisClient)
@@ -221,6 +224,10 @@ func ProvideOpenAIOAuthHandler(
 	h.ConfigureBatchOAuthSMS(pixlabSMSService)
 	h.ConfigureTokenCacheInvalidator(tokenCacheInvalidator)
 	h.ConfigureReauthorizationAuditReader(auditLogService)
+	rateLimitService.SetOpenAIUnauthorizedHandler(h.HandleOpenAIUnauthorizedEvent)
+	quotaService.SetOpenAIUnauthorizedHandler(h.HandleOpenAIUnauthorizedEvent)
+	accountUsageService.SetOpenAIUnauthorizedHandler(h.HandleOpenAIUnauthorizedEvent)
+	h.StartOpenAIReauthorizationAutoWorker(context.Background())
 	return h
 }
 
@@ -246,32 +253,30 @@ func ProvideHandlers(
 	smsReceiverHandler *SMSReceiverHandler,
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
-	executionNodePairingHandler *ExecutionNodePairingHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
 	return &Handlers{
-		Auth:                 authHandler,
-		User:                 userHandler,
-		APIKey:               apiKeyHandler,
-		Usage:                usageHandler,
-		Redeem:               redeemHandler,
-		Subscription:         subscriptionHandler,
-		Announcement:         announcementHandler,
-		ChannelMonitor:       channelMonitorUserHandler,
-		Admin:                adminHandlers,
-		Gateway:              gatewayHandler,
-		OpenAIGateway:        openaiGatewayHandler,
-		Setting:              settingHandler,
-		Totp:                 totpHandler,
-		Passkey:              passkeyHandler,
-		Payment:              paymentHandler,
-		PaymentWebhook:       paymentWebhookHandler,
-		AvailableChannel:     availableChannelHandler,
-		SMSReceiver:          smsReceiverHandler,
-		AsyncImage:           asyncImageHandler,
-		BatchImage:           batchImageHandler,
-		ExecutionNodePairing: executionNodePairingHandler,
+		Auth:             authHandler,
+		User:             userHandler,
+		APIKey:           apiKeyHandler,
+		Usage:            usageHandler,
+		Redeem:           redeemHandler,
+		Subscription:     subscriptionHandler,
+		Announcement:     announcementHandler,
+		ChannelMonitor:   channelMonitorUserHandler,
+		Admin:            adminHandlers,
+		Gateway:          gatewayHandler,
+		OpenAIGateway:    openaiGatewayHandler,
+		Setting:          settingHandler,
+		Totp:             totpHandler,
+		Passkey:          passkeyHandler,
+		Payment:          paymentHandler,
+		PaymentWebhook:   paymentWebhookHandler,
+		AvailableChannel: availableChannelHandler,
+		SMSReceiver:      smsReceiverHandler,
+		AsyncImage:       asyncImageHandler,
+		BatchImage:       batchImageHandler,
 	}
 }
 
@@ -297,7 +302,6 @@ var ProviderSet = wire.NewSet(
 	NewSMSReceiverHandler,
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
-	NewExecutionNodePairingHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

@@ -61,7 +61,7 @@ func weeklyStatePGRepo() service.OpenAIWeeklyStateRepository {
 func TestOpenAIWeeklyStateCASPGMergesOnlyStateWithoutSideEffects(t *testing.T) {
 	ctx := context.Background()
 	extra := weeklyStatePGExtra()
-	extra[service.AccountExecutionNodeExtraKey] = "test-owner-node"
+	extra["xiass_execution_node_id"] = "test-owner-node"
 	extra["codex_fingerprint_seed"] = "d4e2adab-8dd6-4af5-b2cb-6d74a68d781e"
 	extra["codex_fingerprint_mode"] = "device"
 	extra["unrelated"] = map[string]any{"nested": "keep"}
@@ -276,7 +276,7 @@ func TestOpenAIWeeklyStateCASPGRejectsMalformedPatchesAndWrongAccounts(t *testin
 		{openAIWeeklyStateBaselineKey: json.RawMessage(`not-json`)},
 		{openAIWeeklyStateEpochKey: math.NaN()},
 		{openAIWeeklyStateEpochKey: "new", "credentials": map[string]any{"access_token": "forbidden"}},
-		{service.AccountExecutionNodeExtraKey: "forbidden"},
+		{"xiass_execution_node_id": "forbidden"},
 		{"codex_fingerprint_seed": "forbidden"},
 		{openAIWeeklyStateUsageUpdatedKey: "forbidden"},
 	} {

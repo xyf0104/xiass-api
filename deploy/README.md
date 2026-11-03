@@ -36,7 +36,6 @@ curl -fsSL https://raw.githubusercontent.com/xyf0104/xiass-api/main/install.sh |
 | `docker-compose.build.yml` | 本机源码构建覆盖配置 |
 | `.env.example` | 环境变量模板，不含真实密钥 |
 | `TEAM_CHILD_BROWSER_SETUP.md` | Team 子号创建、临时邮箱和服务器 Chromium 的完整部署与使用教程 |
-| `MULTI_NODE.md` | 多节点共享状态、固定账号出口、权重调度与无中断接入说明 |
 | `config.example.yaml` | 高级配置模板 |
 | `Caddyfile` | HTTPS 反向代理示例 |
 | `install.sh` | 二进制/systemd 安装器，需自备 PostgreSQL/Redis |

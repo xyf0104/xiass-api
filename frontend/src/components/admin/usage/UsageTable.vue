@@ -52,23 +52,10 @@
           <div class="flex min-w-0 flex-col">
             <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
             <div
-              v-if="(showExecutionNode && accountExecutionNodeID(row)) || accountPool(row)"
+              v-if="accountPool(row)"
               data-testid="account-affiliation-badges"
               class="mt-1 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden"
             >
-              <span
-                v-if="showExecutionNode && accountExecutionNodeID(row)"
-                :class="[
-                  'inline-flex w-fit shrink-0 items-center gap-0.5 whitespace-nowrap rounded px-1 py-px text-[11px] font-medium leading-4',
-                  accountExecutionNodeID(row) === executionNodeLocalId
-                    ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-                    : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70'
-                ]"
-                :title="t('admin.accounts.columns.executionNodeHint')"
-              >
-                <Icon name="server" size="xs" class="shrink-0" :stroke-width="2" />
-                <span>{{ accountExecutionNodeID(row) === executionNodeLocalId ? t('admin.accounts.executionNodeLocal') : accountExecutionNodeID(row) }}</span>
-              </span>
               <AccountPoolBadge
                 v-if="accountPool(row)"
                 class="min-w-0 shrink whitespace-nowrap"
@@ -646,9 +633,6 @@ interface Props {
   showUpstreamEndpoint?: boolean
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
-  showExecutionNode?: boolean
-  executionNodeLocalId?: string
-  executionNodeLegacyId?: string
   accountPoolLookup?: AccountPoolLookup
 }
 
@@ -660,9 +644,6 @@ const props = withDefaults(defineProps<Props>(), {
   showAccountBilling: true,
   showUpstreamEndpoint: true,
 	flat: false,
-  showExecutionNode: false,
-  executionNodeLocalId: 'api',
-  executionNodeLegacyId: 'api',
   accountPoolLookup: () => ({})
 })
 const emit = defineEmits<{
@@ -674,7 +655,6 @@ const { t } = useI18n()
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
-const accountExecutionNodeID = (row: AdminUsageLog): string => row.account?.execution_node_id?.trim() || props.executionNodeLegacyId
 const accountPool = (row: AdminUsageLog): AccountPool | undefined => row.account_id ? props.accountPoolLookup[String(row.account_id)] : undefined
 
 interface AccountEgressPresentation {
@@ -706,7 +686,6 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
   }
 
   const ipAddress = snapshotText(egress.ip_address)
-  const executionNode = snapshotText(egress.execution_node_id)
   const publicIp = ipAddress || t('admin.usage.egressIpUnprobed')
   const titleLines = [
     egressTitleLine(
@@ -717,9 +696,6 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
   ]
 
   if (egress.route === 'direct') {
-    if (executionNode) {
-      titleLines.push(egressTitleLine('admin.usage.egressExecutionNode', executionNode))
-    }
     titleLines.push(...egressProbeTitle(egress))
     return {
       display: [t('admin.usage.egressDirect'), ipAddress].filter(Boolean).join(' · '),
@@ -734,17 +710,13 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
     ? `${t('admin.usage.egressProxy')} #${egress.proxy_id}`
     : t('admin.usage.egressProxy')
   const proxyReference = proxyName || proxyAddress || proxyFallback
-  const helper = proxyName || executionNode
-  const displayParts = ipAddress ? [ipAddress, helper] : [proxyReference, executionNode]
+  const displayParts = ipAddress ? [ipAddress, proxyName || proxyReference] : [proxyReference]
 
   if (proxyName) {
     titleLines.push(egressTitleLine('admin.usage.egressProxyName', proxyName))
   }
   if (proxyAddress) {
     titleLines.push(egressTitleLine('admin.usage.egressProxyAddress', proxyAddress))
-  }
-  if (executionNode) {
-    titleLines.push(egressTitleLine('admin.usage.egressExecutionNode', executionNode))
   }
   titleLines.push(...egressProbeTitle(egress))
 

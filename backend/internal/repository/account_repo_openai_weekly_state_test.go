@@ -96,7 +96,7 @@ func TestOpenAIWeeklyStateCASRejectsInvalidInputBeforeSQL(t *testing.T) {
 	require.False(t, applied)
 	require.ErrorIs(t, err, service.ErrOpenAIWeeklyStateInvalidInput)
 	for _, key := range []string{"credentials", "access_token", "refresh_token", "proxy_id", "platform", "type",
-		service.AccountExecutionNodeExtraKey, "codex_fingerprint_seed", "codex_fingerprint_mode", openAIWeeklyStateUsageUpdatedKey,
+		"xiass_execution_node_id", "codex_fingerprint_seed", "codex_fingerprint_mode", openAIWeeklyStateUsageUpdatedKey,
 		"codex_7d_used_percent", "codex_7d_estimate_baseline.nested", "arbitrary"} {
 		applied, err := repo.CompareAndSwapOpenAIWeeklyState(context.Background(), weeklyStateUnitAccount(),
 			map[string]any{openAIWeeklyStateBaselineKey: nil, key: "forbidden"})

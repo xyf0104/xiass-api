@@ -250,6 +250,24 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
 
+	if err == nil && billingAccount != nil && billingAccount.IsOpenAI() &&
+		apiKey.Group != nil && apiKey.Group.FreeOpenAIFast && groupSupportsOpenAIFast(apiKey.Group.Platform) &&
+		(normalizeBillingServiceTier(serviceTier) == "priority" || normalizeBillingServiceTier(serviceTier) == "fast" ||
+			normalizeBillingServiceTier(serviceTier) == OpenAIFastTierUltrafast) {
+		// Reuse final prices, context tiers and reasoning policy, changing only
+		// the user's Fast premium. Raw costs and account-statistics inputs stay intact.
+		standardCost, standardErr := s.calculateOpenAIRecordUsageCost(
+			ctx, result, apiKey, billingModels, multiplier, imageMultiplier, videoMultiplier,
+			baseMultiplier, tokens, "", longContextBillingEnabled,
+		)
+		if standardErr != nil {
+			return fmt.Errorf("calculate free OpenAI Fast user cost: %w", standardErr)
+		}
+		if standardCost.ActualCost < cost.ActualCost {
+			cost.ActualCost = standardCost.ActualCost
+		}
+	}
+
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	billingType := BillingTypeBalance

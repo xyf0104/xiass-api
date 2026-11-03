@@ -43,7 +43,7 @@
           </button>
         </form>
         <div class="min-w-0">
-          <span id="account-pool-proxy-label" class="input-label">号池代理节点</span>
+          <span id="account-pool-proxy-label" class="input-label">号池代理</span>
           <ProxySelector
             :model-value="currentPool ? currentPool.proxy_id : draftProxy" :proxies="proxies"
             :disabled="locked" aria-labelledby="account-pool-proxy-label" @update:model-value="changeProxy"
@@ -58,7 +58,7 @@
               <label class="flex items-center gap-1.5"><input v-model="scope" type="radio" value="all" name="account-pool-scope" />全部账号</label>
               <label class="flex items-center gap-1.5"><input v-model="scope" type="radio" value="pool" name="account-pool-scope" />当前号池</label>
             </div>
-            <input v-model="search" type="search" class="input min-w-0 flex-1 basis-48" aria-label="搜索账号、节点或号池" placeholder="搜索账号、节点或号池" data-testid="pool-search" />
+            <input v-model="search" type="search" class="input min-w-0 flex-1 basis-48" aria-label="搜索账号、代理或号池" placeholder="搜索账号、代理或号池" data-testid="pool-search" />
           </div>
           <div class="flex flex-wrap items-center justify-between gap-2">
             <label class="flex items-center gap-2">
@@ -77,7 +77,6 @@
               <input type="checkbox" class="mt-1 shrink-0" :checked="selected.has(account.id)" :disabled="!!selectionDisabledReason(account)" :aria-label="`选择账号 ${account.name}`" @change="toggleAccount(account.id)" />
               <span class="grid min-w-0 flex-1 gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:gap-x-4">
                 <span class="min-w-0 break-all font-medium">{{ account.name }} <span class="font-normal text-gray-500 dark:text-gray-400">#{{ account.id }}</span></span>
-                <span class="min-w-0 break-all text-gray-600 dark:text-gray-300">所属服务器：{{ account.execution_node_id?.trim() || '本机' }}</span>
                 <span class="min-w-0 break-words text-xs text-gray-500 dark:text-gray-400">{{ account.platform }} · {{ planName(account) }}</span>
                 <span class="min-w-0 break-all text-xs" :class="membership.get(account.id)?.id === poolId ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'">号池：{{ membership.get(account.id)?.name || '未分配' }}</span>
                 <span class="min-w-0 break-all text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">代理出口：{{ formatProxyDisplayName(proxyName(account.proxy_id)) }}</span>
@@ -157,7 +156,7 @@ const visibleAccounts = computed(() => {
   const query = search.value.trim().toLowerCase()
   return accounts.value.filter(account => {
     if (scope.value === 'pool' && membership.value.get(account.id)?.id !== poolId.value) return false
-    return !query || [account.id, account.name, account.platform, planName(account), proxyName(account.proxy_id), account.execution_node_id, membership.value.get(account.id)?.name]
+    return !query || [account.id, account.name, account.platform, planName(account), proxyName(account.proxy_id), membership.value.get(account.id)?.name]
       .join(' ').toLowerCase().includes(query)
   })
 })

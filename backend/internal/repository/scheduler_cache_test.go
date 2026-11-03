@@ -37,7 +37,7 @@ func TestSchedulerMetadataAccountKeepsOpenAISubscriptionIdentity(t *testing.T) {
 	require.Empty(t, metadata.GetCredential("access_token"))
 }
 
-func TestSchedulerMetadataAccountKeepsExecutionNodeOwnership(t *testing.T) {
+func TestSchedulerMetadataAccountKeepsProxyWithoutRetiredOwnership(t *testing.T) {
 	proxyID := int64(204)
 	account := service.Account{
 		ID:       25,
@@ -46,16 +46,16 @@ func TestSchedulerMetadataAccountKeepsExecutionNodeOwnership(t *testing.T) {
 		ProxyID:  &proxyID,
 		Proxy:    &service.Proxy{ID: proxyID, Status: service.StatusActive},
 		Extra: map[string]any{
-			service.AccountExecutionNodeExtraKey:  "api2",
-			service.AccountExecutionProxyExtraKey: "99",
-			"unused_large_field":                  "drop-me",
+			"xiass_execution_node_id":  "api2",
+			"xiass_execution_proxy_id": "99",
+			"unused_large_field":       "drop-me",
 		},
 	}
 
 	metadata := buildSchedulerMetadataAccount(account)
 
-	require.Equal(t, "api2", metadata.ExecutionNodeID("api"))
-	require.Equal(t, "99", metadata.Extra[service.AccountExecutionProxyExtraKey])
+	require.NotContains(t, metadata.Extra, "xiass_execution_node_id")
+	require.NotContains(t, metadata.Extra, "xiass_execution_proxy_id")
 	require.NotNil(t, metadata.ProxyID)
 	require.Equal(t, proxyID, *metadata.ProxyID)
 	require.NotNil(t, metadata.Proxy)

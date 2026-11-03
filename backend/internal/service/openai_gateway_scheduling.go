@@ -31,8 +31,6 @@ const (
 
 var openaiGrokFreeQuotaGateCache sync.Map
 
-var errOpenAIExecutionNodeEgressUnavailable = errors.New("execution node fixed egress unavailable")
-
 var explicitOpenAIHeaderSessionNames = []string{
 	"session-id",
 	"session_id",
@@ -862,11 +860,6 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if len(eligible) == 0 {
 		return nil, compactBlocked
 	}
-	executionNodePolicy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	eligible = filterExecutionNodeCandidates(eligible, func(account *Account) *Account { return account }, executionNodePolicy)
-	if len(eligible) == 0 {
-		return nil, compactBlocked
-	}
 	preference := s.resolveOpenAIModelRoutingPreference(ctx, groupID, platform, requestedModel)
 	eligible = partitionOpenAIModelPreferenceTiers(eligible, func(account *Account) *Account { return account }, preference)[0]
 	eligible = partitionOpenAIAccountsByPriority(eligible)[0]
@@ -887,12 +880,6 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		}
 		return s.isBetterAccount(a, b)
 	})
-	eligible = orderExecutionNodeCandidates(
-		eligible,
-		func(account *Account) *Account { return account },
-		executionNodePolicy,
-		executionNodeSelectionAnchor(sessionHash),
-	)
 	return eligible[0], compactBlocked
 }
 
@@ -1093,7 +1080,6 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		parentCacheL2[id] = a
 		return a
 	}
-	executionNodePolicy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
 	baseCandidateCount := 0
 	candidates := make([]*Account, 0, len(accounts))
 	for i := range accounts {
@@ -1114,9 +1100,6 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact) {
-			continue
-		}
-		if !executionNodeCandidateAllowed(executionNodePolicy, acc) {
 			continue
 		}
 		baseCandidateCount++
@@ -1210,12 +1193,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				return openAICompactSupportTier(selectionOrder[i].account) > openAICompactSupportTier(selectionOrder[j].account)
 			})
 		}
-		selectionOrder = orderOpenAIExecutionNodeCandidatesByModelPreference(
+		selectionOrder = orderOpenAIAccountCandidatesByModelPreference(
 			selectionOrder,
 			func(item accountWithLoad) *Account { return item.account },
 			preference,
-			executionNodePolicy,
-			executionNodeSelectionAnchor(sessionHash),
 		)
 
 		for _, item := range selectionOrder {
@@ -1271,12 +1252,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				return openAICompactSupportTier(ordered[i]) > openAICompactSupportTier(ordered[j])
 			})
 		}
-		ordered = orderOpenAIExecutionNodeCandidatesByModelPreference(
+		ordered = orderOpenAIAccountCandidatesByModelPreference(
 			ordered,
 			func(account *Account) *Account { return account },
 			preference,
-			executionNodePolicy,
-			executionNodeSelectionAnchor(sessionHash),
 		)
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
@@ -1342,12 +1321,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			return openAICompactSupportTier(candidates[i]) > openAICompactSupportTier(candidates[j])
 		})
 	}
-	candidates = orderOpenAIExecutionNodeCandidatesByModelPreference(
+	candidates = orderOpenAIAccountCandidatesByModelPreference(
 		candidates,
 		func(account *Account) *Account { return account },
 		preference,
-		executionNodePolicy,
-		executionNodeSelectionAnchor(sessionHash),
 	)
 	for _, acc := range candidates {
 		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
@@ -1574,11 +1551,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		return nil
 	}
 	platform = normalizeOpenAICompatiblePlatform(platform)
-	executionNodePolicy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
 	if s.schedulerSnapshot == nil || s.accountRepo == nil {
-		if !executionNodePolicy.hydratedAccountEgressAllowed(account) {
-			return nil
-		}
 		if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !account.IsPrivacySet() {
 			return nil
 		}
@@ -1599,9 +1572,6 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 
 	latest, err := s.accountRepo.GetByID(ctx, account.ID)
 	if err != nil || latest == nil {
-		return nil
-	}
-	if !executionNodePolicy.hydratedAccountEgressAllowed(latest) {
 		return nil
 	}
 	if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
@@ -1647,10 +1617,6 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	}
 	if err != nil || account == nil {
 		return account, err
-	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(account) {
-		return nil, errOpenAIExecutionNodeEgressUnavailable
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
@@ -1707,10 +1673,6 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 			return nil, fmt.Errorf("selected openai account %d not found during hydration", account.ID)
 		}
 	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(hydrated) {
-		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
-	}
 	return hydrated, nil
 }
 
@@ -1728,10 +1690,6 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 func (s *OpenAIGatewayService) newSelectionResultFromAccount(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
 	if account == nil {
 		return nil, nil
-	}
-	policy := resolveExecutionNodeRoutingPolicy(ctx, s.cfg, s.settingService)
-	if !policy.hydratedAccountEgressAllowed(account) {
-		return nil, fmt.Errorf("%w: execution node egress unavailable for account %d", ErrNoAvailableAccounts, account.ID)
 	}
 	if acquired && s.concurrencyService != nil {
 		var err error

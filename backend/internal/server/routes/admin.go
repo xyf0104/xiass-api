@@ -24,7 +24,6 @@ func RegisterAdminRoutes(
 
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
-	admin.Use(middleware.ExecutionNodeReadContext(settingService))
 	// 面板全局按用户限流（默认管理员豁免，可在系统设置中关闭豁免）
 	admin.Use(panelRateLimiter.Global())
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
@@ -208,7 +207,6 @@ func registerContentModerationRoutes(admin *gin.RouterGroup, h *handler.Handlers
 
 func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
 	apiKeys := admin.Group("/api-keys")
-	apiKeys.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
 	}
@@ -325,7 +323,6 @@ func registerDashboardRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
 	users := admin.Group("/users")
-	users.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 	{
 		users.GET("", h.Admin.User.List)
 		users.GET("/:id", h.Admin.User.GetByID)
@@ -353,7 +350,6 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 
 func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
 	groups := admin.Group("/groups")
-	groups.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 	{
 		groups.GET("", h.Admin.Group.List)
 		groups.GET("/all", h.Admin.Group.GetAll)
@@ -663,21 +659,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, setting
 	adminSettings := admin.Group("/settings")
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
-		// UpdateSettings applies a field-level guard so either paired machine can
-		// change only shared execution-node weights while secondary nodes remain
-		// unable to mutate unrelated business settings.
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
-		adminSettings.GET("/execution-nodes/status", h.Admin.Setting.GetExecutionNodeStatus)
-		adminSettings.POST("/execution-nodes/runtime/initialize", h.Admin.Setting.InitializeExecutionNodeRuntime)
 
-		adminSettings.GET("/execution-nodes/pairing", h.Admin.Setting.GetExecutionNodePairingStatus)
-		adminSettings.POST("/execution-nodes/pairing/invite", h.Admin.Setting.GenerateExecutionNodePairingInvite)
-		adminSettings.POST("/execution-nodes/pairing/join", h.Admin.Setting.PairExecutionNode)
-		adminSettings.POST("/execution-nodes/pairing/unpair", h.Admin.Setting.UnpairExecutionNode)
-		// All remaining mutating settings endpoints own shared business state.
-		// Reads still pass through this guard; a secondary becomes writable only
-		// after verified shared-state pairing.
-		adminSettings.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)
@@ -891,7 +874,6 @@ func registerTLSFingerprintProfileRoutes(admin *gin.RouterGroup, h *handler.Hand
 
 func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
 	channels := admin.Group("/channels")
-	channels.Use(middleware.ExecutionNodeSharedWriteGuard(settingService))
 	{
 		channels.GET("", h.Admin.Channel.List)
 		channels.GET("/model-pricing", h.Admin.Channel.GetModelDefaultPricing)

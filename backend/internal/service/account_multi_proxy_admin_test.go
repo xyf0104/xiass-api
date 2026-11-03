@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,35 +79,23 @@ func TestValidateAccountProxyBindingsPreservesOnlyExistingUnavailableBindings(t 
 	require.ErrorContains(t, err, "does not exist")
 }
 
-func TestDuplicateMultiProxyAccountKeepsManagedExecutionProxy(t *testing.T) {
+func TestDuplicateMultiProxyAccountKeepsBindingsAndActiveCapacity(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateAccountRepoStub()
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:                true,
-		ID:                     "api2",
-		LegacyUnassignedNodeID: "api",
-		DefaultProxyID:         83,
-	}
-	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
-		SettingKeyExecutionNodeBalancingEnabled: "true",
-		SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
-		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
-	}}, cfg)
 	bindings := []AccountProxyBindingInput{
 		{ProxyID: 10, MaxConcurrency: 2},
 		{ProxyID: 11, MaxConcurrency: 3},
 	}
-	managedProxyID := int64(83)
+	selectedProxyID := int64(10)
 	source := &Account{
 		Name:        "source",
 		Platform:    PlatformAnthropic,
 		Type:        AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "secret"},
-		ProxyID:     &managedProxyID,
+		ProxyID:     &selectedProxyID,
 		Concurrency: 5,
 		Extra: setAccountProxyBindingsExtra(map[string]any{
-			AccountExecutionNodeExtraKey: "api2",
+			"custom": "preserved",
 		}, bindings),
 	}
 	require.NoError(t, repo.Create(ctx, source))
@@ -119,20 +106,19 @@ func TestDuplicateMultiProxyAccountKeepsManagedExecutionProxy(t *testing.T) {
 			{ID: 10, Status: StatusDisabled},
 			{ID: 11, Status: StatusActive},
 		}},
-		settingService: settings,
 	}
 
 	duplicate, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, duplicate.ProxyID)
-	require.Equal(t, managedProxyID, *duplicate.ProxyID)
-	require.Equal(t, "api2", duplicate.Extra[AccountExecutionNodeExtraKey])
+	require.Equal(t, selectedProxyID, *duplicate.ProxyID)
+	require.Equal(t, "preserved", duplicate.Extra["custom"])
 	require.Equal(t, 3, duplicate.Concurrency, "inactive bindings stay configured but contribute no runtime capacity")
 	require.Equal(t, bindings, AccountProxyBindingInputsFromExtra(duplicate.Extra))
 }
 
-func TestExecutionNodeCreateAndUpdateKeepManagedProxyWithMultiProxy(t *testing.T) {
+func TestCreateAndUpdateMultiProxyAccountUsesConfiguredBindings(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateAccountRepoStub()
 	proxyRepo := &accountMultiProxyRepoStub{proxies: []Proxy{
@@ -140,23 +126,9 @@ func TestExecutionNodeCreateAndUpdateKeepManagedProxyWithMultiProxy(t *testing.T
 		{ID: 11, Status: StatusActive},
 		{ID: 12, Status: StatusDisabled},
 	}}
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode = config.GatewayExecutionNodeConfig{
-		Enabled:                true,
-		ID:                     "api2",
-		LegacyUnassignedNodeID: "api",
-		DefaultProxyID:         83,
-	}
-	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
-		SettingKeyExecutionNodeBalancingEnabled: "true",
-		SettingKeyExecutionNodeWeights:          `{"api":9,"api2":1}`,
-		SettingKeyExecutionNodeProxyIDs:         `{"api":84,"api2":83}`,
-	}}, cfg)
 	svc := &adminServiceImpl{
-		accountRepo:    repo,
-		groupRepo:      &executionProxyGroupRepoStub{},
-		proxyRepo:      proxyRepo,
-		settingService: settings,
+		accountRepo: repo,
+		proxyRepo:   proxyRepo,
 	}
 	bindings := []AccountProxyBindingInput{
 		{ProxyID: 11, MaxConcurrency: 3},
@@ -173,7 +145,8 @@ func TestExecutionNodeCreateAndUpdateKeepManagedProxyWithMultiProxy(t *testing.T
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.ProxyID)
-	require.Equal(t, int64(83), *created.ProxyID)
+	require.Equal(t, int64(10), *created.ProxyID)
+	require.Equal(t, 5, created.Concurrency)
 	require.Equal(t, []AccountProxyBindingInput{
 		{ProxyID: 10, MaxConcurrency: 2},
 		{ProxyID: 11, MaxConcurrency: 3},
@@ -187,12 +160,31 @@ func TestExecutionNodeCreateAndUpdateKeepManagedProxyWithMultiProxy(t *testing.T
 	updated, err := svc.UpdateAccount(ctx, created.ID, &UpdateAccountInput{ProxyBindings: &preserved})
 	require.NoError(t, err)
 	require.NotNil(t, updated.ProxyID)
-	require.Equal(t, int64(83), *updated.ProxyID)
+	require.Equal(t, int64(10), *updated.ProxyID)
+	require.Equal(t, 7, updated.Concurrency, "the unhydrated repository stub retains configured capacity")
 	require.Equal(t, preserved, AccountProxyBindingInputsFromExtra(updated.Extra))
+	runtimeAccount := *updated
+	HydrateAccountProxyBindings(&runtimeAccount, map[int64]*Proxy{10: &proxyRepo.proxies[0], 11: &proxyRepo.proxies[1]})
+	require.Equal(t, 3, runtimeAccount.Concurrency, "disabled routes must not contribute runtime capacity")
+	require.Len(t, runtimeAccount.UsableProxyBindings(), 1)
+	require.Equal(t, int64(11), runtimeAccount.UsableProxyBindings()[0].ProxyID)
 
 	withNewInactive := append(append([]AccountProxyBindingInput(nil), preserved...), AccountProxyBindingInput{ProxyID: 12, MaxConcurrency: 1})
 	_, err = svc.UpdateAccount(ctx, created.ID, &UpdateAccountInput{ProxyBindings: &withNewInactive})
 	require.ErrorContains(t, err, "proxy 12 is inactive")
+
+	emptyBindings := []AccountProxyBindingInput{}
+	updated, err = svc.UpdateAccount(ctx, created.ID, &UpdateAccountInput{ProxyBindings: &emptyBindings, DirectEgress: true})
+	require.NoError(t, err)
+	require.Nil(t, updated.ProxyID)
+	require.Empty(t, AccountProxyBindingInputsFromExtra(updated.Extra))
+	require.Empty(t, updated.requestProxyURL())
+
+	selectedProxyID := int64(11)
+	updated, err = svc.UpdateAccount(ctx, created.ID, &UpdateAccountInput{ProxyID: &selectedProxyID})
+	require.NoError(t, err)
+	require.Equal(t, &selectedProxyID, updated.ProxyID)
+	require.Empty(t, AccountProxyBindingInputsFromExtra(updated.Extra))
 }
 
 func TestCreateAccountAllowsUnavailableBindingOnlyForTrustedRestore(t *testing.T) {
@@ -201,7 +193,6 @@ func TestCreateAccountAllowsUnavailableBindingOnlyForTrustedRestore(t *testing.T
 	bindings := []AccountProxyBindingInput{{ProxyID: 10, MaxConcurrency: 2}}
 	svc := &adminServiceImpl{
 		accountRepo: repo,
-		groupRepo:   &executionProxyGroupRepoStub{},
 		proxyRepo: &accountMultiProxyRepoStub{proxies: []Proxy{
 			{ID: 10, Status: StatusDisabled},
 		}},

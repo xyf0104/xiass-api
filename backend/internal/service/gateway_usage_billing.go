@@ -307,7 +307,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return true, nil
 	}
 
-	billingCtx, cancel := detachedUsageBillingRecoveryContext(ctx, deps.cfg)
+	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
 	result, attempts, err := retryUsageBillingWithUsageLog(billingCtx, repo, cmd, usageLog)
@@ -553,19 +553,6 @@ func detachedBillingContext(ctx context.Context) (context.Context, context.Cance
 		base = context.WithoutCancel(ctx)
 	}
 	return context.WithTimeout(base, postUsageBillingTimeout)
-}
-
-func detachedUsageBillingRecoveryContext(ctx context.Context, cfg *config.Config) (context.Context, context.CancelFunc) {
-	// Reuse the explicitly configured task budget for paired-node recovery.
-	// Ordinary installs retain the existing 15-second deadline.
-	if cfg == nil || !cfg.Gateway.ExecutionNode.Enabled || cfg.Gateway.UsageRecord.TaskTimeoutSeconds <= int(postUsageBillingTimeout/time.Second) {
-		return detachedBillingContext(ctx)
-	}
-	base := context.Background()
-	if ctx != nil {
-		base = context.WithoutCancel(ctx)
-	}
-	return context.WithTimeout(base, time.Duration(min(cfg.Gateway.UsageRecord.TaskTimeoutSeconds, 120))*time.Second)
 }
 
 func detachStreamUpstreamContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {

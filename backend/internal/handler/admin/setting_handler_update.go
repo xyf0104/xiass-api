@@ -239,9 +239,6 @@ type UpdateSettingsRequest struct {
 
 	// 分组隔离
 	AllowUngroupedKeyScheduling   bool               `json:"allow_ungrouped_key_scheduling"`
-	ExecutionNodeBalancingEnabled *bool              `json:"execution_node_balancing_enabled"`
-	ExecutionNodeWeights          map[string]float64 `json:"execution_node_weights"`
-	ExecutionNodeProxyIDs         map[string]int64   `json:"execution_node_proxy_ids"`
 
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
@@ -478,20 +475,6 @@ func omittedSettingKeys(sentFields map[string]json.RawMessage) service.OmittedSe
 	return omitted
 }
 
-func isExecutionNodeOnlySettingsUpdate(sentFields map[string]json.RawMessage) bool {
-	if len(sentFields) == 0 {
-		return false
-	}
-	for field := range sentFields {
-		switch field {
-		case "execution_node_balancing_enabled", "execution_node_weights", "execution_node_proxy_ids":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func settingsAuditRequest(req UpdateSettingsRequest) UpdateSettingsRequest {
 	req.TencentCaptchaAppSecretKey = strings.TrimSpace(req.TencentCaptchaAppSecretKey)
 	req.TencentCaptchaCloudSecretID = strings.TrimSpace(req.TencentCaptchaCloudSecretID)
@@ -513,13 +496,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	auditReq := settingsAuditRequest(req)
 	omitted := omittedSettingKeys(sentFields)
-	if !h.settingService.CanWriteSharedAdminState(c.Request.Context()) && !isExecutionNodeOnlySettingsUpdate(sentFields) {
-		response.ErrorWithDetails(c, http.StatusForbidden,
-			"This machine is read-only for shared configuration while the primary machine is online",
-			"EXECUTION_NODE_ADMIN_READ_ONLY", nil)
-		return
-	}
-
 	previousSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -1692,24 +1668,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MinClaudeCodeVersion:                   req.MinClaudeCodeVersion,
 		MaxClaudeCodeVersion:                   req.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling:            req.AllowUngroupedKeyScheduling,
-		ExecutionNodeBalancingEnabled: func() bool {
-			if req.ExecutionNodeBalancingEnabled != nil {
-				return *req.ExecutionNodeBalancingEnabled
-			}
-			return previousSettings.ExecutionNodeBalancingEnabled
-		}(),
-		ExecutionNodeWeights: func() map[string]float64 {
-			if req.ExecutionNodeWeights != nil {
-				return req.ExecutionNodeWeights
-			}
-			return previousSettings.ExecutionNodeWeights
-		}(),
-		ExecutionNodeProxyIDs: func() map[string]int64 {
-			if req.ExecutionNodeProxyIDs != nil {
-				return req.ExecutionNodeProxyIDs
-			}
-			return previousSettings.ExecutionNodeProxyIDs
-		}(),
 		BackendModeEnabled: req.BackendModeEnabled,
 		AllowUserViewErrorRequests: func() bool {
 			if req.AllowUserViewErrorRequests != nil {

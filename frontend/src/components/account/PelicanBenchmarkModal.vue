@@ -46,7 +46,6 @@
           <div v-for="account in sortedAccounts" :key="account.id" class="benchmark-row grid items-center gap-2 border-b border-gray-100 py-2 text-sm dark:border-dark-700" :data-testid="`account-${account.id}`">
             <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">
               <label class="flex items-center gap-2"><input v-model="selectedIds" type="checkbox" :value="account.id" :disabled="busy || loading || !ready || !canStart(account)" :data-testid="`select-${account.id}`"><span>{{ account.name }}</span></label>
-              <span :class="nodeClass(account.execution_node_id)" data-testid="node-badge">{{ nodeLabel(account.execution_node_id) }}</span>
             </div>
             <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
             <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
@@ -58,7 +57,7 @@
         <template v-else>
           <div v-for="run in rows" :key="tab === 'current' ? run.account_id : run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
             <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
-              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}<br><span :class="nodeClass(runOwner(run))" data-testid="node-badge">{{ nodeLabel(runOwner(run)) }}</span></div>
+              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}</div>
               <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
               <span class="run-status min-w-0 text-xs" :class="statusClass(run.status)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
               <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ run.model }}</span>
@@ -94,7 +93,6 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PelicanResultPreview from './PelicanResultPreview.vue'
-import { getStatus as getExecutionNodeStatus, type ExecutionNodeAdminStatus } from '@/api/admin/executionNodes'
 import {
   DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
   getPelicanModels, getPelicanResult, restartPelicanTest, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
@@ -111,7 +109,6 @@ const tab = ref<Tab>('new')
 const accounts = ref<PelicanBenchmarkAccount[]>([])
 const models = ref<Record<number, string>>({})
 const selectedIds = ref<number[]>([])
-const nodeStatus = ref<ExecutionNodeAdminStatus | null>(null)
 const filters = ref<{ current: '' | 'succeeded'; history: '' | 'succeeded' }>({ current: '', history: '' })
 const filterOptions = computed(() => [{ value: '', label: t(`${prefix}.allResults`) }, { value: 'succeeded', label: t(`${prefix}.passed`) }])
 const waitingForExit = ref(false)
@@ -144,22 +141,6 @@ const startable = computed(() => accounts.value.filter(canStart))
 const selectedStartable = computed(() => startable.value.filter(account => selectedIds.value.includes(account.id)))
 const allSelected = computed(() => startable.value.length > 0 && selectedStartable.value.length === startable.value.length)
 function selectAll(checked: boolean) { selectedIds.value = checked ? startable.value.map(account => account.id) : [] }
-function runOwner(run: PelicanBenchmarkRun) {
-  // Migrated history has an empty snapshot. Fall back only to a known account,
-  // never to a guessed default or remote node.
-  return run.execution_node_id?.trim() || accounts.value.find(account => account.id === run.account_id)?.execution_node_id
-}
-function isLocal(owner?: string) {
-  const id = owner?.trim()
-  return !!id && (id === nodeStatus.value?.runtime.node_id?.trim() || nodeStatus.value?.nodes.some(node => node.node_id === id && node.is_local) === true)
-}
-function nodeLabel(owner?: string) { return isLocal(owner) ? t('admin.accounts.executionNodeLocal') : owner?.trim() || '--' }
-function nodeClass(owner?: string) {
-  const base = 'mt-1 inline-flex max-w-full break-all rounded px-1.5 py-0.5 text-[11px] font-medium leading-4 '
-  return base + (!owner?.trim() ? 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400' : isLocal(owner)
-    ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-    : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-800/70')
-}
 const stoppable = computed(() => current.value.filter(active))
 function planRank(plan: string | null | undefined) {
   const normalized = plan?.toLowerCase().replace(/[\s_-]/g, '')
@@ -172,7 +153,7 @@ const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
 function errorLabel(code: string) {
   const http = /^upstream_http_(\d{3})$/.exec(code)
-  const known = ['account_unavailable', 'ineligible', 'free_plan', 'unknown_plan', 'unsupported_auth_mode', 'model_not_supported', 'fixed_egress_unavailable', 'upstream_failed', 'html_too_large', 'invalid_html', 'timeout', 'runner_interrupted', 'runner_panic', 'account_access_denied', 'account_not_found']
+  const known = ['account_unavailable', 'ineligible', 'free_plan', 'unknown_plan', 'unsupported_auth_mode', 'model_not_supported', 'upstream_failed', 'html_too_large', 'invalid_html', 'timeout', 'runner_interrupted', 'runner_panic', 'account_access_denied', 'account_not_found']
   const upstream = ['upstream_http_400', 'upstream_http_401', 'upstream_http_403', 'upstream_http_404', 'upstream_http_408', 'upstream_http_429', 'upstream_http_500', 'upstream_http_502', 'upstream_http_503', 'upstream_http_504', 'upstream_network_error', 'upstream_stream_error', 'upstream_incomplete']
   const continuation = ['upstream_client_upgrade_required', 'continuation_source_unavailable', 'invalid_continuation_source']
   const label = t(`${prefix}.errors.${known.includes(code) || upstream.includes(code) || continuation.includes(code) ? code : 'unknown'}`)
@@ -485,11 +466,6 @@ watch(() => props.show, show => {
   selectedIds.value = []
   filters.value = { current: '', history: '' }
   waitingForExit.value = false
-  nodeStatus.value = null
-  const ownSession = session
-  void getExecutionNodeStatus().then(status => {
-    if (ownSession === session && !controller.signal.aborted) nodeStatus.value = status
-  }).catch(() => { /* Unknown ownership remains explicit when status is unavailable. */ })
   loadedModels.clear()
   loadingModels.clear()
   notice.value = ''

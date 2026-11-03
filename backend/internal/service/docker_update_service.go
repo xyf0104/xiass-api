@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,28 +11,25 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	deploymentModeEnv           = "XIASS_DEPLOYMENT_MODE"
-	previousDeploymentModeEnv   = "NOWIND_DEPLOYMENT_MODE"
-	legacyDeploymentModeEnv     = "SUB2API_DEPLOYMENT_MODE"
-	watchtowerUpdateURL         = "http://watchtower:8080/v1/update"
-	watchtowerTokenEnv          = "XIASS_WATCHTOWER_TOKEN"
-	previousWatchtowerTokenEnv  = "NOWIND_WATCHTOWER_TOKEN"
-	legacyWatchtowerToken       = "sub2api-update-token"
-	dockerUpdateSocketPath      = "/var/run/docker.sock"
-	dockerUpdateAPIVersion      = "v1.40"
-	updaterImageEnv             = "XIASS_UPDATER_IMAGE"
-	defaultUpdaterImage         = "ghcr.io/xyf0104/xiass-updater:latest"
-	updaterContainerName        = "xiass-api-updater"
-	clusterJoinContainerName    = "xiass-api-cluster-join"
-	clusterRuntimeContainerName = "xiass-api-cluster-runtime"
-	updaterBackupDir            = "/root/xiass-backups"
-	teamChildBrowserEnabledEnv  = "TEAM_CHILD_BROWSER_ENABLED"
+	deploymentModeEnv          = "XIASS_DEPLOYMENT_MODE"
+	previousDeploymentModeEnv  = "NOWIND_DEPLOYMENT_MODE"
+	legacyDeploymentModeEnv    = "SUB2API_DEPLOYMENT_MODE"
+	watchtowerUpdateURL        = "http://watchtower:8080/v1/update"
+	watchtowerTokenEnv         = "XIASS_WATCHTOWER_TOKEN"
+	previousWatchtowerTokenEnv = "NOWIND_WATCHTOWER_TOKEN"
+	legacyWatchtowerToken      = "sub2api-update-token"
+	dockerUpdateSocketPath     = "/var/run/docker.sock"
+	dockerUpdateAPIVersion     = "v1.40"
+	updaterImageEnv            = "XIASS_UPDATER_IMAGE"
+	defaultUpdaterImage        = "ghcr.io/xyf0104/xiass-updater:latest"
+	updaterContainerName       = "xiass-api-updater"
+	updaterBackupDir           = "/root/xiass-backups"
+	teamChildBrowserEnabledEnv = "TEAM_CHILD_BROWSER_ENABLED"
 )
 
 // IsRunningInContainer selects the updater without changing existing Docker
@@ -87,128 +83,6 @@ func (s *DockerUpdateService) PerformUpdate(ctx context.Context) error {
 		s.launchHostUpdater,
 		s.performWatchtowerUpdate,
 	)
-}
-
-// LaunchExecutionNodeJoin starts the host-side join controller and returns
-// before it recreates the current application container. This keeps the admin
-// request alive long enough to report that the operation was accepted while
-// the updater owns backup, health, rollback, and source finalization.
-func (s *DockerUpdateService) LaunchExecutionNodeJoin(ctx context.Context, join ExecutionNodeJoinConfig) error {
-	if !IsRunningInContainer() {
-		return fmt.Errorf("execution-node host join is available only in Docker deployments")
-	}
-	return s.launchHostClusterJoin(ctx, join, newDockerUpdateClient())
-}
-
-func (s *DockerUpdateService) LaunchExecutionNodeRuntime(ctx context.Context, runtime ExecutionNodeRuntimeConfig) error {
-	if !IsRunningInContainer() {
-		return fmt.Errorf("execution-node host runtime is available only in Docker deployments")
-	}
-	return s.launchHostClusterRuntime(ctx, runtime, newDockerUpdateClient())
-}
-
-func (s *DockerUpdateService) launchHostClusterRuntime(ctx context.Context, runtime ExecutionNodeRuntimeConfig, client *dockerUpdateClient) error {
-	if !validExecutionNodeID(runtime.NodeID) || len(strings.TrimSpace(runtime.TunnelToken)) != 64 || runtime.DefaultProxyID <= 0 ||
-		!validExecutionNodeID(runtime.LegacyUnassignedNodeID) || runtime.LegacyUnassignedProxyID <= 0 {
-		return fmt.Errorf("execution-node runtime configuration is invalid")
-	}
-	installDir, err := client.discoverInstallDir(ctx)
-	if err != nil {
-		return err
-	}
-	if existing, inspectErr := client.inspect(ctx, clusterRuntimeContainerName); inspectErr == nil {
-		if existing.State.Running {
-			return fmt.Errorf("an execution-node runtime initialization is already running")
-		}
-		_, _ = client.requestOK(ctx, http.MethodDelete, "/containers/"+url.PathEscape(clusterRuntimeContainerName)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
-	}
-	if err := client.pullImage(ctx, updaterImage()); err != nil {
-		return fmt.Errorf("pull host runtime controller image: %w", err)
-	}
-	create := dockerUpdateContainerCreateRequest{
-		Image: updaterImage(),
-		// The updater image already declares /usr/local/bin/xiass-updater as its
-		// ENTRYPOINT. Docker appends Cmd, so only the subcommand belongs here.
-		Cmd: []string{"cluster-runtime"},
-		Env: []string{
-			"INSTALL_DIR=" + installDir,
-			"BACKUP_DIR=" + updaterBackupDir,
-			"RUNTIME_NODE_ID=" + runtime.NodeID,
-			"RUNTIME_TUNNEL_TOKEN=" + runtime.TunnelToken,
-			"RUNTIME_DEFAULT_PROXY_ID=" + strconv.FormatInt(runtime.DefaultProxyID, 10),
-			"RUNTIME_LEGACY_NODE_ID=" + runtime.LegacyUnassignedNodeID,
-			"RUNTIME_LEGACY_PROXY_ID=" + strconv.FormatInt(runtime.LegacyUnassignedProxyID, 10),
-		},
-		WorkingDir: installDir,
-		Labels: map[string]string{
-			"com.xiass.role": "cluster-runtime-orchestrator",
-		},
-	}
-	create.HostConfig.Binds = []string{dockerUpdateSocketPath + ":" + dockerUpdateSocketPath, installDir + ":" + installDir, updaterBackupDir + ":" + updaterBackupDir}
-	create.HostConfig.NetworkMode = "host"
-	createPayload, err := client.requestOK(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(clusterRuntimeContainerName), &create, http.StatusCreated)
-	if err != nil {
-		return fmt.Errorf("create host runtime controller: %w", err)
-	}
-	var created struct {
-		ID string `json:"Id"`
-	}
-	if err := json.Unmarshal(createPayload, &created); err != nil || strings.TrimSpace(created.ID) == "" {
-		return fmt.Errorf("host runtime controller creation returned no id")
-	}
-	if _, err := client.requestOK(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, http.StatusNoContent, http.StatusNotModified); err != nil {
-		return fmt.Errorf("start host runtime controller: %w", err)
-	}
-	return nil
-}
-
-func (s *DockerUpdateService) launchHostClusterJoin(ctx context.Context, join ExecutionNodeJoinConfig, client *dockerUpdateClient) error {
-	if strings.TrimSpace(join.SourceURL) == "" || !validExecutionNodeID(join.SourceNodeID) || !validExecutionNodeID(join.TargetNodeID) || len(join.TunnelProof) != 64 {
-		return fmt.Errorf("execution-node join configuration is invalid")
-	}
-	installDir, err := client.discoverInstallDir(ctx)
-	if err != nil {
-		return err
-	}
-	if existing, inspectErr := client.inspect(ctx, clusterJoinContainerName); inspectErr == nil {
-		if existing.State.Running {
-			return fmt.Errorf("an execution-node join is already running")
-		}
-		_, _ = client.requestOK(ctx, http.MethodDelete, "/containers/"+url.PathEscape(clusterJoinContainerName)+"?force=1", nil, http.StatusNoContent, http.StatusNotFound)
-	}
-	if err := client.pullImage(ctx, updaterImage()); err != nil {
-		return fmt.Errorf("pull host join controller image: %w", err)
-	}
-	payload, err := json.Marshal(join)
-	if err != nil {
-		return fmt.Errorf("encode execution-node join bundle: %w", err)
-	}
-	bundle := base64.StdEncoding.EncodeToString(payload)
-	create := dockerUpdateContainerCreateRequest{
-		Image:      updaterImage(),
-		Cmd:        []string{"cluster-join"},
-		Env:        []string{"INSTALL_DIR=" + installDir, "BACKUP_DIR=" + updaterBackupDir, "JOIN_BUNDLE_B64=" + bundle, "JOIN_SOURCE_URL=" + join.SourceURL, "JOIN_TARGET_NODE_ID=" + join.TargetNodeID, "JOIN_TUNNEL_PROOF=" + join.TunnelProof},
-		WorkingDir: installDir,
-		Labels: map[string]string{
-			"com.xiass.role": "cluster-join-orchestrator",
-		},
-	}
-	create.HostConfig.Binds = []string{dockerUpdateSocketPath + ":" + dockerUpdateSocketPath, installDir + ":" + installDir, updaterBackupDir + ":" + updaterBackupDir}
-	create.HostConfig.NetworkMode = "host"
-	createPayload, err := client.requestOK(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(clusterJoinContainerName), &create, http.StatusCreated)
-	if err != nil {
-		return fmt.Errorf("create host join controller: %w", err)
-	}
-	var created struct {
-		ID string `json:"Id"`
-	}
-	if err := json.Unmarshal(createPayload, &created); err != nil || strings.TrimSpace(created.ID) == "" {
-		return fmt.Errorf("host join controller creation returned no id")
-	}
-	if _, err := client.requestOK(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, http.StatusNoContent, http.StatusNotModified); err != nil {
-		return fmt.Errorf("start host join controller: %w", err)
-	}
-	return nil
 }
 
 type hostUpdaterLauncher func(context.Context) (bool, error)

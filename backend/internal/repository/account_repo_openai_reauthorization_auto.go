@@ -15,8 +15,7 @@ var _ service.OpenAIReauthorizationAutoRepository = (*accountRepository)(nil)
 const openAIReauthorizationStateKey = service.OpenAIReauthorizationStateExtraKey
 
 // Automatic reauthorization is claimed in PostgreSQL, rather than in process
-// memory. The claim is bound to the complete OAuth identity and the current
-// episode key, so api/api2 cannot both open a browser for one 401 episode.
+// memory, so concurrent workers cannot open duplicate browsers for one 401 episode.
 const claimOpenAIReauthorizationAutoQuery = `
 WITH updated AS (
 	UPDATE accounts AS a

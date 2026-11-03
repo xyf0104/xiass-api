@@ -57,7 +57,6 @@ export interface TrendParams {
   stream?: boolean
   native_compaction_v2?: boolean | null
   billing_type?: number | null
-	execution_node_id?: string
 	upstream_model_mismatch?: boolean
 }
 
@@ -91,7 +90,6 @@ export interface ModelStatsParams {
   stream?: boolean
   native_compaction_v2?: boolean | null
   billing_type?: number | null
-	execution_node_id?: string
 	upstream_model_mismatch?: boolean
 }
 
@@ -122,7 +120,6 @@ export interface GroupStatsParams {
   stream?: boolean
   native_compaction_v2?: boolean | null
   billing_type?: number | null
-	execution_node_id?: string
 	upstream_model_mismatch?: boolean
 }
 
@@ -182,7 +179,6 @@ export interface UserBreakdownParams {
   user_id?: number
   api_key_id?: number
   account_id?: number
-	execution_node_id?: string
   request_type?: UsageRequestType
   stream?: boolean
   native_compaction_v2?: boolean | null

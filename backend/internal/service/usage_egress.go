@@ -50,26 +50,17 @@ func newUsageEgress(account *Account, proxyURL string, directWhenEmpty bool) *Us
 	if host != "" && !strings.ContainsAny(host, "/\\?#@ \t\r\n") && proxy.Port > 0 && proxy.Port <= 65535 {
 		address = net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(proxy.Port))
 	}
-	nodeID := ""
 	name := sanitizeManagedOpsProxyName(proxy.Name)
-	if strings.HasPrefix(proxy.Name, executionNodeBuiltinProxyNamePrefix) {
-		candidate := strings.TrimPrefix(proxy.Name, executionNodeBuiltinProxyNamePrefix)
-		if validExecutionNodeID(candidate) && proxy.Protocol == "socks5" && host == "127.0.0.1" && proxy.Port == 19080 && proxy.Username == candidate {
-			nodeID = candidate
-			name = executionNodeBuiltinProxyNamePrefix + candidate
-		}
-	}
 	if name == opsProxyNameUnnamed {
 		name = ""
 	}
 	return &UsageEgress{
-		Route:           "proxy",
-		ProxyID:         proxy.ID,
-		ProxyName:       name,
-		ProxyAddress:    address,
-		ExecutionNodeID: nodeID,
-		ProxyUpdatedAt:  proxy.UpdatedAt,
-		CapturedAt:      time.Now(),
+		Route:          "proxy",
+		ProxyID:        proxy.ID,
+		ProxyName:      name,
+		ProxyAddress:   address,
+		ProxyUpdatedAt: proxy.UpdatedAt,
+		CapturedAt:     time.Now(),
 	}
 }
 

@@ -69,7 +69,6 @@ func newTestApplicationCleanup(inactiveUserCleanup *service.InactiveUserCleanupS
 		nil, // apiKeyService
 		nil, // authCacheInvalidationWorker
 		schedulerSnapshotSvc,
-		nil, // executionNodeHeartbeat
 		tokenRefreshSvc,
 		accountExpirySvc,
 		nil, // cnProviderBalanceCheck

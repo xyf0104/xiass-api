@@ -20,7 +20,7 @@ func TestRefreshSessionRuntimeACLDefaults(t *testing.T) {
 		~sub2api:dashboard:stats:v1 ~batch_image:queue:ready ~batch_image:queue:delayed
 		~batch_image:queue:active ~batch_image:queue:inflight:* ~batch_image:queue:lock:*
 		~ops:alert:evaluator:leader ~rate_limit:* ~apikey:usage:* ~billing:upq:dirty
-		~xiass:execution_node:cluster_identity ~xiass:team-child:mailbox:*
+		~xiass:team-child:mailbox:*
 		&auth:cache:invalidate &subscription:cache:invalidate &error_passthrough_rules_updated
 		&tls_fingerprint_profiles_updated &sub2api:prompt_guard:config:invalidate
 	`) {
@@ -51,6 +51,25 @@ func TestRefreshSessionRuntimeACLDefaults(t *testing.T) {
 		t.Error("default DB does not need SELECT")
 	}
 	refreshRuntimeACLAssertProtected(t, rules)
+}
+
+func TestRefreshSessionRuntimeACLRejectsRetiredNodeKeys(t *testing.T) {
+	for _, cfg := range []*config.Config{nil, {Redis: config.RedisConfig{DB: 2}}} {
+		rules, err := refreshSessionRuntimeACL(cfg, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rule := range rules {
+			if strings.Contains(rule, "execution_node") {
+				t.Errorf("retired node grant %q", rule)
+			}
+		}
+		for _, key := range []string{"xiass:execution_node:cluster_identity", "xiass:execution_node:heartbeat:api", "xiass:execution_node:heartbeat:api2"} {
+			if refreshRuntimeACLAllowsKey(t, rules, key) {
+				t.Errorf("retired node key %q is accessible", key)
+			}
+		}
+	}
 }
 
 func TestRefreshSessionRuntimeACLCommandsAndChannels(t *testing.T) {

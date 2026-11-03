@@ -72,10 +72,8 @@ func TestOpenAIAdsPowerResidentHelperQueueIsPairedAndEnvironmentScoped(t *testin
 	require.NoError(t, err)
 	require.False(t, authenticated)
 
-	// The command is delivered through the current api2 control server while
-	// the account itself keeps its api-node proxy assignment.
-	record := openAIAdsPowerLaunchRecord{AdminUserID: 42, EnvironmentKey: "api"}
-	queued, err := store.enqueueHelperCommand(context.Background(), record, "launch-ticket", "api2")
+	record := openAIAdsPowerLaunchRecord{AdminUserID: 42, EnvironmentKey: "api2"}
+	queued, err := store.enqueueHelperCommand(context.Background(), record, "launch-ticket")
 	require.NoError(t, err)
 	require.True(t, queued)
 	ticket, err := store.nextHelperCommand(context.Background(), "device-1", "api2")
@@ -84,6 +82,16 @@ func TestOpenAIAdsPowerResidentHelperQueueIsPairedAndEnvironmentScoped(t *testin
 	ticket, err = store.nextHelperCommand(context.Background(), "device-1", "api2")
 	require.NoError(t, err)
 	require.Empty(t, ticket)
+
+	record.Existing = &service.OpenAIAdsPowerBinding{DeviceID: "device-1", ProfileID: "profile-1", EnvironmentKey: "other-pool"}
+	queued, err = store.enqueueHelperCommand(context.Background(), record, "wrong-pool-ticket")
+	require.Error(t, err)
+	require.False(t, queued)
+	record.Existing.EnvironmentKey = record.EnvironmentKey
+	record.AdminUserID = 43
+	queued, err = store.enqueueHelperCommand(context.Background(), record, "other-admin-ticket")
+	require.NoError(t, err)
+	require.False(t, queued)
 }
 
 func TestNormalizeOpenAIAdsPowerBindingReportRequiresSafeProfile(t *testing.T) {

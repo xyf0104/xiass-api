@@ -520,6 +520,32 @@ func TestObserveUpstreamMessage_ResponseModelIsTurnLocalAndTerminalWins(t *testi
 	require.False(t, second.responseConflict, "the previous turn must not contaminate this turn")
 }
 
+func TestObserveUpstreamMessage_ServiceTierIsTerminalAndTurnLocal(t *testing.T) {
+	state := &relayState{requestModel: "gpt-5.5"}
+	startAt := time.Unix(0, 0)
+	now := func() time.Time { return startAt.Add(time.Second) }
+	for _, tc := range []struct{ payload, want string }{
+		{`{"type":"response.completed","response":{"id":"one","model":"gpt-5.5","service_tier":"ultrafast"}}`, "ultrafast"},
+		{`{"type":"response.completed","response":{"id":"two","model":"gpt-5.5"}}`, ""},
+		{`{"type":"response.completed","response":{"id":"three","model":"gpt-5.5","service_tier":"flex"}}`, "flex"},
+		{`{"type":"response.completed","response":{"id":"four","service_tier":"ultrafast"}}`, ""},
+		{`{"type":"response.completed","response":{"id":"five","model":"gpt-5.5","service_tier":true}}`, ""},
+	} {
+		observed := observeUpstreamMessage(state, []byte(tc.payload), startAt, now, nil)
+		require.Equal(t, tc.want, observed.responseServiceTier)
+		var turn RelayTurnResult
+		emitTurnComplete(func(result RelayTurnResult) { turn = result }, state, observed)
+		require.Equal(t, tc.want, turn.ResponseServiceTier)
+		var result RelayResult
+		enrichResult(&result, state, time.Second)
+		require.Equal(t, tc.want, result.ResponseServiceTier)
+	}
+	created := observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"six","model":"gpt-5.5","service_tier":"ultrafast"}}`), startAt, now, nil)
+	require.Empty(t, created.responseServiceTier)
+	completed := observeUpstreamMessage(state, []byte(`{"type":"response.completed","response":{"id":"six","model":"gpt-5.5","service_tier":"default"}}`), startAt, now, nil)
+	require.Equal(t, "default", completed.responseServiceTier)
+}
+
 func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	t.Parallel()
 

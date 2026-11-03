@@ -6,7 +6,7 @@
   <h1>XIASS API</h1>
   <p>面向个人与团队的 AI API 网关、账号池和计费管理平台</p>
   <p>
-    <img src="https://img.shields.io/badge/当前版本-v1.2.71-0ea5e9" alt="当前版本 v1.2.71" />
+    <img src="https://img.shields.io/badge/当前版本-v1.2.72-0ea5e9" alt="当前版本 v1.2.72" />
     <img src="https://img.shields.io/badge/Docker-amd64-2496ed" alt="Docker amd64" />
     <img src="https://img.shields.io/badge/Go-1.27-00add8" alt="Go 1.27" />
     <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" />
@@ -14,7 +14,7 @@
   </p>
 </div>
 
-> 当前版本：v1.2.71
+> 当前版本：v1.2.72
 
 XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包含完整前后端源码、Docker 镜像构建、数据库迁移、一键安装、在线更新、备份恢复和软路由代理节点功能。
 
@@ -60,7 +60,7 @@ XIASS API 是本项目唯一的公开源码仓库与正式发布源。仓库包�
 - PostgreSQL 与 Redis 不映射到公网，只允许 Docker 内部网络访问。
 - 对外请求仅包括 GitHub 版本/镜像获取，以及管理员自己配置的模型上游、OAuth、邮件、支付或代理服务。
 
-默认按单机运行，多节点负载均衡和容灾不是启动前提。关闭多节点负载均衡后，请求继续按账号、分组与代理配置调度，不因旧节点离线而等待其心跳；现有账号的代理出口不会被自动替换。
+XIASS API 按单机运行，请求按账号、分组与代理配置调度。账号可使用直连、单代理或多代理，保留管理员设置的出口与优先顺序。
 
 推荐安装方式使用本地持久化目录：
 

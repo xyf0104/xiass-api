@@ -7,7 +7,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -89,7 +88,7 @@ func TestAccountPoolAssignMixesPlansWithoutChangingScheduling(t *testing.T) {
 	u := r.updates[0]
 	require.Equal(t, &p, u.ProxyID)
 	require.Equal(t, "8", u.Extra[AccountPoolExtraKey])
-	require.Equal(t, "42", u.Extra[AccountExecutionProxyExtraKey])
+	require.Equal(t, map[string]any{AccountPoolExtraKey: "8", UpstreamBillingProbeExtraKey: nil}, u.Extra)
 	require.Nil(t, u.Concurrency)
 	require.Nil(t, u.Priority)
 	require.Nil(t, u.RateMultiplier)
@@ -154,15 +153,6 @@ func TestAccountPoolDetachRejectsStaleMembership(t *testing.T) {
 	require.Empty(t, r.updates)
 }
 
-func TestAccountPoolHonorsRemoteAccountOwnership(t *testing.T) {
-	p := int64(42)
-	r := &accountPoolRepoStub{pool: AccountPool{ID: 8, ProxyID: &p}, accounts: []*Account{{ID: 1, Extra: map[string]any{AccountExecutionNodeExtraKey: "api"}}}}
-	s := &adminServiceImpl{accountRepo: r, settingService: executionNodeAdminAccessService("api2", false, "true")}
-	_, err := s.AssignAccountPool(context.Background(), 8, []int64{1}, false)
-	require.Equal(t, "ACCOUNT_REMOTE_NODE_READ_ONLY", infraerrors.Reason(err))
-	require.Empty(t, r.updates)
-}
-
 func TestAccountPoolNoSuccessOnWriteOrCommitFailure(t *testing.T) {
 	for _, commitFailure := range []bool{false, true} {
 		r := &accountPoolRepoStub{pool: AccountPool{ID: 8, AccountIDs: []int64{1}}, accounts: []*Account{{ID: 1}}}
@@ -194,33 +184,50 @@ func TestAccountPoolNameValidationAndEmptyPoolPersistence(t *testing.T) {
 	require.Equal(t, "INVALID_ACCOUNT_POOL_PROXY", infraerrors.Reason(err))
 }
 
-func TestAccountPoolDirectProxyRespectsExecutionNodeRouting(t *testing.T) {
-	r := &accountPoolRepoStub{pool: AccountPool{ID: 8}}
-	s := &adminServiceImpl{accountRepo: r, settingService: executionNodeAdminAccessService("api2", false, "true")}
-	s.settingService.executionNodeRoutingCache.Store(&cachedExecutionNodeRoutingSettings{
-		settings:  ExecutionNodeRoutingSettings{Available: true, Enabled: true},
-		expiresAt: time.Now().Add(time.Minute).UnixNano(),
-	})
-	_, err := s.SetAccountPoolProxy(context.Background(), 8, nil)
-	require.Equal(t, "EXECUTION_NODE_PROXY_REQUIRED", infraerrors.Reason(err))
-	require.Empty(t, r.updates)
-	require.False(t, r.committed)
+func TestAccountPoolCanSwitchBetweenDirectAndSelectedProxy(t *testing.T) {
+	proxyID := int64(42)
+	r := &accountPoolRepoStub{pool: AccountPool{ID: 8, ProxyID: &proxyID, AccountIDs: []int64{1}}, accounts: []*Account{{ID: 1}}}
+	s := &adminServiceImpl{accountRepo: r}
+	pool, err := s.SetAccountPoolProxy(context.Background(), 8, nil)
+	require.NoError(t, err)
+	require.Nil(t, pool.ProxyID)
+	require.True(t, r.committed)
+	require.Len(t, r.updates, 1)
+	require.NotNil(t, r.updates[0].ProxyID)
+	require.Zero(t, *r.updates[0].ProxyID, "bulk zero must clear the account proxy")
+	require.Equal(t, map[string]any{AccountPoolExtraKey: "8", UpstreamBillingProbeExtraKey: nil}, r.updates[0].Extra)
+
+	pool, err = s.SetAccountPoolProxy(context.Background(), 8, &proxyID)
+	require.NoError(t, err)
+	require.Equal(t, &proxyID, pool.ProxyID)
+	require.Len(t, r.updates, 2)
+	require.Equal(t, &proxyID, r.updates[1].ProxyID)
 }
 
-func TestAccountPoolRenameAndDeleteHonorAllMemberOwnership(t *testing.T) {
+func TestAccountPoolRenameAndDeletePreserveMemberConfiguration(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		r := &accountPoolRepoStub{pool: AccountPool{ID: 8, Name: "old", AccountIDs: []int64{1}},
-			accounts: []*Account{{ID: 1, Extra: map[string]any{AccountExecutionNodeExtraKey: "api"}}}}
-		s := &adminServiceImpl{accountRepo: r, settingService: executionNodeAdminAccessService("api2", false, "true")}
+			accounts: []*Account{{ID: 1, Priority: 7, Concurrency: 3, Extra: map[string]any{"custom": "preserved"}}}}
+		s := &adminServiceImpl{accountRepo: r}
 		var err error
 		if remove {
 			err = s.DeleteAccountPool(context.Background(), 8)
 		} else {
 			_, err = s.RenameAccountPool(context.Background(), 8, "new")
 		}
-		require.Equal(t, "ACCOUNT_REMOTE_NODE_READ_ONLY", infraerrors.Reason(err))
-		require.False(t, r.deleted)
-		require.Equal(t, "old", r.pool.Name)
-		require.Empty(t, r.updates)
+		require.NoError(t, err)
+		require.True(t, r.committed)
+		if remove {
+			require.True(t, r.deleted)
+			require.Len(t, r.updates, 1)
+			require.Nil(t, r.updates[0].ProxyID)
+			require.Equal(t, map[string]any{AccountPoolExtraKey: nil}, r.updates[0].Extra)
+		} else {
+			require.Equal(t, "new", r.pool.Name)
+			require.Empty(t, r.updates)
+		}
+		require.Equal(t, 7, r.accounts[0].Priority)
+		require.Equal(t, 3, r.accounts[0].Concurrency)
+		require.Equal(t, "preserved", r.accounts[0].Extra["custom"])
 	}
 }

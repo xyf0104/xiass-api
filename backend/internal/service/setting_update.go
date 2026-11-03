@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -45,15 +43,6 @@ func (s *SettingService) UpdateSettingsOmitting(ctx context.Context, settings *S
 		return err
 	}
 	omitted.dropFrom(updates)
-	activated, err := s.prepareExecutionNodeRoutingActivationAndReport(ctx, settings, updates)
-	if err != nil {
-		return err
-	}
-	if activated {
-		delete(updates, SettingKeyExecutionNodeBalancingEnabled)
-		delete(updates, SettingKeyExecutionNodeWeights)
-		delete(updates, SettingKeyExecutionNodeProxyIDs)
-	}
 
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
@@ -84,149 +73,12 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 		updates[key] = value
 	}
 	omitted.dropFrom(updates)
-	activated, err := s.prepareExecutionNodeRoutingActivationAndReport(ctx, settings, updates)
-	if err != nil {
-		return err
-	}
-	if activated {
-		delete(updates, SettingKeyExecutionNodeBalancingEnabled)
-		delete(updates, SettingKeyExecutionNodeWeights)
-		delete(updates, SettingKeyExecutionNodeProxyIDs)
-	}
 
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
 	return nil
-}
-
-func (s *SettingService) prepareExecutionNodeRoutingActivation(ctx context.Context, settings *SystemSettings, updates map[string]string) error {
-	_, err := s.prepareExecutionNodeRoutingActivationAndReport(ctx, settings, updates)
-	return err
-}
-
-func (s *SettingService) prepareExecutionNodeRoutingActivationAndReport(ctx context.Context, settings *SystemSettings, updates map[string]string) (bool, error) {
-	if settings == nil || updates[SettingKeyExecutionNodeBalancingEnabled] != "true" {
-		return false, nil
-	}
-	// The account migration and the shared switch are separate repository
-	// operations. Serialize local activation attempts so concurrent admin saves
-	// cannot race through the one-time preflight and duplicate rebuild work.
-	s.executionNodeActivationMu.Lock()
-	defer s.executionNodeActivationMu.Unlock()
-
-	current, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyExecutionNodeBalancingEnabled})
-	if err != nil {
-		return false, fmt.Errorf("read execution node routing state: %w", err)
-	}
-	if current[SettingKeyExecutionNodeBalancingEnabled] == "true" {
-		if rawProxyIDs, present := updates[SettingKeyExecutionNodeProxyIDs]; present {
-			stored, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyExecutionNodeProxyIDs})
-			if err != nil {
-				return false, fmt.Errorf("read execution node proxy mapping: %w", err)
-			}
-			storedProxyIDs, err := parseStoredExecutionNodeProxyIDs(stored[SettingKeyExecutionNodeProxyIDs])
-			if err != nil {
-				return false, infraerrors.BadRequest("EXECUTION_NODE_PROXY_MAPPING_UNAVAILABLE", "the active execution node proxy mapping is invalid")
-			}
-			requestedProxyIDs, err := parseStoredExecutionNodeProxyIDs(rawProxyIDs)
-			if err != nil {
-				return false, infraerrors.BadRequest("INVALID_EXECUTION_NODE_PROXY_IDS", err.Error())
-			}
-			if !maps.Equal(storedProxyIDs, requestedProxyIDs) {
-				return false, infraerrors.BadRequest("EXECUTION_NODE_PROXY_MAPPING_IMMUTABLE", "disable multi-node routing before changing execution node proxy mappings")
-			}
-		}
-		return false, nil
-	}
-	if s.cfg == nil || !s.cfg.Gateway.ExecutionNode.Enabled {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LOCAL_CONFIG_DISABLED", "enable gateway.execution_node on this instance before activating multi-node routing")
-	}
-	cfg := s.cfg.Gateway.ExecutionNode
-	if (s.executionNodeAccountPreparer == nil && s.executionNodeRoutingActivator == nil) || s.proxyRepo == nil {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_PREFLIGHT_UNAVAILABLE", "execution node account preflight is unavailable")
-	}
-	localNodeID := strings.TrimSpace(cfg.ID)
-	legacyNodeID := strings.TrimSpace(cfg.LegacyUnassignedNodeID)
-	legacyProxy, err := s.proxyRepo.GetByID(ctx, cfg.LegacyUnassignedProxyID)
-	if err != nil || legacyProxy == nil || !legacyProxy.IsActive() || legacyProxy.IsExpired(time.Now()) {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LEGACY_PROXY_INVALID", "legacy execution node proxy must exist, be active, and not be expired")
-	}
-	weights, err := normalizeExecutionNodeWeights(settings.ExecutionNodeWeights)
-	if err != nil {
-		return false, err
-	}
-	if _, ok := weights[localNodeID]; !ok {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LOCAL_WEIGHT_MISSING", "execution node weights do not contain this instance node ID")
-	}
-	if _, ok := weights[legacyNodeID]; !ok {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LEGACY_WEIGHT_MISSING", "execution node weights do not contain the legacy node ID")
-	}
-	if len(weights) > 1 && s.executionNodePairingState != nil {
-		pairingStatus, pairingErr := s.GetExecutionNodePairingStatus(ctx)
-		if pairingErr != nil || pairingStatus == nil || !pairingStatus.ProductionReady {
-			return false, infraerrors.BadRequest("EXECUTION_NODE_PAIRING_NOT_READY", "complete production-ready node pairing before enabling multi-node routing")
-		}
-	}
-	proxyIDs, err := normalizeExecutionNodeProxyIDs(settings.ExecutionNodeProxyIDs)
-	if err != nil {
-		return false, err
-	}
-	if err := validateExecutionNodeProxyIDs(proxyIDs, weights); err != nil {
-		return false, err
-	}
-	if proxyIDs[localNodeID] != cfg.DefaultProxyID {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LOCAL_PROXY_MISMATCH", "the local execution node proxy mapping must match its deployment default_proxy_id")
-	}
-	if proxyIDs[legacyNodeID] != cfg.LegacyUnassignedProxyID {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_LEGACY_PROXY_MISMATCH", "the legacy execution node proxy mapping must match legacy_unassigned_proxy_id")
-	}
-	allowedNodeIDs := make([]string, 0, len(weights))
-	for nodeID := range weights {
-		allowedNodeIDs = append(allowedNodeIDs, nodeID)
-	}
-	sort.Strings(allowedNodeIDs)
-	if strictActivator, ok := s.executionNodeAccountPreparer.(ExecutionNodeRoutingProxyMapActivator); ok {
-		if _, err := strictActivator.PrepareAndEnableExecutionNodeRoutingWithProxyIDs(
-			ctx,
-			legacyNodeID,
-			cfg.LegacyUnassignedProxyID,
-			allowedNodeIDs,
-			weights,
-			proxyIDs,
-		); err != nil {
-			return false, infraerrors.BadRequest("EXECUTION_NODE_PREFLIGHT_FAILED", err.Error())
-		}
-		return true, nil
-	}
-	if s.executionNodeRoutingActivator != nil {
-		if _, err := s.executionNodeRoutingActivator.PrepareAndEnableExecutionNodeRouting(
-			ctx,
-			legacyNodeID,
-			cfg.LegacyUnassignedProxyID,
-			allowedNodeIDs,
-			weights,
-		); err != nil {
-			return false, infraerrors.BadRequest("EXECUTION_NODE_PREFLIGHT_FAILED", err.Error())
-		}
-		return true, nil
-	}
-	if _, err := s.executionNodeAccountPreparer.PrepareExecutionNodeRouting(ctx, legacyNodeID, cfg.LegacyUnassignedProxyID, allowedNodeIDs); err != nil {
-		return false, infraerrors.BadRequest("EXECUTION_NODE_PREFLIGHT_FAILED", err.Error())
-	}
-	return false, nil
-}
-
-func parseStoredExecutionNodeProxyIDs(raw string) (map[string]int64, error) {
-	if strings.TrimSpace(raw) == "" {
-		return map[string]int64{}, nil
-	}
-	var proxyIDs map[string]int64
-	if err := json.Unmarshal([]byte(raw), &proxyIDs); err != nil {
-		return nil, err
-	}
-	return normalizeExecutionNodeProxyIDs(proxyIDs)
 }
 
 // refreshCachedSettingsAfterWrite keeps the in-process caches in step with the
@@ -614,33 +466,6 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// 分组隔离
 	updates[SettingKeyAllowUngroupedKeyScheduling] = strconv.FormatBool(settings.AllowUngroupedKeyScheduling)
-	weights, err := normalizeExecutionNodeWeights(settings.ExecutionNodeWeights)
-	if err != nil {
-		return nil, err
-	}
-	settings.ExecutionNodeWeights = weights
-	weightsJSON, err := json.Marshal(weights)
-	if err != nil {
-		return nil, fmt.Errorf("marshal execution node weights: %w", err)
-	}
-	updates[SettingKeyExecutionNodeBalancingEnabled] = strconv.FormatBool(settings.ExecutionNodeBalancingEnabled)
-	updates[SettingKeyExecutionNodeWeights] = string(weightsJSON)
-	proxyIDs, err := normalizeExecutionNodeProxyIDs(settings.ExecutionNodeProxyIDs)
-	if err != nil {
-		return nil, err
-	}
-	if settings.ExecutionNodeBalancingEnabled {
-		if err := validateExecutionNodeProxyIDs(proxyIDs, weights); err != nil {
-			return nil, err
-		}
-	}
-	settings.ExecutionNodeProxyIDs = proxyIDs
-	proxyIDsJSON, err := json.Marshal(proxyIDs)
-	if err != nil {
-		return nil, fmt.Errorf("marshal execution node proxy IDs: %w", err)
-	}
-	updates[SettingKeyExecutionNodeProxyIDs] = string(proxyIDsJSON)
-
 	// Backend Mode
 	updates[SettingKeyBackendModeEnabled] = strconv.FormatBool(settings.BackendModeEnabled)
 
@@ -877,18 +702,6 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if settings == nil {
 		return
 	}
-	s.executionNodeRoutingSF.Forget(executionNodeRoutingCacheKey)
-	s.executionNodeRoutingCache.Store(&cachedExecutionNodeRoutingSettings{
-		settings: ExecutionNodeRoutingSettings{
-			Available: true,
-			Enabled:   settings.ExecutionNodeBalancingEnabled,
-			Weights:   cloneExecutionNodeWeights(settings.ExecutionNodeWeights),
-			ProxyIDs:  cloneExecutionNodeProxyIDs(settings.ExecutionNodeProxyIDs),
-		},
-		// Heartbeat and local failover-proxy state are not part of the admin
-		// payload. Force the next hot-path read to rebuild the complete snapshot.
-		expiresAt: 0,
-	})
 	s.grokRuntimeSettingsSF.Forget("grok_runtime_settings")
 	grokTextModel := strings.TrimSpace(settings.GrokDefaultTextModel)
 	if grokTextModel == "" {

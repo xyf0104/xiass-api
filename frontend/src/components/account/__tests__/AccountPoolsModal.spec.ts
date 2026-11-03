@@ -26,7 +26,7 @@ let wrapper: VueWrapper | undefined
 
 function row(id: number, plan: string, proxyId: number | null = 9): Account {
   return { id, name: `${plan}账号`, platform: 'openai', type: 'oauth', proxy_id: proxyId,
-    execution_node_id: 'node-a', credentials: { plan_type: plan } } as Account
+    credentials: { plan_type: plan } } as Account
 }
 
 function element(testId: string) {
@@ -121,19 +121,7 @@ describe('AccountPoolsModal', () => {
     expect(element('pool-account-3').text()).toContain('team')
     expect(element('pool-account-3').text()).toContain('节点十')
     expect(element('pool-account-3').text()).toContain('其他号池')
-    expect(element('pool-account-1').text()).toContain('所属服务器：node-a')
     expect(element('pool-account-1').text()).toContain('代理出口：节点九')
-  })
-
-  it('shows 本机 for missing server IDs and preserves api/api2 server names independently of proxies', async () => {
-    accounts[0].execution_node_id = undefined
-    accounts[1].execution_node_id = 'api'
-    accounts[2].execution_node_id = 'api2'
-    await open()
-    expect(element('pool-account-1').text()).toContain('所属服务器：本机')
-    expect(element('pool-account-2').text()).toContain('所属服务器：api')
-    expect(element('pool-account-3').text()).toContain('所属服务器：api2')
-    expect(element('pool-account-3').text()).toContain('代理出口：节点十')
   })
 
   it('disables shadow/read-only rows and excludes them from select-all and mutation payloads', async () => {

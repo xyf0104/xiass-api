@@ -80,7 +80,6 @@ func TestAccountPoolPGMixedPlansLifecyclePreservesAccountConfiguration(t *testin
 	before["proxy_id"] = float64(p1)
 	extra := before["extra"].(map[string]any)
 	extra[service.AccountPoolExtraKey] = strconv.FormatInt(pool.ID, 10)
-	extra[service.AccountExecutionProxyExtraKey] = strconv.FormatInt(p1, 10)
 	require.Equal(t, before, actual)
 	pool, err = s.RenameAccountPool(ctx, pool.ID, pool.Name+"-renamed")
 	require.NoError(t, err)

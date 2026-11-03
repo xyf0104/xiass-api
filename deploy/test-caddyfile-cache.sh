@@ -80,24 +80,6 @@ if ! printf '%s\n' "$active_config" | grep -Eq 'health_uri[[:space:]]+/readyz'; 
 	exit 1
 fi
 
-multinode_example="$repo_root/deploy/Caddyfile.multinode.example"
-if [ ! -f "$multinode_example" ]; then
-	echo "multi-node Caddy example is missing" >&2
-	exit 1
-fi
-if ! grep -Eq 'lb_policy[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+([[:space:]]+[0-9]+)+([[:space:]]|$)' "$multinode_example"; then
-	echo "multi-node Caddy example must use explicit weighted origin distribution" >&2
-	exit 1
-fi
-if ! grep -Eq 'health_uri[[:space:]]+/readyz' "$multinode_example"; then
-	echo "multi-node Caddy example must use the dependency-aware /readyz probe" >&2
-	exit 1
-fi
-if grep -Eq 'lb_policy[[:space:]]+random_choose' "$multinode_example"; then
-	echo "multi-node Caddy example must not silently discard configured origin weights" >&2
-	exit 1
-fi
-
 if printf '%s\n' "$normalized_config" | grep -Eq '^import([[:space:]]|$)'; then
 	echo "Caddyfile must not import configuration outside this canonical policy check" >&2
 	exit 1

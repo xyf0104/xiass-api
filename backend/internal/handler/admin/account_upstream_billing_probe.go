@@ -57,10 +57,6 @@ func (h *AccountHandler) SetUpstreamBillingProbeEnabled(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if h.upstreamBillingProbe == nil {
 		response.ErrorFrom(c, service.ErrUpstreamBillingProbeUnavailable)
 		return
@@ -81,10 +77,6 @@ func (h *AccountHandler) ProbeUpstreamBilling(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || accountID <= 0 {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if h.upstreamBillingProbe == nil {
@@ -121,12 +113,6 @@ func (h *AccountHandler) ProbeUpstreamBillingBatch(c *gin.Context) {
 		}
 		seen[accountID] = struct{}{}
 		accountIDs = append(accountIDs, accountID)
-	}
-	for _, accountID := range accountIDs {
-		if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
 	}
 	if h.upstreamBillingProbe == nil {
 		response.ErrorFrom(c, service.ErrUpstreamBillingProbeUnavailable)

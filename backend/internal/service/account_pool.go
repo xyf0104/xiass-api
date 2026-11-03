@@ -116,9 +116,6 @@ func (s *adminServiceImpl) withAccountPoolTransaction(ctx context.Context, fn fu
 
 func (s *adminServiceImpl) validateAccountPoolProxy(ctx context.Context, r AccountPoolRepository, id *int64) error {
 	if id == nil {
-		if s.executionNodeRoutingActive(ctx) {
-			return infraerrors.BadRequest("EXECUTION_NODE_PROXY_REQUIRED", "accounts must keep a private egress proxy while multi-node routing is enabled")
-		}
 		return nil
 	}
 	if *id <= 0 {
@@ -188,12 +185,9 @@ func (s *adminServiceImpl) lockAccountPoolMembers(ctx context.Context, r Account
 		return nil, err
 	}
 	for _, id := range ids {
-		a, found := findAccountByID(accounts, id)
+		_, found := findAccountByID(accounts, id)
 		if !found {
 			return nil, ErrAccountNotFound
-		}
-		if err := s.ensureAccountManagementAccess(ctx, a); err != nil {
-			return nil, err
 		}
 	}
 	return accounts, nil
@@ -286,17 +280,17 @@ func (s *adminServiceImpl) validateAccountPoolProxyTargets(ctx context.Context, 
 		if account.IsCredentialShadow() {
 			return infraerrors.BadRequest("SPARK_SHADOW_PROXY_INHERITED", "shadow accounts inherit their parent's proxy; add the parent to the pool instead")
 		}
-		shadows, err := s.accountRepo.ListShadowsByParent(ctx, account.ID)
-		if err != nil {
-			return err
-		}
-		for _, shadow := range shadows {
-			if err := s.ensureAccountManagementAccess(ctx, shadow); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
+}
+
+func findAccountByID(accounts []*Account, accountID int64) (*Account, bool) {
+	for _, account := range accounts {
+		if account != nil && account.ID == accountID {
+			return account, true
+		}
+	}
+	return nil, false
 }
 
 func (s *adminServiceImpl) updateAccountPoolMembers(ctx context.Context, ids []int64, membership any, proxyID *int64) error {

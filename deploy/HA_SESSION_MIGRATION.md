@@ -6,8 +6,8 @@
 
 ## 关键边界
 
-- 默认启动、`-setup`、网页配对、在线更新和多节点启用都不会迁移会话，也不会修改 Redis ACL。
-- 只有同时显式提供 `-migrate-refresh-sessions` 与 `-offline-maintenance` 时，server 二进制才进入迁移命令；该分支不会启动正常 HTTP server、执行 setup、启动隧道或自动运行数据库 migration。
+- 默认启动、`-setup` 和在线更新都不会迁移会话，也不会修改 Redis ACL。
+- 只有同时显式提供 `-migrate-refresh-sessions` 与 `-offline-maintenance` 时，server 二进制才进入迁移命令；该分支不会启动正常 HTTP server、执行 setup 或自动运行数据库 migration。
 - 工具只从清单中固定的原始 Redis primary 读取会话。它不会把 replica 中缺失于 primary 的 token 补回，不会合并多份快照，也不会把 Sentinel 地址当作数据来源。
 - 成功后 PostgreSQL 是唯一刷新会话 authority。应用不会在 PostgreSQL 查询失败、token 缺失或数据库回退时重新读取 Redis。
 - 该迁移保留可验证的 token 身份、绑定、family、原始绝对到期时间和七天上限；已撤销或已从 primary 消失的会话不会复活。

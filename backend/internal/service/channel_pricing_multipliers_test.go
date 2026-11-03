@@ -20,7 +20,8 @@ func TestConfiguredServiceTierMultiplier(t *testing.T) {
 		{name: "flex configured", serviceTier: "flex", pricing: &ModelPricing{FlexMultiplier: pricingMultiplier(0.4)}, want: 0.4},
 		{name: "legacy fast default", serviceTier: "fast", pricing: &ModelPricing{}, want: 2},
 		{name: "ultrafast default", serviceTier: "ultrafast", pricing: &ModelPricing{}, want: 2},
-		{name: "ultrafast ignores fast multiplier", serviceTier: "ultrafast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 2},
+		{name: "ultrafast explicit one", serviceTier: "ultrafast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(1)}, want: 1},
+		{name: "ultrafast configured", serviceTier: "ultrafast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 2.5},
 		{name: "legacy flex default", serviceTier: "flex", pricing: &ModelPricing{}, want: 0.5},
 	}
 
@@ -59,6 +60,20 @@ func TestConfiguredServiceTierMultiplierAppliesToEveryTokenComponent(t *testing.
 	require.InDelta(t, 15, flex.OutputCost, 1e-12)
 	require.InDelta(t, 3.125, flex.CacheCreationCost, 1e-12)
 	require.InDelta(t, 0.25, flex.CacheReadCost, 1e-12)
+}
+
+func TestConfiguredUltrafastMultiplierPreservesBaseCost(t *testing.T) {
+	pricing := &ModelPricing{InputPricePerToken: 6e-6, FastMultiplier: pricingMultiplier(1)}
+	tokens := UsageTokens{InputTokens: 1_000_000}
+	service := &BillingService{}
+	configured := service.computeTokenBreakdown(pricing, tokens, 0.4, OpenAIFastTierUltrafast, false)
+	require.InDelta(t, 6, configured.TotalCost, 1e-12)
+	require.InDelta(t, 2.4, configured.ActualCost, 1e-12)
+
+	pricing.FastMultiplier = nil
+	legacy := service.computeTokenBreakdown(pricing, tokens, 0.4, OpenAIFastTierUltrafast, false)
+	require.InDelta(t, 12, legacy.TotalCost, 1e-12)
+	require.InDelta(t, 4.8, legacy.ActualCost, 1e-12)
 }
 
 func TestChannelOverridePreservesCatalogFastRatioByDefault(t *testing.T) {

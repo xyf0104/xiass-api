@@ -641,16 +641,9 @@ func (s *BatchImagePublicService) ListModels(ctx context.Context, owner BatchIma
 		if err != nil {
 			return nil, err
 		}
-		policy := resolveExecutionNodeRoutingPolicy(selectionCtx, s.Config, s.SettingService)
 		for i := range accounts {
 			account := accounts[i]
 			if !account.IsSchedulable() || !provider.SupportsAccount(&account) {
-				continue
-			}
-			// Model discovery must expose the same usable account pool as submit.
-			// Otherwise a drained node or a broken fixed egress can advertise a
-			// model that the next request cannot actually execute.
-			if !executionNodeCandidateAllowed(policy, &account) {
 				continue
 			}
 			for _, model := range batchImageModelsFromAccountMapping(&account) {
@@ -976,18 +969,9 @@ func (s *BatchImagePublicService) selectProviderAndAccount(ctx context.Context, 
 				eligible = append(eligible, account)
 			}
 		}
-		policy := resolveExecutionNodeRoutingPolicy(selectionCtx, s.Config, s.SettingService)
-		eligible = filterExecutionNodeCandidates(eligible, func(account *Account) *Account { return account }, policy)
 		if len(eligible) == 0 {
 			continue
 		}
-		eligible = orderExecutionNodeCandidatesWithinPriorities(
-			eligible,
-			func(account *Account) *Account { return account },
-			func(account *Account) int { return account.Priority },
-			policy,
-			"",
-		)
 		if len(eligible) > 0 {
 			return provider, eligible[0], nil
 		}

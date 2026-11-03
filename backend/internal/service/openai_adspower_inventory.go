@@ -29,18 +29,17 @@ type OpenAIAdsPowerProfileInventory struct {
 }
 
 type OpenAIAdsPowerBindingAccountRecord struct {
-	Account         Account
-	Binding         OpenAIAdsPowerBinding
-	ExecutionNodeID string
-	Deleted         bool
+	Account Account
+	Binding OpenAIAdsPowerBinding
+	Deleted bool
 }
 
 // OpenAIAdsPowerInventoryRepository is deliberately optional. Inventory and
 // release callers must fail closed when the production repository does not
 // provide an exact, bounded database view and an atomic compare-and-clear.
 type OpenAIAdsPowerInventoryRepository interface {
-	ListOpenAIAdsPowerBindingAccounts(ctx context.Context, deviceID, environmentKey, legacyNodeID string, limit int) ([]OpenAIAdsPowerBindingAccountRecord, bool, error)
-	ReleaseOpenAIAdsPowerProfileBindings(ctx context.Context, deviceID, environmentKey, profileID, legacyNodeID string, blockedCodes []string) ([]int64, bool, error)
+	ListOpenAIAdsPowerBindingAccounts(ctx context.Context, deviceID string, limit int) ([]OpenAIAdsPowerBindingAccountRecord, bool, error)
+	ReleaseOpenAIAdsPowerProfileBindings(ctx context.Context, deviceID, environmentKey, profileID string, blockedCodes []string) ([]int64, bool, error)
 }
 
 func (s *adminServiceImpl) ListOpenAIAdsPowerProfileInventory(ctx context.Context, deviceID, environmentKey string) (*OpenAIAdsPowerProfileInventory, error) {
@@ -53,9 +52,7 @@ func (s *adminServiceImpl) ListOpenAIAdsPowerProfileInventory(ctx context.Contex
 	if !ok {
 		return nil, ErrOpenAIAdsPowerInventoryIncomplete
 	}
-	records, complete, err := repo.ListOpenAIAdsPowerBindingAccounts(
-		ctx, deviceID, environmentKey, s.legacyExecutionNodeID(), OpenAIAdsPowerInventoryMaxBindings,
-	)
+	records, complete, err := repo.ListOpenAIAdsPowerBindingAccounts(ctx, deviceID, OpenAIAdsPowerInventoryMaxBindings)
 	if err != nil {
 		return nil, err
 	}
@@ -74,14 +71,11 @@ func (s *adminServiceImpl) ListOpenAIAdsPowerProfileInventory(ctx context.Contex
 		record := &records[i]
 		binding := record.Binding
 		binding.Normalize()
-		if binding.DeviceID != deviceID || binding.ProfileID == "" {
+		if binding.DeviceID != deviceID || binding.ProfileID == "" || binding.EnvironmentKey == "" ||
+			record.Account.Platform != PlatformOpenAI || record.Account.Type != AccountTypeOAuth || record.Account.ParentAccountID != nil {
 			return nil, ErrOpenAIAdsPowerInventoryIncomplete
 		}
-		if binding.EnvironmentKey == environmentKey || record.ExecutionNodeID == environmentKey {
-			if binding.EnvironmentKey != environmentKey || record.ExecutionNodeID != environmentKey ||
-				record.Account.Platform != PlatformOpenAI || record.Account.Type != AccountTypeOAuth || record.Account.ParentAccountID != nil {
-				return nil, ErrOpenAIAdsPowerInventoryIncomplete
-			}
+		if binding.EnvironmentKey == environmentKey {
 			targetProfiles[binding.ProfileID] = struct{}{}
 		}
 	}
@@ -92,8 +86,7 @@ func (s *adminServiceImpl) ListOpenAIAdsPowerProfileInventory(ctx context.Contex
 		if _, target := targetProfiles[binding.ProfileID]; !target {
 			continue
 		}
-		if binding.EnvironmentKey != environmentKey || record.ExecutionNodeID != environmentKey ||
-			record.Account.Platform != PlatformOpenAI || record.Account.Type != AccountTypeOAuth || record.Account.ParentAccountID != nil {
+		if binding.EnvironmentKey != environmentKey {
 			return nil, ErrOpenAIAdsPowerInventoryIncomplete
 		}
 		if record.Deleted {
@@ -134,7 +127,7 @@ func (s *adminServiceImpl) ReleaseOpenAIAdsPowerProfile(ctx context.Context, dev
 		return false, ErrOpenAIAdsPowerInventoryIncomplete
 	}
 	_, released, err := repo.ReleaseOpenAIAdsPowerProfileBindings(
-		ctx, deviceID, environmentKey, profileID, s.legacyExecutionNodeID(), openAIAdsPowerExplicitBlockedCodes(),
+		ctx, deviceID, environmentKey, profileID, openAIAdsPowerExplicitBlockedCodes(),
 	)
 	return released, err
 }

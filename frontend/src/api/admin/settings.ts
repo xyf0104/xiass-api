@@ -581,11 +581,6 @@ export interface SystemSettings {
   // 分组隔离
   allow_ungrouped_key_scheduling: boolean;
 
-  // XIASS multi-node execution scheduling
-  execution_node_balancing_enabled: boolean;
-  execution_node_weights: Record<string, number>;
-  execution_node_proxy_ids: Record<string, number>;
-
   // Gateway forwarding behavior
   openai_ttft_mode: string;
   enable_fingerprint_unification: boolean;
@@ -902,9 +897,6 @@ export interface UpdateSettingsRequest {
   min_claude_code_version?: string;
   max_claude_code_version?: string;
   allow_ungrouped_key_scheduling?: boolean;
-  execution_node_balancing_enabled?: boolean;
-  execution_node_weights?: Record<string, number>;
-  execution_node_proxy_ids?: Record<string, number>;
   openai_ttft_mode?: string;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;

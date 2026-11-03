@@ -185,13 +185,16 @@ func (s *openAIAdsPowerLaunchStore) defaultDevice(ctx context.Context, adminUser
 	return s.defaults[key], nil
 }
 
-func (s *openAIAdsPowerLaunchStore) enqueueHelperCommand(ctx context.Context, record openAIAdsPowerLaunchRecord, ticket, deliveryEnvironmentKey string) (bool, error) {
-	deliveryEnvironmentKey = strings.TrimSpace(deliveryEnvironmentKey)
+func (s *openAIAdsPowerLaunchStore) enqueueHelperCommand(ctx context.Context, record openAIAdsPowerLaunchRecord, ticket string) (bool, error) {
+	deliveryEnvironmentKey := strings.TrimSpace(record.EnvironmentKey)
 	if deliveryEnvironmentKey == "" {
 		return false, nil
 	}
 	deviceID := ""
 	if record.Existing != nil {
+		if strings.TrimSpace(record.Existing.EnvironmentKey) != deliveryEnvironmentKey {
+			return false, errors.New("AdsPower launch environment does not match the profile binding")
+		}
 		deviceID = strings.TrimSpace(record.Existing.DeviceID)
 	} else {
 		var err error
@@ -286,8 +289,8 @@ func (h *OpenAIOAuthHandler) CreateOpenAIAdsPowerHelperPairing(c *gin.Context) {
 	if environmentKey == "" {
 		environmentKey = openAIAdsPowerLocalEnvironment(c)
 	}
-	if !validOpenAIAdsPowerOpaqueID(environmentKey, 128) || environmentKey != openAIAdsPowerLocalEnvironment(c) {
-		response.BadRequest(c, "AdsPower helper environment does not match this XIASS server")
+	if !validOpenAIAdsPowerOpaqueID(environmentKey, 128) {
+		response.BadRequest(c, "Invalid AdsPower helper environment")
 		return
 	}
 	ticket, err := newTeamChildBrowserToken()

@@ -43,9 +43,8 @@ do
     fi
   done < "$gateway_variables"
 
-  # Automatic witness-based disaster recovery remains retired.
-  if grep -Eq '^[[:space:]]*-[[:space:]]*GATEWAY_EXECUTION_NODE_WITNESS_' "$compose_file"; then
-    printf '%s must not restore retired witness configuration\n' "$compose_file" >&2
+  if grep -Eq '^[[:space:]]*-[[:space:]]*(GATEWAY_EXECUTION_NODE_|XIASS_CLUSTER_)' "$compose_file"; then
+    printf '%s must not restore retired execution-node configuration\n' "$compose_file" >&2
     exit 1
   fi
 

@@ -167,27 +167,17 @@ func sortOpenAIAccountsByModelPreference(
 	sort.SliceStable(accounts, func(i, j int) bool { return preference.tier(accounts[i]) < preference.tier(accounts[j]) })
 }
 
-func orderOpenAIExecutionNodeCandidatesByModelPreference[T any](
+func orderOpenAIAccountCandidatesByModelPreference[T any](
 	items []T,
 	accountOf func(T) *Account,
 	preference openAIModelRoutingPreference,
-	policy executionNodeRoutingPolicy,
-	anchor string,
 ) []T {
 	if !preference.configured() {
-		return orderExecutionNodeCandidatesWithinPriorities(
-			items,
-			accountOf,
-			func(item T) int { return openAIAccountSchedulingPriority(accountOf(item)) },
-			policy,
-			anchor,
-		)
+		return items
 	}
 	ordered := make([]T, 0, len(items))
 	for _, tier := range partitionOpenAIModelPreferenceTiers(items, accountOf, preference) {
-		ordered = append(ordered, orderExecutionNodeCandidatesWithinPriorities(
-			tier, accountOf, func(item T) int { return openAIAccountSchedulingPriority(accountOf(item)) }, policy, anchor,
-		)...)
+		ordered = append(ordered, tier...)
 	}
 	return ordered
 }

@@ -152,39 +152,6 @@ func appendUsageLogModelQueryFilter(query string, args []any, model string, sour
 	return query, args
 }
 
-// appendExecutionNodeUsageLogWhereCondition applies the same ownership rule
-// to every usage query. Node attribution is intentionally read from accounts,
-// because usage_logs are historical records and do not duplicate that field.
-func appendExecutionNodeUsageLogWhereCondition(
-	conditions []string,
-	args []any,
-	executionNodeID string,
-	legacyNodeID string,
-	accountColumn string,
-) ([]string, []any) {
-	executionNodeID = strings.TrimSpace(executionNodeID)
-	if executionNodeID == "" {
-		return conditions, args
-	}
-	legacyNodeID = strings.TrimSpace(legacyNodeID)
-	if legacyNodeID == "" {
-		legacyNodeID = "api"
-	}
-	accountColumn = strings.TrimSpace(accountColumn)
-	if accountColumn == "" {
-		accountColumn = "account_id"
-	}
-	legacyPos := len(args) + 1
-	nodePos := len(args) + 2
-	conditions = append(conditions, fmt.Sprintf(`%s IN (
-		SELECT a.id
-		FROM accounts a
-		WHERE COALESCE(NULLIF(BTRIM(a.extra ->> 'xiass_execution_node_id'), ''), $%d) = $%d
-	)`, accountColumn, legacyPos, nodePos))
-	args = append(args, legacyNodeID, executionNodeID)
-	return conditions, args
-}
-
 type usageLogRepository struct {
 	client            *dbent.Client
 	sql               sqlExecutor

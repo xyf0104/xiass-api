@@ -13,7 +13,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -23,7 +22,6 @@ type captureDefaultsAdminStub struct {
 	*stubAdminService
 	updates   map[string]any
 	updateErr error
-	accessErr error
 }
 
 func (s *captureDefaultsAdminStub) UpdateAccountExtra(_ context.Context, _ int64, updates map[string]any) error {
@@ -34,10 +32,6 @@ func (s *captureDefaultsAdminStub) UpdateAccountExtra(_ context.Context, _ int64
 	s.updates = maps.Clone(updates)
 	maps.Copy(s.getAccountResult.Extra, updates)
 	return nil
-}
-
-func (s *captureDefaultsAdminStub) CheckAccountManagementAccess(context.Context, int64) error {
-	return s.accessErr
 }
 
 func TestCodexTicketCaptureDefaultsHandler(t *testing.T) {
@@ -92,9 +86,6 @@ func TestCodexTicketCaptureDefaultsHandler(t *testing.T) {
 	account.Platform = service.PlatformAnthropic
 	require.Equal(t, http.StatusBadRequest, request(`{"proxy_ids":[11]}`).Code)
 	account.Platform = service.PlatformOpenAI
-	svc.accessErr = infraerrors.New(http.StatusForbidden, "DENIED", "Account access denied")
-	require.Equal(t, http.StatusForbidden, request(`{"proxy_ids":[11]}`).Code)
-	svc.accessErr = nil
 	svc.updateErr = errors.New("write failed")
 	require.Equal(t, http.StatusInternalServerError, request(`{"proxy_ids":[11]}`).Code)
 	require.Equal(t, []int64{12, 11}, account.Extra[service.OpenAICodexTicketCaptureProxyIDsExtraKey])

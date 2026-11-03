@@ -666,7 +666,10 @@ func TestUpdateAccount_PropagatesProxyToShadow(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, storedShadow.ProxyID)
 	require.Equal(t, newProxy, *storedShadow.ProxyID)
-	require.True(t, storedShadow.hasExplicitExecutionProxy())
+	_, err = svc.UpdateAccount(ctx, parent.ID, &UpdateAccountInput{DirectEgress: true})
+	require.NoError(t, err)
+	require.Nil(t, repo.accounts[parent.ID].ProxyID)
+	require.Nil(t, repo.accounts[shadowID].ProxyID, "switching the parent to direct must also clear the shadow's proxy")
 }
 
 // TestUpdateAccount_RejectsCredentialWriteToShadow 验证安全不变量「影子绝不持有鉴权凭据」

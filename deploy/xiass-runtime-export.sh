@@ -193,8 +193,7 @@ redis_image="redis:8-alpine"
 if [ -n "$REDIS_CONTAINER" ]; then
     redis_image=$(docker inspect --format '{{.Config.Image}}' "$REDIS_CONTAINER")
 fi
-# The CLI shares the application's network namespace, so a paired instance's
-# loopback tunnel is the same endpoint here, not the local Redis container.
+# Share the application's network namespace to use its effective Redis endpoint.
 redis_cli() {
     local host="$1" port="$2" username="$3" password="$4"
     shift 4

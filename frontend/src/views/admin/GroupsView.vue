@@ -1,6 +1,5 @@
 <template>
   <AppLayout>
-    <ExecutionNodeAdminAccessNotice class="mb-4" />
     <TablePageLayout>
       <template #filters>
         <div
@@ -95,7 +94,6 @@
             </div>
             <button
               @click="openSortModal"
-              :disabled="sharedReadOnly"
               class="btn btn-secondary"
               :title="t('admin.groups.sortOrder')"
             >
@@ -104,7 +102,6 @@
             </button>
             <button
               @click="openCreateModal"
-              :disabled="sharedReadOnly"
               class="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50"
               data-tour="groups-create-btn"
             >
@@ -376,7 +373,6 @@
             <div class="flex items-center gap-1">
               <button
                 @click="handleEdit(row)"
-                :disabled="sharedReadOnly"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
                 <Icon name="edit" size="sm" />
@@ -389,7 +385,7 @@
                     ? t('admin.groups.duplicating')
                     : t('admin.groups.duplicate')
                 "
-                :disabled="sharedReadOnly || duplicatingGroupIds.has(row.id)"
+                :disabled="duplicatingGroupIds.has(row.id)"
                 @click="handleDuplicate(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
@@ -414,7 +410,6 @@
               </button>
               <button
                 @click="handleRateMultipliers(row)"
-                :disabled="sharedReadOnly"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-purple-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-purple-400"
               >
                 <Icon name="dollar" size="sm" />
@@ -424,7 +419,6 @@
               </button>
               <button
                 @click="handleRPMOverrides(row)"
-                :disabled="sharedReadOnly"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-orange-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-orange-400"
               >
                 <Icon name="bolt" size="sm" />
@@ -434,7 +428,6 @@
               </button>
               <button
                 @click="handleDelete(row)"
-                :disabled="sharedReadOnly"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
                 <Icon name="trash" size="sm" />
@@ -447,7 +440,7 @@
             <EmptyState
               :title="t('admin.groups.noGroupsYet')"
               :description="t('admin.groups.createFirstGroup')"
-              :action-text="sharedReadOnly ? '' : t('admin.groups.createGroup')"
+              :action-text="t('admin.groups.createGroup')"
               @action="openCreateModal"
             />
           </template>
@@ -2316,7 +2309,7 @@
           <button
             type="submit"
             form="create-group-form"
-            :disabled="sharedReadOnly || submitting"
+            :disabled="submitting"
             class="btn btn-primary"
             data-tour="group-form-submit"
           >
@@ -4202,7 +4195,7 @@
           <button
             type="submit"
             form="edit-group-form"
-            :disabled="sharedReadOnly || submitting"
+            :disabled="submitting"
             class="btn btn-primary"
             data-tour="group-form-submit"
           >
@@ -4325,7 +4318,7 @@
           </button>
           <button
             @click="saveSortOrder"
-            :disabled="sharedReadOnly || sortSubmitting"
+            :disabled="sortSubmitting"
             class="btn btn-primary"
           >
             <svg
@@ -4464,7 +4457,6 @@
                       <div class="flex justify-end gap-1">
                         <button
                           type="button"
-                          :disabled="sharedReadOnly"
                           class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                           :title="t('common.edit')"
                           @click="editCompositeRoute(route)"
@@ -4473,7 +4465,6 @@
                         </button>
                         <button
                           type="button"
-                          :disabled="sharedReadOnly"
                           class="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                           :title="t('common.delete')"
                           @click="deleteCompositeRoute(route)"
@@ -4605,7 +4596,7 @@
               <button
                 type="submit"
                 class="btn btn-primary"
-                :disabled="sharedReadOnly || compositeRouteSaving"
+                :disabled="compositeRouteSaving"
               >
                 <Icon
                   v-if="!compositeRouteSaving"
@@ -4981,9 +4972,7 @@ import { VueDraggable } from "vue-draggable-plus";
 import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import { useKeyedDebouncedSearch } from "@/composables/useKeyedDebouncedSearch";
-import { useExecutionNodeAdminAccess } from "@/composables/useExecutionNodeAdminAccess";
 import { getPersistedPageSize } from "@/composables/usePersistedPageSize";
-import ExecutionNodeAdminAccessNotice from "@/components/admin/ExecutionNodeAdminAccessNotice.vue";
 import { sortGroups } from "@/utils/groupSorting";
 import {
   createDefaultMessagesDispatchFormState,
@@ -5112,12 +5101,6 @@ const route = useRoute();
 const appStore = useAppStore();
 const authStore = useAuthStore();
 const onboardingStore = useOnboardingStore();
-const { sharedReadOnly, loadExecutionNodeAdminAccess } = useExecutionNodeAdminAccess();
-const ensureSharedWrite = (): boolean => {
-  if (!sharedReadOnly.value) return true;
-  appStore.showError(t("admin.executionNodes.sharedAccess.actionBlocked"));
-  return false;
-};
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
 // Default hidden columns (hidden on first load / after schema bumps).
@@ -5819,7 +5802,6 @@ const openUserAccountAllowlist = async (user: UserGroupAccountRuntimeUser) => {
 };
 
 const saveUserAccountAllowlist = async (accountIDs: number[]) => {
-  if (!ensureSharedWrite()) return;
   const group = runtimeGroup.value;
   const user = allowlistUser.value;
   if (!group || !user) return;
@@ -5839,7 +5821,6 @@ const saveUserAccountAllowlist = async (accountIDs: number[]) => {
 };
 
 const restoreUserAccountAllowlist = async () => {
-  if (!ensureSharedWrite()) return;
   const group = runtimeGroup.value;
   const user = allowlistUser.value;
   if (!group || !user) return;
@@ -7102,7 +7083,6 @@ const validateProfitControlForm = (form: ProfitControlFormState): boolean => {
 };
 
 const handleCreateGroup = async () => {
-  if (!ensureSharedWrite()) return;
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
     return;
@@ -7431,7 +7411,6 @@ const closeEditModal = () => {
 };
 
 const handleUpdateGroup = async () => {
-  if (!ensureSharedWrite()) return;
   if (!editingGroup.value) return;
   if (!editForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -7628,19 +7607,16 @@ const removeEditMessagesDispatchMapping = (row: MessagesDispatchMappingRow) => {
 };
 
 const handleRateMultipliers = (group: AdminGroup) => {
-  if (!ensureSharedWrite()) return;
   rateMultipliersGroup.value = group;
   showRateMultipliersModal.value = true;
 };
 
 const handleRPMOverrides = (group: AdminGroup) => {
-  if (!ensureSharedWrite()) return;
   rpmOverridesGroup.value = group;
   showRPMOverridesModal.value = true;
 };
 
 const handleDuplicate = async (group: AdminGroup) => {
-  if (!ensureSharedWrite()) return;
   if (duplicatingGroupIds.has(group.id)) return;
 
   duplicatingGroupIds.add(group.id);
@@ -7757,7 +7733,6 @@ const editCompositeRoute = (route: CompositeModelRoute) => {
 };
 
 const saveCompositeRoute = async () => {
-  if (!ensureSharedWrite()) return;
   if (!compositeRoutesGroup.value) return;
   if (!compositeRouteForm.public_model.trim()) {
     appStore.showError(t("admin.groups.compositeRoutes.publicModelRequired"));
@@ -7795,7 +7770,6 @@ const saveCompositeRoute = async () => {
 };
 
 const deleteCompositeRoute = async (route: CompositeModelRoute) => {
-  if (!ensureSharedWrite()) return;
   if (!compositeRoutesGroup.value) return;
   if (!window.confirm(t("admin.groups.compositeRoutes.deleteConfirm"))) return;
   try {
@@ -7844,13 +7818,11 @@ const previewCompositeRoute = async () => {
 };
 
 const handleDelete = (group: AdminGroup) => {
-  if (!ensureSharedWrite()) return;
   deletingGroup.value = group;
   showDeleteDialog.value = true;
 };
 
 const confirmDelete = async () => {
-  if (!ensureSharedWrite()) return;
   if (!deletingGroup.value) return;
 
   try {
@@ -8062,7 +8034,6 @@ const handleClickOutside = (event: MouseEvent) => {
 
 // 打开排序弹窗
 const openSortModal = async () => {
-  if (!ensureSharedWrite()) return;
   try {
     // 获取所有分组（不分页）
     const allGroups = await adminAPI.groups.getAll();
@@ -8082,7 +8053,6 @@ const closeSortModal = () => {
 
 // 保存排序
 const saveSortOrder = async () => {
-  if (!ensureSharedWrite()) return;
   sortSubmitting.value = true;
   try {
     const updates = sortableGroups.value.map((g, index) => ({
@@ -8104,7 +8074,6 @@ const saveSortOrder = async () => {
 };
 
 onMounted(() => {
-  void loadExecutionNodeAdminAccess(true);
   void loadGroups().then(openRequestedAccountAllowlist);
   if (!authStore.isSimpleMode) {
     void loadLiveCapability();

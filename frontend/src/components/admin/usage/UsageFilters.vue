@@ -174,12 +174,6 @@
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
 
-        <!-- Execution node filter: errors are served by a separate log API and do not support this dimension. -->
-        <div v-if="mode !== 'errors' && executionNodeOptions.length > 0" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.usage.executionNode') }}</label>
-          <Select v-model="filters.execution_node_id" :options="executionNodeOptions" @change="emitChange" />
-        </div>
-
       </div>
 
       <!-- Right: actions -->
@@ -221,7 +215,6 @@ interface Props {
   endDate: string
   showActions?: boolean
   modelOptions?: string[]
-  executionNodeOptions?: SelectOption[]
   /**
    * errors 模式:隐藏用量专属字段/按钮,显示错误类型+状态码(错误请求 tab 用)
    * ranking 模式:同 usage 但隐藏计费模式筛选与清理/导出按钮(用户排行 tab 用)
@@ -277,7 +270,6 @@ const modelOptions = computed<SelectOption[]>(() => [
   ...(props.modelOptions ?? []).map((m) => ({ value: m, label: m })),
 ])
 const groupOptions = ref<SelectOption[]>([{ value: null, label: t('admin.usage.allGroups') }])
-const executionNodeOptions = computed<SelectOption[]>(() => props.executionNodeOptions ?? [])
 
 const requestTypeOptions = ref<SelectOption[]>([
   { value: null, label: t('admin.usage.allTypes') },

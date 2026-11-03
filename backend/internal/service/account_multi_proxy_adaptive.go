@@ -21,14 +21,13 @@ const (
 )
 
 type AccountProxyAdaptiveRouteKey struct {
-	ExecutionNode string
-	AccountID     int64
-	ModelHash     string
-	ProxyHash     string
+	AccountID int64
+	ModelHash string
+	ProxyHash string
 }
 
 func (k AccountProxyAdaptiveRouteKey) CacheID() string {
-	return k.ExecutionNode + ":" + fmt.Sprintf("%d", k.AccountID) + ":" + k.ModelHash + ":" + k.ProxyHash
+	return fmt.Sprintf("%d", k.AccountID) + ":" + k.ModelHash + ":" + k.ProxyHash
 }
 
 type AccountProxyAdaptiveRouteStats struct {
@@ -179,20 +178,12 @@ func adaptiveSeedPriority(priority int) int {
 }
 
 func (s *ConcurrencyService) accountProxyAdaptiveRouteKey(account *Account, model string, proxy *Proxy) AccountProxyAdaptiveRouteKey {
-	node := "default"
-	if account != nil {
-		if value := strings.TrimSpace(account.ExecutionNodeID("")); value != "" {
-			node = value
-		} else if s != nil && s.executionNodeID != "" {
-			node = s.executionNodeID
-		}
-	}
 	proxyIdentity := "none"
 	if proxy != nil {
 		proxyIdentity = fmt.Sprintf("%d:%d", proxy.ID, proxy.UpdatedAt.UnixNano())
 	}
 	return AccountProxyAdaptiveRouteKey{
-		ExecutionNode: shortAdaptiveHash(node), AccountID: account.ID,
+		AccountID: account.ID,
 		ModelHash: shortAdaptiveHash(strings.TrimSpace(model)), ProxyHash: shortAdaptiveHash(proxyIdentity),
 	}
 }

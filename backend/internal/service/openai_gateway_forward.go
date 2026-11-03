@@ -602,32 +602,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	if rawTier := requestView.ServiceTier; rawTier != "" {
-		if normTier := normalizedOpenAIServiceTierValue(rawTier); normTier != "" {
-			action, errMsg := s.evaluateOpenAIFastPolicy(ctx, account, upstreamModel, normTier)
-			switch action {
-			case BetaPolicyActionBlock:
-				msg := errMsg
-				if msg == "" {
-					msg = fmt.Sprintf("openai service_tier=%s is not allowed for model %s", normTier, upstreamModel)
-				}
-				blocked := &OpenAIFastBlockedError{Message: msg}
-				writeOpenAIFastPolicyBlockedResponse(c, blocked)
-				return nil, blocked
-			case BetaPolicyActionFilter:
-				markPatchDelete("service_tier")
-			case OpenAIFastPolicyActionForcePriority:
-				if rawTier != OpenAIFastTierPriority {
-					markPatchSet("service_tier", OpenAIFastTierPriority)
-				}
-			default:
-				if normTier != rawTier {
-					markPatchSet("service_tier", normTier)
-				}
-			}
-		}
-	}
-
 	if bodyModified {
 		if requestView.HasPatches() {
 			if patchedBody, patchErr := requestView.ApplyPatches(); patchErr == nil {
@@ -649,6 +623,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			requestView = newOpenAIRequestView(body)
 		}
+	}
+
+	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, body)
+	if policyErr != nil {
+		var blocked *OpenAIFastBlockedError
+		if errors.As(policyErr, &blocked) {
+			writeOpenAIFastPolicyBlockedResponse(c, blocked)
+		}
+		return nil, policyErr
+	}
+	if !bytes.Equal(body, updatedBody) {
+		body = updatedBody
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
 	}
 
 	// Remember the account-scoped entry identity before any recovery retry

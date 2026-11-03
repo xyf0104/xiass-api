@@ -14,8 +14,6 @@ import UsageTable from '../UsageTable.vue'
 
 const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'Deleted',
-  'admin.accounts.executionNodeLocal': 'Local',
-  'admin.accounts.columns.executionNodeHint': 'Account egress node',
   'admin.usage.egressLabel': 'Egress',
   'admin.usage.egressDirect': 'Direct',
   'admin.usage.egressProxy': 'Proxy',
@@ -24,7 +22,6 @@ const messages: Record<string, string> = {
   'admin.usage.egressPublicIp': 'Public IP',
   'admin.usage.egressProxyName': 'Proxy name',
   'admin.usage.egressProxyAddress': 'Proxy address',
-  'admin.usage.egressExecutionNode': 'Execution node',
   'admin.usage.egressIpObservedAt': 'Last IP probe',
   'usage.costDetails': 'Cost Breakdown',
   'admin.usage.inputCost': 'Input Cost',
@@ -136,7 +133,7 @@ const baseImageRow = {
   image_size_breakdown: null,
 }
 
-describe('admin UsageTable execution-node badges', () => {
+describe('admin UsageTable account pool badges', () => {
   const AccountCellDataTableStub = {
     props: ['data'],
     template: `
@@ -148,47 +145,16 @@ describe('admin UsageTable execution-node badges', () => {
     `,
   }
 
-  it('uses distinct colors for local and remote account ownership', () => {
-    const wrapper = mount(UsageTable, {
-      props: {
-        data: [
-          { ...baseImageRow, request_id: 'local-node', account: { name: 'Local account', execution_node_id: 'api' } },
-          { ...baseImageRow, request_id: 'remote-node', account: { name: 'Remote account', execution_node_id: 'api2' } },
-        ],
-        columns: [],
-        showExecutionNode: true,
-        executionNodeLocalId: 'api',
-      },
-      global: {
-        stubs: {
-          DataTable: AccountCellDataTableStub,
-          Icon: { template: '<i />' },
-        },
-      },
-    })
-
-    const badges = wrapper.findAll('span[title="Account egress node"]')
-    expect(badges).toHaveLength(2)
-    expect(badges[0].classes()).toContain('text-sky-700')
-    expect(badges[0].text()).toContain('Local')
-    expect(badges[1].classes()).toContain('text-amber-700')
-    expect(badges[1].classes()).toContain('whitespace-nowrap')
-    expect(badges[1].classes()).toContain('shrink-0')
-    expect(badges[1].text()).toContain('api2')
-  })
-
-  it('keeps the execution node and account pool on the same row for historical requests', () => {
+  it('keeps the account pool badge on one line for historical requests', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
           ...baseImageRow,
           request_id: 'pooled',
           account_id: 12,
-          account: { id: 12, name: 'Pool account', execution_node_id: 'api' }
+          account: { id: 12, name: 'Pool account' } as any
         }],
         columns: [],
-        showExecutionNode: true,
-        executionNodeLocalId: 'api',
         accountPoolLookup: {
           '12': { id: 7, name: '沐念云', proxy_id: null, account_ids: [12], account_count: 1 }
         }
@@ -203,7 +169,6 @@ describe('admin UsageTable execution-node badges', () => {
 
     const row = wrapper.get('[data-testid="account-affiliation-badges"]')
     expect(row.classes()).toContain('flex-nowrap')
-    expect(row.get('[title="Account egress node"]').text()).toContain('Local')
     expect(row.get('[title="号池：沐念云"]').text()).toBe('沐念云')
     expect(row.get('[title="号池：沐念云"]').classes()).not.toContain('mt-1')
   })
@@ -246,10 +211,10 @@ describe('admin UsageTable per-request egress snapshot', () => {
         proxy_address: '10.0.0.8:1080',
         ip_address: '203.0.113.8',
         ip_observed_at: '2026-10-24T08:30:00Z',
-        execution_node_id: 'api2',
+        execution_node_id: 'retired-worker-east',
       },
       display: ['203.0.113.8', 'Tokyo exit'],
-      title: ['Public IP: 203.0.113.8', 'Proxy address: 10.0.0.8:1080', 'Execution node: api2', 'Last IP probe:'],
+      title: ['Public IP: 203.0.113.8', 'Proxy address: 10.0.0.8:1080', 'Last IP probe:'],
     },
     {
       name: 'proxy IPv6',
@@ -268,10 +233,9 @@ describe('admin UsageTable per-request egress snapshot', () => {
       egress: {
         route: 'direct',
         ip_address: '198.51.100.44',
-        execution_node_id: 'api',
       },
       display: ['Direct', '198.51.100.44'],
-      title: ['Egress: Direct', 'Public IP: 198.51.100.44', 'Execution node: api'],
+      title: ['Egress: Direct', 'Public IP: 198.51.100.44'],
     },
     {
       name: 'direct IPv6',
@@ -294,6 +258,9 @@ describe('admin UsageTable per-request egress snapshot', () => {
     const line = wrapper.get(`[data-testid="account-egress"][data-request-id="${requestId}"]`)
     for (const value of display) expect(line.text()).toContain(value)
     for (const value of title) expect(line.attributes('title')).toContain(value)
+    expect(line.text()).not.toMatch(/api\d*/)
+    expect(line.html()).not.toContain('retired-worker-east')
+    expect(line.attributes('title')).not.toContain('Execution node')
     expect(line.classes()).toContain('min-w-0')
     expect(line.classes()).toContain('overflow-hidden')
     expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
@@ -307,7 +274,6 @@ describe('admin UsageTable per-request egress snapshot', () => {
       proxy_address: '10.0.0.8:1080',
       ip_address: '203.0.113.8',
       ip_observed_at: '2026-10-24T08:30:00Z',
-      execution_node_id: 'api2',
     })
     const row = {
       ...baseImageRow,
@@ -345,7 +311,6 @@ describe('admin UsageTable per-request egress snapshot', () => {
         route: 'proxy',
         proxy_name: '<b>Private listener</b>',
         proxy_address: '[fd00::12]:1080',
-        execution_node_id: 'api3',
       },
     }])
 
@@ -364,7 +329,6 @@ describe('admin UsageTable per-request egress snapshot', () => {
       account: {
         id: 12,
         name: 'Current proxy account',
-        execution_node_id: 'api9',
         proxy: { id: 7, name: '[Subscription] Source A / Current exit' },
       },
     }])

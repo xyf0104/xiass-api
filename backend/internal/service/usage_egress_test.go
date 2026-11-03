@@ -71,19 +71,22 @@ func TestUsageEgressCopiesScalarContextAndRejectsUnsafeAddress(t *testing.T) {
 	require.Nil(t, newUsageEgress(account, "http://different.test:80", true))
 }
 
-func TestUsageEgressUsesSelectedBuiltinNodeNotAccountOwner(t *testing.T) {
-	account := &Account{ID: 42, Extra: map[string]any{AccountExecutionNodeExtraKey: "api"},
-		RequestProxy: &Proxy{ID: 85, Name: executionNodeBuiltinProxyNamePrefix + "api2", Protocol: "socks5", Host: "127.0.0.1", Port: 19080, Username: "api2", Password: "private"},
+func TestUsageEgressRecordsSelectedAccountProxy(t *testing.T) {
+	proxyID := int64(85)
+	account := &Account{ID: 42, ProxyID: &proxyID,
+		RequestProxy: &Proxy{ID: proxyID, Name: "selected-account-proxy", Protocol: "socks5", Host: "127.0.0.1", Port: 19080, Username: "private-user", Password: "private"},
 	}
 	egress := newUsageEgress(account, account.requestProxyURL(), true)
-	require.Equal(t, "api2", egress.ExecutionNodeID)
-	require.Equal(t, executionNodeBuiltinProxyNamePrefix+"api2", egress.ProxyName)
-	account.RequestProxy.Name = executionNodeBuiltinProxyNamePrefix + "api.example.invalid"
-	account.RequestProxy.Username = "api.example.invalid"
-	egress = newUsageEgress(account, account.requestProxyURL(), true)
-	require.Equal(t, executionNodeBuiltinProxyNamePrefix+"api.example.invalid", egress.ProxyName)
+	require.Equal(t, "proxy", egress.Route)
+	require.Equal(t, proxyID, egress.ProxyID)
+	require.Equal(t, "selected-account-proxy", egress.ProxyName)
+	require.Equal(t, "127.0.0.1:19080", egress.ProxyAddress)
+	raw, err := json.Marshal(egress)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "execution_node_id")
+
 	account.RequestProxy = nil
-	require.Empty(t, newUsageEgress(account, "", true).ExecutionNodeID)
+	require.Equal(t, "direct", newUsageEgress(account, "", true).Route)
 }
 
 type usageEgressProbeCache struct {

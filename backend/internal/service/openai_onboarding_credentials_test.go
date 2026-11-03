@@ -55,12 +55,10 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 		Status: StatusError, ErrorMessage: "401 unauthorized", Credentials: maps.Clone(credentials),
 		Concurrency: 7, Priority: 9, ProxyID: &proxyID, GroupIDs: []int64{4, 5}, Schedulable: true,
 		Extra: map[string]any{
-			codexFingerprintModeExtraKey:  "device",
-			codexFingerprintSeedExtraKey:  fingerprintSeed,
-			AccountExecutionNodeExtraKey:  "api2",
-			AccountExecutionProxyExtraKey: "17",
-			AccountPoolExtraKey:           "23",
-			"custom_config":               "preserved",
+			codexFingerprintModeExtraKey: "device",
+			codexFingerprintSeedExtraKey: fingerprintSeed,
+			AccountPoolExtraKey:          "23",
+			"custom_config":              "preserved",
 		},
 	}}
 	svc := &adminServiceImpl{accountRepo: repo}
@@ -83,8 +81,6 @@ func TestOpenAIOnboardingCredentialsSurviveSameIdentityReauthorization(t *testin
 	require.True(t, updated.Schedulable)
 	require.Equal(t, "device", updated.Extra[codexFingerprintModeExtraKey])
 	require.Equal(t, fingerprintSeed, updated.Extra[codexFingerprintSeedExtraKey])
-	require.Equal(t, "api2", updated.Extra[AccountExecutionNodeExtraKey])
-	require.Equal(t, "17", updated.Extra[AccountExecutionProxyExtraKey])
 	require.Equal(t, "23", updated.Extra[AccountPoolExtraKey])
 	require.Equal(t, "preserved", updated.Extra["custom_config"])
 }

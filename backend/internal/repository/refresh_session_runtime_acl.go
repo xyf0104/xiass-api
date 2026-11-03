@@ -41,7 +41,6 @@ func RefreshSessionRuntimeACL(cfg *config.Config, alertLockKey string) ([]string
 		~update:latest ~error_passthrough_rules ~tls_fingerprint_profiles
 		~ops:aggregation:hourly:leader ~ops:aggregation:daily:leader ~ops:cleanup:leader
 		~ops:metrics:collector:leader ~ops:scheduled_reports:leader ~ops:scheduled_reports:last_run:*
-		~xiass:execution_node:heartbeat:* ~xiass:execution_node:cluster_identity
 		~xiass:team-child:browser:session:* ~xiass:team-child:browser:ticket:* ~xiass:team-child:browser:controller
 		~xiass:team-child:mailbox:*
 		&auth:cache:invalidate &subscription:cache:invalidate &error_passthrough_rules_updated

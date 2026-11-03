@@ -26,7 +26,6 @@ func TestOpenAIAdsPowerProfileReleaseCASRejectsCrossEnvironmentReference(t *test
 			"last_verified_at": now.Add(-2 * time.Minute),
 		}
 		extraValues := map[string]any{
-			service.AccountExecutionNodeExtraKey:  environmentKey,
 			service.OpenAIAdsPowerBindingExtraKey: binding,
 		}
 		if errorCode != "" {
@@ -57,7 +56,7 @@ func TestOpenAIAdsPowerProfileReleaseCASRejectsCrossEnvironmentReference(t *test
 	blockedCodes := []string{"account_banned", "account_deleted_or_disabled"}
 
 	_, released, err := repo.ReleaseOpenAIAdsPowerProfileBindings(
-		ctx, "device-cas", "api2", "profile-cas", "api", blockedCodes,
+		ctx, "device-cas", "api2", "profile-cas", blockedCodes,
 	)
 	require.NoError(t, err)
 	require.False(t, released)
@@ -67,7 +66,7 @@ func TestOpenAIAdsPowerProfileReleaseCASRejectsCrossEnvironmentReference(t *test
 	_, err = integrationDB.ExecContext(ctx, "UPDATE accounts SET deleted_at = NOW() WHERE id = $1", remoteID)
 	require.NoError(t, err)
 	ids, released, err := repo.ReleaseOpenAIAdsPowerProfileBindings(
-		ctx, "device-cas", "api2", "profile-cas", "api", blockedCodes,
+		ctx, "device-cas", "api2", "profile-cas", blockedCodes,
 	)
 	require.NoError(t, err)
 	require.True(t, released)

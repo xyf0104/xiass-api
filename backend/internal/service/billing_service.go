@@ -199,7 +199,7 @@ func serviceTierCostMultiplier(serviceTier string) float64 {
 func configuredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) float64 {
 	if pricing != nil {
 		switch normalizeBillingServiceTier(serviceTier) {
-		case "priority", "fast":
+		case "priority", "fast", OpenAIFastTierUltrafast:
 			if pricing.FastMultiplier != nil {
 				return *pricing.FastMultiplier
 			}

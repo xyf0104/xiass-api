@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/benchmark"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -16,14 +17,13 @@ import (
 )
 
 type PelicanBenchmarkHandler struct {
-	store     benchmark.Store
-	accounts  service.AdminService
-	manager   *benchmark.Manager
-	nodeOwner func(*service.Account) string
+	store    benchmark.Store
+	accounts service.AdminService
+	manager  *benchmark.Manager
 }
 
 func NewPelicanBenchmarkHandler(store benchmark.Store, accounts service.AdminService, tester *service.AccountTestService) *PelicanBenchmarkHandler {
-	h := &PelicanBenchmarkHandler{store: store, accounts: accounts, manager: benchmark.NewManager(store, tester), nodeOwner: tester.PelicanExecutionNodeID}
+	h := &PelicanBenchmarkHandler{store: store, accounts: accounts, manager: benchmark.NewManager(store, tester)}
 	h.manager.Start()
 	return h
 }
@@ -94,10 +94,6 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		source, err := h.store.Get(c.Request.Context(), req.SourceID)
 		if err != nil {
 			pelicanError(c, err)
-			return
-		}
-		if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.accounts, source.AccountID); err != nil {
-			response.ErrorFrom(c, err)
 			return
 		}
 		if source.Status == "queued" || source.Status == "running" || source.Status == "canceling" {
@@ -175,19 +171,12 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		}
 		seen[account.ID] = true
 		reason := service.PelicanBenchmarkEligibility(account, req.Model)
-		if reason == "" && ensureAdminAccountManagementAccess(ctx, h.accounts, account.ID) != nil {
-			reason = "account_access_denied"
-		}
 		if reason != "" {
 			result.Skipped = append(result.Skipped, benchmark.Skipped{AccountID: account.ID, Reason: reason})
 			continue
 		}
-		owner := account.ExecutionNodeID("")
-		if h.nodeOwner != nil {
-			owner = h.nodeOwner(account)
-		}
 		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: req.Model,
-			ExecutionNodeID: owner, SourceID: req.SourceID, Action: req.Action})
+			SourceID: req.SourceID, Action: req.Action})
 	}
 	for _, id := range req.AccountIDs {
 		if !seen[id] {
@@ -209,7 +198,7 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			h.manager.Wake()
 		}
 	}
-	response.Accepted(c, result)
+	response.Accepted(c, gin.H{"batch_id": result.BatchID, "tasks": dto.PelicanTasksFromService(result.Tasks), "skipped": result.Skipped})
 }
 
 func (h *PelicanBenchmarkHandler) List(c *gin.Context) {
@@ -251,7 +240,7 @@ func (h *PelicanBenchmarkHandler) List(c *gin.Context) {
 		pelicanError(c, err)
 		return
 	}
-	response.Success(c, page)
+	response.Success(c, gin.H{"items": dto.PelicanTasksFromService(page.Items), "total": page.Total, "page": page.Page, "page_size": page.PageSize})
 }
 
 func pelicanID(c *gin.Context) (string, bool) {
@@ -276,7 +265,7 @@ func (h *PelicanBenchmarkHandler) Detail(c *gin.Context) {
 	}
 	// gin.JSON escapes HTML. Never render this string through a template or
 	// expose a same-origin HTML document, including on the detail endpoint.
-	response.Success(c, result)
+	response.Success(c, dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML})
 }
 
 func (h *PelicanBenchmarkHandler) Stop(c *gin.Context) {
@@ -290,10 +279,6 @@ func (h *PelicanBenchmarkHandler) Stop(c *gin.Context) {
 		pelicanError(c, err)
 		return
 	}
-	if err := ensureAdminAccountManagementAccess(c.Request.Context(), h.accounts, task.AccountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if _, err := h.store.Stop(c.Request.Context(), id, task.AccountID); err != nil {
 		pelicanError(c, err)
 		return
@@ -303,7 +288,7 @@ func (h *PelicanBenchmarkHandler) Stop(c *gin.Context) {
 		pelicanError(c, err)
 		return
 	}
-	response.Success(c, task)
+	response.Success(c, dto.PelicanTaskFromService(*task))
 }
 
 func (h *PelicanBenchmarkHandler) StopAll(c *gin.Context) {
@@ -319,64 +304,10 @@ func (h *PelicanBenchmarkHandler) StopAll(c *gin.Context) {
 		response.BadRequest(c, "select account_id or all=true")
 		return
 	}
-	ctx := c.Request.Context()
-	accountIDs := map[int64]struct{}{}
-	if req.AccountID > 0 {
-		if err := ensureAdminAccountManagementAccess(ctx, h.accounts, req.AccountID); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	} else {
-		for _, status := range []string{"queued", "running"} {
-			for page := 1; ; page++ {
-				result, err := h.store.List(ctx, benchmark.Filter{Status: status, Page: page, PageSize: 100})
-				if err != nil {
-					pelicanError(c, err)
-					return
-				}
-				for _, task := range result.Items {
-					if task.AccountID > 0 {
-						accountIDs[task.AccountID] = struct{}{}
-					}
-				}
-				if len(result.Items) == 0 || int64(page*result.PageSize) >= result.Total {
-					break
-				}
-			}
-		}
-		for accountID := range accountIDs {
-			if err := ensureAdminAccountManagementAccess(ctx, h.accounts, accountID); err != nil {
-				response.ErrorFrom(c, err)
-				return
-			}
-		}
-	}
-	// Restrict the mutation to the account IDs that were both observed and
-	// authorized above. Do not re-list while mutating: changing a paginated
-	// result set can skip rows, and newly-created rows must not inherit an
-	// authorization decision from this request.
-	if req.AccountID > 0 {
-		affected, err := h.store.Stop(ctx, "", req.AccountID)
-		if err != nil {
-			pelicanError(c, err)
-			return
-		}
-		response.Success(c, gin.H{"affected": affected})
+	affected, err := h.store.Stop(c.Request.Context(), "", req.AccountID)
+	if err != nil {
+		pelicanError(c, err)
 		return
-	}
-	authorized := make([]int64, 0, len(accountIDs))
-	for accountID := range accountIDs {
-		authorized = append(authorized, accountID)
-	}
-	sort.Slice(authorized, func(i, j int) bool { return authorized[i] < authorized[j] })
-	affected := int64(0)
-	for _, accountID := range authorized {
-		n, err := h.store.Stop(ctx, "", accountID)
-		if err != nil {
-			pelicanError(c, err)
-			return
-		}
-		affected += n
 	}
 	response.Success(c, gin.H{"affected": affected})
 }

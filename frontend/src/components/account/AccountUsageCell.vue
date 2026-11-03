@@ -90,7 +90,7 @@
           <button
             type="button"
             class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
-            :disabled="readOnly || activeQueryLoading"
+            :disabled="activeQueryLoading"
             @click="loadActiveUsage"
           >
             <svg
@@ -116,7 +116,7 @@
       <div v-else class="space-y-1">
         <div class="text-xs text-gray-400">-</div>
         <!-- Always allow on-demand upstream quota probe, even before passive headers exist. -->
-        <GrokQuotaProbeCell v-if="!readOnly" :account="account" />
+        <GrokQuotaProbeCell :account="account" />
       </div>
     </template>
 
@@ -160,7 +160,6 @@
               -->
               <OpenAIQuotaResetCell
                 :account="account"
-                :read-only="readOnly"
                 :spread-actions="true"
                 @account-updated="handleQuotaResetAccountUpdated"
                 @credits-updated="handleQuotaCreditsUpdated"
@@ -173,7 +172,7 @@
                       'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                       compact ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
                     ]"
-                    :disabled="readOnly || activeQueryLoading"
+                    :disabled="activeQueryLoading"
                     @click="loadActiveUsage"
                   >
                     <svg
@@ -215,7 +214,6 @@
           <OpenAIQuotaResetCell
             v-else
             :account="account"
-            :read-only="readOnly"
             :spread-actions="true"
             @account-updated="handleQuotaResetAccountUpdated"
             @credits-updated="handleQuotaCreditsUpdated"
@@ -228,7 +226,7 @@
                   'inline-flex min-w-0 shrink items-center gap-0.5 rounded py-0.5 font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                   compact ? 'px-0.5 text-[10px]' : 'px-1.5 text-[10px]'
                 ]"
-                :disabled="readOnly || activeQueryLoading"
+                :disabled="activeQueryLoading"
                 @click="loadActiveUsage"
               >
                 <svg
@@ -268,7 +266,6 @@
         <!-- Always allow on-demand upstream quota query, even before local data exists. -->
         <OpenAIQuotaResetCell
           :account="account"
-          :read-only="readOnly"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
           @credits-updated="handleQuotaCreditsUpdated"
@@ -518,7 +515,7 @@
         <div v-if="grokQuotaStatusLine" class="text-[10px] text-gray-500 dark:text-gray-400">
           {{ grokQuotaStatusLine }}
         </div>
-        <GrokQuotaProbeCell v-if="!readOnly" :account="account" @probed="handleGrokProbed" />
+        <GrokQuotaProbeCell :account="account" @probed="handleGrokProbed" />
       </div>
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
@@ -533,14 +530,14 @@
     >
       <div class="space-y-1">
         <div
-          v-if="readOnly || (!cnQuotaCellVisible && !cnBalanceCellVisible)"
+          v-if="!cnQuotaCellVisible && !cnBalanceCellVisible"
           class="text-xs text-gray-400"
           :title="t('admin.accounts.cnProviders.noBalanceEndpoint')"
         >
           -
         </div>
-        <CNProviderQuotaCell v-if="!readOnly" :account="account" />
-        <CNProviderBalanceCell v-if="!readOnly" :account="account" />
+        <CNProviderQuotaCell :account="account" />
+        <CNProviderBalanceCell :account="account" />
       </div>
     </template>
 
@@ -774,13 +771,11 @@ const USAGE_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const props = withDefaults(
   defineProps<{
     account: Account
-    readOnly?: boolean
     todayStats?: WindowStats | null
     todayStatsLoading?: boolean
     manualRefreshToken?: number
   }>(),
   {
-    readOnly: false,
     todayStats: null,
     todayStatsLoading: false,
     manualRefreshToken: 0
@@ -848,7 +843,6 @@ const cnBalanceCellVisible = computed(() =>
 )
 
 const shouldFetchUsage = computed(() => {
-  if (props.readOnly && !['anthropic', 'openai'].includes(props.account.platform)) return false
   if (props.account.platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
@@ -930,7 +924,6 @@ const usageCacheVersionKey = computed(() => JSON.stringify([
   props.account.id,
   props.account.platform,
   props.account.type,
-  props.readOnly,
   openAICredentialGenerationKey.value,
   props.account.platform === 'openai' && props.account.type === 'oauth'
     ? openAIUsageRefreshKey.value
@@ -1498,8 +1491,8 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
   activeQueryLoading.value = false
   const requestedVersionKey = usageCacheVersionKey.value
   const requestedAccount = props.account
-  const source = props.readOnly ? 'passive' : options?.source
-  const force = props.readOnly ? undefined : options?.force
+  const source = options?.source
+  const force = options?.force
   const isCurrentRequest = () => !unmounted.value && requestGeneration === usageRequestGeneration &&
     requestedVersionKey === usageCacheVersionKey.value
 
@@ -1599,7 +1592,6 @@ const attachVisibilityObserver = () => {
 }
 
 const loadActiveUsage = async () => {
-  if (props.readOnly) return
   const requestGeneration = ++usageRequestGeneration
   loading.value = false
   const requestedVersionKey = usageCacheVersionKey.value
@@ -1628,7 +1620,6 @@ const loadActiveUsage = async () => {
 }
 
 const handleGrokProbed = (result: GrokQuotaProbeResult) => {
-  if (props.readOnly) return
   const current = usageInfo.value
   if (!current) return
   const snapshot = result.snapshot
@@ -1748,7 +1739,7 @@ const quotaTotalBar = computed((): QuotaBarInfo | null => {
 })
 
 const handleQuotaResetAccountUpdated = (account: Account) => {
-  if (props.readOnly || account.id !== props.account.id) return
+  if (account.id !== props.account.id) return
   emit('account-updated', account)
 }
 
@@ -1756,7 +1747,7 @@ const handleQuotaCreditsUpdated = (payload: {
   accountId: number
   snapshot: NonNullable<Account['extra']>['codex_credits_snapshot']
 }) => {
-  if (props.readOnly || payload.accountId !== props.account.id) return
+  if (payload.accountId !== props.account.id) return
   emit('account-updated', {
     ...props.account,
     extra: {

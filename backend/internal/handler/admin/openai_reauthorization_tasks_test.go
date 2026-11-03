@@ -143,8 +143,8 @@ func reauthorizationAccount(id int64) *service.Account {
 			service.OpenAIOAuthReauthorizationTOTPSecretCredentialKey: "enc:SkJTV1kzRFBFSFBLM1BYUA",
 		},
 		Extra: map[string]any{
-			service.AccountExecutionNodeExtraKey: "api2", service.AccountPoolExtraKey: "14",
-			"codex_fingerprint_mode": "device", "codex_fingerprint_seed": "38fb7d63-5ef9-4c06-bb74-21a42464636a",
+			service.AccountPoolExtraKey: "14",
+			"codex_fingerprint_mode":    "device", "codex_fingerprint_seed": "38fb7d63-5ef9-4c06-bb74-21a42464636a",
 			service.OpenAIReauthorizationStateExtraKey: service.OpenAIReauthorizationState{
 				Version: 1, TrackingStartedAt: &trackingStartedAt,
 				HistorySource: "xiass_state", HistoryConfidence: service.OpenAIReauthorizationHistoryExact,
@@ -341,20 +341,29 @@ func TestOpenAIReauthorizationTaskUsesSeparateSavedEmailCodeLogin(t *testing.T) 
 	require.Empty(t, f.requests[0]["totp_secret"])
 }
 
-func TestOpenAIReauthorizationBuiltInTaskRejectsAnotherExecutionNode(t *testing.T) {
+func TestOpenAIReauthorizationBuiltInTaskIgnoresLegacyNodeOwnership(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
-	f.admin.getAccountResult = reauthorizationAccount(448)
+	account := reauthorizationAccount(448)
+	account.Extra["xiass_execution_node_id"] = "api2"
+	f.admin.getAccountResult = account
+	proxy := service.Proxy{ID: 9, Protocol: "http", Host: "proxy.example.test", Port: 8080, Status: service.StatusActive}
+	f.admin.proxies = []service.Proxy{proxy}
+	configureOpenAIReauthorizationProxy(t, f, proxy)
 	r := openAIReauthorizationRouter(f.h, 42)
 	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true}`)
-	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	require.Empty(t, f.requests)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, f.requests, 1)
+	require.NotNil(t, account.ProxyID)
+	require.Equal(t, int64(9), *account.ProxyID)
 }
 
-func TestOpenAIReauthorizationAdsPowerTaskUsesAssignedProxyAcrossExecutionNodes(t *testing.T) {
+func TestOpenAIReauthorizationAdsPowerTaskPreservesSelectedProxy(t *testing.T) {
 	f := newBatchOAuthFixture(t)
 	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api")
-	f.admin.getAccountResult = reauthorizationAccount(448)
+	account := reauthorizationAccount(448)
+	account.Extra["xiass_execution_node_id"] = "api2"
+	f.admin.getAccountResult = account
 	r := openAIReauthorizationRouter(f.h, 42)
 
 	w := batchOAuthRequest(r, http.MethodPost, "/tasks", `{"account_id":448,"confirmed":true,"browser_mode":"adspower"}`)
@@ -362,20 +371,27 @@ func TestOpenAIReauthorizationAdsPowerTaskUsesAssignedProxyAcrossExecutionNodes(
 	require.Contains(t, w.Body.String(), `"browser_mode":"adspower"`)
 	require.Contains(t, w.Body.String(), `"stage":"external_browser"`)
 	require.Empty(t, f.requests)
+	for _, task := range f.h.batchOAuthStore.tasks {
+		require.NotNil(t, task.config.ProxyID)
+		require.Equal(t, *account.ProxyID, *task.config.ProxyID)
+	}
 }
 
-func TestOpenAIReauthorizationConfigurationAllowsAdsPowerAcrossExecutionNodes(t *testing.T) {
+func TestOpenAIReauthorizationConfigurationTracksSelectedProxyOnly(t *testing.T) {
 	account := reauthorizationAccount(448)
 	task := &batchOAuthTask{
-		executionNodeID: account.GetExtraString(service.AccountExecutionNodeExtraKey),
-		config:          openAIReauthorizationAccountConfig(account),
+		config: openAIReauthorizationAccountConfig(account),
 	}
 	task.config.BrowserMode = batchOAuthBrowserAdsPower
 
-	require.False(t, openAIReauthorizationConfigurationChanged(task, account, "api"))
+	require.False(t, openAIReauthorizationConfigurationChanged(task, account))
+	account.Extra["xiass_execution_node_id"] = "old-node"
+	require.False(t, openAIReauthorizationConfigurationChanged(task, account))
 
 	task.config.BrowserMode = batchOAuthBrowserServer
-	require.True(t, openAIReauthorizationConfigurationChanged(task, account, "api"))
+	require.False(t, openAIReauthorizationConfigurationChanged(task, account))
+	account.ProxyID = nil
+	require.True(t, openAIReauthorizationConfigurationChanged(task, account))
 }
 
 func TestOpenAIReauthorizationCompletionOnlyUpdatesMergedCredentials(t *testing.T) {

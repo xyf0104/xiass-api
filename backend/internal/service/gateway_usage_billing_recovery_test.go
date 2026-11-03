@@ -151,33 +151,24 @@ func TestUsageBillingRecoveryErrorClassification(t *testing.T) {
 	}
 }
 
-func TestUsageBillingRecoveryBudgetKeepsDefaults(t *testing.T) {
-	for _, tc := range []struct {
-		enabled       bool
-		seconds, want int
-	}{
-		{false, 60, 15}, {true, 5, 15}, {true, 60, 60}, {true, 1000, 120},
-	} {
-		cfg := &config.Config{}
-		cfg.Gateway.ExecutionNode.Enabled = tc.enabled
-		cfg.Gateway.UsageRecord.TaskTimeoutSeconds = tc.seconds
-		ctx, cancel := detachedUsageBillingRecoveryContext(context.Background(), cfg)
-		deadline, ok := ctx.Deadline()
-		require.True(t, ok)
-		require.InDelta(t, tc.want, time.Until(deadline).Seconds(), 0.2)
-		cancel()
-	}
+func TestUsageBillingRecoveryContextSurvivesClientCancellation(t *testing.T) {
+	type contextKey struct{}
+	parent, cancelParent := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "request-snapshot"))
+	cancelParent()
+	ctx, cancel := detachedBillingContext(parent)
+	defer cancel()
+	require.NoError(t, ctx.Err())
+	require.Equal(t, "request-snapshot", ctx.Value(contextKey{}))
+	deadline, ok := ctx.Deadline()
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(postUsageBillingTimeout), deadline, 200*time.Millisecond)
+	cancel()
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }
 
-func TestUsageBillingRecoveryUsesOpenAIConfiguredBudget(t *testing.T) {
+func TestUsageBillingRecoveryPreservesOpenAIServiceConfiguration(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode.Enabled = true
 	cfg.Gateway.UsageRecord.TaskTimeoutSeconds = 60
 	svc := &OpenAIGatewayService{cfg: cfg}
 	require.True(t, cfg == svc.billingDeps().cfg, "OpenAI must forward its existing service configuration to billing")
-	ctx, cancel := detachedUsageBillingRecoveryContext(context.Background(), svc.billingDeps().cfg)
-	defer cancel()
-	deadline, ok := ctx.Deadline()
-	require.True(t, ok)
-	require.InDelta(t, 60, time.Until(deadline).Seconds(), 0.2)
 }

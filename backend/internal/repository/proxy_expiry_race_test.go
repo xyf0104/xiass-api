@@ -28,7 +28,7 @@ func TestSweepOneExpiredProxySkipsStaleSnapshot(t *testing.T) {
 	execExpectation.WithArgs(service.StatusExpired, snapshot.ID, service.StatusActive, now, expiresAt, snapshot.FallbackMode, backupID)
 	execExpectation.WillReturnResult(sqlmock.NewResult(0, 0))
 	repo := newProxyRepositoryWithSQL(client, db)
-	changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, snapshot, now, &backupID, true, "")
+	changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), db, snapshot, now, &backupID, true)
 	require.NoError(t, err)
 	require.Empty(t, changed)
 	require.NoError(t, mock.ExpectationsWereMet())

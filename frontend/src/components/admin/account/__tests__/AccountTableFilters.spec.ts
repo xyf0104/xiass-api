@@ -19,7 +19,7 @@ const SelectStub = {
 
 describe('AccountTableFilters account pool filter', () => {
   it('lists pools and emits the selected pool without changing other filters', async () => {
-    const filters = { platform: '', type: '', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '', execution_node_id: '' }
+    const filters = { platform: '', type: '', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '' }
     const wrapper = mount(AccountTableFilters, {
       props: {
         searchQuery: '',
@@ -43,7 +43,7 @@ describe('AccountTableFilters account pool filter', () => {
   })
 
   it('keeps subscription plan and login method as independent combinable filters', async () => {
-    const filters = { platform: 'openai', type: 'oauth', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '', execution_node_id: '' }
+    const filters = { platform: 'openai', type: 'oauth', subscription_plan: '', login_method: '', status: '', privacy_mode: '', group: '', account_pool: '' }
     const wrapper = mount(AccountTableFilters, {
       props: { searchQuery: '', filters },
       global: {

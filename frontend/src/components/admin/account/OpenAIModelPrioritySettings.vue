@@ -2,14 +2,14 @@
   <section class="card overflow-hidden" data-testid="openai-model-priority-settings">
     <div class="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
       <div class="min-w-0">
-        <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.modelPriorityTitle') }}</h2>
-        <p class="mt-1 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('admin.executionNodes.modelPriorityDescription') }}</p>
+        <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.modelPriority.modelPriorityTitle') }}</h2>
+        <p class="mt-1 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('admin.modelPriority.modelPriorityDescription') }}</p>
       </div>
       <div class="flex items-center gap-3">
         <span class="text-sm font-medium" :class="draft.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
-          {{ draft.enabled ? t('admin.executionNodes.on') : t('admin.executionNodes.off') }}
+          {{ draft.enabled ? t('admin.modelPriority.on') : t('admin.modelPriority.off') }}
         </span>
-        <Toggle v-model="draft.enabled" :disabled="loading || saving" :aria-label="t('admin.executionNodes.modelPriorityTitle')" />
+        <Toggle v-model="draft.enabled" :disabled="loading || saving" :aria-label="t('admin.modelPriority.modelPriorityTitle')" />
       </div>
     </div>
 
@@ -20,24 +20,24 @@
       <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
         <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)_auto] lg:items-center">
           <div class="min-w-0">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.smartRotationTitle') }}</h3>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.modelPriority.smartRotationTitle') }}</h3>
             <p id="model-priority-smart-rotation-help" class="mt-1 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">
-              {{ t('admin.executionNodes.smartRotationDescription') }}
+              {{ t('admin.modelPriority.smartRotationDescription') }}
             </p>
             <p v-if="!draft.enabled" class="mt-1 text-sm text-amber-700 dark:text-amber-300">
-              {{ t('admin.executionNodes.smartRotationRequiresPriority') }}
+              {{ t('admin.modelPriority.smartRotationRequiresPriority') }}
             </p>
           </div>
 
           <label class="block min-w-0" for="model-priority-smart-rotation-cooldown">
-            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.executionNodes.smartRotationCooldown') }}</span>
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.modelPriority.smartRotationCooldown') }}</span>
             <Select
               id="model-priority-smart-rotation-cooldown"
               class="mt-1 w-full"
               :model-value="draft.smart_rotation_cooldown_minutes"
               :options="smartRotationCooldownOptions"
               :disabled="smartRotationCooldownDisabled"
-              :aria-label="t('admin.executionNodes.smartRotationCooldown')"
+              :aria-label="t('admin.modelPriority.smartRotationCooldown')"
               aria-describedby="model-priority-smart-rotation-help"
               data-testid="model-priority-smart-rotation-cooldown"
               @update:model-value="setSmartRotationCooldown"
@@ -55,7 +55,7 @@
             <Toggle
               v-model="draft.smart_rotation_enabled"
               :disabled="smartRotationToggleDisabled"
-              :aria-label="t('admin.executionNodes.smartRotationTitle')"
+              :aria-label="t('admin.modelPriority.smartRotationTitle')"
               aria-describedby="model-priority-smart-rotation-help"
               data-testid="model-priority-smart-rotation-toggle"
             />
@@ -66,34 +66,34 @@
       <div v-if="draft.rules.length" class="divide-y divide-gray-100 dark:divide-dark-700">
         <div v-for="(rule, index) in draft.rules" :key="rule.key" class="grid gap-3 px-5 py-4 sm:px-6 lg:grid-cols-[minmax(14rem,1fr)_11rem_auto_auto] lg:items-end">
           <label class="block min-w-0" :for="`model-priority-pattern-${rule.key}`">
-            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.executionNodes.modelPattern') }}</span>
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.modelPriority.modelPattern') }}</span>
             <input
               :id="`model-priority-pattern-${rule.key}`"
               v-model.trim="rule.model_pattern"
               list="openai-model-priority-model-options"
               class="input mt-1 w-full font-mono text-sm"
-              :placeholder="t('admin.executionNodes.modelPatternPlaceholder')"
+              :placeholder="t('admin.modelPriority.modelPatternPlaceholder')"
               :disabled="saving"
               :data-testid="`model-priority-pattern-${index}`"
             />
           </label>
           <div class="min-w-0">
-            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.executionNodes.preferredAccounts') }}</span>
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.modelPriority.preferredAccounts') }}</span>
             <div class="mt-1 flex h-10 items-center text-sm font-semibold text-gray-800 dark:text-gray-200">
-              {{ t('admin.executionNodes.selectedAccounts', { count: rule.account_ids.length }) }}
+              {{ t('admin.modelPriority.selectedAccounts', { count: rule.account_ids.length }) }}
             </div>
           </div>
           <button type="button" class="btn btn-secondary" :disabled="saving" :data-testid="`model-priority-configure-${index}`" @click="openAccountPicker(index)">
             <Icon name="users" size="sm" />
-            <span>{{ t('admin.executionNodes.configureAccounts') }}</span>
+            <span>{{ t('admin.modelPriority.configureAccounts') }}</span>
           </button>
-          <button type="button" class="btn btn-secondary flex h-10 w-10 items-center justify-center p-0 text-red-600 dark:text-red-400" :disabled="saving" :title="t('admin.executionNodes.removeRule')" :aria-label="t('admin.executionNodes.removeRule')" @click="removeRule(index)">
+          <button type="button" class="btn btn-secondary flex h-10 w-10 items-center justify-center p-0 text-red-600 dark:text-red-400" :disabled="saving" :title="t('admin.modelPriority.removeRule')" :aria-label="t('admin.modelPriority.removeRule')" @click="removeRule(index)">
             <Icon name="trash" size="sm" />
           </button>
         </div>
       </div>
       <div v-else class="px-5 py-8 text-center text-sm text-gray-500 dark:text-gray-400 sm:px-6">
-        {{ t('admin.executionNodes.noModelPriorityRules') }}
+        {{ t('admin.modelPriority.noModelPriorityRules') }}
       </div>
       <datalist id="openai-model-priority-model-options">
         <option v-for="model in modelOptions" :key="model" :value="model" />
@@ -101,11 +101,11 @@
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
         <button type="button" class="btn btn-secondary" :disabled="saving" data-testid="model-priority-add" @click="addRule">
           <Icon name="plus" size="sm" />
-          <span>{{ t('admin.executionNodes.addModelPriorityRule') }}</span>
+          <span>{{ t('admin.modelPriority.addModelPriorityRule') }}</span>
         </button>
         <button type="button" class="btn btn-primary" :disabled="saving || !canSave" data-testid="model-priority-save" @click="save">
           <Icon :name="saving ? 'refresh' : 'check'" size="sm" :class="saving ? 'animate-spin' : ''" />
-          <span>{{ saving ? t('admin.executionNodes.saving') : t('admin.executionNodes.save') }}</span>
+          <span>{{ saving ? t('admin.modelPriority.saving') : t('admin.modelPriority.save') }}</span>
         </button>
       </div>
     </div>
@@ -113,37 +113,36 @@
     <BaseDialog :show="pickerRuleIndex !== null" :title="pickerTitle" width="full" @close="closeAccountPicker">
       <div class="space-y-4">
         <div class="flex flex-wrap items-center gap-3">
-          <SearchInput v-model="filters.search" :placeholder="t('admin.executionNodes.searchPriorityAccounts')" class="w-full sm:w-64" />
+          <SearchInput v-model="filters.search" :placeholder="t('admin.modelPriority.searchPriorityAccounts')" class="w-full sm:w-64" />
           <Select v-model="filters.group" class="w-40" :options="groupOptions" data-testid="model-priority-group-filter" />
           <Select v-model="filters.pool" class="w-40" :options="poolOptions" data-testid="model-priority-pool-filter" />
           <Select v-model="filters.plan" class="w-40" :options="planOptions" data-testid="model-priority-plan-filter" />
           <Select v-model="filters.type" class="w-40" :options="typeOptions" data-testid="model-priority-type-filter" />
           <Select v-model="filters.status" class="w-40" :options="statusOptions" data-testid="model-priority-status-filter" />
-          <Select v-if="nodeOptions.length > 1" v-model="filters.node" class="w-40" :options="nodeOptions" data-testid="model-priority-node-filter" />
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-3 border-y border-gray-100 py-3 dark:border-dark-700">
           <div class="text-sm text-gray-600 dark:text-gray-300">
-            {{ t('admin.executionNodes.prioritySelectionSummary', { filtered: filteredAccounts.length, selected: pickerSelected.size }) }}
+            {{ t('admin.modelPriority.prioritySelectionSummary', { filtered: filteredAccounts.length, selected: pickerSelected.size }) }}
           </div>
           <div class="flex flex-wrap gap-2">
             <button type="button" class="btn btn-secondary btn-sm" :disabled="catalogLoading || !filteredAccounts.length" data-testid="model-priority-select-filtered" @click="selectFiltered">
               <Icon name="check" size="sm" />
-              <span>{{ t('admin.executionNodes.selectFilteredAccounts') }}</span>
+              <span>{{ t('admin.modelPriority.selectFilteredAccounts') }}</span>
             </button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="catalogLoading || !filteredAccounts.length" @click="deselectFiltered">
               <Icon name="x" size="sm" />
-              <span>{{ t('admin.executionNodes.deselectFilteredAccounts') }}</span>
+              <span>{{ t('admin.modelPriority.deselectFilteredAccounts') }}</span>
             </button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="!pickerSelected.size" data-testid="model-priority-clear-selection" @click="clearPickerSelection">
               <Icon name="trash" size="sm" />
-              <span>{{ t('admin.executionNodes.clearSelectedAccounts') }}</span>
+              <span>{{ t('admin.modelPriority.clearSelectedAccounts') }}</span>
             </button>
           </div>
         </div>
 
         <div v-if="pickerOrder.length" class="space-y-2" data-testid="model-priority-selected-order">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.executionNodes.selectedAccountOrder') }}</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.modelPriority.selectedAccountOrder') }}</h3>
           <VueDraggable v-model="pickerOrder" :animation="180" handle=".priority-drag-handle" class="space-y-2">
             <div
               v-for="(accountID, orderIndex) in pickerOrder"
@@ -155,8 +154,8 @@
               <button
                 type="button"
                 class="priority-drag-handle flex h-9 w-9 shrink-0 cursor-grab items-center justify-center text-gray-400 hover:text-gray-700 active:cursor-grabbing dark:hover:text-gray-200"
-                :aria-label="t('admin.executionNodes.dragPriorityAccount', { account: selectedAccountName(accountID) })"
-                :title="t('admin.executionNodes.dragPriorityAccount', { account: selectedAccountName(accountID) })"
+                :aria-label="t('admin.modelPriority.dragPriorityAccount', { account: selectedAccountName(accountID) })"
+                :title="t('admin.modelPriority.dragPriorityAccount', { account: selectedAccountName(accountID) })"
                 :data-testid="`model-priority-drag-${accountID}`"
                 @keydown.up.prevent="movePickerAccount(orderIndex, -1)"
                 @keydown.down.prevent="movePickerAccount(orderIndex, 1)"
@@ -168,10 +167,10 @@
                 <div v-if="accountByID.get(accountID) && accountEmail(accountByID.get(accountID)!)" class="truncate text-xs text-gray-500 dark:text-gray-400">{{ accountEmail(accountByID.get(accountID)!) }}</div>
               </div>
               <div class="flex shrink-0 items-center gap-1">
-                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === 0" :aria-label="t('admin.executionNodes.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :title="t('admin.executionNodes.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-up-${accountID}`" @click="movePickerAccount(orderIndex, -1)">
+                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === 0" :aria-label="t('admin.modelPriority.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :title="t('admin.modelPriority.movePriorityAccountUp', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-up-${accountID}`" @click="movePickerAccount(orderIndex, -1)">
                   <Icon name="chevronUp" size="sm" />
                 </button>
-                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === pickerOrder.length - 1" :aria-label="t('admin.executionNodes.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :title="t('admin.executionNodes.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-down-${accountID}`" @click="movePickerAccount(orderIndex, 1)">
+                <button type="button" class="flex h-9 w-9 items-center justify-center text-gray-500 disabled:opacity-30 dark:text-gray-300" :disabled="orderIndex === pickerOrder.length - 1" :aria-label="t('admin.modelPriority.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :title="t('admin.modelPriority.movePriorityAccountDown', { account: selectedAccountName(accountID) })" :data-testid="`model-priority-down-${accountID}`" @click="movePickerAccount(orderIndex, 1)">
                   <Icon name="chevronDown" size="sm" />
                 </button>
               </div>
@@ -188,14 +187,14 @@
               <thead class="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-dark-800 dark:text-gray-400">
                 <tr>
                   <th class="w-12 px-4 py-3">
-                    <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" :checked="pageAccounts.length > 0 && pageAccounts.every(account => pickerSelected.has(account.id))" :aria-label="t('admin.executionNodes.selectCurrentPage')" @change="toggleCurrentPage" />
+                    <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" :checked="pageAccounts.length > 0 && pageAccounts.every(account => pickerSelected.has(account.id))" :aria-label="t('admin.modelPriority.selectCurrentPage')" @change="toggleCurrentPage" />
                   </th>
-                  <th class="w-[30%] px-3 py-3">{{ t('admin.executionNodes.account') }}</th>
-                  <th class="w-40 px-3 py-3">{{ t('admin.executionNodes.accountType') }}</th>
-                  <th class="w-28 px-3 py-3">{{ t('admin.executionNodes.accountPlan') }}</th>
-                  <th class="px-3 py-3">{{ t('admin.executionNodes.accountGroups') }}</th>
-                  <th class="w-32 px-3 py-3">{{ t('admin.executionNodes.accountPool') }}</th>
-                  <th class="w-24 px-3 py-3 text-right">{{ t('admin.executionNodes.accountPriority') }}</th>
+                  <th class="w-[30%] px-3 py-3">{{ t('admin.modelPriority.account') }}</th>
+                  <th class="w-40 px-3 py-3">{{ t('admin.modelPriority.accountType') }}</th>
+                  <th class="w-28 px-3 py-3">{{ t('admin.modelPriority.accountPlan') }}</th>
+                  <th class="px-3 py-3">{{ t('admin.modelPriority.accountGroups') }}</th>
+                  <th class="w-32 px-3 py-3">{{ t('admin.modelPriority.accountPool') }}</th>
+                  <th class="w-24 px-3 py-3 text-right">{{ t('admin.modelPriority.accountPriority') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-900">
@@ -213,7 +212,7 @@
                   <td class="px-3 py-3 text-gray-600 dark:text-gray-300">{{ accountPoolName(account.id) || '-' }}</td>
                   <td class="px-3 py-3 text-right font-mono text-gray-700 dark:text-gray-300">{{ account.priority }}</td>
                 </tr>
-                <tr v-if="!pageAccounts.length"><td colspan="7" class="px-4 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.executionNodes.noMatchingAccounts') }}</td></tr>
+                <tr v-if="!pageAccounts.length"><td colspan="7" class="px-4 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.modelPriority.noMatchingAccounts') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -224,7 +223,7 @@
         <button type="button" class="btn btn-secondary" data-testid="model-priority-cancel-accounts" @click="closeAccountPicker">{{ t('common.cancel') }}</button>
         <button type="button" class="btn btn-primary" :disabled="catalogLoading || pickerRuleIndex === null || pickerSelected.size === 0" data-testid="model-priority-apply-accounts" @click="applyAccountPicker">
           <Icon name="check" size="sm" />
-          <span>{{ t('admin.executionNodes.applySelectedAccounts') }}</span>
+          <span>{{ t('admin.modelPriority.applySelectedAccounts') }}</span>
         </button>
       </template>
     </BaseDialog>
@@ -284,7 +283,7 @@ const pageSize = ref(20)
 let ruleSequence = 0
 let pickerRequestSequence = 0
 
-const filters = reactive({ search: '', group: '', pool: '', plan: '', type: '', status: '', node: '' })
+const filters = reactive({ search: '', group: '', pool: '', plan: '', type: '', status: '' })
 const modelOptions = getModelsByPlatform('openai')
 const groupByID = computed(() => new Map(groups.value.map(group => [group.id, group.name])))
 const accountByID = computed(() => new Map(accounts.value.map(account => [account.id, account])))
@@ -295,7 +294,7 @@ const poolByAccountID = computed(() => {
 })
 
 const groupOptions = computed(() => [{ value: '', label: t('admin.accounts.allGroups') }, ...groups.value.map(group => ({ value: String(group.id), label: group.name }))])
-const poolOptions = computed(() => [{ value: '', label: t('admin.executionNodes.allAccountPools') }, ...pools.value.map(pool => ({ value: String(pool.id), label: pool.name }))])
+const poolOptions = computed(() => [{ value: '', label: t('admin.modelPriority.allAccountPools') }, ...pools.value.map(pool => ({ value: String(pool.id), label: pool.name }))])
 const typeOptions = computed(() => [
   { value: '', label: t('admin.accounts.allTypes') },
   { value: 'oauth', label: t('admin.accounts.oauthType') },
@@ -304,22 +303,18 @@ const typeOptions = computed(() => [
 ])
 const statusOptions = computed(() => [
   { value: '', label: t('admin.accounts.allStatus') },
-  { value: 'available', label: t('admin.executionNodes.availableAccounts') },
+  { value: 'available', label: t('admin.modelPriority.availableAccounts') },
   { value: 'active', label: t('admin.accounts.status.active') },
   { value: 'inactive', label: t('admin.accounts.status.inactive') },
   { value: 'error', label: t('admin.accounts.status.error') }
 ])
 const planOptions = computed(() => {
   const values = new Set(accounts.value.map(accountPlan).filter(Boolean))
-  return [{ value: '', label: t('admin.executionNodes.allPlans') }, ...Array.from(values).sort().map(value => ({ value, label: planLabel(value) }))]
-})
-const nodeOptions = computed(() => {
-  const values = Array.from(new Set(accounts.value.map(account => account.execution_node_id?.trim()).filter((value): value is string => Boolean(value)))).sort()
-  return [{ value: '', label: t('admin.executionNodes.allExecutionNodes') }, ...values.map(value => ({ value, label: value }))]
+  return [{ value: '', label: t('admin.modelPriority.allPlans') }, ...Array.from(values).sort().map(value => ({ value, label: planLabel(value) }))]
 })
 const smartRotationState = computed(() => {
-  if (!draft.enabled) return t('admin.executionNodes.smartRotationInactive')
-  return draft.smart_rotation_enabled ? t('admin.executionNodes.on') : t('admin.executionNodes.off')
+  if (!draft.enabled) return t('admin.modelPriority.smartRotationInactive')
+  return draft.smart_rotation_enabled ? t('admin.modelPriority.on') : t('admin.modelPriority.off')
 })
 const smartRotationToggleDisabled = computed(() => loading.value || saving.value || !draft.enabled)
 const smartRotationCooldownDisabled = computed(() => smartRotationToggleDisabled.value || !draft.smart_rotation_enabled)
@@ -331,8 +326,8 @@ const smartRotationCooldownOptions = computed(() => {
     .map(value => ({
       value,
       label: value === 1440
-        ? t('admin.executionNodes.smartRotationCooldownDay')
-        : t('admin.executionNodes.smartRotationCooldownMinutes', { count: value })
+        ? t('admin.modelPriority.smartRotationCooldownDay')
+        : t('admin.modelPriority.smartRotationCooldownMinutes', { count: value })
     }))
 })
 
@@ -392,7 +387,6 @@ const filteredAccounts = computed(() => {
     if (filters.group && !(account.group_ids ?? account.groups?.map(group => group.id) ?? []).includes(Number(filters.group))) return false
     if (filters.pool && poolByAccountID.value.get(account.id)?.id !== Number(filters.pool)) return false
     if (filters.plan && accountPlan(account) !== filters.plan) return false
-    if (filters.node && account.execution_node_id?.trim() !== filters.node) return false
     if (filters.status === 'available' && !accountCurrentlyAvailable(account)) return false
     if (filters.status && filters.status !== 'available' && account.status !== filters.status) return false
     return true
@@ -402,7 +396,7 @@ const pageAccounts = computed(() => filteredAccounts.value.slice((page.value - 1
 const pickerTitle = computed(() => {
   const index = pickerRuleIndex.value
   const model = index === null ? '' : draft.rules[index]?.model_pattern
-  return model ? t('admin.executionNodes.configureModelAccounts', { model }) : t('admin.executionNodes.configureAccounts')
+  return model ? t('admin.modelPriority.configureModelAccounts', { model }) : t('admin.modelPriority.configureAccounts')
 })
 const canSave = computed(() => {
   if (draft.enabled && draft.rules.length === 0) return false
@@ -415,9 +409,9 @@ const canSave = computed(() => {
   })
 })
 
-watch(() => [filters.search, filters.group, filters.pool, filters.plan, filters.type, filters.status, filters.node], () => { page.value = 1 })
+watch(() => [filters.search, filters.group, filters.pool, filters.plan, filters.type, filters.status], () => { page.value = 1 })
 
-function resetFilters(): void { Object.assign(filters, { search: '', group: '', pool: '', plan: '', type: '', status: '', node: '' }); page.value = 1 }
+function resetFilters(): void { Object.assign(filters, { search: '', group: '', pool: '', plan: '', type: '', status: '' }); page.value = 1 }
 function addRule(): void { draft.rules.push({ key: ++ruleSequence, model_pattern: '', account_ids: [] }) }
 function removeRule(index: number): void { draft.rules.splice(index, 1) }
 function toggleAccount(accountID: number): void {
@@ -459,7 +453,7 @@ function toggleCurrentPage(event: Event): void {
   pickerSelected.value = next
 }
 function changePageSize(value: number): void { pageSize.value = value; page.value = 1 }
-function selectedAccountName(accountID: number): string { return accountByID.value.get(accountID)?.name ?? t('admin.executionNodes.missingPriorityAccount', { id: accountID }) }
+function selectedAccountName(accountID: number): string { return accountByID.value.get(accountID)?.name ?? t('admin.modelPriority.missingPriorityAccount', { id: accountID }) }
 function movePickerAccount(index: number, offset: -1 | 1): void {
   const target = index + offset
   if (target < 0 || target >= pickerOrder.value.length) return
@@ -499,7 +493,7 @@ async function loadAccountCatalog(): Promise<void> {
     pools.value = loadedPools.items
     catalogLoaded.value = true
   } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPriorityAccountsLoadFailed')))
+    appStore.showError(extractApiErrorMessage(error, t('admin.modelPriority.modelPriorityAccountsLoadFailed')))
   } finally {
     catalogLoading.value = false
   }
@@ -534,7 +528,7 @@ async function load(): Promise<void> {
     draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(settings.smart_rotation_cooldown_minutes)
     draft.rules = (settings.rules ?? []).map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
   } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPriorityLoadFailed')))
+    appStore.showError(extractApiErrorMessage(error, t('admin.modelPriority.modelPriorityLoadFailed')))
   } finally {
     loading.value = false
   }
@@ -555,9 +549,9 @@ async function save(): Promise<void> {
     draft.smart_rotation_enabled = updated.smart_rotation_enabled ?? payload.smart_rotation_enabled ?? false
     draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(updated.smart_rotation_cooldown_minutes ?? payload.smart_rotation_cooldown_minutes)
     draft.rules = updated.rules.map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
-    appStore.showSuccess(t('admin.executionNodes.modelPrioritySaveSuccess'))
+    appStore.showSuccess(t('admin.modelPriority.modelPrioritySaveSuccess'))
   } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.executionNodes.modelPrioritySaveFailed')))
+    appStore.showError(extractApiErrorMessage(error, t('admin.modelPriority.modelPrioritySaveFailed')))
   } finally {
     saving.value = false
   }

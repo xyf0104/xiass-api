@@ -72,10 +72,6 @@ func (h *AccountHandler) SaveOllamaCloudUsageSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if !h.requireOllamaCloudUsage(c) {
 		return
 	}
@@ -97,10 +93,6 @@ func (h *AccountHandler) DeleteOllamaCloudUsageSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	if !h.requireOllamaCloudUsage(c) {
 		return
 	}
@@ -115,10 +107,6 @@ func (h *AccountHandler) DeleteOllamaCloudUsageSession(c *gin.Context) {
 func (h *AccountHandler) SetOllamaCloudUsageAutoRefresh(c *gin.Context) {
 	accountID, ok := ollamaCloudUsageAccountID(c)
 	if !ok {
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if !h.requireOllamaCloudUsage(c) {
@@ -140,10 +128,6 @@ func (h *AccountHandler) SetOllamaCloudUsageAutoRefresh(c *gin.Context) {
 func (h *AccountHandler) RefreshOllamaCloudUsage(c *gin.Context) {
 	accountID, ok := ollamaCloudUsageAccountID(c)
 	if !ok {
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if !h.requireOllamaCloudUsage(c) {

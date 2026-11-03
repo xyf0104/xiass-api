@@ -34,7 +34,6 @@ func (s *openAIAdsPowerInventoryAdminStub) ReleaseOpenAIAdsPowerProfile(context.
 
 func openAIAdsPowerInventoryTestHandler(t *testing.T, admin *openAIAdsPowerInventoryAdminStub) *OpenAIOAuthHandler {
 	t.Helper()
-	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "api2")
 	store := newOpenAIAdsPowerLaunchStore()
 	now := time.Now().UTC()
 	store.now = func() time.Time { return now }
@@ -73,6 +72,15 @@ func TestInventoryOpenAIAdsPowerProfilesRequiresExactPairedDeviceAndEnvironment(
 	valid := performOpenAIAdsPowerInventoryRequest(t, handler.InventoryOpenAIAdsPowerProfiles, `{"device_id":"device-1","environment_key":"api2"}`, "device-secret")
 	require.Equal(t, http.StatusOK, valid.Code)
 	require.Contains(t, valid.Body.String(), `"complete":true`)
+}
+
+func TestInventoryOpenAIAdsPowerProfilesIgnoresLegacyNodeSettings(t *testing.T) {
+	t.Setenv("GATEWAY_EXECUTION_NODE_ID", "unrelated-retired-node")
+	t.Setenv("GATEWAY_EXECUTION_NODE_ENABLED", "true")
+	admin := &openAIAdsPowerInventoryAdminStub{inventory: &service.OpenAIAdsPowerProfileInventory{Complete: true}}
+	handler := openAIAdsPowerInventoryTestHandler(t, admin)
+	rec := performOpenAIAdsPowerInventoryRequest(t, handler.InventoryOpenAIAdsPowerProfiles, `{"device_id":"device-1","environment_key":"api2"}`, "device-secret")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
 func TestInventoryOpenAIAdsPowerProfilesFailsClosedWhenSnapshotIncomplete(t *testing.T) {

@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,8 +17,7 @@ import (
 
 type pelicanHandlerAccounts struct {
 	service.AdminService
-	items     []*service.Account
-	accessErr error
+	items []*service.Account
 }
 
 func (s *pelicanHandlerAccounts) GetAccountsByIDs(context.Context, []int64) ([]*service.Account, error) {
@@ -33,16 +31,13 @@ func (s *pelicanHandlerAccounts) ListAccounts(context.Context, int, int, string,
 	return items, int64(len(items)), nil
 }
 
-func (s *pelicanHandlerAccounts) CheckAccountManagementAccess(context.Context, int64) error {
-	return s.accessErr
-}
-
 type pelicanHandlerStore struct {
 	benchmark.Store
-	tasks  []benchmark.Task
-	stops  int
-	html   string
-	source *benchmark.Task
+	tasks         []benchmark.Task
+	stops         int
+	html          string
+	source        *benchmark.Task
+	stopAccountID int64
 }
 
 func (s *pelicanHandlerStore) Create(_ context.Context, tasks []benchmark.Task) ([]benchmark.Task, []benchmark.Skipped, error) {
@@ -50,31 +45,29 @@ func (s *pelicanHandlerStore) Create(_ context.Context, tasks []benchmark.Task) 
 	return tasks, nil, nil
 }
 func (s *pelicanHandlerStore) List(context.Context, benchmark.Filter) (*benchmark.Page, error) {
-	return &benchmark.Page{Items: []benchmark.Task{{ID: "test", AccountID: 1, Status: "running", HTMLBytes: len(s.html)}}, Total: 1, Page: 1, PageSize: 100}, nil
+	return &benchmark.Page{Items: []benchmark.Task{{ID: "test", AccountID: 1, ExecutionNodeID: "legacy", Status: "running", HTMLBytes: len(s.html)}}, Total: 1, Page: 1, PageSize: 100}, nil
 }
 func (s *pelicanHandlerStore) Detail(context.Context, string) (*benchmark.Detail, error) {
-	return &benchmark.Detail{Task: benchmark.Task{ID: "test"}, HTML: s.html}, nil
+	return &benchmark.Detail{Task: benchmark.Task{ID: "test", ExecutionNodeID: "legacy"}, HTML: s.html}, nil
 }
 func (s *pelicanHandlerStore) Get(context.Context, string) (*benchmark.Task, error) {
 	if s.source != nil {
 		return s.source, nil
 	}
-	return &benchmark.Task{ID: "test", AccountID: 1, Status: "canceling"}, nil
+	return &benchmark.Task{ID: "test", AccountID: 1, ExecutionNodeID: "legacy", Status: "canceling"}, nil
 }
 
-func TestPelicanFollowupUsesSourceAccountModelAndCurrentOwner(t *testing.T) {
+func TestPelicanFollowupUsesSourceAccountAndModel(t *testing.T) {
 	for _, action := range []string{"continue", "retry"} {
 		sourceID := uuid.NewString()
 		store := &pelicanHandlerStore{source: &benchmark.Task{ID: sourceID, AccountID: 7, Model: "gpt-6-astra", Status: "failed"}}
-		accounts := &pelicanHandlerAccounts{items: []*service.Account{{ID: 7, Name: "paid", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
-			Extra: map[string]any{service.AccountExecutionNodeExtraKey: "api2"}}}}
+		accounts := &pelicanHandlerAccounts{items: []*service.Account{{ID: 7, Name: "paid", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}}}
 		h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
 		body := `{"source_id":"` + sourceID + `","action":"` + action + `"}`
 		w := pelicanHandlerRequest("POST", "/", body, h.Create, nil)
 		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 		require.Len(t, store.tasks, 1)
 		require.Equal(t, int64(7), store.tasks[0].AccountID)
-		require.Equal(t, "api2", store.tasks[0].ExecutionNodeID)
 		require.Equal(t, sourceID, store.tasks[0].SourceID)
 		require.Equal(t, action, store.tasks[0].Action)
 		require.Equal(t, store.source.Model, store.tasks[0].Model)
@@ -95,14 +88,10 @@ func TestPelicanFollowupRejectsActiveSourceAndOverrides(t *testing.T) {
 		w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"retry"`+fields+`}`, h.Create, nil)
 		require.Equal(t, http.StatusBadRequest, w.Code)
 	}
-	store := &pelicanHandlerStore{source: &benchmark.Task{ID: id, AccountID: 1, Status: "succeeded"}}
-	h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{accessErr: errors.New("denied")}}
-	w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"continue"}`, h.Create, nil)
-	require.Equal(t, http.StatusInternalServerError, w.Code)
-	require.Empty(t, store.tasks)
 }
-func (s *pelicanHandlerStore) Stop(context.Context, string, int64) (int64, error) {
+func (s *pelicanHandlerStore) Stop(_ context.Context, _ string, accountID int64) (int64, error) {
 	s.stops++
+	s.stopAccountID = accountID
 	return 1, nil
 }
 
@@ -133,6 +122,7 @@ func TestPelicanHandlerCreateFiltersAndDefaults(t *testing.T) {
 		require.Equal(t, int64(1), store.tasks[0].AccountID)
 		require.Equal(t, int64(4), store.tasks[1].AccountID)
 		require.NotContains(t, w.Body.String(), "credentials")
+		require.NotContains(t, w.Body.String(), "execution_node_id")
 		require.Contains(t, w.Body.String(), "free_plan")
 		require.Contains(t, w.Body.String(), "ineligible")
 	}
@@ -157,6 +147,7 @@ func TestPelicanHandlerSingleListDetailAndStopContract(t *testing.T) {
 	w = pelicanHandlerRequest("GET", "/", "", h.List, nil)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NotContains(t, w.Body.String(), "window.parent")
+	require.NotContains(t, w.Body.String(), "execution_node_id")
 	var result struct {
 		Data struct {
 			Items []map[string]any `json:"items"`
@@ -172,13 +163,18 @@ func TestPelicanHandlerSingleListDetailAndStopContract(t *testing.T) {
 	require.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 	require.NotContains(t, w.Body.String(), "<script>")
 	require.Contains(t, w.Body.String(), `\u003cscript\u003e`)
+	require.NotContains(t, w.Body.String(), "execution_node_id")
 	w = pelicanHandlerRequest("POST", "/", "", h.Stop, id)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), "canceling")
 	require.Equal(t, 1, store.stops)
+	require.Equal(t, int64(1), store.stopAccountID)
+	require.NotContains(t, w.Body.String(), "execution_node_id")
 	w = pelicanHandlerRequest("POST", "/", `{"all":true}`, h.StopAll, nil)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), `"affected":1`)
+	require.Equal(t, 2, store.stops)
+	require.Zero(t, store.stopAccountID)
 }
 
 func TestPelicanHandlerInvalidFilters(t *testing.T) {
@@ -187,17 +183,4 @@ func TestPelicanHandlerInvalidFilters(t *testing.T) {
 		w := pelicanHandlerRequest("GET", "/?"+query, "", h.List, nil)
 		require.Equal(t, http.StatusBadRequest, w.Code, query)
 	}
-}
-
-func TestPelicanHandlerStopHonorsAccountManagementAccess(t *testing.T) {
-	store := &pelicanHandlerStore{}
-	accounts := &pelicanHandlerAccounts{accessErr: errors.New("remote account is read-only")}
-	h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
-	id := gin.Params{{Key: "id", Value: uuid.NewString()}}
-	w := pelicanHandlerRequest("POST", "/", "", h.Stop, id)
-	require.Equal(t, http.StatusInternalServerError, w.Code)
-	require.Equal(t, 0, store.stops)
-	w = pelicanHandlerRequest("POST", "/", `{"all":true}`, h.StopAll, nil)
-	require.Equal(t, http.StatusInternalServerError, w.Code)
-	require.Equal(t, 0, store.stops)
 }

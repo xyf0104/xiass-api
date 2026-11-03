@@ -349,16 +349,6 @@ func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, un
 	if blockUntil.IsZero() || !blockUntil.After(now) {
 		blockUntil = now.Add(openAIStopSchedulingBridgeCooldown)
 	}
-	// A reset on another node clears the shared rate limit, not this process's
-	// memory. Keep only a bounded bridge here; the shared account still enforces
-	// the full upstream deadline after that bridge expires.
-	if account.Platform == PlatformOpenAI && s.cfg != nil && s.cfg.Gateway.ExecutionNode.Enabled &&
-		(reason == "429" || reason == "429_fallback") {
-		if bridgeUntil := now.Add(openAIStopSchedulingBridgeCooldown); blockUntil.After(bridgeUntil) {
-			blockUntil = bridgeUntil
-		}
-	}
-
 	for {
 		current, loaded := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
 		if !loaded {

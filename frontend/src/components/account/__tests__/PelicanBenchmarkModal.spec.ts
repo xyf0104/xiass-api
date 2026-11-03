@@ -8,8 +8,6 @@ const api = vi.hoisted(() => ({
   getPelicanAccounts: vi.fn(), getPelicanCurrent: vi.fn(), getPelicanHistory: vi.fn(),
   getPelicanResult: vi.fn(), getPelicanModels: vi.fn(), startPelicanTests: vi.fn(), restartPelicanTest: vi.fn(), stopPelicanTests: vi.fn(), stopAllPelicanTests: vi.fn()
 }))
-const nodes = vi.hoisted(() => ({ getStatus: vi.fn() }))
-vi.mock('@/api/admin/executionNodes', () => nodes)
 vi.mock('@/api/admin/pelicanBenchmark', () => ({ ...api, DEFAULT_PELICAN_MODEL: 'gpt-6-astra', PelicanPartialStartError: class extends Error {
   constructor(public items: PelicanBenchmarkRun[], public skipped: unknown[], public cause: unknown) { super('Partial start') }
 } }))
@@ -127,7 +125,6 @@ describe('PelicanBenchmarkModal', () => {
     vi.useFakeTimers()
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     for (const mock of Object.values(api)) mock.mockReset()
-    nodes.getStatus.mockReset().mockResolvedValue({ runtime: { node_id: 'api' }, nodes: [{ node_id: 'api', is_local: true }, { node_id: 'api2', is_local: false }] })
     api.getPelicanAccounts.mockResolvedValue({ items: [account(), account(2, { plan_type: 'team' }), account(3, { plan_type: 'plus' })] })
     api.getPelicanCurrent.mockResolvedValue({ items: [] })
     api.getPelicanHistory.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
@@ -553,22 +550,20 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.get('[data-testid="start-selected"]').attributes('disabled')).toBeDefined()
   })
 
-  it('uses real node snapshots on all tabs and never invents ownership', async () => {
-    api.getPelicanAccounts.mockResolvedValue({ items: [account(1, { execution_node_id: 'api' }), account(2, { execution_node_id: 'api2' }), account(3)] })
-    const items = [run('old', { execution_node_id: '' }), run('snapshot', { account_id: 2, execution_node_id: 'worker-east' }), run('unknown', { account_id: 3, execution_node_id: '' })]
+  it('does not display legacy node metadata on account or result rows', async () => {
+    api.getPelicanAccounts.mockResolvedValue({ items: [account(1), account(2), account(3)] })
+    const items = [run('old'), run('snapshot', { account_id: 2 }), run('unknown', { account_id: 3 })]
     api.getPelicanCurrent.mockResolvedValue({ items })
     api.getPelicanHistory.mockResolvedValue({ items: items.map(item => ({ ...item, status: 'succeeded' })), page: 1, page_size: 20, total: 3, pages: 1 })
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.get('[data-testid="account-1"] [data-testid="node-badge"]').text()).toBe('本机')
-    expect(wrapper.get('[data-testid="account-2"] [data-testid="node-badge"]').text()).toBe('api2')
-    expect(wrapper.get('[data-testid="account-3"] [data-testid="node-badge"]').text()).toBe('--')
+    expect(wrapper.text()).not.toContain('node-badge')
+    expect(wrapper.text()).not.toContain('api2')
     for (const tab of ['current', 'history']) {
       await wrapper.get(`[data-testid="tab-${tab}"]`).trigger('click')
       await flushPromises()
-      expect(wrapper.get('[data-testid="run-old"] [data-testid="node-badge"]').text()).toBe('本机')
-      expect(wrapper.get('[data-testid="run-snapshot"] [data-testid="node-badge"]').text()).toBe('worker-east')
-      expect(wrapper.get('[data-testid="run-unknown"] [data-testid="node-badge"]').text()).toBe('--')
+      expect(wrapper.text()).not.toContain('node-badge')
+      expect(wrapper.text()).not.toContain('worker-east')
     }
   })
 

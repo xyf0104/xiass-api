@@ -62,7 +62,6 @@ type OpenAIReauthorizationState struct {
 	AutoEpisodeKey               string      `json:"auto_episode_key,omitempty"`
 	AutoClaimID                  string      `json:"auto_claim_id,omitempty"`
 	AutoBrowserMode              string      `json:"auto_browser_mode,omitempty"`
-	AutoExecutionNodeID          string      `json:"auto_execution_node_id,omitempty"`
 	AutoClaimedAt                *time.Time  `json:"auto_claimed_at,omitempty"`
 	AutoLeaseUntil               *time.Time  `json:"auto_lease_until,omitempty"`
 	AutoFinishedAt               *time.Time  `json:"auto_finished_at,omitempty"`
@@ -77,7 +76,6 @@ type OpenAIReauthorizationAutoClaim struct {
 	EpisodeKey         string
 	ClaimID            string
 	BrowserMode        string
-	ExecutionNodeID    string
 	ClaimedAt          time.Time
 	LeaseUntil         time.Time
 	RestoreSchedulable bool
@@ -131,7 +129,6 @@ func (s *adminServiceImpl) ClaimOpenAIReauthorizationAutoAttempt(ctx context.Con
 	next.AutoEpisodeKey = strings.TrimSpace(claim.EpisodeKey)
 	next.AutoClaimID = strings.TrimSpace(claim.ClaimID)
 	next.AutoBrowserMode = strings.ToLower(strings.TrimSpace(claim.BrowserMode))
-	next.AutoExecutionNodeID = strings.TrimSpace(claim.ExecutionNodeID)
 	next.AutoClaimedAt = cloneOpenAIReauthorizationTime(&now)
 	next.AutoLeaseUntil = cloneOpenAIReauthorizationTime(&claim.LeaseUntil)
 	next.AutoFinishedAt = nil
@@ -209,7 +206,6 @@ func (s *OpenAIReauthorizationState) Normalize() {
 	s.AutoEpisodeKey = strings.TrimSpace(s.AutoEpisodeKey)
 	s.AutoClaimID = strings.TrimSpace(s.AutoClaimID)
 	s.AutoBrowserMode = strings.ToLower(strings.TrimSpace(s.AutoBrowserMode))
-	s.AutoExecutionNodeID = strings.TrimSpace(s.AutoExecutionNodeID)
 	s.TrackingStartedAt = normalizedOpenAIReauthorizationTime(s.TrackingStartedAt)
 	s.FirstAttemptAt = normalizedOpenAIReauthorizationTime(s.FirstAttemptAt)
 	s.LastAttemptAt = normalizedOpenAIReauthorizationTime(s.LastAttemptAt)
@@ -313,9 +309,6 @@ func (s OpenAIReauthorizationState) CooldownUntil() *time.Time {
 func (s *adminServiceImpl) UpdateOpenAIReauthorizationState(ctx context.Context, id int64, state OpenAIReauthorizationState) error {
 	if s == nil || s.accountRepo == nil {
 		return errors.New("account repository is unavailable")
-	}
-	if err := s.ensureAccountManagementAccessByID(ctx, id); err != nil {
-		return err
 	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {

@@ -109,7 +109,7 @@ func TestPelicanResponsesRecordsExactPromptModelAndOwnerProxy(t *testing.T) {
 			id := int64(91)
 			account := &Account{ID: 10, Platform: PlatformOpenAI, Type: typ, ProxyID: &id,
 				Proxy:       &Proxy{ID: id, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive},
-				Extra:       map[string]any{"openai_responses_mode": "force_responses", AccountExecutionNodeExtraKey: "api"},
+				Extra:       map[string]any{"openai_responses_mode": "force_responses"},
 				Credentials: map[string]any{"access_token": "synthetic", "api_key": "synthetic", "plan_type": "plus", "model_mapping": map[string]any{"public-pelican": "gpt-6-astra"}}}
 			u := &pelicanRecordingUpstream{status: 200, response: pelicanResponses("<html><svg></svg></html>")}
 			s := pelicanTestService(account, u)
@@ -167,38 +167,53 @@ func TestPelicanDoesNotWriteAccountStateOnUpstreamFailure(t *testing.T) {
 	}
 }
 
-type pelicanEmptySettings struct{ SettingRepository }
+func TestPelicanUsesDirectOrSelectedAccountProxy(t *testing.T) {
+	proxyID := int64(91)
+	for _, tc := range []struct {
+		name      string
+		proxyID   *int64
+		proxy     *Proxy
+		wantProxy string
+	}{
+		{name: "direct"},
+		{name: "selected account proxy", proxyID: &proxyID, proxy: &Proxy{ID: proxyID, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive}, wantProxy: "socks5://owner-egress.example:1080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: tc.proxyID,
+				Proxy: tc.proxy, Credentials: map[string]any{"access_token": "synthetic", "plan_type": "plus"}}
+			u := &pelicanRecordingUpstream{status: 200, response: pelicanResponses("<html></html>")}
+			out, err := pelicanTestService(a, u).RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, nil)
+			require.NoError(t, err)
+			require.Equal(t, "<html></html>", out.HTML)
+			require.Equal(t, tc.wantProxy, u.proxy)
+		})
+	}
+}
 
-func TestPelicanPairedNodeKeepsFixedOwnerExit(t *testing.T) {
-	id := int64(91)
-	a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &id,
-		Proxy: &Proxy{ID: id, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive},
-		Extra: map[string]any{AccountExecutionNodeExtraKey: "api"}, Credentials: map[string]any{"access_token": "synthetic", "plan_type": "plus"}}
-	u := &pelicanRecordingUpstream{status: 200, response: pelicanResponses("<html></html>")}
-	s := pelicanTestService(a, u)
-	s.cfg.Gateway.ExecutionNode.Enabled = true
-	s.cfg.Gateway.ExecutionNode.ID = "api2"
-	s.settingService = &SettingService{cfg: s.cfg, settingRepo: &pelicanEmptySettings{}}
-	s.settingService.executionNodeRoutingCache.Store(&cachedExecutionNodeRoutingSettings{expiresAt: time.Now().Add(time.Minute).UnixNano(), settings: ExecutionNodeRoutingSettings{
-		Available: true, Enabled: true, ProxyIDs: map[string]int64{"api": 91, "api2": 92}, Healthy: map[string]bool{"api": true, "api2": true},
-	}})
-	_, err := s.RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, func(string) error { return nil })
-	require.NoError(t, err)
-	require.Equal(t, a.Proxy.URL(), u.proxy)
-	cached, ok := s.settingService.executionNodeRoutingCache.Load().(*cachedExecutionNodeRoutingSettings)
-	require.True(t, ok)
-	cached.settings.Healthy["api"] = false
-	u.called = false
-	_, err = s.RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, func(string) error { return nil })
-	require.Error(t, err)
-	require.False(t, u.called, "offline owner must not use emergency local egress")
-	cached.settings.Healthy["api"] = true
-	a.Proxy.ID = 999
-	u.called = false
-	out, err := s.RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, func(string) error { return nil })
-	require.Error(t, err)
-	require.Equal(t, "fixed_egress_unavailable", out.ErrorCode)
-	require.False(t, u.called)
+func TestPelicanRejectsUnavailableSelectedAccountProxy(t *testing.T) {
+	proxyID := int64(91)
+	for _, tc := range []struct {
+		name  string
+		proxy *Proxy
+	}{
+		{name: "missing hydrated proxy"},
+		{name: "mismatched proxy id", proxy: &Proxy{ID: 92, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive}},
+		{name: "disabled proxy", proxy: &Proxy{ID: proxyID, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusDisabled}},
+		{name: "expired proxy", proxy: func() *Proxy {
+			expiresAt := time.Now().Add(-time.Minute)
+			return &Proxy{ID: proxyID, Protocol: "socks5", Host: "owner-egress.example", Port: 1080, Status: StatusActive, ExpiresAt: &expiresAt}
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ProxyID: &proxyID, Proxy: tc.proxy,
+				Credentials: map[string]any{"access_token": "synthetic", "plan_type": "plus"}}
+			u := &pelicanRecordingUpstream{status: 200, response: pelicanResponses("<html></html>")}
+			out, err := pelicanTestService(a, u).RunPelicanBenchmark(context.Background(), 1, benchmark.DefaultModel, nil)
+			require.EqualError(t, err, "proxy unavailable")
+			require.Equal(t, "proxy_unavailable", out.ErrorCode)
+			require.False(t, u.called)
+		})
+	}
 }
 
 func TestPelicanSizeInvalidHTMLAndCanceledBeforeSend(t *testing.T) {
@@ -380,16 +395,6 @@ func TestPelicanExpiredOAuthRemainsReadOnly(t *testing.T) {
 	require.JSONEq(t, string(before), string(after))
 }
 
-func TestPelicanExecutionNodeID(t *testing.T) {
-	s := &AccountTestService{}
-	require.Equal(t, "api", s.PelicanExecutionNodeID(&Account{}))
-	cfg := &config.Config{}
-	cfg.Gateway.ExecutionNode.LegacyUnassignedNodeID = "api2"
-	s.settingService = &SettingService{cfg: cfg}
-	require.Equal(t, "api2", s.PelicanExecutionNodeID(&Account{}))
-	require.Equal(t, "api", s.PelicanExecutionNodeID(&Account{Extra: map[string]any{AccountExecutionNodeExtraKey: "api"}}))
-}
-
 func TestPelicanBoundedUTF8Continuation(t *testing.T) {
 	a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "synthetic"}, Extra: map[string]any{"openai_responses_mode": "force_responses"}}
 	previous := strings.Repeat("x", benchmark.MaxHTMLBytes-1)
@@ -506,7 +511,7 @@ func TestPelicanOAuthUsesDynamicVersionAfterHeaderOverrides(t *testing.T) {
 		SetCodexCanonicalUserAgentResolver(previousResolver)
 		SetCodexIdentityEnforcementEnabled(previousEnforcement)
 	})
-	settings := NewSettingService(&executionNodeSettingRepo{values: map[string]string{
+	settings := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexClientVersionSynced: "0.154.0",
 	}}, &config.Config{})
 	SetCodexCanonicalUserAgentResolver(func() string { return settings.GetOpenAICodexCanonicalUserAgent(context.Background()) })

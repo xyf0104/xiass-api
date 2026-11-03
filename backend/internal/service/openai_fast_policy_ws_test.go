@@ -136,6 +136,37 @@ func TestWSResponseCreate_GroupForceInjectsMissingTier(t *testing.T) {
 	require.Equal(t, OpenAIFastTierPriority, gjson.GetBytes(updated, "service_tier").String())
 }
 
+func TestWSResponseCreate_GroupForceMatchesHTTPPolicy(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	for _, platform := range []string{PlatformOpenAI, PlatformComposite} {
+		ctx := context.WithValue(context.Background(), ctxkey.Group, &Group{
+			ID: 7, Platform: platform, Status: StatusActive, Hydrated: true, ForceOpenAIFast: true,
+		})
+		for _, tier := range []string{"", "default", "flex", "ultrafast"} {
+			for _, action := range []string{BetaPolicyActionPass, BetaPolicyActionFilter, BetaPolicyActionBlock} {
+				svc := newServiceTierPolicyGateway(t, action, nil)
+				frame := []byte(`{"type":"response.create","model":"gpt-5.5","service_tier":"` + tier + `"}`)
+				httpBody, httpErr := svc.applyOpenAIFastPolicyToBody(ctx, account, "gpt-5.5", frame)
+				wsBody, blocked, err := svc.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, "gpt-5.5", frame)
+				require.NoError(t, err)
+				require.Equal(t, string(httpBody), string(wsBody))
+				if action == BetaPolicyActionBlock {
+					require.Error(t, httpErr)
+					require.NotNil(t, blocked)
+				} else {
+					require.NoError(t, httpErr)
+					require.Nil(t, blocked)
+					want := "priority"
+					if action == BetaPolicyActionFilter {
+						want = ""
+					}
+					require.Equal(t, want, gjson.GetBytes(wsBody, "service_tier").String())
+				}
+			}
+		}
+	}
+}
+
 func TestWSResponseCreate_ForcePriorityInjectsMissingTier(t *testing.T) {
 	settings := &OpenAIFastPolicySettings{
 		Rules: []OpenAIFastPolicyRule{{

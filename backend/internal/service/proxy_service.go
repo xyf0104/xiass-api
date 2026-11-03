@@ -12,10 +12,6 @@ import (
 var (
 	ErrProxyNotFound               = infraerrors.NotFound("PROXY_NOT_FOUND", "proxy not found")
 	ErrProxyInUse                  = infraerrors.Conflict("PROXY_IN_USE", "proxy is in use by accounts")
-	ErrExecutionNodeProxyProtected = infraerrors.Conflict(
-		"EXECUTION_NODE_PROXY_PROTECTED",
-		"execution node egress proxies cannot be disabled, expired, or deleted while multi-node routing is enabled",
-	)
 )
 
 type ProxyRepository interface {

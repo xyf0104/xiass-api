@@ -104,24 +104,18 @@ func TestInactiveUserCleanup_WireApplicationLifecycle(t *testing.T) {
 
 func TestInactiveUserCleanup_StartupAndApplicationCleanup(t *testing.T) {
 	for _, tt := range []struct {
-		name          string
-		nilConfig     bool
-		enabled       bool
-		executionNode bool
-		controlPlane  bool
-		wantStarted   bool
+		name        string
+		nilConfig   bool
+		enabled     bool
+		wantStarted bool
 	}{
 		{name: "nil_config", nilConfig: true},
 		{name: "disabled_by_default"},
 		{name: "enabled_single_node", enabled: true, wantStarted: true},
-		{name: "enabled_non_control_plane", enabled: true, executionNode: true},
-		{name: "enabled_control_plane", enabled: true, executionNode: true, controlPlane: true, wantStarted: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{}
 			cfg.InactiveUserCleanup.Enabled = tt.enabled
-			cfg.Gateway.ExecutionNode.Enabled = tt.executionNode
-			cfg.Gateway.ExecutionNode.ControlPlane = tt.controlPlane
 			if tt.nilConfig {
 				cfg = nil
 			}

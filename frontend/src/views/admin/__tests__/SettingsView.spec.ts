@@ -76,35 +76,6 @@ const {
 }));
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
-const executionAccessState = vi.hoisted(() => ({ readOnly: false }));
-
-vi.mock("@/composables/useExecutionNodeAdminAccess", () => ({
-  useExecutionNodeAdminAccess: () => {
-    const readOnly = executionAccessState.readOnly;
-    return {
-      executionNodeStatus: {
-        __v_isRef: true,
-        value: {
-          admin_write_allowed: !readOnly,
-          admin_write_mode: readOnly ? "secondary_read_only" : "primary",
-          runtime: { enabled: readOnly },
-        },
-      },
-      sharedWriteAllowed: { __v_isRef: true, value: !readOnly },
-      sharedReadOnly: { __v_isRef: true, value: readOnly },
-      loadExecutionNodeAdminAccess: vi.fn().mockResolvedValue(null),
-    };
-  },
-}));
-
-vi.mock("@/api/admin/executionNodes", () => ({
-  executionNodesAPI: {
-    getStatus: vi.fn().mockResolvedValue(null),
-  },
-  default: {
-    getStatus: vi.fn().mockResolvedValue(null),
-  },
-}));
 
 vi.mock("@/components/account/PixlabSMSCardKeyManager.vue", () => ({
   default: { template: "<div data-test=\"pixlab-card-key-manager-stub\" />" },
@@ -497,9 +468,6 @@ const baseSettingsResponse = {
   min_claude_code_version: "",
   max_claude_code_version: "",
   allow_ungrouped_key_scheduling: false,
-  execution_node_balancing_enabled: false,
-  execution_node_weights: { api: 9, api2: 1 },
-  execution_node_proxy_ids: {},
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -596,6 +564,7 @@ function mountView() {
         ProxySelector: true,
         ImageUpload: ImageUploadStub,
         BackupSettings: true,
+        OpenAIModelPrioritySettings: true,
         PixlabSMSCardKeyManager: true,
       },
     },
@@ -644,7 +613,6 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
 
 describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
-    executionAccessState.readOnly = false;
     getSettings.mockReset();
     updateSettings.mockReset();
     getWebSearchEmulationConfig.mockReset();
@@ -756,22 +724,6 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(backupTabButton).toBeDefined();
     await backupTabButton!.trigger("click");
     expect(wrapper.find('[data-testid="settings-save-button"]').exists()).toBe(false);
-  });
-
-  it("shows the secondary read-only notice and disables the shared settings save action", async () => {
-    executionAccessState.readOnly = true;
-    const wrapper = mountView();
-    await flushPromises();
-
-    expect(wrapper.get('[data-testid="execution-node-shared-access-notice"]').text()).toContain(
-      "admin.executionNodes.sharedAccess.readOnlyTitle",
-    );
-    expect(wrapper.get('[data-testid="settings-save-button"]').attributes("disabled")).toBeDefined();
-
-    await wrapper.find("form").trigger("submit");
-    await flushPromises();
-    expect(updateSettings).not.toHaveBeenCalled();
-    wrapper.unmount();
   });
 
   it("renders panel rate limit card and saves settings", async () => {
@@ -1456,37 +1408,6 @@ describe("admin SettingsView payment visible method controls", () => {
       weightedModeText.indexOf("调度权值覆盖"),
     );
     expect(weightedModeText).toContain("计费倍率");
-  });
-
-  it("shows load-balancing status and leaves node settings to the dedicated panel", async () => {
-    getSettings.mockResolvedValue({
-      ...baseSettingsResponse,
-      execution_node_balancing_enabled: true,
-      execution_node_weights: { api: 3, api2: 1 },
-      execution_node_proxy_ids: { api: 84, api2: 83 },
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-    await openGatewayTab(wrapper);
-
-    expect(wrapper.get('[data-testid="execution-node-balancing-status"]').text()).toBe(
-      "admin.executionNodes.on",
-    );
-    expect(wrapper.get('[data-testid="open-execution-node-panel"]').attributes("href")).toBe(
-      "/admin/execution-nodes",
-    );
-    expect(wrapper.find('[data-testid="execution-node-balancing-toggle"]').exists()).toBe(false);
-
-    await wrapper.find("form").trigger("submit");
-    await flushPromises();
-
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty(
-      "execution_node_balancing_enabled",
-    );
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("execution_node_weights");
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("execution_node_proxy_ids");
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {

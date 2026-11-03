@@ -169,11 +169,90 @@ run_health_fixture() {
     fi
 }
 
+run_config_fixture() {
+    local scenario="$1" fixture="$2"
+    local INSTALL_DIR="$fixture/install" PACKAGE_DIR="$fixture/package"
+    local DEPLOY_DIR="$fixture/install/deploy" RESTORE_CONFIG=""
+    local RESTORE_REDIS_USER="" RESTORE_REDIS_PASSWORD=""
+    mkdir -p "$PACKAGE_DIR/payload" "$DEPLOY_DIR/data" "$DEPLOY_DIR/redis_data"
+    jq -n --arg store "$scenario" '{
+        version:2,
+        config:{
+            database:{host:"original-db",port:6543,user:"fixture-user",password:"source-db-secret",dbname:"fixture-db",sslmode:"require"},
+            redis:{host:"original-cache",port:6380,username:"fixture-cache",password:"cache-secret",db:2,enable_tls:true},
+            jwt:{secret:"synthetic-jwt-secret",refresh_token_store:$store,refresh_token_migration_readiness:false},
+            totp:{encryption_key:"synthetic-totp-key"},
+            gateway:{response_header_timeout:123,execution_node:{enabled:true,id:"retired-node",default_proxy_id:83,control_plane:false,witness:{enabled:true}}},
+            batch_image:{enabled:true}
+        },
+        environment:{
+            GATEWAY_EXECUTION_NODE_ENABLED:"true",GATEWAY_EXECUTION_NODE_ID:"retired-node",
+            GATEWAY_EXECUTION_NODE_DEFAULT_PROXY_ID:"83",GATEWAY_EXECUTION_NODE_WITNESS_ENABLED:"true",
+            XIASS_CLUSTER_ENABLED:"true",XIASS_CLUSTER_STATE_SOURCE_URL:"https://retired.example.invalid",
+            XIASS_CLUSTER_TUNNEL_TOKEN:"synthetic-retired-token",XIASS_CLUSTER_NODE_URLS_JSON:"{}",
+            JWT_REFRESH_TOKEN_STORE:$store,JWT_SECRET:"synthetic-jwt-secret",
+            TEAM_CHILD_AUTOMATION_TOKEN:"synthetic-team-secret",UNOWNED_SECRET:"keep-$#=literal"
+        }
+    }' > "$PACKAGE_DIR/payload/runtime-context.json"
+    printf 'synthetic-rdb\n' > "$PACKAGE_DIR/payload/redis.rdb"
+    printf 'user fixture-cache on >synthetic-secret ~* +@all\n' > "$PACKAGE_DIR/payload/redis.acl"
+    printf '{"username":"fixture-backup","password":"synthetic-backup-secret"}\n' > "$PACKAGE_DIR/payload/redis-backup.json"
+    cp "$PACKAGE_DIR/payload/runtime-context.json" "$fixture/context.before"
+    cp "$PACKAGE_DIR/payload/redis.acl" "$fixture/acl.before"
+    printf '%s\n' 'EXISTING_SETTING=keep' 'GATEWAY_EXECUTION_NODE_ENABLED=true' \
+        'export XIASS_CLUSTER_ENABLED=true' '  GATEWAY_EXECUTION_NODE_ID=retired-node' \
+        'UNOWNED_SECRET=keep-in-original-env' > "$PACKAGE_DIR/payload/.env"
+    cp "$PACKAGE_DIR/payload/.env" "$fixture/env.before"
+    printf 'application-data\n' > "$DEPLOY_DIR/data/sentinel"
+    manifest_value() {
+        case "$1" in
+            format_version) printf '2\n' ;;
+            app_image) printf 'fixture/app:current\n' ;;
+            redis_image) printf 'redis:8-alpine\n' ;;
+            *) fail "unexpected manifest query: $1" ;;
+        esac
+    }
+    docker() {
+        [ "$*" = "run --rm --user 0 --entrypoint sh -v $DEPLOY_DIR/redis_data:/data redis:8-alpine -c chown -R redis:redis /data" ] || fail 'unexpected Docker operation during config restore'
+        printf 'ownership\n' >> "$fixture/calls"
+    }
+    load_restore_function restore_environment
+    restore_environment
+    cmp -s "$fixture/env.before" "$PACKAGE_DIR/payload/.env" || fail 'source environment changed'
+    load_restore_function prepare_restored_runtime
+    prepare_restored_runtime
+    cmp -s "$fixture/context.before" "$PACKAGE_DIR/payload/runtime-context.json" || fail 'source runtime snapshot changed'
+    cmp -s "$fixture/acl.before" "$PACKAGE_DIR/payload/redis.acl" || fail 'source Redis ACL changed'
+    cmp -s "$PACKAGE_DIR/payload/redis.rdb" "$DEPLOY_DIR/redis_data/dump.rdb" || fail 'Redis data was not preserved'
+    cmp -s "$PACKAGE_DIR/payload/redis-backup.json" "$DEPLOY_DIR/ha/secrets/redis-backup.json" || fail 'backup credentials were not preserved'
+    [ "$(cat "$DEPLOY_DIR/data/sentinel")" = application-data ] || fail 'existing application data changed'
+    jq -e --arg store "$scenario" '
+        (.gateway | has("execution_node") | not) and .gateway.response_header_timeout == 123
+        and .database.host == "postgres" and .database.dbname == "fixture-db"
+        and .redis.host == "redis" and .redis.username == "fixture-cache" and .redis.db == 2
+        and .redis.password == "cache-secret" and .jwt.refresh_token_store == $store
+        and .jwt.secret == "synthetic-jwt-secret" and .totp.encryption_key == "synthetic-totp-key"
+        and .batch_image.enabled == true
+    ' "$DEPLOY_DIR/data/xiass-restored-config.json" >/dev/null || fail 'effective restore config lost application settings'
+    if grep -Eq '^(GATEWAY_EXECUTION_NODE_|XIASS_CLUSTER_)' "$DEPLOY_DIR/.env"; then
+        fail 'retired node variables were copied into the restored env'
+    fi
+    jq -e '
+        [.services["xiass-api"].environment | keys[] | select(startswith("GATEWAY_EXECUTION_NODE_") or startswith("XIASS_CLUSTER_"))] | length == 0
+    ' "$RESTORE_CONFIG" >/dev/null || fail 'restored Compose can bind retired node variables'
+    source "$DEPLOY_DIR/.env"
+    [ "$EXISTING_SETTING" = keep ] && [ "$UNOWNED_SECRET" = 'keep-$#=literal' ] || fail 'unrelated environment values changed'
+    [ "$JWT_REFRESH_TOKEN_STORE" = "$scenario" ] && [ "$JWT_SECRET" = synthetic-jwt-secret ] || fail 'session authority or signing secret changed'
+    [ "$TEAM_CHILD_AUTOMATION_TOKEN" = synthetic-team-secret ] || fail 'Team credentials changed'
+    [ "$TOTP_ENCRYPTION_KEY" = synthetic-totp-key ] || fail 'TOTP encryption key changed'
+}
+
 if [ "${1:-}" = --fixture ]; then
     case "$2" in
         bootstrap) run_bootstrap_fixture "$3" "$4" "$5" ;;
         redis) run_redis_fixture "$3" "$4" ;;
         health) run_health_fixture "$3" "$4" ;;
+        config) run_config_fixture "$3" "$4" ;;
         *) fail "unknown fixture: $2" ;;
     esac
     exit 0
@@ -200,11 +279,12 @@ grep -Fq 'compose_at "$existing_deploy" "$compose_file" down --remove-orphans' "
 mkdir -p "$ROOT/../../artifacts"
 TEST_DIR=$(mktemp -d "$ROOT/../../artifacts/runtime-restore-tests.XXXXXX")
 trap 'rm -rf "$TEST_DIR"' EXIT
-for flow in bootstrap redis health; do
+for flow in bootstrap redis health config; do
     case "$flow" in
         bootstrap) scenarios=(apt-get dnf yum apk bad-checksum bad-format bad-context missing-after-install) ;;
         redis) scenarios=(removed-nopass removed-password retained transport-failure denied-command misleading-success) ;;
         health) scenarios=(wildcard bound ipv6 ipv6-bound dual-stack retry unpublished lookup-failure invalid unhealthy) ;;
+        config) scenarios=(redis postgres) ;;
     esac
     for scenario in "${scenarios[@]}"; do
         fixture="$TEST_DIR/$flow-$scenario"
@@ -243,6 +323,8 @@ for flow in bootstrap redis health; do
                     unpublished|lookup-failure|invalid) [ "$(cat "$fixture/calls")" = port ] || fail 'health check fell back to a stale env port' ;;
                     *) grep -qx curl "$fixture/calls" || fail 'published health endpoint was not checked' ;;
                 esac ;;
+            config)
+                [ "$(cat "$fixture/calls")" = ownership ] || fail 'runtime config restore changed the expected operation set' ;;
         esac
         printf 'PASS: %s/%s\n' "$flow" "$scenario"
     done

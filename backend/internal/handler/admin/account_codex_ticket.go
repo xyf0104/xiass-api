@@ -33,10 +33,6 @@ func (h *AccountHandler) SetCodexTicketCaptureProxies(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	var req struct {
 		ProxyIDs *[]int64 `json:"proxy_ids"`
 	}
@@ -83,10 +79,6 @@ func (h *AccountHandler) SetCodexTicketEnabled(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	var req setCodexTicketEnabledRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
 		response.BadRequest(c, "Invalid request: enabled is required")
@@ -117,10 +109,6 @@ func (h *AccountHandler) RefreshCodexTicket(c *gin.Context) {
 	accountID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || accountID <= 0 {
 		response.BadRequest(c, "Invalid account ID")
-		return
-	}
-	if err := h.ensureAccountManagementAccess(c.Request.Context(), accountID); err != nil {
-		response.ErrorFrom(c, err)
 		return
 	}
 	if h == nil || h.codexTicketRefresher == nil {

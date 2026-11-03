@@ -13,7 +13,7 @@ import (
 func TestProvideSettingServiceLoadsModelPriorityBeforeFirstRequest(t *testing.T) {
 	repo := newStubSettingRepo()
 	repo.values[SettingKeyOpenAIModelPrioritySettings] = `{"enabled":true,"rules":[{"model_pattern":"gpt-test","account_ids":[2,9],"account_order":[9,2]}]}`
-	svc, err := ProvideSettingService(repo, nil, nil, nil, nil, nil, &config.Config{})
+	svc, err := ProvideSettingService(repo, nil, nil, &config.Config{})
 	require.NoError(t, err)
 	require.NotNil(t, svc.openAIModelPriorityCache.Load())
 	preference := svc.resolveOpenAIModelPriorityPreference(context.Background(), "gpt-test")
@@ -26,13 +26,13 @@ func TestProvideSettingServiceLoadsModelPriorityBeforeFirstRequest(t *testing.T)
 func TestProvideSettingServiceDoesNotIgnoreInvalidModelPriority(t *testing.T) {
 	repo := newStubSettingRepo()
 	repo.values[SettingKeyOpenAIModelPrioritySettings] = `{"enabled":true,"rules":[{"model_pattern":"gpt-test","account_ids":[2,9],"account_order":[9]}]}`
-	svc, err := ProvideSettingService(repo, nil, nil, nil, nil, nil, &config.Config{})
+	svc, err := ProvideSettingService(repo, nil, nil, &config.Config{})
 	require.ErrorContains(t, err, "initialize OpenAI model priority settings")
 	require.Nil(t, svc)
 }
 
 func TestProvideSettingServiceAllowsFreshInstallWithoutRules(t *testing.T) {
-	svc, err := ProvideSettingService(newStubSettingRepo(), nil, nil, nil, nil, nil, &config.Config{})
+	svc, err := ProvideSettingService(newStubSettingRepo(), nil, nil, &config.Config{})
 	require.NoError(t, err)
 	require.Empty(t, svc.ResolveOpenAIModelPriorityAccountIDs(context.Background(), "gpt-test"))
 }

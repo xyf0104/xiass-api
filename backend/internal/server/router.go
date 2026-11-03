@@ -131,7 +131,6 @@ func registerRoutes(
 	routes.RegisterToolRoutes(v1, h, redisClient, panelRateLimiter)
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, settingService, panelRateLimiter)
 	routes.RegisterTeamChildBrowserRoutes(v1, h)
-	routes.RegisterExecutionNodePairingRoutes(v1, h)
 	routes.RegisterSoftRouterAgentRoutes(v1, h)
 	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg)

@@ -20,7 +20,7 @@ func TestAdaptiveRouteStatsSharedAcrossInstancesAndExpire(t *testing.T) {
 	require.True(t, ok)
 	cache2, ok := NewConcurrencyCache(client2, 15, 0).(*concurrencyCache)
 	require.True(t, ok)
-	route := service.AccountProxyAdaptiveRouteKey{ExecutionNode: "nodehash", AccountID: 7, ModelHash: "modelhash", ProxyHash: "proxyhash"}
+	route := service.AccountProxyAdaptiveRouteKey{AccountID: 7, ModelHash: "modelhash", ProxyHash: "proxyhash"}
 	ttft := 240
 	require.NoError(t, cache1.RecordAccountProxyAdaptiveRouteOutcome(context.Background(), service.AccountProxyAdaptiveRouteOutcome{
 		Route: route, Success: true, ModelKnown: true, ModelExact: true, FirstTokenMs: &ttft, TTL: 30 * time.Minute,
@@ -41,7 +41,7 @@ func TestAdaptiveRouteStatsSharedAcrossInstancesAndExpire(t *testing.T) {
 
 func TestAdaptiveRouteRecentModelAndErrorSignalsRecover(t *testing.T) {
 	cache, ctx := newAccountProxyConcurrencyCacheTest(t)
-	route := service.AccountProxyAdaptiveRouteKey{ExecutionNode: "n", AccountID: 8, ModelHash: "m", ProxyHash: "p"}
+	route := service.AccountProxyAdaptiveRouteKey{AccountID: 8, ModelHash: "m", ProxyHash: "p"}
 	ttft := 100
 	require.NoError(t, cache.RecordAccountProxyAdaptiveRouteOutcome(ctx, service.AccountProxyAdaptiveRouteOutcome{
 		Route: route, Success: true, ModelKnown: true, ModelExact: true, FirstTokenMs: &ttft,
@@ -71,7 +71,7 @@ func TestAdaptiveRouteRecentModelAndErrorSignalsRecover(t *testing.T) {
 
 func TestAdaptiveRouteProbeLeaseSharedPerAccountModel(t *testing.T) {
 	cache, ctx := newAccountProxyConcurrencyCacheTest(t)
-	first := service.AccountProxyAdaptiveRouteKey{ExecutionNode: "n", AccountID: 9, ModelHash: "m", ProxyHash: "p1"}
+	first := service.AccountProxyAdaptiveRouteKey{AccountID: 9, ModelHash: "m", ProxyHash: "p1"}
 	second := first
 	second.ProxyHash = "p2"
 	claimed, err := cache.ClaimAccountProxyAdaptiveRouteProbe(ctx, first, time.Minute)

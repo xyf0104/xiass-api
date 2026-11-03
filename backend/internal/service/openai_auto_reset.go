@@ -81,7 +81,6 @@ type OpenAIAutoResetService struct {
 	accounts  AccountRepository
 	settings  SettingRepository
 	ledger    IdempotencyRepository
-	access    AccountManagementAccessChecker
 	quota     openAIResetQuota
 	recoverer openAIResetRecoverer
 	cancel    context.CancelFunc
@@ -123,11 +122,8 @@ func validateOpenAIResetThresholds(c OpenAIAutoResetConfig) error {
 }
 
 func (s *OpenAIAutoResetService) account(ctx context.Context, id int64) (*Account, error) {
-	if s == nil || s.accounts == nil || s.access == nil || s.ledger == nil {
+	if s == nil || s.accounts == nil || s.ledger == nil {
 		return nil, ErrOpenAIResetUnavailable
-	}
-	if err := s.access.CheckAccountManagementAccess(ctx, id); err != nil {
-		return nil, err
 	}
 	a, err := s.accounts.GetByID(ctx, id)
 	if err != nil {
@@ -220,7 +216,7 @@ func (s *OpenAIAutoResetService) scan(ctx context.Context) {
 		return
 	}
 	// All-OFF needs only this settings read, not an account-table scan. The
-	// reset path rechecks current consent and ownership before any quota call.
+	// reset path rechecks current consent and account identity before any quota call.
 	for key, raw := range settings {
 		if ctx.Err() != nil {
 			return
@@ -242,8 +238,7 @@ func (s *OpenAIAutoResetService) scan(ctx context.Context) {
 
 func sameOpenAIResetAccount(a, b *Account) bool {
 	return a != nil && b != nil && a.Platform == b.Platform && a.Type == b.Type &&
-		sameOpenAIResetCredentials(a, b) &&
-		reflect.DeepEqual(a.Proxy, b.Proxy) && reflect.DeepEqual(a.Extra[AccountExecutionNodeExtraKey], b.Extra[AccountExecutionNodeExtraKey])
+		sameOpenAIResetCredentials(a, b) && reflect.DeepEqual(a.Proxy, b.Proxy)
 }
 
 func sameOpenAIResetCredentials(a, b *Account) bool {
@@ -268,21 +263,19 @@ func openAIResetRecordFingerprint(a *Account) string {
 		return ""
 	}
 	payload := struct {
-		ID            int64          `json:"id"`
-		Platform      string         `json:"platform"`
-		Type          string         `json:"type"`
-		Credentials   map[string]any `json:"credentials"`
-		ProxyID       *int64         `json:"proxy_id,omitempty"`
-		Proxy         any            `json:"proxy,omitempty"`
-		ExecutionNode any            `json:"execution_node,omitempty"`
+		ID          int64          `json:"id"`
+		Platform    string         `json:"platform"`
+		Type        string         `json:"type"`
+		Credentials map[string]any `json:"credentials"`
+		ProxyID     *int64         `json:"proxy_id,omitempty"`
+		Proxy       any            `json:"proxy,omitempty"`
 	}{
-		ID:            a.ID,
-		Platform:      a.Platform,
-		Type:          a.Type,
-		Credentials:   a.Credentials,
-		ProxyID:       a.ProxyID,
-		Proxy:         a.Proxy,
-		ExecutionNode: a.Extra[AccountExecutionNodeExtraKey],
+		ID:          a.ID,
+		Platform:    a.Platform,
+		Type:        a.Type,
+		Credentials: a.Credentials,
+		ProxyID:     a.ProxyID,
+		Proxy:       a.Proxy,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -418,7 +411,7 @@ func (s *OpenAIAutoResetService) reset(ctx context.Context, id int64, automatic 
 	if err != nil {
 		return nil, err
 	}
-	expected.Extra = map[string]any{AccountExecutionNodeExtraKey: a.Extra[AccountExecutionNodeExtraKey]}
+	expected.Extra = map[string]any{}
 	if a.Proxy != nil {
 		proxy := *a.Proxy
 		expected.Proxy = &proxy
