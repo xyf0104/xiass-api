@@ -217,10 +217,10 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 
-	openAIModelPriorityCache        atomic.Value // *cachedOpenAIModelPrioritySettings
-	openAIModelPrioritySF           singleflight.Group
-	openAIModelPriorityRefreshing   atomic.Bool
-	openAIModelPriorityMu           sync.Mutex
+	openAIModelPriorityCache      atomic.Value // *cachedOpenAIModelPrioritySettings
+	openAIModelPrioritySF         singleflight.Group
+	openAIModelPriorityRefreshing atomic.Bool
+	openAIModelPriorityMu         sync.Mutex
 
 	// grokRuntimeSettingsCache keeps the Grok model-mapping and default endpoint
 	// settings off the request hot path.  It is deliberately per SettingService

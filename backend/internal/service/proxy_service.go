@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	ErrProxyNotFound               = infraerrors.NotFound("PROXY_NOT_FOUND", "proxy not found")
-	ErrProxyInUse                  = infraerrors.Conflict("PROXY_IN_USE", "proxy is in use by accounts")
+	ErrProxyNotFound = infraerrors.NotFound("PROXY_NOT_FOUND", "proxy not found")
+	ErrProxyInUse    = infraerrors.Conflict("PROXY_IN_USE", "proxy is in use by accounts")
 )
 
 type ProxyRepository interface {
