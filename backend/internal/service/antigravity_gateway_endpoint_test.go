@@ -118,17 +118,42 @@ func TestConfiguredAntigravityForwardBaseURLs_HardOverrides(t *testing.T) {
 	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLs())
 }
 
-func TestConfiguredAntigravityForwardBaseURLs_AreIndependentOfAccountPlan(t *testing.T) {
+func TestConfiguredAntigravityForwardBaseURLs_FollowPaidPlanRouting(t *testing.T) {
 	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	svc := &AntigravityGatewayService{}
 	p := antigravityEndpointTestParams(nil)
-	for _, plan := range []string{"Ultra", "g1-ultra-lite-tier", "Pro", "Free", ""} {
+	for _, plan := range []string{"Ultra", "g1-ultra-lite-tier", "Pro", "g1-pro-tier"} {
+		p.account.Credentials = map[string]any{"plan_type": plan}
+		require.Equal(t, []string{dailyURL, prodURL}, svc.antigravityForwardBaseURLs(p), plan)
+	}
+	for _, plan := range []string{"Free", "free-tier", "", "unknown"} {
 		p.account.Credentials = map[string]any{"plan_type": plan}
 		require.Equal(t, []string{prodURL, dailyURL}, svc.antigravityForwardBaseURLs(p), plan)
 	}
 
 	t.Setenv(antigravityForwardBaseURLEnv, "prod")
 	require.Equal(t, []string{prodURL}, configuredAntigravityForwardBaseURLs())
+	require.Equal(t, []string{prodURL}, configuredAntigravityForwardBaseURLsForAccount(p.account))
+	t.Setenv(antigravityForwardBaseURLEnv, "daily")
+	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLsForAccount(p.account))
+}
+
+func TestAntigravityReadOnlyProbeUsesPaidPlanEndpoint(t *testing.T) {
+	_, dailyURL := withAntigravityEndpointURLs(t)
+	upstream := &sequencedAntigravityEndpointUpstream{steps: []antigravityEndpointStep{
+		{status: http.StatusOK, body: `{}`},
+	}}
+	p := antigravityEndpointTestParams(upstream)
+	p.account.Credentials = map[string]any{"plan_type": "Pro"}
+	p.readOnlyProbe = true
+
+	result, err := (&AntigravityGatewayService{}).antigravityReadOnlyProbe(p)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, result.resp.StatusCode)
+	require.Equal(t, []string{dailyURL + "/v1internal:generateContent"}, upstream.calls)
+	_ = result.resp.Body.Close()
 }
 
 func TestAntigravityArgonUsesNormalEndpointNegotiation(t *testing.T) {

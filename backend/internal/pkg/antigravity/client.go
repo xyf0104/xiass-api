@@ -261,6 +261,16 @@ func paidPlanFromTierID(tierID string) string {
 	}
 }
 
+// IsPaidPlanType reports whether a stored plan name or tier ID represents a
+// paid Google One plan. Older account records may store either form.
+func IsPaidPlanType(planType string) bool {
+	planType = strings.ToLower(strings.TrimSpace(planType))
+	if planType == "pro" || planType == "ultra" {
+		return true
+	}
+	return paidPlanFromTierID(planType) != ""
+}
+
 // Client Antigravity API 客户端
 type Client struct {
 	httpClient *http.Client

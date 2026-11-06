@@ -528,7 +528,7 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 			return nil, nil, newUpstreamModelSyncUpstreamError("Failed to resolve Antigravity project ID", err)
 		}
 	}
-	baseURLs := configuredAntigravityForwardBaseURLs()
+	baseURLs := configuredAntigravityForwardBaseURLsForAccount(account)
 	if len(baseURLs) == 0 {
 		return nil, nil, newUpstreamModelSyncConfigError("No Antigravity endpoint is configured", nil)
 	}

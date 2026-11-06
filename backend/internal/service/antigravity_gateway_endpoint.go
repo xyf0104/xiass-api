@@ -43,10 +43,15 @@ func isAutomaticAntigravityForwardMode() bool {
 	return mode == "" || mode == "auto"
 }
 
-// configuredAntigravityForwardBaseURLs keeps explicit environment overrides
-// strict. Automatic mode starts with prod and may negotiate daily only for a
-// narrowly classified endpoint-compatibility response.
+// configuredAntigravityForwardBaseURLsForAccount honors explicit endpoint
+// overrides. In automatic mode, paid OAuth accounts use the same daily-first
+// endpoint selection as the upstream implementation; other accounts start
+// with prod.
 func configuredAntigravityForwardBaseURLs() []string {
+	return configuredAntigravityForwardBaseURLsForAccount(nil)
+}
+
+func configuredAntigravityForwardBaseURLsForAccount(account *Account) []string {
 	baseURLs := append([]string(nil), antigravity.BaseURLs...)
 	if len(baseURLs) == 0 {
 		return nil
@@ -54,6 +59,9 @@ func configuredAntigravityForwardBaseURLs() []string {
 
 	switch antigravityForwardMode() {
 	case "", "auto":
+		if accountHasAntigravityPaidTier(account) && len(baseURLs) > 1 {
+			return append([]string{baseURLs[1]}, baseURLs[:1]...)
+		}
 		return baseURLs
 	case "daily", "sandbox":
 		if len(baseURLs) > 1 {
@@ -65,6 +73,14 @@ func configuredAntigravityForwardBaseURLs() []string {
 	default:
 		return []string{baseURLs[0]}
 	}
+}
+
+func accountHasAntigravityPaidTier(account *Account) bool {
+	if account == nil || account.Credentials == nil {
+		return false
+	}
+	planType, ok := account.Credentials["plan_type"].(string)
+	return ok && antigravity.IsPaidPlanType(planType)
 }
 
 func antigravityEndpointPreferenceIdentity(p antigravityRetryLoopParams) (antigravityEndpointPreferenceKey, [sha256.Size]byte) {
@@ -93,7 +109,7 @@ func antigravityEndpointPreferenceIdentity(p antigravityRetryLoopParams) (antigr
 }
 
 func (s *AntigravityGatewayService) antigravityForwardBaseURLs(p antigravityRetryLoopParams) []string {
-	baseURLs := configuredAntigravityForwardBaseURLs()
+	baseURLs := configuredAntigravityForwardBaseURLsForAccount(p.account)
 	if s == nil || len(baseURLs) < 2 || !isAutomaticAntigravityForwardMode() {
 		return baseURLs
 	}

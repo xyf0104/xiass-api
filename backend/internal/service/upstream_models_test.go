@@ -449,26 +449,21 @@ func TestFetchUpstreamSupportedModelsProjectsAntigravityGemini37Models(t *testin
 	}, models)
 }
 
-func TestFetchUpstreamSupportedModelsAntigravityUsesConfiguredDefaultCatalog(t *testing.T) {
+func TestFetchUpstreamSupportedModelsAntigravityUsesPlanEndpoint(t *testing.T) {
 	prodCalls := 0
 	dailyCalls := 0
 	prod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		prodCalls++
 		require.Equal(t, "Bearer account-token", r.Header.Get("Authorization"))
 		require.Equal(t, antigravity.GetUserAgent(), r.Header.Get("User-Agent"))
-		_, _ = io.WriteString(w, `{"models":{
-			"gemini-4-argon-high":{},
-			"gemini-4-argon-medium":{},
-			"claude-opus-5-5-high":{},
-			"claude-opus-5-5-medium":{}
-		}}`)
+		_, _ = io.WriteString(w, `{"models":{"prod-only-model":{}}}`)
 	}))
 	defer prod.Close()
 	daily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dailyCalls++
 		require.Equal(t, "Bearer account-token", r.Header.Get("Authorization"))
 		require.Equal(t, antigravity.GetUserAgent(), r.Header.Get("User-Agent"))
-		_, _ = io.WriteString(w, `{"models":{"daily-only-model":{}}}`)
+		_, _ = io.WriteString(w, `{"models":{"gemini-3.8-flash-tiered":{},"daily-only-model":{}}}`)
 	}))
 	defer daily.Close()
 
@@ -488,7 +483,7 @@ func TestFetchUpstreamSupportedModelsAntigravityUsesConfiguredDefaultCatalog(t *
 		Credentials: map[string]any{
 			"access_token": "account-token",
 			"project_id":   "project-90",
-			"plan_type":    "Ultra",
+			"plan_type":    "Pro",
 			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		},
 	}
@@ -497,13 +492,20 @@ func TestFetchUpstreamSupportedModelsAntigravityUsesConfiguredDefaultCatalog(t *
 
 	require.NoError(t, err)
 	require.Equal(t, []string{
-		"claude-opus-5-5-high",
-		"claude-opus-5-5-medium",
-		"gemini-4-argon-high",
-		"gemini-4-argon-medium",
+		"daily-only-model",
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-low",
+		"gemini-3.8-flash-medium",
 	}, models)
+	require.Equal(t, 0, prodCalls)
+	require.Equal(t, 1, dailyCalls)
+
+	account.Credentials["plan_type"] = "Free"
+	models, err = svc.FetchUpstreamSupportedModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"prod-only-model"}, models)
 	require.Equal(t, 1, prodCalls)
-	require.Equal(t, 0, dailyCalls)
+	require.Equal(t, 1, dailyCalls)
 }
 
 func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
