@@ -303,8 +303,8 @@ func TestResolveCodexImportExpiryForNoRefreshTokenUsesEarlierRequestExpiry(t *te
 
 func TestCodexIdentityKeysPreferStrongIdentifiers(t *testing.T) {
 	keys := buildCodexImportIdentityKeys("acct-1", "user-1", "same@example.com", "token", "refresh")
-	if len(keys) == 0 || keys[0] != "user:user-1" {
-		t.Fatalf("user key should have highest priority when refresh token exists: %v", keys)
+	if len(keys) == 0 || keys[0] != "account_user:6:acct-16:user-1" {
+		t.Fatalf("workspace-scoped user key should have highest priority when refresh token exists: %v", keys)
 	}
 	if keys[len(keys)-1] != "account:acct-1" {
 		t.Fatalf("shared account key should be the last fallback: %v", keys)
@@ -465,9 +465,44 @@ func TestCodexAccountIndexKeepsAllCandidatesForSharedAccountKey(t *testing.T) {
 		if got == nil || got.ID != member.ID {
 			t.Fatalf("Find by user key = %v, want member account ID %d", got, member.ID)
 		}
-		if matchedKey != "user:user-2" {
-			t.Fatalf("matched key = %q, want user:user-2", matchedKey)
+		if matchedKey != "account_user:6:team-16:user-2" {
+			t.Fatalf("matched key = %q, want workspace-scoped user key", matchedKey)
 		}
+	}
+}
+
+func TestImportCodexSessionsSameUserDifferentWorkspacesCreatesSeparateAccounts(t *testing.T) {
+	svc := newCodexImportMemoryAdminService(nil)
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	req := CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true)}
+	entries := []codexImportEntry{
+		{Index: 1, Value: buildCodexRefreshImportValue(t, "workspace-1", "shared-user", "refresh-1")},
+		{Index: 2, Value: buildCodexRefreshImportValue(t, "workspace-2", "shared-user", "refresh-2")},
+	}
+
+	result, err := handler.importCodexSessions(context.Background(), req, entries)
+	if err != nil {
+		t.Fatalf("importCodexSessions error = %v", err)
+	}
+	if result.Created != 2 || result.Updated != 0 || result.Skipped != 0 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want two created accounts", result)
+	}
+	if len(svc.createdAccounts) != 2 {
+		t.Fatalf("created accounts = %d, want 2", len(svc.createdAccounts))
+	}
+	if got := svc.createdAccounts[0].Credentials["chatgpt_account_id"]; got != "workspace-1" {
+		t.Fatalf("first workspace = %v, want workspace-1", got)
+	}
+	if got := svc.createdAccounts[1].Credentials["chatgpt_account_id"]; got != "workspace-2" {
+		t.Fatalf("second workspace = %v, want workspace-2", got)
+	}
+}
+
+func TestCodexCompositeIdentityKeySeparatesDelimiterValues(t *testing.T) {
+	left := codexCompositeIdentityKey("ab:c", "shared-user")
+	right := codexCompositeIdentityKey("ab", "c:shared-user")
+	if left == right {
+		t.Fatalf("composite identity keys collided: %q", left)
 	}
 }
 
@@ -758,6 +793,149 @@ func TestImportCodexSessionsUpgradesAccessTokenOnlyAccountWithRefreshToken(t *te
 	}
 	if got := svc.updatedAccounts[0].input.Credentials["refresh_token"]; got != "refresh-new" {
 		t.Fatalf("updated refresh_token = %v, want refresh-new", got)
+	}
+}
+
+func TestImportCodexSessionsLegacyUserUpgradeIsolation(t *testing.T) {
+	newAccount := func(id int64, workspace string) service.Account {
+		credentials := map[string]any{
+			"chatgpt_user_id": "shared-user",
+			"access_token": buildCodexAccessTokenWithJTI(t, workspace, "shared-user",
+				fmt.Sprintf("old-token-%d", id), time.Now().Add(time.Hour)),
+		}
+		if workspace != "" {
+			credentials["chatgpt_account_id"] = workspace
+		}
+		return service.Account{
+			ID: id, Name: "existing", Platform: service.PlatformOpenAI,
+			Type: service.AccountTypeOAuth, Credentials: credentials,
+		}
+	}
+	tests := []struct {
+		name          string
+		accounts      []service.Account
+		workspace     string
+		accessOnly    bool
+		reuseToken    bool
+		wantUpdatedID int64
+	}{
+		{
+			name:     "unique legacy user upgrades with a new token and workspace",
+			accounts: []service.Account{newAccount(12, "")}, workspace: "workspace-1",
+			wantUpdatedID: 12,
+		},
+		{
+			name:     "known workspace does not match another workspace",
+			accounts: []service.Account{newAccount(12, "workspace-1")}, workspace: "workspace-2",
+		},
+		{
+			name:      "two known workspaces update only the matching workspace",
+			accounts:  []service.Account{newAccount(12, "workspace-1"), newAccount(13, "workspace-2")},
+			workspace: "workspace-2", wantUpdatedID: 13,
+		},
+		{
+			name:      "known workspace match takes precedence over a legacy user",
+			accounts:  []service.Account{newAccount(12, ""), newAccount(13, "workspace-1")},
+			workspace: "workspace-1", wantUpdatedID: 13,
+		},
+		{
+			name:     "ambiguous legacy users are not overwritten by a workspace import",
+			accounts: []service.Account{newAccount(12, ""), newAccount(13, "")}, workspace: "workspace-1",
+		},
+		{
+			name:     "ambiguous legacy users are not overwritten by a user-only import",
+			accounts: []service.Account{newAccount(12, ""), newAccount(13, "")},
+		},
+		{
+			name:     "access-only import does not fall back to a legacy user",
+			accounts: []service.Account{newAccount(12, "")}, workspace: "workspace-1", accessOnly: true,
+		},
+		{
+			name:       "exact token still resolves ambiguous legacy users",
+			accounts:   []service.Account{newAccount(12, ""), newAccount(13, "")},
+			reuseToken: true, wantUpdatedID: 12,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newCodexImportMemoryAdminService(tt.accounts)
+			handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			newToken := buildCodexAccessTokenWithJTI(t, tt.workspace, "shared-user", "new-token", time.Now().Add(time.Hour))
+			if tt.reuseToken {
+				newToken = codexCredentialString(tt.accounts[0].Credentials, "access_token")
+			}
+			value := map[string]any{"access_token": newToken}
+			if !tt.accessOnly {
+				value["refresh_token"] = "refresh-new"
+			}
+			result, err := handler.importCodexSessions(context.Background(),
+				CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true)},
+				[]codexImportEntry{{Index: 1, Value: value}})
+			if err != nil {
+				t.Fatalf("importCodexSessions error = %v", err)
+			}
+			wantUpdated := 0
+			if tt.wantUpdatedID != 0 {
+				wantUpdated = 1
+			}
+			if result.Updated != wantUpdated || result.Created != 1-wantUpdated || result.Skipped != 0 || result.Failed != 0 {
+				t.Fatalf("result = %+v, want updated=%d created=%d", result, wantUpdated, 1-wantUpdated)
+			}
+			if len(svc.updatedAccounts) != wantUpdated {
+				t.Fatalf("updated accounts = %d, want %d", len(svc.updatedAccounts), wantUpdated)
+			}
+			for _, original := range tt.accounts {
+				stored, err := svc.GetAccount(context.Background(), original.ID)
+				if err != nil {
+					t.Fatalf("GetAccount(%d) error = %v", original.ID, err)
+				}
+				if original.ID != tt.wantUpdatedID {
+					if stored.Credentials["access_token"] != original.Credentials["access_token"] || stored.Credentials["refresh_token"] != original.Credentials["refresh_token"] {
+						t.Fatalf("unmatched account %d credentials changed", original.ID)
+					}
+					continue
+				}
+				if stored.Credentials["access_token"] != newToken || stored.Credentials["refresh_token"] != "refresh-new" {
+					t.Fatalf("account %d did not receive the new OAuth credentials", original.ID)
+				}
+				if codexCredentialString(stored.Credentials, "chatgpt_account_id") != tt.workspace {
+					t.Fatalf("account %d workspace = %v, want %q", original.ID, stored.Credentials["chatgpt_account_id"], tt.workspace)
+				}
+			}
+		})
+	}
+}
+
+func TestImportCodexSessionsLegacyUpgradeRemovesUserOnlyFallback(t *testing.T) {
+	svc := newCodexImportMemoryAdminService(nil)
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	req := CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true)}
+	initial, err := handler.importCodexSessions(context.Background(), req, []codexImportEntry{
+		{Index: 1, Value: buildCodexAccessOnlyImportValue(t, "", "shared-user")},
+	})
+	if err != nil || initial.Created != 1 || initial.Failed != 0 {
+		t.Fatalf("initial import = %+v, error = %v, want one created account", initial, err)
+	}
+	legacyID := initial.Items[0].AccountID
+	result, err := handler.importCodexSessions(context.Background(), req, []codexImportEntry{
+		{Index: 1, Value: buildCodexRefreshImportValue(t, "workspace-1", "shared-user", "refresh-1")},
+		{Index: 2, Value: buildCodexRefreshImportValue(t, "workspace-2", "shared-user", "refresh-2")},
+	})
+	if err != nil {
+		t.Fatalf("importCodexSessions error = %v", err)
+	}
+	if result.Updated != 1 || result.Created != 1 || result.Skipped != 0 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want one upgraded and one separate workspace account", result)
+	}
+	if result.Items[0].AccountID != legacyID || result.Items[1].AccountID == legacyID {
+		t.Fatalf("workspace imports did not keep separate accounts: %+v", result.Items)
+	}
+	stored, err := svc.GetAccount(context.Background(), legacyID)
+	if err != nil {
+		t.Fatalf("GetAccount error = %v", err)
+	}
+	if stored.Credentials["chatgpt_account_id"] != "workspace-1" || stored.Credentials["refresh_token"] != "refresh-1" {
+		t.Fatal("second workspace overwrote the upgraded legacy account")
 	}
 }
 

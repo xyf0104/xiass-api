@@ -97,8 +97,7 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 	}
 
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
-		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
-		return models, nil, err
+		return s.fetchAntigravityOAuthUpstreamModels(ctx, account)
 	}
 
 	if s.httpUpstream == nil {
@@ -504,44 +503,52 @@ func (s *AccountTestService) buildGeminiUpstreamModelsRequest(ctx context.Contex
 	return req, nil
 }
 
-func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Context, account *Account) ([]string, error) {
+func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Context, account *Account) ([]string, []byte, error) {
 	if s.antigravityGatewayService == nil || s.antigravityGatewayService.GetTokenProvider() == nil {
-		return nil, newUpstreamModelSyncConfigError("Antigravity token provider is not configured", nil)
+		return nil, nil, newUpstreamModelSyncConfigError("Antigravity token provider is not configured", nil)
 	}
 
 	accessToken, err := s.antigravityGatewayService.GetTokenProvider().GetAccessToken(ctx, account)
 	if err != nil {
-		return nil, newUpstreamModelSyncUpstreamError("Failed to get Antigravity access token", err)
+		return nil, nil, newUpstreamModelSyncUpstreamError("Failed to get Antigravity access token", err)
 	}
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {
-		return nil, newUpstreamModelSyncConfigError("No Antigravity access token is available", nil)
+		return nil, nil, newUpstreamModelSyncConfigError("No Antigravity access token is available", nil)
 	}
 
 	client, err := antigravity.NewClient(upstreamModelsProxyURL(account))
 	if err != nil {
-		return nil, newUpstreamModelSyncConfigError("Failed to configure Antigravity client", err)
+		return nil, nil, newUpstreamModelSyncConfigError("Failed to configure Antigravity client", err)
 	}
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
 	if projectID == "" {
 		projectID, err = s.antigravityGatewayService.GetTokenProvider().ResolveProjectID(ctx, account, accessToken, true)
 		if err != nil {
-			return nil, newUpstreamModelSyncUpstreamError("Failed to resolve Antigravity project ID", err)
+			return nil, nil, newUpstreamModelSyncUpstreamError("Failed to resolve Antigravity project ID", err)
 		}
 	}
-	modelsResp, _, err := client.FetchAvailableModels(ctx, accessToken, projectID)
+	baseURLs := configuredAntigravityForwardBaseURLs()
+	if len(baseURLs) == 0 {
+		return nil, nil, newUpstreamModelSyncConfigError("No Antigravity endpoint is configured", nil)
+	}
+	modelsResp, raw, err := client.FetchAvailableModelsFromURL(ctx, baseURLs[0], accessToken, projectID)
 	if err != nil {
-		return nil, newUpstreamModelSyncUpstreamError("Failed to fetch Antigravity available models", err)
+		return nil, nil, newUpstreamModelSyncUpstreamError("Failed to fetch Antigravity available models", err)
 	}
 	if modelsResp == nil || len(modelsResp.Models) == 0 {
-		return nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
+		return nil, nil, newUpstreamModelSyncUpstreamError("Upstream returned no supported models", nil)
 	}
 
 	models := make([]string, 0, len(modelsResp.Models))
 	for modelID := range modelsResp.Models {
 		models = append(models, strings.TrimSpace(modelID))
 	}
-	return publicAntigravityModelIDs(models), nil
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return nil, nil, newUpstreamModelSyncUpstreamError("Failed to encode Antigravity model catalog", err)
+	}
+	return publicAntigravityModelIDs(models), body, nil
 }
 
 func (s *AccountTestService) doUpstreamModelsRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {

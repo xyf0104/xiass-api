@@ -40,6 +40,12 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 		"gemini-3.8-flash-high",
 		"gemini-3.8-flash-medium",
 		"gemini-3.8-flash-low",
+		"gemini-4-argon-high",
+		"gemini-4-argon-medium",
+		"gemini-4-argon-low",
+		"claude-opus-5-5-high",
+		"claude-opus-5-5-medium",
+		"claude-opus-5-5-low",
 	}
 
 	for _, id := range requiredIDs {
@@ -156,6 +162,11 @@ func TestGeminiModels_Gemini38FlashMetadata(t *testing.T) {
 	}
 	if !IsGeminiReasoningModel("gemini-3.8-flash-tiered") {
 		t.Fatal("internal Gemini 3.8 tiered route must retain reasoning-model request semantics")
+	}
+	for _, model := range []string{"gemini-4-argon", "gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low"} {
+		if !IsGeminiReasoningModel(model) {
+			t.Errorf("%q should use reasoning-model request semantics", model)
+		}
 	}
 }
 

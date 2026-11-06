@@ -690,8 +690,11 @@ func TestConstants_值正确(t *testing.T) {
 	if RedirectURI != "http://localhost:8085/callback" {
 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)
 	}
-	if GetUserAgent() != "antigravity/2.9.1 windows/amd64" {
+	if GetUserAgent() != "antigravity/hub/2.23.0 windows/amd64" {
 		t.Errorf("UserAgent 不匹配: got %s", GetUserAgent())
+	}
+	if len(BaseURLs) < 2 || BaseURLs[1] != "https://daily-cloudcode-pa.googleapis.com" {
+		t.Errorf("daily endpoint mismatch: got %v", BaseURLs)
 	}
 	if SessionTTL != 30*time.Minute {
 		t.Errorf("SessionTTL 不匹配: got %v", SessionTTL)

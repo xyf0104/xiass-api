@@ -123,9 +123,11 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"claude-sonnet-4-5":          "claude-sonnet-4-5",
 	"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
 	// Antigravity Claude 5.5 reasoning tiers are priced by their base family.
+	"claude-opus-5-5":          "claude-opus-5-5-high",
 	"claude-opus-5-5-high":     "claude-opus-5-5-high",
 	"claude-opus-5-5-medium":   "claude-opus-5-5-medium",
 	"claude-opus-5-5-low":      "claude-opus-5-5-low",
+	"claude-sonnet-5-5":        "claude-sonnet-5-5-high",
 	"claude-sonnet-5-5-high":   "claude-sonnet-5-5-high",
 	"claude-sonnet-5-5-medium": "claude-sonnet-5-5-medium",
 	"claude-sonnet-5-5-low":    "claude-sonnet-5-5-low",

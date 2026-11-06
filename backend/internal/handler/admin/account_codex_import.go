@@ -918,14 +918,16 @@ func buildCodexAgentIdentityKeys(accountID string) []string {
 	return []string{"account:" + accountID}
 }
 
-// buildCodexStoredIdentityKeys 生成存量账号索引键，保留 user/account 维度，
-// 让 accessToken-only 账号后续升级为完整 OAuth 时仍能命中并更新原账号。
+// buildCodexStoredIdentityKeys scopes users to their workspace while retaining
+// account and token fallbacks for legacy imports.
 func buildCodexStoredIdentityKeys(accountID, userID, email, accessToken string) []string {
 	keys := make([]string, 0, 3)
 	accountID = strings.TrimSpace(accountID)
 	userID = strings.TrimSpace(userID)
 	accessToken = strings.TrimSpace(accessToken)
-	if userID != "" {
+	if accountID != "" && userID != "" {
+		keys = append(keys, "account_user:"+codexCompositeIdentityKey(accountID, userID))
+	} else if userID != "" {
 		keys = append(keys, "user:"+userID)
 	}
 	if accountID == "" && userID == "" {
@@ -940,6 +942,10 @@ func buildCodexStoredIdentityKeys(accountID, userID, email, accessToken string) 
 		keys = append(keys, "account:"+accountID)
 	}
 	return keys
+}
+
+func codexCompositeIdentityKey(accountID, userID string) string {
+	return fmt.Sprintf("%d:%s%d:%s", len(accountID), accountID, len(userID), userID)
 }
 
 func buildCodexAccountIndex(accounts []service.Account) *codexAccountIndex {
@@ -1040,13 +1046,26 @@ func (i *codexAccountIndex) Find(keys []string, userID string) (*service.Account
 	if i == nil {
 		return nil, ""
 	}
+	legacyUserKey := ""
 	for _, key := range keys {
-		for _, account := range i.accountsByKey[key] {
+		if strings.HasPrefix(key, "account_user:") && strings.TrimSpace(userID) != "" {
+			legacyUserKey = "user:" + strings.TrimSpace(userID)
+		}
+		accounts := i.accountsByKey[key]
+		if strings.HasPrefix(key, "user:") && len(accounts) != 1 {
+			continue
+		}
+		for _, account := range accounts {
 			if codexIdentityConflicts(key, userID, codexCredentialString(account.Credentials, "chatgpt_user_id")) {
 				continue
 			}
 			return &account, key
 		}
+	}
+	// Only workspace-scoped OAuth imports may fall back to a unique stored
+	// user without a workspace. Token-only imports must keep fingerprint matching.
+	if accounts := i.accountsByKey[legacyUserKey]; legacyUserKey != "" && len(accounts) == 1 {
+		return &accounts[0], legacyUserKey
 	}
 	return nil, ""
 }

@@ -118,26 +118,42 @@ func TestConfiguredAntigravityForwardBaseURLs_HardOverrides(t *testing.T) {
 	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLs())
 }
 
-func TestAntigravityArgonUsesProductionEndpointOnly(t *testing.T) {
+func TestConfiguredAntigravityForwardBaseURLs_AreIndependentOfAccountPlan(t *testing.T) {
+	prodURL, dailyURL := withAntigravityEndpointURLs(t)
+	svc := &AntigravityGatewayService{}
+	p := antigravityEndpointTestParams(nil)
+	for _, plan := range []string{"Ultra", "g1-ultra-lite-tier", "Pro", "Free", ""} {
+		p.account.Credentials = map[string]any{"plan_type": plan}
+		require.Equal(t, []string{prodURL, dailyURL}, svc.antigravityForwardBaseURLs(p), plan)
+	}
+
+	t.Setenv(antigravityForwardBaseURLEnv, "prod")
+	require.Equal(t, []string{prodURL}, configuredAntigravityForwardBaseURLs())
+}
+
+func TestAntigravityArgonUsesNormalEndpointNegotiation(t *testing.T) {
 	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	p := antigravityEndpointTestParams(nil)
 	p.requestedModel = "gemini-4-argon-high"
 	p.body = []byte(`{"project":"project-a","model":"gemini-4-argon-high"}`)
 
 	svc := &AntigravityGatewayService{}
-	require.Equal(t, []string{prodURL}, svc.antigravityForwardBaseURLs(p))
+	require.Equal(t, []string{prodURL, dailyURL}, svc.antigravityForwardBaseURLs(p))
 
 	upstream := &sequencedAntigravityEndpointUpstream{steps: []antigravityEndpointStep{
 		{status: http.StatusTooManyRequests, body: bareAntigravityEndpoint429},
+		{status: http.StatusOK, body: `{}`},
 	}}
 	p.httpUpstream = upstream
-	p.readOnlyProbe = true
 	result, err := svc.antigravityRetryLoop(p)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusTooManyRequests, result.resp.StatusCode)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, result.resp.StatusCode)
+	require.Equal(t, []string{
+		prodURL + "/v1internal:generateContent",
+		dailyURL + "/v1internal:generateContent",
+	}, upstream.calls)
 	_ = result.resp.Body.Close()
-	require.Equal(t, []string{prodURL + "/v1internal:generateContent"}, upstream.calls)
-	require.NotContains(t, upstream.calls, dailyURL+"/v1internal:generateContent")
 }
 
 func TestAntigravityEndpointPreference_IsolatedByTokenAndModel(t *testing.T) {

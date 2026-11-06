@@ -67,31 +67,6 @@ func configuredAntigravityForwardBaseURLs() []string {
 	}
 }
 
-// Gemini 4 Argon is currently exposed only by the production Cloud Code
-// endpoint. Sending it to daily can turn a valid production quota response
-// into a misleading 404, so keep Argon endpoint selection deterministic.
-func antigravityBaseURLsForModel(baseURLs []string, model string) []string {
-	if len(baseURLs) == 0 {
-		return nil
-	}
-	normalized := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(model), "models/"))
-	if strings.HasPrefix(normalized, "gemini-4-argon") {
-		return []string{baseURLs[0]}
-	}
-	return baseURLs
-}
-
-func antigravityEndpointModel(p antigravityRetryLoopParams) string {
-	if model := strings.TrimSpace(p.requestedModel); model != "" {
-		return model
-	}
-	var envelope struct {
-		Model string `json:"model"`
-	}
-	_ = json.Unmarshal(p.body, &envelope)
-	return strings.TrimSpace(envelope.Model)
-}
-
 func antigravityEndpointPreferenceIdentity(p antigravityRetryLoopParams) (antigravityEndpointPreferenceKey, [sha256.Size]byte) {
 	var envelope struct {
 		Project string `json:"project"`
@@ -119,7 +94,6 @@ func antigravityEndpointPreferenceIdentity(p antigravityRetryLoopParams) (antigr
 
 func (s *AntigravityGatewayService) antigravityForwardBaseURLs(p antigravityRetryLoopParams) []string {
 	baseURLs := configuredAntigravityForwardBaseURLs()
-	baseURLs = antigravityBaseURLsForModel(baseURLs, antigravityEndpointModel(p))
 	if s == nil || len(baseURLs) < 2 || !isAutomaticAntigravityForwardMode() {
 		return baseURLs
 	}
@@ -171,7 +145,8 @@ func (s *AntigravityGatewayService) rememberAntigravityForwardBaseURL(p antigrav
 	if !known {
 		return
 	}
-	if len(antigravity.BaseURLs) > 0 && baseURL == antigravity.BaseURLs[0] {
+	defaultURLs := configuredAntigravityForwardBaseURLs()
+	if len(defaultURLs) > 0 && baseURL == defaultURLs[0] {
 		s.forgetAntigravityForwardBaseURL(p, "")
 		return
 	}

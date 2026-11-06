@@ -258,6 +258,8 @@ func TestTierIDToPlanType(t *testing.T) {
 		{"free-tier", "Free"},
 		{"g1-pro-tier", "Pro"},
 		{"g1-ultra-tier", "Ultra"},
+		{"g1-ultra-lite-tier", "Ultra"},
+		{"g1-pro-plus-tier", "Pro"},
 		{"FREE-TIER", "Free"},
 		{"", "Free"},
 		{"unknown-tier", "unknown-tier"},
@@ -1559,6 +1561,55 @@ func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 	}
 	if rawResp["models"] == nil {
 		t.Error("rawResp models 不应为 nil")
+	}
+}
+
+func TestClient_FetchAvailableModelsFromURL_UsesExactEndpoint(t *testing.T) {
+	selectedCalls := 0
+	fallbackCalls := 0
+	selected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		selectedCalls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"selected endpoint exhausted"}`))
+	}))
+	defer selected.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalls++
+		_, _ = w.Write([]byte(`{"models":{"must-not-be-used":{}}}`))
+	}))
+	defer fallback.Close()
+
+	withMockBaseURLs(t, []string{fallback.URL})
+	client := mustNewClient(t, "")
+	_, _, err := client.FetchAvailableModelsFromURL(context.Background(), selected.URL, "token", "project")
+
+	if err == nil {
+		t.Fatal("expected selected endpoint error")
+	}
+	if selectedCalls != 1 || fallbackCalls != 0 {
+		t.Fatalf("expected exactly one selected endpoint call and no fallback, got selected=%d fallback=%d", selectedCalls, fallbackCalls)
+	}
+}
+
+func TestClient_FetchAvailableModelsFromURL_DoesNotFollowRedirect(t *testing.T) {
+	redirectCalls := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectCalls++
+		_, _ = w.Write([]byte(`{"models":{"redirected-model":{}}}`))
+	}))
+	defer redirectTarget.Close()
+	selected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, nil, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer selected.Close()
+
+	_, _, err := mustNewClient(t, "").FetchAvailableModelsFromURL(context.Background(), selected.URL, "token", "project")
+
+	if err == nil {
+		t.Fatal("expected redirect response to be rejected")
+	}
+	if redirectCalls != 0 {
+		t.Fatalf("expected redirect target not to be called, got %d calls", redirectCalls)
 	}
 }
 

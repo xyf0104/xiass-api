@@ -105,6 +105,25 @@ func TestPublicAntigravityModelIDs_HidesGemini38InternalRoutes(t *testing.T) {
 	require.NotContains(t, models, domain.AntigravityGemini38FlashTieredModel)
 }
 
+func TestPublicAntigravityModelIDs_PreservesArgonAndClaude55Catalog(t *testing.T) {
+	models := publicAntigravityModelIDs([]string{
+		"gemini-4-argon-high",
+		"gemini-4-argon-medium",
+		"gemini-4-argon-low",
+		"claude-opus-5-5-high",
+		"claude-opus-5-5-medium",
+		"claude-opus-5-5-low",
+	})
+	require.Equal(t, []string{
+		"claude-opus-5-5-high",
+		"claude-opus-5-5-low",
+		"claude-opus-5-5-medium",
+		"gemini-4-argon-high",
+		"gemini-4-argon-low",
+		"gemini-4-argon-medium",
+	}, models)
+}
+
 func TestAntigravityGateway_Gemini38ResponsesUsesPublicIdentityAndTieredRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}

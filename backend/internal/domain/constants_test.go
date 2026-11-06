@@ -44,6 +44,30 @@ func TestDefaultAntigravityModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMapping_Claude55BaseAliases(t *testing.T) {
+	for model, want := range map[string]string{
+		"claude-opus-5-5":   "claude-opus-5-5-high",
+		"claude-sonnet-5-5": "claude-sonnet-5-5-high",
+	} {
+		if got := DefaultAntigravityModelMapping[model]; got != want {
+			t.Fatalf("expected %s to map to %q, got %q", model, want, got)
+		}
+	}
+}
+
+func TestDefaultAntigravityModelMapping_Gemini4ArgonTiers(t *testing.T) {
+	for model, want := range map[string]string{
+		"gemini-4-argon":        "gemini-4-argon-high",
+		"gemini-4-argon-high":   "gemini-4-argon-high",
+		"gemini-4-argon-medium": "gemini-4-argon-medium",
+		"gemini-4-argon-low":    "gemini-4-argon-low",
+	} {
+		if got := DefaultAntigravityModelMapping[model]; got != want {
+			t.Errorf("expected %s to map to %q, got %q", model, want, got)
+		}
+	}
+}
+
 func TestDefaultAntigravityModelMapping_PreservesExplicitSonnet45AndMigratesLegacyAliases(t *testing.T) {
 	t.Parallel()
 

@@ -57,7 +57,7 @@ func (s *AntigravityGatewayService) antigravityReadOnlyProbe(p antigravityRetryL
 	if p.httpUpstream == nil {
 		return nil, errors.New("antigravity probe upstream is not configured")
 	}
-	baseURLs := antigravityBaseURLsForModel(configuredAntigravityForwardBaseURLs(), antigravityEndpointModel(p))
+	baseURLs := configuredAntigravityForwardBaseURLs()
 	if len(baseURLs) == 0 {
 		return nil, errors.New("no antigravity forward base url configured")
 	}

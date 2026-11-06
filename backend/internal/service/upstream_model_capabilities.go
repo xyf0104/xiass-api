@@ -32,6 +32,8 @@ const (
 	upstreamModelMetadataMaxToolKeys        = 64
 	upstreamModelMetadataMaxToolBytes       = 64 * 1024
 	upstreamModelMetadataMaxSnapshotBytes   = 512 * 1024
+	upstreamModelThinkingBudgetLowMax       = 1024
+	upstreamModelThinkingBudgetMediumMax    = 8192
 )
 
 // UpstreamModelMetadata contains only capability data that was declared by the
@@ -217,7 +219,8 @@ func canonicalUpstreamCapabilityBaseURL(raw string) string {
 func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, account *Account) (*UpstreamModelCatalog, error) {
 	capabilityIdentity := upstreamModelCapabilityIdentity(account)
 	models, body, err := s.fetchUpstreamModelList(ctx, account)
-	if !isOpenAICompatibleCapabilitySyncAccount(account) {
+	antigravityOAuth := account != nil && account.Platform == PlatformAntigravity && account.Type == AccountTypeOAuth
+	if !isOpenAICompatibleCapabilitySyncAccount(account) && !antigravityOAuth {
 		if err != nil {
 			return nil, err
 		}
@@ -249,10 +252,16 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		_, directMetadata, parseErr := extractUpstreamModelCatalog(body, account != nil && account.IsGrok())
 		if parseErr == nil {
 			catalog.Metadata = directMetadata
+			if antigravityOAuth {
+				catalog.Metadata = publicAntigravityModelMetadata(catalog.Metadata)
+			}
 		}
 	}
 
-	enrichIDs := dedupeAndSortModelIDs(append(append([]string(nil), models...), configuredUpstreamModelsForCapabilitySync(account)...))
+	enrichIDs := models
+	if !antigravityOAuth {
+		enrichIDs = dedupeAndSortModelIDs(append(append([]string(nil), models...), configuredUpstreamModelsForCapabilitySync(account)...))
+	}
 	capabilityIDs := capabilitySyncModelIDs(enrichIDs)
 	sourceParts := map[string]bool{"upstream": len(body) > 0}
 
@@ -273,7 +282,9 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		}
 	}
 
-	if upstreamCatalogNeedsRegistry(capabilityIDs, catalog.Metadata) {
+	// Antigravity's account catalog is authoritative. Default mappings and public
+	// registries cannot establish which generation IDs this OAuth account supports.
+	if !antigravityOAuth && upstreamCatalogNeedsRegistry(capabilityIDs, catalog.Metadata) {
 		registryMetadata, registryErr := s.fetchModelsDevMetadata(ctx, account, capabilityIDs)
 		if registryErr == nil {
 			for modelID, fallback := range registryMetadata {
@@ -343,6 +354,38 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		}
 	}
 	return catalog, nil
+}
+
+func publicAntigravityModelMetadata(metadata map[string]UpstreamModelMetadata) map[string]UpstreamModelMetadata {
+	public := make(map[string]UpstreamModelMetadata, len(metadata))
+	for modelID, entry := range metadata {
+		if !isAntigravityGeminiFlashInternalModel(modelID) {
+			public[modelID] = entry
+		}
+	}
+	for _, family := range antigravityGeminiFlashFamilies {
+		entry, ok := metadata[family.tieredModel]
+		if !ok {
+			entry, ok = metadata[family.baseModel]
+		}
+		if !ok {
+			continue
+		}
+		for _, modelID := range family.publicModels {
+			if _, exists := public[modelID]; exists {
+				continue
+			}
+			projected := entry
+			projected.ID = modelID
+			if projected.Reasoning != nil && *projected.Reasoning {
+				level := normalizeReasoningLevel(modelID[strings.LastIndex(modelID, "-")+1:])
+				projected.DefaultReasoningLevel = level
+				projected.SupportedReasoningLevels = []string{level}
+			}
+			public[modelID] = projected
+		}
+	}
+	return public
 }
 
 func validateUpstreamModelMetadataSnapshot(snapshot UpstreamModelMetadataSnapshot) error {
@@ -749,6 +792,12 @@ type upstreamModelCapabilityEntry struct {
 	MaxContextWindow         int64                      `json:"max_context_window"`
 	MaxOutputTokens          int64                      `json:"max_output_tokens"`
 	Limit                    modelsDevLimit             `json:"limit"`
+	DisplayNameCamel         string                     `json:"displayName"`
+	SupportsImages           *bool                      `json:"supportsImages"`
+	SupportsThinking         *bool                      `json:"supportsThinking"`
+	ThinkingBudget           *int64                     `json:"thinkingBudget"`
+	MaxTokens                int64                      `json:"maxTokens"`
+	MaxOutputTokensCamel     int64                      `json:"maxOutputTokens"`
 }
 
 func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]UpstreamModelMetadata, error) {
@@ -764,17 +813,20 @@ func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]U
 	metadata := make(map[string]UpstreamModelMetadata)
 	for _, raw := range entries {
 		var capability upstreamModelCapabilityEntry
-		if err := json.Unmarshal(raw, &capability); err != nil {
+		if err := json.Unmarshal(raw.body, &capability); err != nil {
 			continue
 		}
 		modelID := strings.TrimSpace(selectID(capability.upstreamModelEntry))
+		if raw.modelID != "" {
+			modelID = strings.TrimSpace(raw.modelID)
+		}
 		if modelID == "" {
 			continue
 		}
 		models = append(models, modelID)
 		entry := upstreamMetadataFromCapabilityEntry(modelID, capability)
 		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &fields); err == nil {
+		if err := json.Unmarshal(raw.body, &fields); err == nil {
 			entry.CodexToolCapabilities = extractCodexToolCapabilities(fields)
 		}
 		if upstreamModelMetadataIsUseful(entry) {
@@ -784,20 +836,50 @@ func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]U
 	return dedupeAndSortModelIDs(models), metadata, nil
 }
 
-func extractUpstreamModelRawEntries(body []byte) ([]json.RawMessage, error) {
+type upstreamModelRawEntry struct {
+	modelID string
+	body    json.RawMessage
+}
+
+func extractUpstreamModelRawEntries(body []byte) ([]upstreamModelRawEntry, error) {
 	var response struct {
 		Data   []json.RawMessage `json:"data"`
-		Models []json.RawMessage `json:"models"`
+		Models json.RawMessage   `json:"models"`
 	}
 	if err := json.Unmarshal(body, &response); err == nil && (response.Data != nil || response.Models != nil) {
-		entries := make([]json.RawMessage, 0, len(response.Data)+len(response.Models))
-		entries = append(entries, response.Data...)
-		entries = append(entries, response.Models...)
+		entries := make([]upstreamModelRawEntry, 0, len(response.Data))
+		for _, raw := range response.Data {
+			entries = append(entries, upstreamModelRawEntry{body: raw})
+		}
+		if len(response.Models) > 0 && string(response.Models) != "null" {
+			var list []json.RawMessage
+			if err := json.Unmarshal(response.Models, &list); err == nil {
+				for _, raw := range list {
+					entries = append(entries, upstreamModelRawEntry{body: raw})
+				}
+			} else {
+				var models map[string]json.RawMessage
+				if err := json.Unmarshal(response.Models, &models); err != nil {
+					return nil, fmt.Errorf("parse upstream model catalog: %w", err)
+				}
+				for modelID, raw := range models {
+					// The map key is the exact generation ID, even when an embedded
+					// id, name or slug advertises a different model.
+					if strings.TrimSpace(modelID) != "" {
+						entries = append(entries, upstreamModelRawEntry{modelID: modelID, body: raw})
+					}
+				}
+			}
+		}
 		return entries, nil
 	}
-	var entries []json.RawMessage
-	if err := json.Unmarshal(body, &entries); err != nil {
+	var list []json.RawMessage
+	if err := json.Unmarshal(body, &list); err != nil {
 		return nil, fmt.Errorf("parse upstream model catalog: %w", err)
+	}
+	entries := make([]upstreamModelRawEntry, 0, len(list))
+	for _, raw := range list {
+		entries = append(entries, upstreamModelRawEntry{body: raw})
 	}
 	return entries, nil
 }
@@ -808,6 +890,32 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 		levels = reasoningLevelsFromModelsDevOptions(entry.ReasoningOptions)
 	}
 	reasoning := entry.Reasoning
+	if reasoning == nil {
+		reasoning = entry.SupportsThinking
+	}
+	if len(levels) == 0 && entry.SupportsThinking != nil && *entry.SupportsThinking {
+		level := "high"
+		fixedLevel := normalizeReasoningLevel(modelID[strings.LastIndex(modelID, "-")+1:])
+		if fixedLevel != "" && fixedLevel != "none" {
+			level = fixedLevel
+		} else if entry.ThinkingBudget != nil {
+			switch budget := *entry.ThinkingBudget; {
+			case budget < 0:
+			case budget <= upstreamModelThinkingBudgetLowMax:
+				level = "low"
+			case budget <= upstreamModelThinkingBudgetMediumMax:
+				level = "medium"
+			}
+		}
+		if fixedLevel == "" || fixedLevel == "none" {
+			levels = []string{"low", "medium", "high"}
+			if entry.DefaultReasoningLevel == "" {
+				entry.DefaultReasoningLevel = level
+			}
+		} else {
+			levels = []string{level}
+		}
+	}
 	if reasoning == nil && len(levels) > 0 {
 		value := len(levels) != 1 || levels[0] != "none"
 		reasoning = &value
@@ -816,12 +924,21 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 	if len(modalities) == 0 {
 		modalities = entry.Modalities.Input
 	}
+	if len(modalities) == 0 && (entry.SupportsImages != nil || entry.SupportsThinking != nil || entry.MaxTokens > 0) {
+		modalities = []string{"text"}
+		if entry.SupportsImages != nil && *entry.SupportsImages {
+			modalities = append(modalities, "image")
+		}
+	}
 	contextWindow := entry.ContextWindow
 	if contextWindow <= 0 {
 		contextWindow = entry.MaxContextWindow
 	}
 	if contextWindow <= 0 {
 		contextWindow = entry.Limit.Context
+	}
+	if contextWindow <= 0 {
+		contextWindow = entry.MaxTokens
 	}
 	maxContextWindow := entry.MaxContextWindow
 	if maxContextWindow <= 0 {
@@ -834,11 +951,17 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = entry.Limit.Output
 	}
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = entry.MaxOutputTokensCamel
+	}
 	defaultReasoningLevel := normalizeReasoningLevel(entry.DefaultReasoningLevel)
 	if defaultReasoningLevel == "" && len(levels) > 0 {
 		defaultReasoningLevel = levels[0]
 	}
 	displayName := strings.TrimSpace(entry.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(entry.DisplayNameCamel)
+	}
 	if displayName == "" && strings.TrimSpace(entry.Name) != "" && strings.TrimSpace(entry.Name) != modelID {
 		displayName = strings.TrimSpace(entry.Name)
 	}

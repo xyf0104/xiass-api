@@ -69,6 +69,16 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-6",
 		},
 		{
+			name:           "默认映射 - claude-opus-5-5 → high 档",
+			requestedModel: "claude-opus-5-5",
+			expected:       "claude-opus-5-5-high",
+		},
+		{
+			name:           "默认映射 - gemini-4-argon → high 档",
+			requestedModel: "gemini-4-argon",
+			expected:       "gemini-4-argon-high",
+		},
+		{
 			name:           "默认映射 - claude-sonnet-4-5-20250929 → claude-sonnet-4-5",
 			requestedModel: "claude-sonnet-4-5-20250929",
 			accountMapping: nil,

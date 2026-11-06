@@ -259,6 +259,9 @@ func FallbackGeminiModel(model string) GeminiModel {
 // IsGeminiReasoningModel 判断是否为不支持参数和强制 ToolConfig 的 Gemini 推理模型
 func IsGeminiReasoningModel(modelID string) bool {
 	lowerID := strings.ToLower(modelID)
+	if strings.Contains(lowerID, "gemini-4-argon") {
+		return true
+	}
 	// Gemini 3.7 exposes public tiers, but requests are routed through this
 	// internal model ID after account mapping.
 	if strings.Contains(lowerID, "gemini-3.7-flash-tiered") || strings.Contains(lowerID, "gemini-3.8-flash-tiered") {
