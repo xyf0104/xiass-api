@@ -31,7 +31,9 @@ type createRequest struct {
 }
 
 type subscriptionPreviewRequest struct {
-	Sources []proxyroute.Source `json:"sources"`
+	Sources          []proxyroute.Source `json:"sources"`
+	PreviousSnapshot string              `json:"previous_snapshot,omitempty"`
+	RetainNodeIDs    []string            `json:"retain_node_ids,omitempty"`
 }
 
 type subscriptionSyncRequest struct {
@@ -72,7 +74,7 @@ func (s *Server) subscriptionPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	result, err := s.manager.Preview(r.Context(), request.Sources)
+	result, err := s.manager.PreviewRetaining(r.Context(), request.Sources, request.PreviousSnapshot, request.RetainNodeIDs)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -216,9 +216,9 @@ func (a *httpProxySubscriptionAgent) restartUnresponsiveChild(base, token string
 func (a *httpProxySubscriptionAgent) Health(ctx context.Context) error {
 	return a.do(ctx, http.MethodGet, "/health", nil, nil)
 }
-func (a *httpProxySubscriptionAgent) Preview(ctx context.Context, sources []ProxySubscriptionSource) (*proxySubscriptionAgentResult, error) {
+func (a *httpProxySubscriptionAgent) Preview(ctx context.Context, request proxySubscriptionAgentPreview) (*proxySubscriptionAgentResult, error) {
 	var result proxySubscriptionAgentResult
-	err := a.do(ctx, http.MethodPost, "/v1/subscriptions/preview", map[string]any{"sources": sources}, &result)
+	err := a.do(ctx, http.MethodPost, "/v1/subscriptions/preview", request, &result)
 	return &result, err
 }
 func (a *httpProxySubscriptionAgent) Sync(ctx context.Context, req proxySubscriptionAgentSync) (*proxySubscriptionAgentResult, error) {

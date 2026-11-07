@@ -177,7 +177,7 @@ describe('SubscriptionProxyPanel', () => {
     await wrapper.findAll('button').find(button => button.text().includes('subscriptions.refresh'))!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Subscription refresh failed; saved nodes retained')
+    expect(wrapper.text()).toContain('admin.proxies.subscriptions.refreshFailedRetained')
     expect(wrapper.text()).toContain('Node A')
     expect(api.getSubscriptions).toHaveBeenCalledTimes(2)
   })
@@ -211,9 +211,110 @@ describe('SubscriptionProxyPanel', () => {
     const nodeCheckboxes = wrapper.findAll('tbody input[type="checkbox"]')
     expect(nodeCheckboxes).toHaveLength(2)
     expect(nodeCheckboxes[0].attributes('disabled')).toBeDefined()
+    expect((nodeCheckboxes[0].element as HTMLInputElement).checked).toBe(true)
     expect(nodeCheckboxes[1].attributes('disabled')).toBeUndefined()
     expect((nodeCheckboxes[1].element as HTMLInputElement).checked).toBe(false)
     expect(api.applySubscriptions).not.toHaveBeenCalled()
+  })
+
+  describe('selection retention', () => {
+    const source = { id: 'saved-source', name: 'Saved', source_kind: 'url', configured: true, url: 'https://saved.test/…' }
+    const imported = { id: 'imported-node', source_id: 'saved-source', name: 'Imported', protocol: 'vless', selected: true, proxy_id: 41 }
+    const candidate = { id: 'candidate-node', source_id: 'saved-source', name: 'Candidate', protocol: 'vless', selected: false }
+
+    it.each(['preview', 'refresh'])('preserves explicit selections and deselections by node ID during %s', async (action) => {
+      const saved = { agent_available: true, sources: [source], nodes: [imported, candidate] }
+      const next = { ...saved, preview_id: 'retained-preview', nodes: [candidate, imported, { ...candidate, id: 'new-node', selected: true }] }
+      api.getSubscriptions.mockResolvedValue(saved)
+      api.previewSubscriptions.mockResolvedValue(next)
+      api.refreshSubscriptions.mockResolvedValue(next)
+      api.applySubscriptions.mockResolvedValue(saved)
+      const wrapper = mount(SubscriptionProxyPanel, { global })
+      await flushPromises()
+
+      await wrapper.findAll('tbody input[type="checkbox"]')[0].setValue(false)
+      await wrapper.findAll('tbody input[type="checkbox"]')[1].setValue(true)
+      await wrapper.findAll('button').find(button => button.text().includes(`subscriptions.${action}`))!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.findAll('tbody input[type="checkbox"]').map(input => (input.element as HTMLInputElement).checked)).toEqual([true, false, true])
+      if (action === 'refresh') {
+        expect(wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.attributes('disabled')).toBeDefined()
+        await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+        await flushPromises()
+      }
+      await wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.trigger('click')
+      await flushPromises()
+      expect(api.applySubscriptions).toHaveBeenCalledWith(expect.any(Array), ['candidate-node', 'new-node'], 'retained-preview')
+    })
+
+    it.each(['preview', 'refresh'])('preserves an explicitly empty selection during %s', async (action) => {
+      const saved = { agent_available: true, sources: [source], nodes: [imported] }
+      api.getSubscriptions.mockResolvedValue(saved)
+      api.previewSubscriptions.mockResolvedValue({ ...saved, preview_id: 'empty-selection-preview' })
+      api.refreshSubscriptions.mockResolvedValue(saved)
+      api.applySubscriptions.mockResolvedValue(saved)
+      const wrapper = mount(SubscriptionProxyPanel, { global })
+      await flushPromises()
+
+      await wrapper.findAll('button').find(button => button.text().includes('subscriptions.clear'))!.trigger('click')
+      await wrapper.findAll('button').find(button => button.text().includes(`subscriptions.${action}`))!.trigger('click')
+      await flushPromises()
+      expect((wrapper.get('tbody input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+      if (action === 'refresh') {
+        await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+        await flushPromises()
+      }
+      await wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.trigger('click')
+      expect(api.applySubscriptions).not.toHaveBeenCalled()
+      await wrapper.get('[data-test="confirm-button"]').trigger('click')
+      await flushPromises()
+      expect(api.applySubscriptions).toHaveBeenCalledWith(expect.any(Array), [], 'empty-selection-preview')
+    })
+
+    it('retains choices after a source edit and a rejected apply followed by another preview', async () => {
+      const saved = { agent_available: true, sources: [source], nodes: [imported, candidate] }
+      api.getSubscriptions.mockResolvedValue(saved)
+      api.previewSubscriptions.mockImplementation(async (submitted) => ({ ...saved, sources: [{ ...source, ...submitted[0] }], preview_id: 'retry-preview' }))
+      api.applySubscriptions.mockRejectedValue({ reason: 'PROXY_SUBSCRIPTION_NODE_IMPORTED', message: 'Remove the imported proxy in IP management before deselecting its subscription node' })
+      const wrapper = mount(SubscriptionProxyPanel, { global })
+      await flushPromises()
+      await wrapper.findAll('tbody input[type="checkbox"]')[0].setValue(false)
+      await wrapper.findAll('tbody input[type="checkbox"]')[1].setValue(true)
+      const nameInput = wrapper.findAll('input').find(input => input.attributes('placeholder')?.includes('defaultName'))!
+      await nameInput.setValue('Edited source')
+      await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.trigger('click')
+      await flushPromises()
+
+      expect(store.showError).toHaveBeenCalledWith('admin.proxies.subscriptions.nodeImported')
+      expect(wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.attributes('disabled')).toBeDefined()
+      await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+      await flushPromises()
+      expect((nameInput.element as HTMLInputElement).value).toBe('Edited source')
+      expect(wrapper.findAll('tbody input[type="checkbox"]').map(input => (input.element as HTMLInputElement).checked)).toEqual([false, true])
+    })
+
+    it('honors a deleted proxy reference and requires explicit selection before reimporting', async () => {
+      const saved = { agent_available: true, sources: [source], nodes: [imported, candidate] }
+      api.getSubscriptions.mockResolvedValue(saved)
+      api.previewSubscriptions.mockResolvedValue({ ...saved, preview_id: 'deleted-preview', nodes: [{ ...imported, proxy_id: undefined, selected: false }, candidate] })
+      api.applySubscriptions.mockResolvedValue(saved)
+      const wrapper = mount(SubscriptionProxyPanel, { global })
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+      await flushPromises()
+      expect((wrapper.findAll('tbody input[type="checkbox"]')[0].element as HTMLInputElement).checked).toBe(false)
+
+      await wrapper.findAll('tbody input[type="checkbox"]')[0].setValue(true)
+      await wrapper.findAll('button').find(button => button.text().includes('subscriptions.preview'))!.trigger('click')
+      await flushPromises()
+      expect((wrapper.findAll('tbody input[type="checkbox"]')[0].element as HTMLInputElement).checked).toBe(true)
+      await wrapper.findAll('button').find(button => button.text().includes('applyCount'))!.trigger('click')
+      await flushPromises()
+      expect(api.applySubscriptions).toHaveBeenCalledWith(expect.any(Array), ['imported-node'], 'deleted-preview')
+    })
   })
 
   it('adds pasted URI, Base64, or Clash text as an input source', async () => {
@@ -276,6 +377,11 @@ describe('SubscriptionProxyPanel', () => {
 
   it.each([
     [{ reason: 'INVALID_SUBSCRIPTION_URL', message: 'Use an HTTPS subscription URL' }, 'invalidUrl'],
+    [{ reason: 'PROXY_NODE_MISSING', message: 'A selected subscription node is unavailable; preview and select again' }, 'nodeMissing'],
+    [{ reason: 'PROXY_SUBSCRIPTION_NODE_IMPORTED', message: 'Remove the imported proxy in IP management before deselecting its subscription node' }, 'nodeImported'],
+    [{ code: 'PROXY_SUBSCRIPTION_NODE_DELETED', message: 'A selected proxy was deleted in IP management; preview and deselect it before refreshing' }, 'nodeDeleted'],
+    [{ reason: 'PROXY_PREVIEW_EXPIRED', message: 'Preview subscriptions before applying' }, 'previewExpired'],
+    [{ reason: 'PROXY_SUBSCRIPTION_CHANGED', message: 'Subscriptions changed; preview again before applying' }, 'subscriptionChanged'],
     [{ message: 'node 1: insecure TLS is not allowed; fix the node certificate' }, 'insecureTLSRejected']
   ])('localizes subscription validation errors without discarding drafts', async (error, key) => {
     api.previewSubscriptions.mockRejectedValue(error)
@@ -287,5 +393,17 @@ describe('SubscriptionProxyPanel', () => {
     await flushPromises()
     expect(store.showError).toHaveBeenCalledWith(`admin.proxies.subscriptions.${key}`)
     expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe('https://example.test/sub#label')
+  })
+
+  it.each([
+    ['A selected proxy was deleted; saved nodes retained', 'nodeDeletedRetained'],
+    ['A selected node disappeared from its subscription; saved nodes retained', 'nodeMissingRetained'],
+    ['Subscription refresh failed; saved nodes retained', 'refreshFailedRetained']
+  ])('localizes the saved status error %s', async (last_error, key) => {
+    api.getSubscriptions.mockResolvedValue({ ...emptyOverview, last_error })
+    const wrapper = mount(SubscriptionProxyPanel, { global })
+    await flushPromises()
+    expect(wrapper.text()).toContain(`admin.proxies.subscriptions.${key}`)
+    expect(wrapper.text()).not.toContain(last_error)
   })
 })

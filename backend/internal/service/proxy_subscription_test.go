@@ -98,23 +98,38 @@ func (r *subscriptionTestStore) Update(_ context.Context, expected string, fn fu
 }
 
 type subscriptionTestAgent struct {
-	nodes        []ProxySubscriptionNode
-	previewCount int
-	syncs        []proxySubscriptionAgentSync
-	previewErr   error
-	syncErr      error
+	nodes           []ProxySubscriptionNode
+	previewCount    int
+	previewRequests []proxySubscriptionAgentPreview
+	syncs           []proxySubscriptionAgentSync
+	previewErr      error
+	syncErr         error
+	omitRetained    bool
 }
 
 func (a *subscriptionTestAgent) Health(context.Context) error { return nil }
-func (a *subscriptionTestAgent) Preview(_ context.Context, sources []ProxySubscriptionSource) (*proxySubscriptionAgentResult, error) {
+func (a *subscriptionTestAgent) Preview(_ context.Context, request proxySubscriptionAgentPreview) (*proxySubscriptionAgentResult, error) {
 	a.previewCount++
+	a.previewRequests = append(a.previewRequests, request)
 	if a.previewErr != nil {
 		return nil, a.previewErr
 	}
-	if len(sources) == 0 {
-		return &proxySubscriptionAgentResult{}, nil
+	result := &proxySubscriptionAgentResult{Snapshot: "private node password: fixture-secret"}
+	if len(request.Sources) > 0 {
+		result.Nodes = a.nodes
 	}
-	return &proxySubscriptionAgentResult{Nodes: a.nodes, Snapshot: "private node password: fixture-secret"}, nil
+	if !a.omitRetained {
+		present := make(map[string]bool, len(result.Nodes))
+		for _, node := range result.Nodes {
+			present[node.ID] = true
+		}
+		for _, id := range request.RetainNodeIDs {
+			if !present[id] {
+				result.RetainedNodeIDs = append(result.RetainedNodeIDs, id)
+			}
+		}
+	}
+	return result, nil
 }
 func (a *subscriptionTestAgent) Sync(_ context.Context, req proxySubscriptionAgentSync) (*proxySubscriptionAgentResult, error) {
 	a.syncs = append(a.syncs, req)
@@ -214,7 +229,7 @@ func TestProxySubscriptionFailureRollsBackProxyRowsAndKeepsLiveRoutes(t *testing
 	require.Equal(t, []string{"route-a"}, last.SelectedNodeIDs)
 }
 
-func TestProxySubscriptionRefreshFailureAndMissingNodeRetainLastGood(t *testing.T) {
+func TestProxySubscriptionRefreshFailureAndUnretainedMissingNodeKeepLastGood(t *testing.T) {
 	svc, store, agent, sources := subscriptionFixture()
 	ctx := context.Background()
 	p, err := svc.Preview(ctx, sources)
@@ -232,16 +247,72 @@ func TestProxySubscriptionRefreshFailureAndMissingNodeRetainLastGood(t *testing.
 	require.Len(t, agent.syncs, count)
 	agent.previewErr = nil
 	agent.nodes = agent.nodes[1:]
+	agent.omitRetained = true
 	_, err = svc.Refresh(ctx)
 	require.Error(t, err)
 	require.Equal(t, raw, store.raw)
 	require.Len(t, agent.syncs, count)
 	agent.nodes = originalNodes
+	agent.omitRetained = false
 	overview, err := svc.Refresh(ctx)
 	require.NoError(t, err)
 	require.Empty(t, overview.LastError)
 	require.Equal(t, originalProxy, store.proxies.rows[1])
 	require.Equal(t, "127.0.0.1:31001", agent.syncs[len(agent.syncs)-1].ListenAddresses["route-a"])
+}
+
+func TestProxySubscriptionRefreshRetainsImportedNodeWhenUpstreamIdentityRotates(t *testing.T) {
+	svc, store, agent, sources := subscriptionFixture()
+	ctx := context.Background()
+	preview, err := svc.Preview(ctx, sources)
+	require.NoError(t, err)
+	initial, err := svc.Apply(ctx, sources, []string{"route-a"}, preview.PreviewID)
+	require.NoError(t, err)
+	var oldNode ProxySubscriptionNodeView
+	for _, node := range initial.Nodes {
+		if node.ID == "route-a" {
+			oldNode = node
+		}
+	}
+	require.Positive(t, oldNode.ProxyID)
+	proxy := store.proxies.rows[oldNode.ProxyID]
+	state, _, err := svc.load(ctx)
+	require.NoError(t, err)
+	oldListener := state.Addresses["route-a"]
+	require.NotEmpty(t, oldListener)
+
+	agent.nodes = []ProxySubscriptionNode{
+		{ID: "route-a-renewed", SourceID: sources[0].ID, SourceName: sources[0].Name, Name: "Node A", Protocol: "vless"},
+		{ID: "route-b", SourceID: sources[1].ID, SourceName: sources[1].Name, Name: "Node B", Protocol: "trojan"},
+	}
+	refreshed, err := svc.Refresh(ctx)
+	require.NoError(t, err)
+	require.Contains(t, agent.previewRequests[len(agent.previewRequests)-1].RetainNodeIDs, "route-a")
+	require.NotEmpty(t, agent.previewRequests[len(agent.previewRequests)-1].PreviousSnapshot)
+	var retained ProxySubscriptionNodeView
+	var renewed ProxySubscriptionNodeView
+	for _, node := range refreshed.Nodes {
+		switch node.ID {
+		case "route-a":
+			retained = node
+		case "route-a-renewed":
+			renewed = node
+		}
+	}
+	require.True(t, retained.Missing)
+	require.True(t, retained.Selected)
+	require.Equal(t, oldNode.ProxyID, retained.ProxyID)
+	require.Equal(t, proxy, store.proxies.rows[oldNode.ProxyID])
+	require.Equal(t, oldListener, agent.syncs[len(agent.syncs)-1].ListenAddresses["route-a"])
+	require.False(t, renewed.Selected)
+	require.Zero(t, renewed.ProxyID)
+}
+
+func TestProxySubscriptionRejectsUnrequestedRetainedNodeID(t *testing.T) {
+	request := proxySubscriptionAgentPreview{RetainNodeIDs: []string{"route-a"}}
+	if err := validateRetainedSubscriptionNodeIDs(request.RetainNodeIDs, []string{"route-other"}); err == nil {
+		t.Fatal("accepted an unrequested retained node ID")
+	}
 }
 
 func TestProxySubscriptionRejectsEmptyUnknownStaleAndMutatedPreview(t *testing.T) {
@@ -293,8 +364,10 @@ func TestProxySubscriptionRemovalProtectsBindingsAndPreservesAdminDisable(t *tes
 	require.Equal(t, "inactive", store.proxies.rows[id].Status)
 	delete(store.proxies.rows, id)
 	_, err = svc.Refresh(ctx)
-	require.Error(t, err, "refresh must not recreate an explicitly deleted proxy")
+	require.NoError(t, err, "refresh drops deleted references without recreating proxies")
 	require.Empty(t, store.proxies.rows)
+	p, err = svc.Preview(ctx, []ProxySubscriptionSource{})
+	require.NoError(t, err)
 	_, err = svc.Apply(ctx, []ProxySubscriptionSource{}, nil, p.PreviewID)
 	require.NoError(t, err)
 	c, _, err := svc.load(ctx)
@@ -422,11 +495,10 @@ func TestProxySubscriptionPreviewClearsDeletedProxyReferenceBeforeExplicitReimpo
 	oldProxyID := applied.Nodes[0].ProxyID
 	require.Positive(t, oldProxyID)
 	delete(store.proxies.rows, oldProxyID)
-	rawAfterDelete := store.raw
-
-	_, err = svc.Refresh(ctx)
-	require.ErrorContains(t, err, "PROXY_NODE_MISSING")
-	require.Equal(t, rawAfterDelete, store.raw)
+	refreshed, err := svc.Refresh(ctx)
+	require.NoError(t, err)
+	require.False(t, refreshed.Nodes[0].Selected)
+	require.Zero(t, refreshed.Nodes[0].ProxyID)
 	require.NotContains(t, store.proxies.rows, oldProxyID)
 
 	retained := []ProxySubscriptionSource{{ID: sources[0].ID, Name: sources[0].Name}, {ID: sources[1].ID, Name: sources[1].Name}}

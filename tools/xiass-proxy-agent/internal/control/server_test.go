@@ -114,6 +114,68 @@ func TestSubscriptionPreviewAndSyncContract(t *testing.T) {
 	}
 }
 
+func TestSubscriptionPreviewRetentionRequestContract(t *testing.T) {
+	manager := NewManager()
+	defer manager.Close()
+	server, err := NewServer("test-token", manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testServer := httptest.NewServer(server.Handler())
+	defer testServer.Close()
+	postPreview := func(payload map[string]any) ([]byte, int) {
+		t.Helper()
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authenticatedJSON(t, testServer.URL+"/v1/subscriptions/preview", body)
+	}
+	firstBody, status := postPreview(map[string]any{"sources": []map[string]any{{
+		"id": "inline", "name": "Inline", "input": "http://127.0.0.1:18111#retained",
+	}}})
+	if status != http.StatusOK {
+		t.Fatalf("initial preview status=%d body=%s", status, firstBody)
+	}
+	var first SubscriptionResult
+	if err := json.Unmarshal(firstBody, &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Nodes) != 1 || len(first.RetainedNodeIDs) != 0 {
+		t.Fatalf("unexpected initial preview: %+v", first)
+	}
+
+	secondBody, status := postPreview(map[string]any{
+		"sources": []map[string]any{{
+			"id": "inline", "name": "Inline", "input": "http://127.0.0.1:18112#fresh",
+		}},
+		"previous_snapshot": first.Snapshot,
+		"retain_node_ids":   []string{first.Nodes[0].ID},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("retaining preview status=%d body=%s", status, secondBody)
+	}
+	var second SubscriptionResult
+	if err := json.Unmarshal(secondBody, &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Nodes) != 1 || second.Nodes[0].ID == first.Nodes[0].ID || len(second.RetainedNodeIDs) != 1 || second.RetainedNodeIDs[0] != first.Nodes[0].ID {
+		t.Fatalf("fresh nodes and retained IDs were mixed: %+v", second)
+	}
+	if _, err := decodeAndBuildSnapshot(second.Snapshot); err != nil {
+		t.Fatalf("response snapshot does not include retained node: %v", err)
+	}
+
+	invalidBody, status := postPreview(map[string]any{
+		"sources":           []map[string]any{{"id": "inline", "input": "http://127.0.0.1:18112#fresh"}},
+		"previous_snapshot": first.Snapshot,
+		"retain_node_ids":   []string{"not-in-previous-snapshot"},
+	})
+	if status != http.StatusBadRequest || !bytes.Contains(invalidBody, []byte("retained subscription node does not exist")) {
+		t.Fatalf("invalid allowlist status=%d body=%s", status, invalidBody)
+	}
+}
+
 func authenticatedJSON(t *testing.T, endpoint string, body []byte) ([]byte, int) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))

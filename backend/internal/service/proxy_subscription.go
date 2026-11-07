@@ -99,9 +99,16 @@ type proxySubscriptionAgentRoute struct {
 }
 
 type proxySubscriptionAgentResult struct {
-	Nodes    []ProxySubscriptionNode       `json:"nodes"`
-	Routes   []proxySubscriptionAgentRoute `json:"routes"`
-	Snapshot string                        `json:"snapshot"`
+	Nodes           []ProxySubscriptionNode       `json:"nodes"`
+	Routes          []proxySubscriptionAgentRoute `json:"routes"`
+	Snapshot        string                        `json:"snapshot"`
+	RetainedNodeIDs []string                      `json:"retained_node_ids,omitempty"`
+}
+
+type proxySubscriptionAgentPreview struct {
+	Sources          []ProxySubscriptionSource `json:"sources"`
+	PreviousSnapshot string                    `json:"previous_snapshot,omitempty"`
+	RetainNodeIDs    []string                  `json:"retain_node_ids,omitempty"`
 }
 
 type proxySubscriptionAgentSync struct {
@@ -114,14 +121,15 @@ type proxySubscriptionAgentSync struct {
 
 type ProxySubscriptionAgent interface {
 	Health(context.Context) error
-	Preview(context.Context, []ProxySubscriptionSource) (*proxySubscriptionAgentResult, error)
+	Preview(context.Context, proxySubscriptionAgentPreview) (*proxySubscriptionAgentResult, error)
 	Sync(context.Context, proxySubscriptionAgentSync) (*proxySubscriptionAgentResult, error)
 }
 
 type proxySubscriptionPreview struct {
-	Config   *proxySubscriptionConfig
-	Revision string
-	Expires  time.Time
+	Config          *proxySubscriptionConfig
+	Revision        string
+	Expires         time.Time
+	RetainedNodeIDs []string
 }
 
 type ProxySubscriptionService struct {
@@ -188,11 +196,18 @@ func (s *ProxySubscriptionService) Preview(ctx context.Context, sources []ProxyS
 		return nil, err
 	}
 	stableSources := stripProxySubscriptionClientRefs(normalized)
-	result, err := s.agent.Preview(ctx, stableSources)
+	request, err := s.previewRequest(ctx, current, stableSources)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.agent.Preview(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateSubscriptionAgentResult(result); err != nil {
+		return nil, err
+	}
+	if err := validateRetainedSubscriptionNodeIDs(request.RetainNodeIDs, result.RetainedNodeIDs); err != nil {
 		return nil, err
 	}
 	nodes, selected, err := s.reconcilePreviewProxyReferences(ctx, mergeAgentNodes(result.Nodes, current.Nodes), current.SelectedNodeIDs)
@@ -211,7 +226,7 @@ func (s *ProxySubscriptionService) Preview(ctx context.Context, sources []ProxyS
 	if len(s.previews) >= 16 {
 		return nil, infraerrors.Conflict("PROXY_PREVIEWS_BUSY", "Too many pending previews; retry after they expire")
 	}
-	s.previews[id] = proxySubscriptionPreview{Config: next, Revision: raw, Expires: time.Now().Add(10 * time.Minute)}
+	s.previews[id] = proxySubscriptionPreview{Config: next, Revision: raw, Expires: time.Now().Add(10 * time.Minute), RetainedNodeIDs: result.RetainedNodeIDs}
 	out := configOverview(next)
 	bindProxySubscriptionClientRefs(out.Sources, normalized)
 	out.AgentAvailable, out.PreviewID = true, id
@@ -247,7 +262,7 @@ func (s *ProxySubscriptionService) Apply(ctx context.Context, sources []ProxySub
 	next := *p.Config
 	next.SelectedNodeIDs = ids
 	next.Nodes = append([]ProxySubscriptionNode(nil), p.Config.Nodes...)
-	if err := validateSelectedSubscriptionNodes(&next); err != nil {
+	if err := validateSelectedSubscriptionNodes(&next, p.RetainedNodeIDs); err != nil {
 		return nil, err
 	}
 	out, err := s.applyLocked(ctx, current, raw, &next)
@@ -317,7 +332,11 @@ func (s *ProxySubscriptionService) Refresh(ctx context.Context) (*ProxySubscript
 	if len(current.Sources) == 0 {
 		return configOverview(current), nil
 	}
-	result, err := s.agent.Preview(ctx, current.Sources)
+	request, err := s.previewRequest(ctx, current, current.Sources)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.agent.Preview(ctx, request)
 	if err != nil {
 		s.lastError = "Subscription refresh failed; saved nodes retained"
 		return nil, err
@@ -325,18 +344,17 @@ func (s *ProxySubscriptionService) Refresh(ctx context.Context) (*ProxySubscript
 	if err = validateSubscriptionAgentResult(result); err != nil {
 		return nil, err
 	}
+	if err = validateRetainedSubscriptionNodeIDs(request.RetainNodeIDs, result.RetainedNodeIDs); err != nil {
+		return nil, err
+	}
 	next := *current
 	next.Snapshot = result.Snapshot
 	next.Nodes = mergeAgentNodes(result.Nodes, current.Nodes)
-	_, retainedSelection, err := s.reconcilePreviewProxyReferences(ctx, append([]ProxySubscriptionNode(nil), next.Nodes...), current.SelectedNodeIDs)
+	next.Nodes, next.SelectedNodeIDs, err = s.reconcilePreviewProxyReferences(ctx, next.Nodes, current.SelectedNodeIDs)
 	if err != nil {
 		return nil, err
 	}
-	if len(retainedSelection) != len(current.SelectedNodeIDs) {
-		s.lastError = "A selected proxy was deleted; saved nodes retained"
-		return nil, infraerrors.BadRequest("PROXY_NODE_MISSING", "A selected subscription node is unavailable; preview and select again")
-	}
-	if err := validateSelectedSubscriptionNodes(&next); err != nil {
+	if err := validateSelectedSubscriptionNodes(&next, result.RetainedNodeIDs); err != nil {
 		s.lastError = "A selected node disappeared from its subscription; saved nodes retained"
 		return nil, err
 	}
@@ -367,10 +385,14 @@ func validateSubscriptionAgentResult(result *proxySubscriptionAgentResult) error
 	return nil
 }
 
-func validateSelectedSubscriptionNodes(c *proxySubscriptionConfig) error {
+func validateSelectedSubscriptionNodes(c *proxySubscriptionConfig, retainedIDs []string) error {
+	retained := make(map[string]bool, len(retainedIDs))
+	for _, id := range retainedIDs {
+		retained[id] = true
+	}
 	available := map[string]bool{}
 	for _, node := range c.Nodes {
-		if !node.Missing {
+		if !node.Missing || node.ProxyID > 0 && retained[node.ID] {
 			available[node.ID] = true
 		}
 	}
@@ -380,6 +402,47 @@ func validateSelectedSubscriptionNodes(c *proxySubscriptionConfig) error {
 		}
 	}
 	return nil
+}
+
+func validateRetainedSubscriptionNodeIDs(requested, retained []string) error {
+	if len(retained) > len(requested) {
+		return errors.New("proxy agent returned an invalid retained node set")
+	}
+	allowed := make(map[string]bool, len(requested))
+	for _, id := range requested {
+		allowed[id] = true
+	}
+	seen := make(map[string]bool, len(retained))
+	for _, id := range retained {
+		if !allowed[id] || seen[id] {
+			return errors.New("proxy agent returned an invalid retained node set")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+func (s *ProxySubscriptionService) previewRequest(ctx context.Context, current *proxySubscriptionConfig, sources []ProxySubscriptionSource) (proxySubscriptionAgentPreview, error) {
+	nodes, selected, err := s.reconcilePreviewProxyReferences(ctx, append([]ProxySubscriptionNode(nil), current.Nodes...), current.SelectedNodeIDs)
+	if err != nil {
+		return proxySubscriptionAgentPreview{}, err
+	}
+	imported := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		if node.ProxyID > 0 {
+			imported[node.ID] = true
+		}
+	}
+	request := proxySubscriptionAgentPreview{Sources: sources}
+	for _, id := range selected {
+		if imported[id] {
+			request.RetainNodeIDs = append(request.RetainNodeIDs, id)
+		}
+	}
+	if len(request.RetainNodeIDs) > 0 {
+		request.PreviousSnapshot = current.Snapshot
+	}
+	return request, nil
 }
 
 func (s *ProxySubscriptionService) reconcilePreviewProxyReferences(ctx context.Context, nodes []ProxySubscriptionNode, selected []string) ([]ProxySubscriptionNode, []string, error) {

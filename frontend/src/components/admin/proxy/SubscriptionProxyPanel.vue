@@ -26,7 +26,7 @@
         <Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0" />
         <span>{{ t('admin.proxies.subscriptions.agentUnavailable') }}</span>
       </div>
-      <div v-if="lastError" class="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">{{ lastError }}</div>
+      <div v-if="lastError" class="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">{{ lastErrorMessage }}</div>
       <div v-if="previewStale" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300">{{ t('admin.proxies.subscriptions.previewStale') }}</div>
 
       <div class="mt-5 grid gap-4 lg:grid-cols-2">
@@ -224,6 +224,7 @@ const storedSourceCount = computed(() => sources.filter(source => source.configu
 const currentSignature = computed(() => JSON.stringify(sourcePayload()))
 const previewCurrent = computed(() => Boolean(previewID.value) && previewSignature.value === currentSignature.value)
 const previewStale = computed(() => hadPreview.value && !previewCurrent.value)
+const lastErrorMessage = computed(() => subscriptionError({ message: lastError.value }, 'admin.proxies.subscriptions.refreshFailed'))
 const canApply = computed(() => !busy.value && agentAvailable.value && previewCurrent.value)
 const filteredNodes = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -259,15 +260,24 @@ function overviewMetadataSignature(overview: ProxySubscriptionOverview): string 
   return sourceMetadataSignature(overview.sources.map(source => ({ id: source.id, name: source.name, user_agent: source.user_agent || '', include_protocols: source.include_protocols || [], exclude_keywords: source.exclude_keywords || [], allow_insecure_tls: source.allow_insecure_tls === true })))
 }
 function updateStatus(overview: ProxySubscriptionOverview) { agentAvailable.value = overview.agent_available; updatedAt.value = overview.updated_at || ''; lastError.value = overview.last_error || '' }
-function replaceSelection(nextNodes: ProxySubscriptionNode[], fallback?: Set<string>) {
+function replaceNodes(nextNodes: ProxySubscriptionNode[], retainSelection = false) {
+  const previousNodes = new Map(nodes.value.map(node => [node.id, node]))
+  const draftSelection = new Set(selectedIds)
   selectedIds.clear()
-  nextNodes.forEach(node => { if (!node.missing && (fallback ? fallback.has(node.id) : node.selected)) selectedIds.add(node.id) })
+  nextNodes.forEach(node => {
+    const previous = previousNodes.get(node.id)
+    // A cleared proxy reference requires explicit re-selection before reimporting.
+    const proxyDeleted = Boolean(previous?.proxy_id) && !node.proxy_id
+    const selected = retainSelection && previous && !proxyDeleted ? draftSelection.has(node.id) : node.selected
+    // A missing subscription node must not silently detach a still-imported proxy.
+    if (selected && (!node.missing || (node.proxy_id || 0) > 0)) selectedIds.add(node.id)
+  })
+  nodes.value = nextNodes
 }
 function loadOverview(overview: ProxySubscriptionOverview) {
   const nextSources: SourceForm[] = overview.sources.map(source => ({ key: source.id || newKey(), id: source.id, name: source.name || '', kind: source.source_kind === 'input' ? 'input' : 'url', url: '', input: '', maskedURL: source.url || '', configured: source.configured === true, userAgent: source.user_agent || '', protocols: (source.include_protocols || []).join(', '), excludes: (source.exclude_keywords || []).join(', '), allowInsecureTLS: source.allow_insecure_tls === true }))
   sources.splice(0, sources.length, ...nextSources)
-  nodes.value = overview.nodes || []
-  replaceSelection(nodes.value)
+  replaceNodes(overview.nodes || [])
   updateStatus(overview)
   previewID.value = ''; previewSignature.value = ''; hadPreview.value = false
   savedSourceSignature.value = sourceDraftSignature(sourcePayload())
@@ -282,8 +292,7 @@ function loadPreview(overview: ProxySubscriptionOverview, submitted: ProxySubscr
     const submittedSource = source.client_ref ? submittedByRef.get(source.client_ref) : undefined
     return { key: draft?.key || source.client_ref || source.id || newKey(), id: source.id, name: source.name || draft?.name || '', kind: source.source_kind === 'input' ? 'input' : draft?.kind || 'url', url: submittedSource?.url || draft?.url || '', input: submittedSource?.input || draft?.input || '', maskedURL: source.url || draft?.maskedURL || '', configured: source.configured === true, userAgent: source.user_agent || draft?.userAgent || '', protocols: (source.include_protocols || []).join(', '), excludes: (source.exclude_keywords || []).join(', '), allowInsecureTLS: source.allow_insecure_tls === true }
   }))
-  nodes.value = overview.nodes || []
-  replaceSelection(nodes.value)
+  replaceNodes(overview.nodes || [], true)
   updateStatus(overview)
   previewID.value = overview.preview_id || ''
   previewSignature.value = currentSignature.value
@@ -346,7 +355,23 @@ function confirmTLSChange() {
   pendingTLSSourceKey.value = ''
 }
 function subscriptionError(error: any, fallbackKey: string): string {
-  if ((error?.reason || error?.code) === 'INVALID_SUBSCRIPTION_URL') return t('admin.proxies.subscriptions.invalidUrl')
+  const reasonKeys: Record<string, string> = {
+    INVALID_SUBSCRIPTION_URL: 'invalidUrl',
+    PROXY_NODE_MISSING: 'nodeMissing',
+    PROXY_SUBSCRIPTION_NODE_IMPORTED: 'nodeImported',
+    PROXY_SUBSCRIPTION_NODE_DELETED: 'nodeDeleted',
+    PROXY_PREVIEW_EXPIRED: 'previewExpired',
+    PROXY_SUBSCRIPTION_CHANGED: 'subscriptionChanged'
+  }
+  const reasonKey = reasonKeys[error?.reason || error?.code]
+  if (reasonKey) return t(`admin.proxies.subscriptions.${reasonKey}`)
+  const messageKeys: Record<string, string> = {
+    'A selected proxy was deleted; saved nodes retained': 'nodeDeletedRetained',
+    'A selected node disappeared from its subscription; saved nodes retained': 'nodeMissingRetained',
+    'Subscription refresh failed; saved nodes retained': 'refreshFailedRetained'
+  }
+  const messageKey = messageKeys[error?.message]
+  if (messageKey) return t(`admin.proxies.subscriptions.${messageKey}`)
   if (typeof error?.message === 'string' && error.message.includes('insecure TLS is not allowed')) return t('admin.proxies.subscriptions.insecureTLSRejected')
   return error?.message || t(fallbackKey)
 }
@@ -375,10 +400,9 @@ async function apply() {
   finally { applying.value = false }
 }
 async function refresh() {
-  const draftSelection = new Set(selectedIds)
   refreshing.value = true
   invalidatePreview()
-  try { const overview = await adminAPI.proxies.refreshSubscriptions(); nodes.value = overview.nodes || []; replaceSelection(nodes.value, draftSelection.size > 0 ? draftSelection : undefined); updateStatus(overview); appStore.showSuccess(t('admin.proxies.subscriptions.refreshSuccess')); emit('changed') }
+  try { const overview = await adminAPI.proxies.refreshSubscriptions(); replaceNodes(overview.nodes || [], true); updateStatus(overview); appStore.showSuccess(t('admin.proxies.subscriptions.refreshSuccess')); emit('changed') }
   catch (error: any) {
     let saved: ProxySubscriptionOverview | undefined
     try {

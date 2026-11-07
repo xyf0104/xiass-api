@@ -45,9 +45,10 @@ type SubscriptionNodeInfo struct {
 }
 
 type SubscriptionResult struct {
-	Nodes    []SubscriptionNodeInfo `json:"nodes"`
-	Routes   []RouteInfo            `json:"routes,omitempty"`
-	Snapshot string                 `json:"snapshot,omitempty"`
+	Nodes           []SubscriptionNodeInfo `json:"nodes"`
+	Routes          []RouteInfo            `json:"routes,omitempty"`
+	Snapshot        string                 `json:"snapshot,omitempty"`
+	RetainedNodeIDs []string               `json:"retained_node_ids,omitempty"`
 }
 
 func NewManager() *Manager {
@@ -96,13 +97,71 @@ func (m *Manager) List() []RouteInfo {
 // nodes into an authenticated opaque snapshot, and closes every adapter. It
 // never opens a listener or dials through a node.
 func (m *Manager) Preview(ctx context.Context, sources []proxyroute.Source) (SubscriptionResult, error) {
+	return m.PreviewRetaining(ctx, sources, "", nil)
+}
+
+// PreviewRetaining keeps only explicitly allowed, exact-ID missing nodes in the
+// snapshot. Nodes reports fresh candidates; retained nodes never replace them.
+func (m *Manager) PreviewRetaining(ctx context.Context, sources []proxyroute.Source, previousSnapshot string, retainIDs []string) (SubscriptionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SubscriptionResult{}, err
+	}
+	if len(retainIDs) > proxyroute.MaxNodes {
+		return SubscriptionResult{}, errors.New("too many retained subscription node ids")
+	}
+	var previous []proxyroute.Candidate
+	var err error
+	if previousSnapshot != "" {
+		previous, err = decodeAndBuildSnapshot(previousSnapshot)
+		if err != nil {
+			return SubscriptionResult{}, err
+		}
+		defer proxyroute.CloseCandidates(previous)
+	} else if len(retainIDs) != 0 {
+		return SubscriptionResult{}, errors.New("previous snapshot is required when retaining nodes")
+	}
+	previousByID := make(map[string]proxyroute.Candidate, len(previous))
+	for _, candidate := range previous {
+		if _, duplicate := previousByID[candidate.ID]; duplicate {
+			return SubscriptionResult{}, errors.New("previous snapshot contains duplicate node ids")
+		}
+		previousByID[candidate.ID] = candidate
+	}
+
 	candidates, err := proxyroute.LoadSources(ctx, sources)
 	if err != nil {
 		return SubscriptionResult{}, err
 	}
 	defer proxyroute.CloseCandidates(candidates)
 	result := SubscriptionResult{Nodes: nodeInfo(candidates)}
-	result.Snapshot, err = encodeSnapshot(candidates)
+	merged := append([]proxyroute.Candidate(nil), candidates...)
+	seen := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		if seen[candidate.ID] {
+			return SubscriptionResult{}, errors.New("fresh preview contains duplicate node ids")
+		}
+		seen[candidate.ID] = true
+	}
+	for _, id := range retainIDs {
+		if seen[id] {
+			continue
+		}
+		candidate, exists := previousByID[id]
+		if !exists {
+			return SubscriptionResult{}, errors.New("retained subscription node does not exist in previous snapshot")
+		}
+		if len(merged) >= proxyroute.MaxNodes {
+			return SubscriptionResult{}, errors.New("too many subscription nodes after retaining missing nodes")
+		}
+		merged = append(merged, candidate)
+		seen[id] = true
+		result.RetainedNodeIDs = append(result.RetainedNodeIDs, id)
+	}
+	if err := ctx.Err(); err != nil {
+		return SubscriptionResult{}, err
+	}
+	// Both owning slices are closed above; merged only borrows their adapters.
+	result.Snapshot, err = encodeSnapshot(merged)
 	if err != nil {
 		return SubscriptionResult{}, err
 	}
