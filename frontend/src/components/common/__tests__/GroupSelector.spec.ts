@@ -35,6 +35,15 @@ describe('GroupSelector simple-mode binding policy', () => {
     expect(wrapper.text()).toContain('Composite')
   })
 
+  it('supports a single-column layout for API key group selection', () => {
+    const wrapper = mount(GroupSelector, {
+      props: { modelValue: [], groups, singleColumn: true },
+      global: { stubs: { GroupBadge: { props: ['name'], template: '<span>{{ name }}</span>' }, Icon: true } }
+    })
+    expect(wrapper.find('.grid-cols-1').exists()).toBe(true)
+    expect(wrapper.find('.grid-cols-2').exists()).toBe(false)
+  })
+
   it('cleans hidden historical composite IDs while preserving visible selections', () => {
     authState.isSimpleMode = true
     const wrapper = mountSelector([1, 2])

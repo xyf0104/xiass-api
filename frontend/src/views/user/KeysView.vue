@@ -488,6 +488,7 @@
             :groups="sortedGroups"
             :user-group-rates="userGroupRates"
             :searchable="true"
+            single-column
           />
           <p class="input-hint">{{ t('keys.groupSelectionHint') }}</p>
         </div>
@@ -1035,7 +1036,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-[min(420px,calc(100vw-16px))] max-h-[85vh] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1059,42 +1060,73 @@
           </div>
         </div>
         <!-- Group list -->
-        <div class="max-h-80 overflow-y-auto p-1.5">
+        <div class="max-h-[min(55vh,20rem)] overflow-y-auto p-1.5">
           <button
+            type="button"
+            data-test="clear-group-selection"
+            class="flex w-full items-center gap-3 rounded-lg border-b border-gray-100 px-3 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:border-dark-700 dark:hover:bg-dark-700"
+            @click="clearGroupSelection"
+          >
+            <span class="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-300 text-primary-600 dark:border-dark-500 dark:text-primary-400">
+              <svg v-if="groupSelectionDraft.length === 0" class="h-3 w-3" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="m3 8 3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span class="text-gray-600 dark:text-gray-300">{{ t('keys.noGroup') }}</span>
+          </button>
+          <div
             v-for="option in filteredGroupOptions"
-            :key="option.value ?? 'null'"
-            @click="changeGroup(selectedKeyForGroup!, option.value)"
-            :class="[
-              'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
-              'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
-                ? 'bg-primary-50 dark:bg-primary-900/20'
-                : 'hover:bg-gray-100 dark:hover:bg-dark-700'
-            ]"
+            :key="option.value"
+            class="flex items-center gap-3 rounded-lg border-b border-gray-100 px-3 py-2.5 text-sm transition-colors last:border-0 hover:bg-gray-100 dark:border-dark-700 dark:hover:bg-dark-700"
             :title="option.description || undefined"
           >
-            <GroupOptionItem
-              :name="option.label"
-              :platform="option.platform"
-              :subscription-type="option.subscriptionType"
-              :rate-multiplier="option.rate"
-              :user-rate-multiplier="option.userRate"
-              :peak-rate-enabled="option.peakRateEnabled"
-              :peak-start="option.peakStart"
-              :peak-end="option.peakEnd"
-              :peak-rate-multiplier="option.peakRateMultiplier"
-              :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
+            <input
+              type="checkbox"
+              :aria-label="t('keys.selectGroup') + ': ' + option.label"
+              :data-group-id="option.value"
+              :checked="groupSelectionDraft.includes(option.value)"
+              @change="toggleGroupSelection(option.value, ($event.target as HTMLInputElement).checked)"
+              class="h-4 w-4 shrink-0 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
             />
-          </button>
+            <button
+              type="button"
+              class="min-w-0 flex-1 text-left"
+              :data-test="`group-option-${option.value}`"
+              @click="toggleGroupSelection(option.value, !groupSelectionDraft.includes(option.value))"
+            >
+              <GroupOptionItem
+                :name="option.label"
+                :platform="option.platform"
+                :subscription-type="option.subscriptionType"
+                :rate-multiplier="option.rate"
+                :user-rate-multiplier="option.userRate"
+                :peak-rate-enabled="option.peakRateEnabled"
+                :peak-start="option.peakStart"
+                :peak-end="option.peakEnd"
+                :peak-rate-multiplier="option.peakRateMultiplier"
+                :description="option.description"
+                :selected="groupSelectionDraft.includes(option.value)"
+              />
+            </button>
+          </div>
           <!-- Empty state when search has no results -->
           <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
             {{ t('keys.noGroupFound') }}
           </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-gray-100 px-3 py-2 dark:border-dark-700">
+          <button type="button" class="btn btn-secondary btn-sm" @click="cancelGroupSelection">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            data-test="group-selection-save"
+            :disabled="savingGroupSelection"
+            @click="saveGroupSelection"
+          >
+            {{ savingGroupSelection ? t('keys.saving') : t('common.save') }}
+          </button>
         </div>
       </div>
     </Teleport>
@@ -1279,6 +1311,8 @@ const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
+const groupSelectionDraft = ref<number[]>([])
+const savingGroupSelection = ref(false)
 const publicSettings = ref<PublicSettings | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
@@ -1290,6 +1324,12 @@ let abortController: AbortController | null = null
 const selectedKeyForGroup = computed(() => {
   if (groupSelectorKeyId.value === null) return null
   return apiKeys.value.find((k) => k.id === groupSelectorKeyId.value) || null
+})
+
+const selectedKeyGroupIDs = computed(() => {
+  const key = selectedKeyForGroup.value
+  if (!key) return []
+  return key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : []
 })
 
 const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
@@ -1585,8 +1625,8 @@ const openGroupSelector = (key: ApiKey) => {
     const buttonEl = groupButtonRefs.value.get(key.id)
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
-      const dropdownEstHeight = 400 // estimated max dropdown height
-      const dropdownEstWidth = Math.min(380, window.innerWidth - 16)
+      const dropdownEstHeight = Math.min(480, window.innerHeight * 0.85)
+      const dropdownEstWidth = Math.min(420, window.innerWidth - 16)
       const spaceBelow = window.innerHeight - rect.bottom
       const spaceAbove = rect.top
       // 夹取 left，避免窄屏下浮层超出视口右缘
@@ -1608,20 +1648,44 @@ const openGroupSelector = (key: ApiKey) => {
     }
     groupSelectorKeyId.value = key.id
     groupSearchQuery.value = ''
+    groupSelectionDraft.value = [...(key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [])]
   }
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+const toggleGroupSelection = (groupID: number, checked: boolean) => {
+  groupSelectionDraft.value = checked
+    ? [...new Set([...groupSelectionDraft.value, groupID])]
+    : groupSelectionDraft.value.filter((id) => id !== groupID)
+}
+
+const clearGroupSelection = () => {
+  groupSelectionDraft.value = []
+}
+
+const cancelGroupSelection = () => {
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
+}
 
+const saveGroupSelection = async () => {
+  const key = selectedKeyForGroup.value
+  if (!key || savingGroupSelection.value) return
+  const nextIDs = [...new Set(groupSelectionDraft.value)]
+  if (nextIDs.length === selectedKeyGroupIDs.value.length && nextIDs.every((id, index) => id === selectedKeyGroupIDs.value[index])) {
+    cancelGroupSelection()
+    return
+  }
+
+  savingGroupSelection.value = true
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keysAPI.update(key.id, { group_ids: nextIDs })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
+    cancelGroupSelection()
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
+  } finally {
+    savingGroupSelection.value = false
   }
 }
 

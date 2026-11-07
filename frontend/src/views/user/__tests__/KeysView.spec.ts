@@ -243,6 +243,7 @@ const GroupSelectorStub = defineComponent({
     modelValue: { type: Array, required: true },
     groups: { type: Array, required: true },
     userGroupRates: { type: Object, default: () => ({}) },
+    singleColumn: { type: Boolean, default: false },
   },
   emits: ['update:modelValue'],
   template: `
@@ -526,10 +527,11 @@ describe('user KeysView column settings', () => {
     wrapper.unmount()
   })
 
-  it('updates the key when selecting a different group from the real menu', async () => {
+  it('saves multiple selected groups from the key list menu as one update', async () => {
     const groups = [
       { id: 1, name: 'OpenAI Standard', platform: 'openai', rate_multiplier: 1, is_exclusive: false },
       { id: 2, name: 'Claude Premium', platform: 'anthropic', rate_multiplier: 1.5, is_exclusive: false },
+      { id: 3, name: 'Gemini', platform: 'gemini', rate_multiplier: 1, is_exclusive: false },
     ]
     getAvailableGroups.mockResolvedValue(groups)
     listKeys.mockResolvedValueOnce({
@@ -542,22 +544,48 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
 
     await wrapper.get('[data-test="group-cell"] button').trigger('click')
-    await wrapper.get('input[placeholder="keys.searchGroup"]').setValue('OpenAI Standard')
-    await wrapper.getComponent(GroupOptionItem).trigger('click')
-    await flushPromises()
+    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(3)
+
+    await wrapper.get('[data-test="group-option-2"]').trigger('click')
+    await wrapper.get('[data-test="group-option-3"]').trigger('click')
     expect(updateKey).not.toHaveBeenCalled()
+    expect(wrapper.get('input[data-group-id="1"]').element).toHaveProperty('checked', true)
+    expect(wrapper.get('input[data-group-id="2"]').element).toHaveProperty('checked', true)
+    expect(wrapper.get('input[data-group-id="3"]').element).toHaveProperty('checked', true)
 
-    await wrapper.get('[data-test="group-cell"] button').trigger('click')
-    expect(wrapper.findAllComponents(GroupOptionItem)).toHaveLength(2)
-    await wrapper.get('input[placeholder="keys.searchGroup"]').setValue('Claude Premium')
-    await wrapper.getComponent(GroupOptionItem).trigger('click')
+    await wrapper.get('[data-test="group-selection-save"]').trigger('click')
     await flushPromises()
 
-    expect(updateKey).toHaveBeenCalledExactlyOnceWith(1, { group_id: 2 })
+    expect(updateKey).toHaveBeenCalledExactlyOnceWith(1, { group_ids: [1, 2, 3] })
     expect(listKeys).toHaveBeenCalledTimes(2)
     expect(showSuccess).toHaveBeenCalledWith('keys.groupChangedSuccess')
     expect(showError).not.toHaveBeenCalled()
     expect(wrapper.find('input[placeholder="keys.searchGroup"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('can clear all groups and does not save until confirmation', async () => {
+    const group = { id: 1, name: 'OpenAI Standard', platform: 'openai', rate_multiplier: 1, is_exclusive: false }
+    getAvailableGroups.mockResolvedValue([group])
+    listKeys.mockResolvedValueOnce({
+      items: [{ ...createApiKey(), group_id: 1, group_ids: [1], group, groups: [group] }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="group-cell"] button').trigger('click')
+    await wrapper.get('[data-test="clear-group-selection"]').trigger('click')
+    expect(updateKey).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="group-selection-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalledExactlyOnceWith(1, { group_ids: [] })
+    expect(listKeys).toHaveBeenCalledTimes(2)
+    expect(showSuccess).toHaveBeenCalledWith('keys.groupChangedSuccess')
+    expect(showError).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -577,6 +605,7 @@ describe('user KeysView column settings', () => {
 
     expect(wrapper.get('[data-test="group-selector-order"]').text()).toBe('4,3,2,5,1')
     expect(wrapper.findComponent({ name: 'GroupSelector' }).props('userGroupRates')).toEqual({ 3: 0.3, 4: 0.05 })
+    expect(wrapper.findComponent({ name: 'GroupSelector' }).props('singleColumn')).toBe(true)
   })
 
   it('submits the selected groups in stable first-selection order when creating a key', async () => {
