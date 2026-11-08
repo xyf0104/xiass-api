@@ -79,35 +79,43 @@ private struct UsageLogTable: View {
     let logs: [UsageLog]
 
     var body: some View {
-        AdminTableSurface(minWidth: 990) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "时间", width: 136)
-                    AdminTableHeaderText(text: "用户", width: 166)
-                    AdminTableHeaderText(text: "请求模型", width: 138)
-                    AdminTableHeaderText(text: "上游模型", width: 138)
-                    AdminTableHeaderText(text: "推理", width: 54)
-                    AdminTableHeaderText(text: "首字", width: 76, alignment: .trailing)
-                    AdminTableHeaderText(text: "总延迟", width: 76, alignment: .trailing)
-                    AdminTableHeaderText(text: "状态", width: 54, alignment: .trailing)
-                    AdminTableHeaderText(text: "账号", width: 112)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 7) {
             ForEach(logs, id: \.stableID) { log in
                 NavigationLink { UsageLogDetailView(log: log) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            AdminTableText(text: DisplayFormat.shortDate(log.createdAt), width: 136, color: .secondary)
-                            AdminTableText(text: log.displayUser, width: 166, weight: .semibold)
-                            AdminTableText(text: log.model ?? "--", width: 138)
-                            AdminTableText(text: log.upstreamModel?.isEmpty == false ? log.upstreamModel! : "--", width: 138)
-                            AdminTableText(text: reasoningTitle(log.reasoningEffort), width: 54, color: .secondary)
-                            AdminTableText(text: log.firstTokenMS.map { "\($0) ms" } ?? "--", width: 76, alignment: .trailing)
-                            AdminTableText(text: log.durationMS.map { "\($0) ms" } ?? "--", width: 76, alignment: .trailing)
-                            AdminTableText(text: log.statusCode.map(String.init) ?? "--", width: 54, alignment: .trailing, color: statusColor(log.statusCode), weight: .semibold)
-                            AdminTableText(text: log.displayAccount, width: 112, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 8) {
+                                Text(log.model ?? "--")
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(log.statusCode.map(String.init) ?? "--")
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(statusColor(log.statusCode))
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            HStack(spacing: 8) {
+                                Text(log.displayUser)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(DisplayFormat.shortDate(log.createdAt))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.tertiary)
+                            }
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "首字", value: log.firstTokenMS.map { "\($0) ms" } ?? "--")
+                                CompactMetric(title: "总延迟", value: log.durationMS.map { "\($0) ms" } ?? "--")
+                                CompactMetric(title: "推理", value: reasoningTitle(log.reasoningEffort), tint: .secondary)
+                                CompactMetric(title: "成本", value: DisplayFormat.currency(log.actualCost), tint: AppTheme.accent)
+                            }
+                            Text("上游：\(log.upstreamModel?.isEmpty == false ? log.upstreamModel! : "--") · \(log.displayAccount)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
                         }
                     }
                 }
@@ -120,6 +128,7 @@ private struct UsageLogTable: View {
         guard let statusCode else { return .secondary }
         return (200..<300).contains(statusCode) ? .green : .red
     }
+
 }
 
 struct UsageLogDetailView: View {

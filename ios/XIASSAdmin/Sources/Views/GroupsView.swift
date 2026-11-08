@@ -97,31 +97,33 @@ private struct GroupTable: View {
     let groups: [AdminGroup]
 
     var body: some View {
-        AdminTableSurface(minWidth: 706) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "分组", width: 174)
-                    AdminTableHeaderText(text: "平台", width: 94)
-                    AdminTableHeaderText(text: "账号", width: 76, alignment: .trailing)
-                    AdminTableHeaderText(text: "倍率", width: 70, alignment: .trailing)
-                    AdminTableHeaderText(text: "RPM", width: 76, alignment: .trailing)
-                    AdminTableHeaderText(text: "状态", width: 72)
-                    AdminTableHeaderText(text: "说明", width: 116)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(groups) { group in
                 NavigationLink { GroupDetailView(group: group) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            AdminTableText(text: group.name, width: 174, weight: .semibold)
-                            PlatformBadge(platform: group.platform).frame(width: 94, alignment: .leading)
-                            AdminTableText(text: "\(group.activeAccountCount ?? 0)/\(group.accountCount ?? 0)", width: 76, alignment: .trailing)
-                            AdminTableText(text: DisplayFormat.decimal(group.rateMultiplier ?? 1), width: 70, alignment: .trailing)
-                            AdminTableText(text: (group.rpmLimit ?? 0) == 0 ? "不限" : String(group.rpmLimit ?? 0), width: 76, alignment: .trailing)
-                            StatusPill(text: group.status).frame(width: 72, alignment: .leading)
-                            AdminTableText(text: group.description ?? "--", width: 116, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                PlatformBadge(platform: group.platform)
+                                Text(group.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                StatusPill(text: group.status)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "账号", value: "\(group.activeAccountCount ?? 0)/\(group.accountCount ?? 0)")
+                                CompactMetric(title: "倍率", value: DisplayFormat.decimal(group.rateMultiplier ?? 1))
+                                CompactMetric(title: "RPM", value: (group.rpmLimit ?? 0) == 0 ? "不限" : String(group.rpmLimit ?? 0))
+                            }
+                            if let description = group.description, !description.isEmpty {
+                                Text(description)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
                         }
                     }
                 }

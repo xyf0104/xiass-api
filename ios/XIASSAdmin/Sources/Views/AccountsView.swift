@@ -153,36 +153,35 @@ private struct AccountTable: View {
     let accounts: [AdminAccount]
 
     var body: some View {
-        AdminTableSurface(minWidth: 792) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "账号 / 邮箱", width: 190)
-                    AdminTableHeaderText(text: "类型", width: 78)
-                    AdminTableHeaderText(text: "状态", width: 72)
-                    AdminTableHeaderText(text: "并发", width: 66, alignment: .trailing)
-                    AdminTableHeaderText(text: "倍率", width: 70, alignment: .trailing)
-                    AdminTableHeaderText(text: "优先级", width: 66, alignment: .trailing)
-                    AdminTableHeaderText(text: "最近使用", width: 142)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(accounts) { account in
                 NavigationLink { AccountDetailView(account: account) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(account.name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text(account.displayEmail ?? "账号 #\(account.id)")
-                                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(account.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                StatusPill(text: account.healthLabel)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.tertiary)
                             }
-                            .frame(width: 190, alignment: .leading)
-                            AdminTableText(text: account.type, width: 78, color: .secondary)
-                            StatusPill(text: account.healthLabel).frame(width: 72, alignment: .leading)
-                            AdminTableText(text: "\(account.currentConcurrency ?? 0)/\(account.concurrency ?? 0)", width: 66, alignment: .trailing)
-                            AdminTableText(text: DisplayFormat.decimal(account.rateMultiplier ?? 1), width: 70, alignment: .trailing)
-                            AdminTableText(text: String(account.priority ?? 0), width: 66, alignment: .trailing)
-                            AdminTableText(text: DisplayFormat.shortDate(account.lastUsedAt), width: 142, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                            Text(account.displayEmail ?? "账号 #\(account.id)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "类型", value: account.type, tint: .secondary)
+                                CompactMetric(title: "并发", value: "\(account.currentConcurrency ?? 0)/\(account.concurrency ?? 0)")
+                                CompactMetric(title: "倍率", value: DisplayFormat.decimal(account.rateMultiplier ?? 1))
+                                CompactMetric(title: "优先级", value: String(account.priority ?? 0))
+                            }
+                            Text("最近使用：\(DisplayFormat.shortDate(account.lastUsedAt))")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
                         }
                     }
                 }

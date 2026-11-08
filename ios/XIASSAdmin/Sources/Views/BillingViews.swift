@@ -62,33 +62,28 @@ private struct APIKeyTable: View {
     let keys: [APIKeyRecord]
 
     var body: some View {
-        AdminTableSurface(minWidth: 700) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "名称 / 密钥", width: 190)
-                    AdminTableHeaderText(text: "分组", width: 84)
-                    AdminTableHeaderText(text: "状态", width: 72)
-                    AdminTableHeaderText(text: "已用额度", width: 92, alignment: .trailing)
-                    AdminTableHeaderText(text: "额度上限", width: 92, alignment: .trailing)
-                    AdminTableHeaderText(text: "最近使用", width: 142)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(keys) { key in
                 NavigationLink { APIKeyDetailView(key: key) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(key.name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text(key.maskedKey).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(key.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    Text(key.maskedKey).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                                StatusPill(text: key.status)
+                                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
                             }
-                            .frame(width: 190, alignment: .leading)
-                            AdminTableText(text: key.groupID.map { "#\($0)" } ?? "未绑定", width: 84, color: .secondary)
-                            StatusPill(text: key.status).frame(width: 72, alignment: .leading)
-                            AdminTableText(text: DisplayFormat.currency(key.quotaUsed), width: 92, alignment: .trailing)
-                            AdminTableText(text: key.quota == 0 ? "不限" : DisplayFormat.currency(key.quota), width: 92, alignment: .trailing)
-                            AdminTableText(text: DisplayFormat.shortDate(key.lastUsedAt), width: 142, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "分组", value: key.groupID.map { "#\($0)" } ?? "未绑定", tint: .secondary)
+                                CompactMetric(title: "已用额度", value: DisplayFormat.currency(key.quotaUsed), tint: AppTheme.accent)
+                                CompactMetric(title: "上限", value: key.quota == 0 ? "不限" : DisplayFormat.currency(key.quota))
+                            }
+                            Text("最近使用：\(DisplayFormat.shortDate(key.lastUsedAt))")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -227,32 +222,25 @@ private struct BalanceHistoryTable: View {
     let records: [BalanceHistoryItem]
 
     var body: some View {
-        AdminTableSurface(minWidth: 690) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "时间", width: 142)
-                    AdminTableHeaderText(text: "类型", width: 104)
-                    AdminTableHeaderText(text: "变动", width: 96, alignment: .trailing)
-                    AdminTableHeaderText(text: "状态", width: 76)
-                    AdminTableHeaderText(text: "备注", width: 218)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(records) { item in
-                AdminTableRow {
-                    HStack(spacing: 12) {
-                        AdminTableText(text: DisplayFormat.shortDate(item.usedAt ?? item.createdAt), width: 142, color: .secondary)
-                        AdminTableText(text: balanceTypeTitle(item.type), width: 104, weight: .semibold)
-                        AdminTableText(
-                            text: balanceHistoryValue(item),
-                            width: 96,
-                            alignment: .trailing,
-                            color: item.value >= 0 ? .green : .orange,
-                            weight: .semibold
-                        )
-                        StatusPill(text: item.status ?? "completed").frame(width: 76, alignment: .leading)
-                        AdminTableText(text: item.notes ?? "--", width: 218, color: .secondary)
-                        Spacer(minLength: 0)
+                AdminListRowSurface {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(balanceTypeTitle(item.type)).font(.subheadline.weight(.semibold))
+                            Text(DisplayFormat.shortDate(item.usedAt ?? item.createdAt))
+                                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                            if let notes = item.notes, !notes.isEmpty {
+                                Text(notes).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        VStack(alignment: .trailing, spacing: 5) {
+                            Text(balanceHistoryValue(item))
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(item.value >= 0 ? .green : .orange)
+                            StatusPill(text: item.status ?? "completed")
+                        }
                     }
                 }
             }
@@ -317,31 +305,34 @@ private struct PaymentOrderTable: View {
     let orders: [PaymentOrder]
 
     var body: some View {
-        AdminTableSurface(minWidth: 844) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "用户", width: 190)
-                    AdminTableHeaderText(text: "时间", width: 140)
-                    AdminTableHeaderText(text: "方式", width: 92)
-                    AdminTableHeaderText(text: "类型", width: 86)
-                    AdminTableHeaderText(text: "金额", width: 96, alignment: .trailing)
-                    AdminTableHeaderText(text: "状态", width: 74)
-                    AdminTableHeaderText(text: "订单号", width: 128)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(orders) { order in
                 NavigationLink { PaymentOrderDetailView(order: order) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            AdminTableText(text: order.userEmail ?? order.userName ?? "用户 #\(order.userID ?? 0)", width: 190, weight: .semibold)
-                            AdminTableText(text: DisplayFormat.shortDate(order.paidAt ?? order.createdAt), width: 140, color: .secondary)
-                            AdminTableText(text: paymentTypeTitle(order.paymentType), width: 92)
-                            AdminTableText(text: order.orderType == "subscription" ? "订阅" : "余额充值", width: 86, color: .secondary)
-                            AdminTableText(text: paymentAmount(order), width: 96, alignment: .trailing, weight: .semibold)
-                            StatusPill(text: order.status).frame(width: 74, alignment: .leading)
-                            AdminTableText(text: order.outTradeNo ?? "--", width: 128, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text(order.userEmail ?? order.userName ?? "用户 #\(order.userID ?? 0)")
+                                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(paymentAmount(order))
+                                    .font(.subheadline.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(AppTheme.accent)
+                                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                            }
+                            HStack(spacing: 8) {
+                                StatusPill(text: order.status)
+                                Text(order.orderType == "subscription" ? "订阅" : "余额充值")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text(paymentTypeTitle(order.paymentType))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength: 4)
+                                Text(DisplayFormat.shortDate(order.paidAt ?? order.createdAt))
+                                    .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                            }
+                            Text("订单：\(order.outTradeNo ?? "--")")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
                         }
                     }
                 }

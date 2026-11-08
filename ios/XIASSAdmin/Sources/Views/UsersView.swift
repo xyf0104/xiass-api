@@ -157,36 +157,41 @@ private struct UserTable: View {
     let users: [UserProfile]
 
     var body: some View {
-        AdminTableSurface(minWidth: 800) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "用户 / 邮箱", width: 206)
-                    AdminTableHeaderText(text: "角色", width: 72)
-                    AdminTableHeaderText(text: "状态", width: 72)
-                    AdminTableHeaderText(text: "余额", width: 96, alignment: .trailing)
-                    AdminTableHeaderText(text: "并发", width: 68, alignment: .trailing)
-                    AdminTableHeaderText(text: "RPM", width: 66, alignment: .trailing)
-                    AdminTableHeaderText(text: "最后使用", width: 142)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(users) { user in
                 NavigationLink { UserDetailView(user: user) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(user.email).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text(user.username?.isEmpty == false ? user.username! : "用户 #\(user.id)")
-                                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(user.email)
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text(user.username?.isEmpty == false ? user.username! : "用户 #\(user.id)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                                StatusPill(text: user.status ?? "active")
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.tertiary)
                             }
-                            .frame(width: 206, alignment: .leading)
-                            AdminTableText(text: user.role == "admin" ? "管理员" : "用户", width: 72, color: user.role == "admin" ? .indigo : .secondary)
-                            StatusPill(text: user.status ?? "active").frame(width: 72, alignment: .leading)
-                            AdminTableText(text: DisplayFormat.currency(user.balance), width: 96, alignment: .trailing, weight: .semibold)
-                            AdminTableText(text: "\(user.currentConcurrency ?? 0)/\(user.concurrency ?? 0)", width: 68, alignment: .trailing)
-                            AdminTableText(text: (user.rpmLimit ?? 0) == 0 ? "不限" : String(user.rpmLimit ?? 0), width: 66, alignment: .trailing)
-                            AdminTableText(text: DisplayFormat.shortDate(user.lastUsedAt), width: 142, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "余额", value: DisplayFormat.currency(user.balance), tint: AppTheme.accent)
+                                CompactMetric(title: "并发", value: "\(user.currentConcurrency ?? 0)/\(user.concurrency ?? 0)")
+                                CompactMetric(title: "RPM", value: (user.rpmLimit ?? 0) == 0 ? "不限" : String(user.rpmLimit ?? 0))
+                            }
+                            HStack(spacing: 8) {
+                                Text(user.role == "admin" ? "管理员" : "普通用户")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(user.role == "admin" ? .indigo : .secondary)
+                                Text("最后使用：\(DisplayFormat.shortDate(user.lastUsedAt))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
                         }
                     }
                 }

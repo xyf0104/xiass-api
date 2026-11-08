@@ -10,7 +10,7 @@ struct DashboardView: View {
     @State private var isLoading = true
     @State private var error: ErrorMessage?
 
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
     var body: some View {
         ScrollView {
@@ -19,45 +19,29 @@ struct DashboardView: View {
 
                 if isLoading && stats == nil {
                     ProgressView("正在读取运行数据…")
-                        .frame(maxWidth: .infinity, minHeight: 220)
+                        .frame(maxWidth: .infinity, minHeight: 140)
                 } else {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("高频管理")
-                            .font(.title3.weight(.bold))
-                        Spacer()
-                        Text("常用功能直接进入")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 4)
-
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        NavigationLink { AccountsView() } label: {
-                            MetricTile(title: "上游账号", value: DisplayFormat.integer(stats?.totalAccounts), systemImage: "person.crop.rectangle.stack", tint: AppTheme.primary)
-                        }
-                        NavigationLink { AccountsView(initialFilter: .normal) } label: {
-                            MetricTile(title: "正常账号", value: DisplayFormat.integer(stats?.normalAccounts), systemImage: "checkmark.seal.fill", tint: .green)
-                        }
-                        NavigationLink { GroupsView() } label: {
-                            MetricTile(title: "分组管理", value: DisplayFormat.integer(groupCount), systemImage: "square.stack.3d.up.fill", tint: .indigo)
-                        }
-                        NavigationLink { UsersView(initialStatus: "active") } label: {
-                            MetricTile(title: "活跃用户", value: DisplayFormat.integer(stats?.activeUsers), systemImage: "person.2.fill", tint: AppTheme.accent)
-                        }
-                        NavigationLink { UsageLogsView() } label: {
-                            MetricTile(title: "今日请求", value: DisplayFormat.integer(stats?.todayRequests), systemImage: "arrow.left.arrow.right.circle.fill", tint: .cyan)
-                        }
-                        NavigationLink { UsageLogsView() } label: {
-                            MetricTile(title: "平均延迟", value: realtime?.averageResponseTime.map { "\(DisplayFormat.decimal($0, digits: 0)) ms" } ?? "--", systemImage: "timer", tint: .orange)
-                        }
-                        NavigationLink { PaymentOrdersView() } label: {
-                            MetricTile(title: "充值记录", value: "查看", systemImage: "creditcard.and.123", tint: .mint)
-                        }
-                        NavigationLink { UsageLogsView() } label: {
-                            MetricTile(title: "最近调用", value: "查看", systemImage: "clock.arrow.circlepath", tint: .purple)
-                        }
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        metricLink(title: "上游账号", value: DisplayFormat.integer(stats?.totalAccounts), icon: "person.crop.rectangle.stack", tint: AppTheme.primary) { AccountsView() }
+                        metricLink(title: "正常账号", value: DisplayFormat.integer(stats?.normalAccounts), icon: "checkmark.seal.fill", tint: .green) { AccountsView(initialFilter: .normal) }
+                        metricLink(title: "分组", value: DisplayFormat.integer(groupCount), icon: "square.stack.3d.up.fill", tint: .indigo) { GroupsView() }
+                        metricLink(title: "活跃用户", value: DisplayFormat.integer(stats?.activeUsers), icon: "person.2.fill", tint: AppTheme.accent) { UsersView(initialStatus: "active") }
+                        metricLink(title: "今日请求", value: DisplayFormat.integer(stats?.todayRequests), icon: "arrow.left.arrow.right.circle.fill", tint: .cyan) { UsageLogsView() }
+                        metricLink(title: "平均延迟", value: realtime?.averageResponseTime.map { "\(DisplayFormat.decimal($0, digits: 0)) ms" } ?? "--", icon: "timer", tint: .orange) { UsageLogsView() }
                     }
                     .buttonStyle(.plain)
+
+                    HStack(spacing: 8) {
+                        NavigationLink { UsageLogsView() } label: {
+                            Label("最近调用", systemImage: "clock.arrow.circlepath").frame(maxWidth: .infinity)
+                        }
+                        NavigationLink { PaymentOrdersView() } label: {
+                            Label("充值记录", systemImage: "creditcard.and.123").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .tint(AppTheme.primary)
 
                     if let stats, (stats.ratelimitAccounts ?? 0) > 0 || (stats.overloadAccounts ?? 0) > 0 || (stats.errorAccounts ?? 0) > 0 {
                         NavigationLink { AccountsView(initialFilter: .attention) } label: {
@@ -85,7 +69,7 @@ struct DashboardView: View {
         }
         .appScreenStyle()
         .navigationTitle("XIASS API")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await load(notify: true) } } label: { Image(systemName: "arrow.clockwise") }
@@ -130,6 +114,33 @@ struct DashboardView: View {
             Text(value).font(.subheadline.monospacedDigit().weight(.semibold)).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func metricLink<Destination: View>(
+        title: String,
+        value: String,
+        icon: String,
+        tint: Color,
+        @ViewBuilder destination: () -> Destination
+    ) -> some View {
+        NavigationLink(destination: destination) {
+            HStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.caption2.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(value).font(.subheadline.weight(.bold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
     }
 
     private func load(notify: Bool = false) async {

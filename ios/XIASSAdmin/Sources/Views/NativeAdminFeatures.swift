@@ -53,37 +53,39 @@ private struct ProxyTable: View {
     let onChanged: () -> Void
 
     var body: some View {
-        AdminTableSurface(minWidth: 780) {
-            AdminTableHeader {
-                HStack(spacing: 12) {
-                    AdminTableHeaderText(text: "节点", width: 160)
-                    AdminTableHeaderText(text: "协议", width: 76)
-                    AdminTableHeaderText(text: "地址", width: 182)
-                    AdminTableHeaderText(text: "状态", width: 76)
-                    AdminTableHeaderText(text: "延迟", width: 82, alignment: .trailing)
-                    AdminTableHeaderText(text: "绑定账号", width: 82, alignment: .trailing)
-                    AdminTableHeaderText(text: "地区", width: 92)
-                    Spacer(minLength: 0)
-                }
-            }
+        LazyVStack(spacing: 8) {
             ForEach(proxies) { proxy in
                 NavigationLink { ProxyDetailView(proxy: proxy, onChanged: onChanged) } label: {
-                    AdminTableRow {
-                        HStack(spacing: 12) {
-                            AdminTableText(text: proxy.name, width: 160, weight: .semibold)
-                            AdminTableText(text: proxy.protocolName?.uppercased() ?? "--", width: 76, color: .secondary)
-                            AdminTableText(text: "\(proxy.host ?? "--"):\(proxy.port.map(String.init) ?? "--")", width: 182)
-                            StatusPill(text: proxy.status ?? "inactive").frame(width: 76, alignment: .leading)
-                            AdminTableText(text: proxy.latencyMS.map { "\($0) ms" } ?? "未检测", width: 82, alignment: .trailing)
-                            AdminTableText(text: String(proxy.accountCount ?? 0), width: 82, alignment: .trailing)
-                            AdminTableText(text: proxy.country ?? "--", width: 92, color: .secondary)
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                    AdminListRowSurface {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text(proxy.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Spacer(minLength: 4)
+                                StatusPill(text: proxy.status ?? "inactive")
+                                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                            }
+                            Text("\(proxy.protocolName?.uppercased() ?? "--") · \(proxy.host ?? "--"):\(proxy.port.map(String.init) ?? "--")")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            HStack(spacing: 10) {
+                                CompactMetric(title: "延迟", value: proxy.latencyMS.map { "\($0) ms" } ?? "未检测", tint: latencyTint(proxy.latencyMS))
+                                CompactMetric(title: "绑定账号", value: String(proxy.accountCount ?? 0))
+                                CompactMetric(title: "地区", value: proxy.country ?? "--", tint: .secondary)
+                            }
                         }
                     }
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func latencyTint(_ latency: Int?) -> Color {
+        guard let latency else { return .secondary }
+        if latency < 180 { return .green }
+        if latency < 500 { return .orange }
+        return .red
     }
 }
 
