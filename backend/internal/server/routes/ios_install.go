@@ -144,7 +144,7 @@ func (h *iosInstallHandler) manifest(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "iOS manifest unavailable"})
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "iOS manifest unavailable"})
 		return
@@ -188,7 +188,7 @@ func (h *iosInstallHandler) packageFile(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "iOS package unavailable"})
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "iOS package unavailable"})
 		return
@@ -227,7 +227,7 @@ func (h *iosInstallHandler) getRelease(ctx context.Context) (*iosInstallRelease,
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub release API returned %d", response.StatusCode)
 	}
@@ -340,12 +340,15 @@ func rewriteIOSManifestPackageURL(rawManifest []byte, packageURL string) ([]byte
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
-			if value.Name.Local == "key" {
+			switch value.Name.Local {
+			case "key":
 				insideKey = true
-			} else if value.Name.Local == "string" {
+			case "string":
 				replaceURLString = pendingKey == "url"
-			} else if pendingKey != "" {
-				pendingKey = ""
+			default:
+				if pendingKey != "" {
+					pendingKey = ""
+				}
 			}
 		case xml.CharData:
 			if insideKey {
