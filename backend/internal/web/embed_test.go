@@ -759,6 +759,17 @@ func TestEmbeddedFrontendBypassesReadinessRoute(t *testing.T) {
 	require.True(t, shouldBypassEmbeddedFrontend("/readyz"))
 }
 
+func TestEmbeddedFrontendBypassesIOSInstallRoutes(t *testing.T) {
+	for _, path := range []string{
+		"/ios/info",
+		"/ios/manifest",
+		"/ios/package",
+	} {
+		require.True(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
+	}
+	require.False(t, shouldBypassEmbeddedFrontend("/ios"))
+}
+
 func TestEmbeddedFrontendMiddlewarePassesReadinessRouteToRegisteredHandler(t *testing.T) {
 	server, err := NewFrontendServer(&mockSettingsProvider{})
 	require.NoError(t, err)
