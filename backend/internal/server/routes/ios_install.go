@@ -358,9 +358,10 @@ func rewriteIOSManifestPackageURL(rawManifest []byte, packageURL string) ([]byte
 				replaced = true
 			}
 		case xml.EndElement:
-			if value.Name.Local == "key" {
+			switch value.Name.Local {
+			case "key":
 				insideKey = false
-			} else if value.Name.Local == "string" {
+			case "string":
 				replaceURLString = false
 				pendingKey = ""
 			}
