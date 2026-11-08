@@ -14,6 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_DOCS = ("README.md", "deploy/README.md", "deploy/DOCKER.md")
 ALLOWED_PUBLIC_API_REFERENCES = {
+    "backend/internal/server/routes/ios_install.go": (
+        "https://api.xiass.com/ios",
+    ),
     "tools/check_release_contract.py": ("https://api.xiass.com",),
     "README.md": ("`https://api.xiass.com`",),
     "tools/xiass-codex-helper/README.md": ("`https://api.xiass.com`",),

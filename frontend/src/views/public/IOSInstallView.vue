@@ -1,46 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-interface ReleaseAsset {
-  name: string
-  browser_download_url: string
+interface IOSInstallInfo {
+  version: string
+  manifest_url: string
+  package_url: string
 }
 
-interface GitHubRelease {
-  tag_name: string
-  name: string | null
-  draft: boolean
-  prerelease: boolean
-  published_at: string | null
-  assets: ReleaseAsset[]
-}
-
-const releasesURL = 'https://api.github.com/repos/xyf0104/xiass-api/releases?per_page=30'
-
-const release = ref<GitHubRelease | null>(null)
+const release = ref<IOSInstallInfo | null>(null)
 const loading = ref(true)
 const error = ref('')
 const isIOS = ref(false)
 const installStarted = ref(false)
 
-const manifest = computed(() => release.value?.assets.find((asset) => {
-  const name = asset.name.toLowerCase()
-  return name.startsWith('xiassadmin-') && name.endsWith('.plist')
-}) ?? null)
+const otaInstallURL = computed(() => release.value
+  ? `itms-services://?action=download-manifest&url=${encodeURIComponent(release.value.manifest_url)}`
+  : '')
 
-const otaInstallURL = computed(() => {
-  if (!manifest.value) return ''
-  return `itms-services://?action=download-manifest&url=${encodeURIComponent(manifest.value.browser_download_url)}`
-})
-
-const version = computed(() => release.value?.tag_name.replace(/^ios-v/i, '') || '')
-
-function isInstallableRelease(candidate: GitHubRelease): boolean {
-  if (candidate.draft || candidate.prerelease) return false
-  const assetNames = candidate.assets.map((asset) => asset.name.toLowerCase())
-  return assetNames.some((name) => name.startsWith('xiassadmin-') && name.endsWith('.ipa')) &&
-    assetNames.some((name) => name.startsWith('xiassadmin-') && name.endsWith('.plist'))
-}
+const version = computed(() => release.value?.version || '')
 
 async function loadRelease() {
   loading.value = true
@@ -48,14 +25,14 @@ async function loadRelease() {
   installStarted.value = false
 
   try {
-    const response = await fetch(releasesURL, {
-      headers: { Accept: 'application/vnd.github+json' },
-    })
-    if (!response.ok) throw new Error('GitHub release request failed')
+    const response = await fetch('/ios/info', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error('iOS release request failed')
 
-    const releases = await response.json() as GitHubRelease[]
-    const latest = releases.find(isInstallableRelease)
-    if (!latest) throw new Error('No installable iOS release found')
+    const payload = await response.json() as { data?: IOSInstallInfo } & IOSInstallInfo
+    const latest = payload.data ?? payload
+    if (!latest.version || !latest.manifest_url || !latest.package_url) {
+      throw new Error('Incomplete iOS install information')
+    }
     release.value = latest
   } catch {
     release.value = null
