@@ -226,6 +226,11 @@ jobs:
       - name: Test OAuth automation
         working-directory: deploy/team-child-automation
         run: |
+          # Use the runner's official Ubuntu fallback mirrors for browser dependencies.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+            test -s /etc/apt/apt-mirrors.txt
+          fi
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
           npm test
