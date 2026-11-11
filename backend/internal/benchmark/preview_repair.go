@@ -67,7 +67,7 @@ func RepairPreviewHTML(document string) string {
 				raw = fixed
 			}
 		}
-		output.WriteString(raw)
+		_, _ = output.WriteString(raw)
 	}
 }
 
