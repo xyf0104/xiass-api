@@ -284,7 +284,11 @@ func (h *PelicanBenchmarkHandler) Detail(c *gin.Context) {
 	}
 	// gin.JSON escapes HTML. Never render this string through a template or
 	// expose a same-origin HTML document, including on the detail endpoint.
-	response.Success(c, dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML})
+	detail := dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML}
+	if result.Status == "succeeded" {
+		detail.PreviewHTML = benchmark.RepairPreviewHTML(result.HTML)
+	}
+	response.Success(c, detail)
 }
 
 func (h *PelicanBenchmarkHandler) Stop(c *gin.Context) {

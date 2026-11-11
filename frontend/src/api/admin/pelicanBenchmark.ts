@@ -203,7 +203,7 @@ export async function getPelicanHistory(page = 1, signal?: AbortSignal, status?:
   return { ...data, pages: Math.ceil(data.total / data.page_size) }
 }
 
-export async function getPelicanResult(id: string, signal?: AbortSignal): Promise<PelicanBenchmarkRun & { html: string }> {
-  const { data } = await apiClient.get<PelicanBenchmarkRun & { html: string }>(`${base}/${encodeURIComponent(id)}`, { signal })
+export async function getPelicanResult(id: string, signal?: AbortSignal): Promise<PelicanBenchmarkRun & { html: string; preview_html?: string }> {
+  const { data } = await apiClient.get<PelicanBenchmarkRun & { html: string; preview_html?: string }>(`${base}/${encodeURIComponent(id)}`, { signal })
   return data
 }

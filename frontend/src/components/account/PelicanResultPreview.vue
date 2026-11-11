@@ -50,7 +50,7 @@ watch(() => props.id, async id => {
     if (result.id !== id || result.status !== 'succeeded' || !result.html?.trim()) throw new Error('Invalid result')
     // A navigated sandbox document has its own CSP. srcdoc would inherit the
     // application's nonce-only script policy and silently block generated JS.
-    preview.value = { id: result.id, html: result.html }
+    preview.value = { id: result.id, html: result.preview_html?.trim() ? result.preview_html : result.html }
     const pending = preview.value
     loadTimeout = setTimeout(() => {
       if (preview.value !== pending) return

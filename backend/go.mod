@@ -21,6 +21,7 @@ require (
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.6.0
+	github.com/evanw/esbuild v0.25.12
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.17.4

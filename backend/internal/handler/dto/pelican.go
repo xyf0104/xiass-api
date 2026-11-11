@@ -29,7 +29,8 @@ type PelicanTask struct {
 
 type PelicanDetail struct {
 	PelicanTask
-	HTML string `json:"html"`
+	HTML        string `json:"html"`
+	PreviewHTML string `json:"preview_html,omitempty"`
 }
 
 func PelicanTaskFromService(task benchmark.Task) PelicanTask {

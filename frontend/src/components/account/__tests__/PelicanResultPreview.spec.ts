@@ -9,8 +9,8 @@ const api = vi.hoisted(() => ({ getPelicanResult: vi.fn() }))
 vi.mock('@/api/admin/pelicanBenchmark', () => api)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const wrappers: VueWrapper[] = []
-async function render(html: string) {
-  api.getPelicanResult.mockResolvedValue({ id: 'result', status: 'succeeded', html })
+async function render(html: string, preview_html?: string) {
+  api.getPelicanResult.mockResolvedValue(Object.freeze({ id: 'result', status: 'succeeded', html, preview_html }))
   const wrapper = mount(PelicanResultPreview, { props: { id: 'result', title: 'Preview' } })
   wrappers.push(wrapper)
   await flushPromises()
@@ -38,6 +38,33 @@ describe('PelicanResultPreview', () => {
     expect(iframe.attributes('style')).toBeUndefined()
   })
 
+  it('sends repaired HTML without adding markup or changing the original result', async () => {
+    const html = '<html><script>const point = { x=1 };</script></html>'
+    const previewHTML = '\n<html><script>const point = { x:1 };</script></html>\n'
+    const original = await render(html)
+    const wrapper = await render(html, previewHTML)
+    expect(wrapper.html()).toBe(original.html())
+    expect(wrapper.find('script').exists()).toBe(false)
+    const iframe = wrapper.get('iframe')
+    const postMessage = vi.fn()
+    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
+    await iframe.trigger('load')
+    await iframe.trigger('load')
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html: previewHTML }, '*')
+    expect((await api.getPelicanResult.mock.results.at(-1)!.value).html).toBe(html)
+  })
+
+  it.each(['', ' \n\t'])('falls back to original HTML for an empty preview (%j)', async previewHTML => {
+    const html = '<html><body>Original result</body></html>'
+    const wrapper = await render(html, previewHTML)
+    const iframe = wrapper.get('iframe')
+    const postMessage = vi.fn()
+    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
+    await iframe.trigger('load')
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html }, '*')
+    expect(wrapper.get('[data-testid="result-thumbnail"]').element.children).toHaveLength(1)
+  })
+
   it('never renders failed or mismatched results', async () => {
     for (const result of [
       { id: 'result', status: 'failed', html: '<html>partial</html>' },
@@ -53,7 +80,7 @@ describe('PelicanResultPreview', () => {
   })
 
   it('aborts stale requests and gives changed results a fresh isolated document', async () => {
-    const wrapper = await render('<html>first</html>')
+    const wrapper = await render('<html>first</html>', '<html>repaired first</html>')
     const firstFrame = wrapper.get('iframe').element
     const firstSignal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
     api.getPelicanResult.mockResolvedValue({ id: 'second', status: 'succeeded', html: '<html>second</html>' })
@@ -68,6 +95,28 @@ describe('PelicanResultPreview', () => {
     const activeSignal = api.getPelicanResult.mock.calls.at(-1)![1] as AbortSignal
     wrapper.unmount()
     expect(activeSignal.aborted).toBe(true)
+  })
+
+  it('ignores a repaired response that arrives after the result changes', async () => {
+    let resolveFirst!: (result: { id: string; status: string; html: string; preview_html: string }) => void
+    api.getPelicanResult.mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve }))
+    const wrapper = mount(PelicanResultPreview, { props: { id: 'first', title: 'Preview' } })
+    wrappers.push(wrapper)
+    const firstSignal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
+    api.getPelicanResult.mockResolvedValue({ id: 'second', status: 'succeeded', html: '<html>second</html>' })
+    await wrapper.setProps({ id: 'second' })
+    await flushPromises()
+    const iframe = wrapper.get('iframe')
+    const markup = wrapper.html()
+    resolveFirst({ id: 'first', status: 'succeeded', html: '<html>first</html>', preview_html: '<html>repaired first</html>' })
+    await flushPromises()
+    expect(firstSignal.aborted).toBe(true)
+    expect(wrapper.get('iframe').element).toBe(iframe.element)
+    expect(wrapper.html()).toBe(markup)
+    const postMessage = vi.fn()
+    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
+    await iframe.trigger('load')
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*')
   })
 
   it.each([false, true])('shows a failure if the shell never acknowledges the HTML (load=%s)', async loaded => {

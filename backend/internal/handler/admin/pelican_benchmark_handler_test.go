@@ -40,6 +40,7 @@ type pelicanHandlerStore struct {
 	tasks         []benchmark.Task
 	stops         int
 	html          string
+	detailStatus  string
 	source        *benchmark.Task
 	stopAccountID int64
 }
@@ -52,7 +53,7 @@ func (s *pelicanHandlerStore) List(context.Context, benchmark.Filter) (*benchmar
 	return &benchmark.Page{Items: []benchmark.Task{{ID: "test", AccountID: 1, ExecutionNodeID: "legacy", Status: "running", HTMLBytes: len(s.html)}}, Total: 1, Page: 1, PageSize: 100}, nil
 }
 func (s *pelicanHandlerStore) Detail(context.Context, string) (*benchmark.Detail, error) {
-	return &benchmark.Detail{Task: benchmark.Task{ID: "test", ExecutionNodeID: "legacy"}, HTML: s.html}, nil
+	return &benchmark.Detail{Task: benchmark.Task{ID: "test", ExecutionNodeID: "legacy", Status: s.detailStatus}, HTML: s.html}, nil
 }
 func (s *pelicanHandlerStore) Get(context.Context, string) (*benchmark.Task, error) {
 	if s.source != nil {
@@ -189,6 +190,34 @@ func TestPelicanHandlerInvalidFilters(t *testing.T) {
 	for _, query := range []string{"page=-1", "page_size=0", "account_id=abc", "batch_id=invalid", "status=unknown"} {
 		w := pelicanHandlerRequest("GET", "/?"+query, "", h.List, nil)
 		require.Equal(t, http.StatusBadRequest, w.Code, query)
+	}
+}
+
+func TestPelicanDetailRepairsOnlySuccessfulPreviewAndPreservesOriginal(t *testing.T) {
+	original := `<html><script>const drawing={stroke='red'};</script></html>`
+	for _, status := range []string{"succeeded", "failed", "running", "interrupted", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			store := &pelicanHandlerStore{html: original, detailStatus: status}
+			h := &PelicanBenchmarkHandler{store: store}
+			w := pelicanHandlerRequest("GET", "/", "", h.Detail, gin.Params{{Key: "id", Value: uuid.NewString()}})
+			require.Equal(t, http.StatusOK, w.Code)
+			var result struct {
+				Data map[string]any `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+			require.Equal(t, original, result.Data["html"])
+			require.Equal(t, status, result.Data["status"])
+			if status == "succeeded" {
+				require.Equal(t, strings.Replace(original, "stroke=", "stroke:", 1), result.Data["preview_html"])
+			} else {
+				require.NotContains(t, result.Data, "preview_html")
+			}
+			require.NotContains(t, w.Body.String(), "<script>")
+			require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			require.Equal(t, original, store.html)
+			require.Empty(t, store.tasks)
+			require.Zero(t, store.stops)
+		})
 	}
 }
 
