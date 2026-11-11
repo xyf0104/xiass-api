@@ -156,12 +156,38 @@ func pelicanAccessToken(ctx context.Context, a *Account, load func() (string, er
 	return token, nil
 }
 
-func pelicanClaudePayload(c *gin.Context, payload map[string]any) {
+// Keep the larger benchmark allowance separate from ordinary connection tests.
+// Unknown aliases retain the previous allowance; legacy Claude 3 needs less.
+func pelicanOutputTokenBudget(model string) int {
+	model = normalizeAntigravityCompatModel(model)
+	if isBedrockClaude45OrNewer(model) || len(claude.EffortLevelsForModel(model)) > 0 {
+		return 32768
+	}
+	for _, prefix := range bedrockCrossRegionPrefixes {
+		model = strings.TrimPrefix(model, prefix)
+	}
+	model = strings.TrimPrefix(model, "anthropic.")
+	for _, prefix := range []string{"claude-3-7-sonnet", "claude-sonnet-4", "claude-opus-4", "gemini-2.5-", "gemini-3-", "gemini-3.", "gemini-4-"} {
+		if strings.HasPrefix(model, prefix) {
+			return 32768
+		}
+	}
+	if strings.HasPrefix(model, "claude-3-") && !strings.HasPrefix(model, "claude-3-5-") {
+		return 4096
+	}
+	return 8192
+}
+
+func pelicanClaudePayload(c *gin.Context, payload map[string]any, resolvedModel ...string) {
 	if pelicanProbe(c) != nil {
+		model, _ := payload["model"].(string)
+		if len(resolvedModel) > 0 {
+			model = resolvedModel[0]
+		}
 		payload["messages"] = pelicanMessages(c.Request.Context(), false)
 		// Messages requires an explicit limit; the connectivity probe's 256/1024
 		// tokens cannot hold an animation. Truncation is still a failed benchmark.
-		payload["max_tokens"] = 8192
+		payload["max_tokens"] = pelicanOutputTokenBudget(model)
 	}
 }
 
@@ -241,7 +267,11 @@ func (s *AccountTestService) testPelicanAntigravityConnection(c *gin.Context, a 
 		generation = map[string]any{}
 		request["generationConfig"] = generation
 	}
-	generation["maxOutputTokens"] = 8192
+	budget := pelicanOutputTokenBudget(mapped)
+	if metadata, ok := a.GetUpstreamModelMetadata(mapped); ok && metadata.MaxOutputTokens > 0 {
+		budget = int(min(int64(budget), metadata.MaxOutputTokens))
+	}
+	generation["maxOutputTokens"] = budget
 	body, _ = json.Marshal(wrapped)
 	body, err = applyAntigravityWrappedModelProfile(body, profile)
 	if err != nil {

@@ -73,7 +73,7 @@
                 </div>
               </div>
             </div>
-            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}<span v-if="run.error_message" class="mt-1 block whitespace-pre-wrap">{{ run.error_message }}</span><span v-else-if="run.error_code.startsWith('upstream_')" class="mt-1 block">{{ t(`${prefix}.errors.no_upstream_detail`) }}</span></p>
+            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}<span v-if="run.error_message" class="mt-1 block whitespace-pre-wrap">{{ errorDetail(run.error_message) }}</span><span v-else-if="run.error_code.startsWith('upstream_')" class="mt-1 block">{{ t(`${prefix}.errors.no_upstream_detail`) }}</span></p>
           </div>
         </template>
 
@@ -165,6 +165,12 @@ function errorLabel(code: string) {
   const continuation = ['upstream_client_upgrade_required', 'continuation_source_unavailable', 'invalid_continuation_source']
   const label = t(`${prefix}.errors.${known.includes(code) || upstream.includes(code) || continuation.includes(code) ? code : 'unknown'}`)
   return http ? `HTTP ${http[1]} · ${label}` : label
+}
+
+function errorDetail(message: string) {
+  const cause = /^cause=([a-z_]+);(?: protocol=[a-z]+; (?:status|stop_reason|finish_reason|finishReason)=[A-Za-z_]+;)? terminal=(?:missing|received)$/.exec(message)?.[1]
+  const known = ['output_limit', 'html_incomplete', 'terminal_missing', 'stop_reason_missing', 'stream_error']
+  return cause && known.includes(cause) ? t(`${prefix}.errors.${cause}`) : message
 }
 
 function cancelModelLoads() {

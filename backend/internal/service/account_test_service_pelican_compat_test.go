@@ -49,13 +49,17 @@ func TestPelicanPrefacedHTMLAndContinuationAcrossAdapters(t *testing.T) {
 				require.JSONEq(t, string(before), string(after))
 				switch adapter.wire {
 				case "claude", "bedrock":
-					require.Equal(t, float64(8192), u.body["max_tokens"])
+					budget := 32768
+					if adapter.platform == PlatformMiniMax {
+						budget = 8192
+					}
+					require.Equal(t, float64(budget), u.body["max_tokens"])
 				case "wrapped":
 					request, ok := u.body["request"].(map[string]any)
 					require.True(t, ok)
 					generation, ok := request["generationConfig"].(map[string]any)
 					require.True(t, ok)
-					require.Equal(t, float64(8192), generation["maxOutputTokens"])
+					require.Equal(t, float64(32768), generation["maxOutputTokens"])
 				}
 			})
 		}

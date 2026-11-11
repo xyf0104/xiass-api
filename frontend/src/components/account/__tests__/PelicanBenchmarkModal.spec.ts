@@ -807,6 +807,19 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('[data-testid="retry-partial"]').exists()).toBe(true)
   })
 
+  it('explains a confirmed output limit and offers continuation', async () => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('limited', {
+      status: 'failed', error_code: 'upstream_incomplete', html_bytes: 1700,
+      error_message: 'cause=output_limit; protocol=gemini; finishReason=MAX_TOKENS; terminal=received'
+    })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.text()).toContain('本次生成达到模型输出上限')
+    expect(wrapper.text()).not.toContain('cause=')
+    expect(wrapper.find('[data-testid="continue-limited"]').exists()).toBe(true)
+  })
+
   it('selects multiple accounts and select-all excludes unavailable accounts', async () => {
     const wrapper = render()
     await flushPromises()

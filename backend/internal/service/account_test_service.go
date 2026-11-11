@@ -637,7 +637,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		"max_tokens":  256,
 		"temperature": 1,
 	}
-	pelicanClaudePayload(c, bedrockPayload)
+	pelicanClaudePayload(c, bedrockPayload, testModelID)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
 	// Use non-streaming endpoint (response is standard Claude JSON)
