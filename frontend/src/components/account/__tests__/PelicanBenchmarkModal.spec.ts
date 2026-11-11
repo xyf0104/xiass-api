@@ -337,6 +337,16 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('[data-testid="stop-run-1"]').exists()).toBe(false)
     await flushPromises()
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
+    const preview = wrapper.get<HTMLIFrameElement>('[data-testid="result-preview"]')
+    const frameWindow = { postMessage: vi.fn() }
+    Object.defineProperty(preview.element, 'contentWindow', { value: frameWindow, configurable: true })
+    await preview.trigger('load')
+    const accepted = new MessageEvent('message', {
+      origin: 'null',
+      data: { type: 'xiass-pelican-render-accepted' }
+    })
+    Object.defineProperty(accepted, 'source', { value: frameWindow })
+    window.dispatchEvent(accepted)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
     expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
@@ -366,7 +376,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(failedCalls)
   })
 
-  it('loads completed HTML automatically, retaining scripts inside an opaque CSP-first sandbox', async () => {
+  it('loads completed HTML automatically, retaining scripts inside an isolated preview document', async () => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'succeeded', html_bytes: 120 }), run('failed', { status: 'failed' })] })
     const wrapper = render()
     await flushPromises()
@@ -377,10 +387,12 @@ describe('PelicanBenchmarkModal', () => {
     const frame = wrapper.get('iframe')
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('referrerpolicy')).toBe('no-referrer')
-    const srcdoc = frame.attributes('srcdoc')
-    expect(srcdoc).toMatch(/^<meta http-equiv="Content-Security-Policy"/)
-    for (const directive of ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", 'img-src data:', 'font-src data:', "connect-src 'none'", "form-action 'none'", "base-uri 'none'"]) expect(srcdoc).toContain(directive)
-    expect(srcdoc).toContain('<script>document.body.dataset.animated="yes"</script>')
+    expect(frame.attributes('src')).toBe('/api/v1/pelican-preview')
+    expect(frame.attributes('srcdoc')).toBeUndefined()
+    const postMessage = vi.fn()
+    Object.defineProperty(frame.element, 'contentWindow', { value: { postMessage }, configurable: true })
+    await frame.trigger('load')
+    expect(postMessage).toHaveBeenCalledWith({ type: 'xiass-pelican-render', html: expect.stringContaining('<script>document.body.dataset.animated="yes"</script>') }, '*')
     expect(wrapper.find('script').exists()).toBe(false)
     await wrapper.setProps({ show: false })
     expect(wrapper.find('iframe').exists()).toBe(false)
@@ -758,7 +770,8 @@ describe('PelicanBenchmarkModal', () => {
         expect(row.get('.model-select').text()).toBe(item.model)
         expect(row.get('iframe').attributes('sandbox')).toBe('allow-scripts')
         expect(row.get('iframe').attributes('referrerpolicy')).toBe('no-referrer')
-        expect(row.get('iframe').attributes('srcdoc')).toContain("connect-src 'none'")
+        expect(row.get('iframe').attributes('src')).toBe('/api/v1/pelican-preview')
+        expect(row.get('iframe').attributes('srcdoc')).toBeUndefined()
       }
     }
   })

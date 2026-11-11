@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>XIASS Pelican Preview</title>
+</head>
+<body>
+<script>
+(() => {
+  if (parent === window) return;
+
+  // The sandbox has an opaque origin; the navigated URL identifies the trusted parent.
+  const parentOrigin = new URL(location.href).origin;
+  const maxHTMLBytes = __MAX_HTML_BYTES__;
+  let rendered = false;
+
+  function sizePreview() {
+    addEventListener('load', () => {
+      const root = document.documentElement;
+      let scheduled = false;
+      const report = () => {
+        scheduled = false;
+        root.style.setProperty('transform', 'none', 'important');
+        root.style.setProperty('transform-origin', '0 0', 'important');
+        root.style.setProperty('overflow', 'hidden', 'important');
+        const width = Math.max(1100, root.scrollWidth, document.body?.scrollWidth || 0);
+        const height = Math.max(690, root.scrollHeight, document.body?.scrollHeight || 0);
+        const scale = Math.min(1100 / width, 690 / height);
+        root.style.setProperty('transform', 'translate(' + ((1100 - width * scale) / 2) + 'px,' + ((690 - height * scale) / 2) + 'px) scale(' + scale + ')', 'important');
+      };
+      const schedule = () => {
+        if (!scheduled) {
+          scheduled = true;
+          requestAnimationFrame(report);
+        }
+      };
+      report();
+      const observer = new ResizeObserver(schedule);
+      observer.observe(root);
+      if (document.body) observer.observe(document.body);
+      new MutationObserver(schedule).observe(root, { subtree: true, childList: true, characterData: true });
+      root.addEventListener('load', schedule, true);
+      document.fonts?.ready.then(schedule);
+    });
+  }
+
+  function render(event) {
+    if (rendered || event.source !== parent || event.origin !== parentOrigin) return;
+    const message = event.data;
+    if (!message || typeof message !== 'object' || Array.isArray(message) ||
+        message.type !== 'xiass-pelican-render' || typeof message.html !== 'string') return;
+    const html = message.html;
+    if (!html.length || html.length > maxHTMLBytes || new TextEncoder().encode(html).byteLength > maxHTMLBytes) return;
+
+    // Consume the message before executing any generated scripts or triggering another load.
+    rendered = true;
+    removeEventListener('message', render);
+    parent.postMessage({ type: 'xiass-pelican-render-accepted' }, parentOrigin);
+    const sizing = '<script>(' + sizePreview.toString() + ')();<' + '/script>';
+    document.open();
+    document.write(html + sizing);
+    document.close();
+  }
+
+  addEventListener('message', render);
+})();
+</script>
+</body>
+</html>
