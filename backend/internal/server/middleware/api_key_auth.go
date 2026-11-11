@@ -471,8 +471,12 @@ func ValidateSelectedAPIKeyGroupSubscription(c *gin.Context, apiKey *service.API
 		}
 		return status, err.Error()
 	}
-	subscriptions, _ := c.Get(string(ContextKeyGroupSubscriptions))
-	subscriptions.(map[int64]*service.UserSubscription)[apiKey.Group.ID] = subscription
+	value, _ = c.Get(string(ContextKeyGroupSubscriptions))
+	subscriptions, ok := value.(map[int64]*service.UserSubscription)
+	if !ok || subscriptions == nil {
+		return http.StatusInternalServerError, "Missing group subscription context"
+	}
+	subscriptions[apiKey.Group.ID] = subscription
 	c.Set(string(ContextKeySubscription), subscription)
 	return 0, ""
 }
