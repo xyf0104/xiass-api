@@ -104,6 +104,7 @@ const (
 	AntigravityGemini37FlashTieredModel = "gemini-3.7-flash-tiered"
 	AntigravityGemini38FlashTieredModel = "gemini-3.8-flash-tiered"
 	AntigravityGemini4ArgonModel        = "gemini-4-argon"
+	AntigravityGemini4CarbonModel       = "gemini-4-carbon"
 )
 
 // DefaultAntigravityModelMapping 是 Antigravity 平台的默认模型映射
@@ -185,6 +186,11 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-4-argon-high":   "gemini-4-argon-high",
 	"gemini-4-argon-medium": "gemini-4-argon-medium",
 	"gemini-4-argon-low":    "gemini-4-argon-low",
+	// Carbon uses explicit upstream tiers, verified against the paid daily catalog.
+	"gemini-4-carbon":        "gemini-4-carbon-high",
+	"gemini-4-carbon-high":   "gemini-4-carbon-high",
+	"gemini-4-carbon-medium": "gemini-4-carbon-medium",
+	"gemini-4-carbon-low":    "gemini-4-carbon-low",
 	// Gemini 3 image 兼容映射（向 3.1 image 迁移）
 	"gemini-3-pro-image":         "gemini-3.1-flash-image",
 	"gemini-3-pro-image-preview": "gemini-3.1-flash-image",
@@ -203,8 +209,10 @@ var DefaultAntigravityModelMapping = map[string]string{
 // aws_region 自动调整为匹配的区域前缀（如 eu.、apac.、jp. 等）
 var DefaultBedrockModelMapping = map[string]string{
 	// Claude Fable
-	"claude-fable-5-1": "anthropic.claude-fable-5-1",
-	"claude-fable-5":   "anthropic.claude-fable-5",
+	"claude-fable-5-2":  "anthropic.claude-fable-5-2",
+	"claude-mythos-5-2": "anthropic.claude-mythos-5-2",
+	"claude-fable-5-1":  "anthropic.claude-fable-5-1",
+	"claude-fable-5":    "anthropic.claude-fable-5",
 	// Claude Opus
 	"claude-opus-5":            "us.anthropic.claude-opus-5-v1",
 	"claude-opus-4-8":          "us.anthropic.claude-opus-4-8-v1",

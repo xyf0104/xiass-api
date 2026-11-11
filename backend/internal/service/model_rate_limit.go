@@ -6,12 +6,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 const (
 	modelRateLimitsKey                 = "model_rate_limits"
 	antigravityGeminiModelRateLimitKey = "antigravity:gemini"
+	antigravityArgonModelRateLimitKey  = "antigravity:gemini:argon"
+	antigravityCarbonModelRateLimitKey = "antigravity:gemini:carbon"
 	openAIImageGenerationRateLimitKey  = "openai:image_generation"
 	openAICodexSparkRateLimitReason    = "openai_codex_spark_rate_limit"
 	// anthropicFableRateLimitKey 是 Anthropic 7d_oi（Fable 专属 7d 窗口）限流的
@@ -80,9 +83,7 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 	keys := []string{modelKey}
 	switch a.Platform {
 	case PlatformAntigravity:
-		if isAntigravityGeminiModel(modelKey) && modelKey != antigravityGeminiModelRateLimitKey {
-			keys = append(keys, antigravityGeminiModelRateLimitKey)
-		}
+		return antigravityModelRateLimitKeys(a, modelKey)
 	case PlatformOpenAI:
 		if openAIImageGenerationRateLimitApplies(ctx, requestedModel, modelKey) && modelKey != openAIImageGenerationRateLimitKey {
 			keys = append(keys, openAIImageGenerationRateLimitKey)
@@ -155,14 +156,27 @@ func isAntigravityGeminiModel(model string) bool {
 	return strings.HasPrefix(normalizeAntigravityModelName(model), "gemini-")
 }
 
-func antigravityModelRateLimitKeys(model string) []string {
+func antigravityModelRateLimitKeys(account *Account, model string) []string {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return nil
 	}
 	keys := []string{model}
-	if isAntigravityGeminiModel(model) && model != antigravityGeminiModelRateLimitKey {
-		keys = append(keys, antigravityGeminiModelRateLimitKey)
+	if isAntigravityGeminiModel(model) && !isAntigravityGeminiImageModel(model) && model != antigravityGeminiModelRateLimitKey {
+		familyKey := antigravityGeminiModelRateLimitKey
+		normalized := normalizeAntigravityModelName(model)
+		// Carbon is a distinct catalog family. Do not infer a shared quota pool
+		// from its Gemini prefix while its quota-group metadata is unavailable.
+		if normalized == "gemini-4-carbon" || strings.HasPrefix(normalized, "gemini-4-carbon-") {
+			familyKey = antigravityCarbonModelRateLimitKey
+		}
+		// Pro has a separate Argon quota pool; unknown plans retain legacy behavior.
+		if account != nil && strings.EqualFold(strings.TrimSpace(antigravity.TierIDToPlanType(account.GetCredential("plan_type"))), "Pro") {
+			if normalized == "gemini-4-argon" || strings.HasPrefix(normalized, "gemini-4-argon-") {
+				familyKey = antigravityArgonModelRateLimitKey
+			}
+		}
+		keys = append(keys, familyKey)
 	}
 	return keys
 }

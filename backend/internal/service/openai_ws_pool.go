@@ -295,6 +295,9 @@ type openAIWSConn struct {
 
 	readMu  sync.Mutex
 	writeMu sync.Mutex
+	// Hosted search capability is fixed by the first create on this socket.
+	responseCreateSent bool // guarded by writeMu
+	initialWebSearch   bool // guarded by writeMu
 
 	readerLoopResults    chan []byte
 	readerLoopErrMu      sync.Mutex
@@ -585,6 +588,9 @@ func (c *openAIWSConn) writeJSON(value any, writeCtx context.Context) error {
 	}
 	if err := c.ws.WriteJSON(writeCtx, value); err != nil {
 		return err
+	}
+	if !c.responseCreateSent {
+		c.recordInitialWebSearch(value)
 	}
 	c.touch()
 	return nil

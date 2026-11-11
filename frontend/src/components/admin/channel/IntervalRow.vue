@@ -25,8 +25,13 @@
             type="number" step="any" min="0" class="input mt-0.5 text-xs" />
         </div>
         <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWritePriceShort', '缓存W') }} <span class="text-gray-300">¥/M</span></label>
+          <label class="text-xs text-gray-400">{{ t(props.platform === 'openai' ? 'admin.channels.form.cacheWrite30mPrice' : 'admin.channels.form.cacheWritePriceShort') }} <span class="text-gray-300">¥/M</span></label>
           <input :value="interval.cache_write_price" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
+        </div>
+        <div v-if="props.platform === 'openai'">
+          <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite12hPriceShort') }} <span class="text-gray-300">¥/M</span></label>
+          <input :value="interval.cache_write_12h_price" @input="emitField('cache_write_12h_price', ($event.target as HTMLInputElement).value)"
             type="number" step="any" min="0" class="input mt-0.5 text-xs" />
         </div>
         <div>
@@ -103,6 +108,7 @@ const { t } = useI18n()
 const props = defineProps<{
   interval: IntervalFormEntry
   mode: BillingMode
+  platform?: string
   enableMultipliers?: boolean
 }>()
 
@@ -117,6 +123,8 @@ const isEmpty = computed(() => {
   return (iv.input_price == null || iv.input_price === '') &&
     (iv.output_price == null || iv.output_price === '') &&
     (iv.cache_write_price == null || iv.cache_write_price === '') &&
+    (iv.cache_write_1h_price == null || iv.cache_write_1h_price === '') &&
+    (iv.cache_write_12h_price == null || iv.cache_write_12h_price === '') &&
     (iv.cache_read_price == null || iv.cache_read_price === '') &&
     (iv.input_multiplier == null || iv.input_multiplier === '') &&
     (iv.output_multiplier == null || iv.output_multiplier === '') &&

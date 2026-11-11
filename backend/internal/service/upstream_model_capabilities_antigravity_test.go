@@ -60,7 +60,7 @@ func TestExtractUpstreamModelCatalogRetainsArrayFormats(t *testing.T) {
 }
 
 func TestExtractUpstreamModelCatalogAntigravityFixedTiers(t *testing.T) {
-	for _, family := range []string{"gemini-4-argon", "claude-opus-5-5", "claude-sonnet-5-5"} {
+	for _, family := range []string{"gemini-4-argon", "gemini-4-carbon", "claude-opus-5-5", "claude-sonnet-5-5"} {
 		for _, tier := range []string{"low", "medium", "high"} {
 			t.Run(family+"-"+tier, func(t *testing.T) {
 				modelID := family + "-" + tier
@@ -251,6 +251,24 @@ func TestPublicAntigravityModelMetadataPrefersDeclaredPublicEntry(t *testing.T) 
 	require.Equal(t, "medium", public["gemini-3.7-flash-medium"].DefaultReasoningLevel)
 	require.Equal(t, []string{"low"}, public["gemini-3.7-flash-low"].SupportedReasoningLevels)
 	require.Equal(t, "low", public["gemini-3.7-flash-low"].DefaultReasoningLevel)
+}
+
+func TestSyncAntigravityCatalogKeepsDisabledEvidencePrivate(t *testing.T) {
+	repo := &upstreamModelCapabilityRepo{}
+	svc, account, _ := antigravityCapabilitySyncFixture(t, `{"models":{
+		"gemini-3.8-flash-tiered":{"supportsThinking":true,"maxTokens":1048576},
+		"gemini-4-carbon-disabled":{"displayName":"Carbon unavailable"}
+	}}`, repo)
+	catalog, err := svc.SyncUpstreamModelCatalog(context.Background(), account)
+	require.NoError(t, err)
+	require.NotContains(t, catalog.Models, "gemini-4-carbon-disabled")
+	require.NotContains(t, catalog.Metadata, "gemini-4-carbon-disabled")
+	snapshot := account.GetUpstreamModelMetadataSnapshot()
+	require.NotNil(t, snapshot)
+	require.Equal(t, []string{"gemini-4-carbon-disabled"}, snapshot.DisabledModels)
+	require.False(t, account.IsModelSupported("gemini-4-carbon-medium"))
+	account.Credentials["access_token"] = "new-identity"
+	require.Nil(t, account.GetUpstreamModelMetadataSnapshot())
 }
 
 func TestSyncUpstreamModelCatalogAntigravityDoesNotInventRegistryCapabilities(t *testing.T) {

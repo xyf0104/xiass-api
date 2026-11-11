@@ -100,6 +100,7 @@ type ChannelModelPricing struct {
 	OutputPrice                  *float64          `json:"output_price"`
 	CacheWritePrice              *float64          `json:"cache_write_price"`
 	CacheWrite1hPrice            *float64          `json:"cache_write_1h_price,omitempty"`
+	CacheWrite12hPrice           *float64          `json:"cache_write_12h_price,omitempty"`
 	CacheReadPrice               *float64          `json:"cache_read_price"`
 	FastMultiplier               *float64          `json:"fast_multiplier,omitempty"`
 	FlexMultiplier               *float64          `json:"flex_multiplier,omitempty"`
@@ -123,6 +124,7 @@ type PricingInterval struct {
 	OutputPrice          *float64  `json:"output_price"`
 	CacheWritePrice      *float64  `json:"cache_write_price"`
 	CacheWrite1hPrice    *float64  `json:"cache_write_1h_price,omitempty"`
+	CacheWrite12hPrice   *float64  `json:"cache_write_12h_price,omitempty"`
 	CacheReadPrice       *float64  `json:"cache_read_price"`
 	InputMultiplier      *float64  `json:"input_multiplier"`
 	OutputMultiplier     *float64  `json:"output_multiplier"`
@@ -161,7 +163,7 @@ func (p *ChannelModelPricing) UnmarshalJSON(data []byte) error {
 		"ID": "id", "ChannelID": "channel_id", "Platform": "platform", "Models": "models",
 		"BillingMode": "billing_mode", "PriceMode": "price_mode", "InputPrice": "input_price",
 		"OutputPrice": "output_price", "CacheWritePrice": "cache_write_price",
-		"CacheWrite1hPrice": "cache_write_1h_price", "CacheReadPrice": "cache_read_price",
+		"CacheWrite1hPrice": "cache_write_1h_price", "CacheWrite12hPrice": "cache_write_12h_price", "CacheReadPrice": "cache_read_price",
 		"FastMultiplier": "fast_multiplier", "FlexMultiplier": "flex_multiplier",
 		"MaxReasoningEffortMultiplier": "max_reasoning_effort_multiplier",
 		"ImageInputPrice":              "image_input_price", "ImageOutputPrice": "image_output_price",
@@ -185,7 +187,7 @@ func (p *PricingInterval) UnmarshalJSON(data []byte) error {
 		"ID": "id", "PricingID": "pricing_id", "MinTokens": "min_tokens",
 		"MaxTokens": "max_tokens", "TierLabel": "tier_label", "InputPrice": "input_price",
 		"OutputPrice": "output_price", "CacheWritePrice": "cache_write_price",
-		"CacheWrite1hPrice": "cache_write_1h_price", "CacheReadPrice": "cache_read_price",
+		"CacheWrite1hPrice": "cache_write_1h_price", "CacheWrite12hPrice": "cache_write_12h_price", "CacheReadPrice": "cache_read_price",
 		"InputMultiplier": "input_multiplier", "OutputMultiplier": "output_multiplier",
 		"CacheWriteMultiplier": "cache_write_multiplier", "CacheReadMultiplier": "cache_read_multiplier",
 		"PerRequestPrice": "per_request_price", "SortOrder": "sort_order",
@@ -429,6 +431,8 @@ func validateIntervalPrices(iv *PricingInterval, idx int) error {
 		{"input_price", iv.InputPrice},
 		{"output_price", iv.OutputPrice},
 		{"cache_write_price", iv.CacheWritePrice},
+		{"cache_write_1h_price", iv.CacheWrite1hPrice},
+		{"cache_write_12h_price", iv.CacheWrite12hPrice},
 		{"cache_read_price", iv.CacheReadPrice},
 		{"per_request_price", iv.PerRequestPrice},
 	}
@@ -547,11 +551,12 @@ type platformPricingIndex struct {
 	byLower      map[string]*ChannelModelPricing // lowercased model name → pricing (Clone'd)
 	originalCase map[string]string               // lowercased model name → original-case model name
 	names        []string                        // priced model names in their ORIGINAL case, insertion-ordered, deduped case-insensitively (first wins)
+	wildcards    []*wildcardPricingEntry
 }
 
 // buildPricingIndex 对渠道的定价列表做一次扫描，按 platform 聚合为查找索引。
 // 索引值是定价条目的 Clone 指针，调用方可安全按需返回副本而不污染缓存。
-// 通配符后缀条目（如 "claude-*"）不被索引（它们是模式，不是具体模型名）。
+// 通配符后缀条目单独保存，不作为具体模型展示。
 // 同一平台中以大小写不敏感方式去重，先出现者保留原始大小写。
 func buildPricingIndex(pricings []ChannelModelPricing) map[string]*platformPricingIndex {
 	idx := make(map[string]*platformPricingIndex)
@@ -567,7 +572,11 @@ func buildPricingIndex(pricings []ChannelModelPricing) map[string]*platformPrici
 			idx[p.Platform] = pidx
 		}
 		for _, m := range p.Models {
-			if _, wild := splitWildcardSuffix(m); wild {
+			if prefix, wild := splitWildcardSuffix(m); wild {
+				cp := pricings[i].Clone()
+				pidx.wildcards = append(pidx.wildcards, &wildcardPricingEntry{
+					prefix: normalizeChannelPricingModelName(prefix), pricing: &cp,
+				})
 				continue
 			}
 			lower := strings.ToLower(m)
@@ -628,6 +637,16 @@ func (c *Channel) SupportedModels() []SupportedModel {
 		lower := strings.ToLower(name)
 		if p, ok := pidx.byLower[lower]; ok {
 			return pidx.originalCase[lower], p
+		}
+		if isCarbonPricingModel(lower) {
+			for _, wildcard := range pidx.wildcards {
+				if strings.HasPrefix(normalizeChannelPricingModelName(lower), wildcard.prefix) {
+					return name, wildcard.pricing
+				}
+			}
+			if p, ok := pidx.byLower["gemini-4-carbon"]; ok {
+				return name, p
+			}
 		}
 		return name, nil
 	}

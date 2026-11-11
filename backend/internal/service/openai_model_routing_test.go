@@ -361,6 +361,85 @@ func TestOpenAIModelPriorityExplicitOrderAcrossSchedulers(t *testing.T) {
 	}
 }
 
+func TestOpenAIUserPriorityPrecedesModelAndFallsBackAcrossSchedulers(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		for _, busyCount := range []int{0, 1, 2} {
+			t.Run(fmt.Sprintf("%s/busy_%d", mode, busyCount), func(t *testing.T) {
+				groupID := int64(12010)
+				accounts := []Account{
+					openAIModelRoutingTestAccount(301, groupID, 1, ""),
+					openAIModelRoutingTestAccount(302, groupID, 2, ""),
+					openAIModelRoutingTestAccount(303, groupID, 9, ""),
+				}
+				settings := NewSettingService(&openAIModelPriorityRepoStub{values: map[string]string{}}, &config.Config{})
+				require.NoError(t, settings.SetOpenAIModelPrioritySettings(context.Background(), &OpenAIModelPrioritySettings{
+					Enabled: true, Rules: []OpenAIModelPriorityRule{{ModelPattern: "gpt-5.6-luna", AccountIDs: []int64{302}, AccountOrder: []int64{302}}},
+					UserEnabled: true, UserRules: []OpenAIUserPriorityRule{{UserID: 17, AccountIDs: []int64{303}, AccountOrder: []int64{303}}},
+				}))
+				cache := schedulerTestConcurrencyCache{acquireResults: map[int64]bool{}, loadMap: map[int64]*AccountLoadInfo{}}
+				for _, account := range accounts {
+					cache.acquireResults[account.ID] = true
+					cache.loadMap[account.ID] = &AccountLoadInfo{AccountID: account.ID}
+				}
+				for _, id := range []int64{303, 302}[:busyCount] {
+					cache.acquireResults[id] = false
+					cache.loadMap[id] = &AccountLoadInfo{AccountID: id, CurrentConcurrency: 1, LoadRate: 100}
+				}
+				ctx := context.WithValue(openAIModelRoutingTestContext(groupID, nil, nil), ctxkey.UserID, int64(17))
+				selection := selectOpenAIModelRoutingTestAccount(t, mode, ctx, groupID, accounts, cache, "", settings)
+				require.Equal(t, []int64{303, 302, 301}[busyCount], selection.Account.ID)
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				other := context.WithValue(openAIModelRoutingTestContext(groupID, nil, nil), ctxkey.UserID, int64(18))
+				preference := (&OpenAIGatewayService{settingService: settings}).resolveOpenAIModelRoutingPreference(other, &groupID, PlatformOpenAI, "gpt-5.6-luna")
+				require.Less(t, preference.tier(&accounts[1]), preference.tier(&accounts[2]))
+			})
+		}
+	}
+}
+
+func TestOpenAIUserPrioritySurvivesModelRotationExhaustion(t *testing.T) {
+	for _, mode := range []string{"advanced", "legacy_batch", "legacy_no_batch"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, key, accounts := modelRotationTestGateway(t, mode)
+			ctx := modelRotationTestContext(key.UserID, key.ID)
+			settings, err := svc.settingService.GetOpenAIModelPrioritySettings(ctx)
+			require.NoError(t, err)
+			settings.UserEnabled = true
+			settings.UserRules = []OpenAIUserPriorityRule{{UserID: key.UserID, AccountIDs: []int64{32, 31}, AccountOrder: []int64{32, 31}}}
+			require.NoError(t, svc.settingService.SetOpenAIModelPrioritySettings(ctx, settings))
+			for i := range accounts {
+				svc.ObserveOpenAIModelRotation(ctx, key, &accounts[i], "gpt-6-astra", &OpenAIForwardResult{UpstreamResponseModel: "gpt-5.6-luna"})
+			}
+			selected, decision := selectModelRotationAccount(t, svc, key, "gpt-6-astra", "", nil)
+			require.True(t, decision.ModelRotationFallback)
+			require.Equal(t, int64(32), selected)
+			excluded := map[int64]struct{}{32: {}}
+			selected, decision = selectModelRotationAccount(t, svc, key, "gpt-6-astra", "", excluded)
+			require.True(t, decision.ModelRotationFallback)
+			require.Equal(t, int64(31), selected)
+			require.Len(t, excluded, 1)
+		})
+	}
+}
+
+func TestOpenAIUserPriorityRotationFallbackSkipsGroupRouting(t *testing.T) {
+	groupID := int64(12011)
+	settings := NewSettingService(&openAIModelPriorityRepoStub{values: map[string]string{}}, &config.Config{})
+	require.NoError(t, settings.SetOpenAIModelPrioritySettings(context.Background(), &OpenAIModelPrioritySettings{
+		Enabled: true, Rules: []OpenAIModelPriorityRule{{ModelPattern: "gpt-*", AccountIDs: []int64{402}, AccountOrder: []int64{402}}},
+		UserEnabled: true, UserRules: []OpenAIUserPriorityRule{{UserID: 17, AccountIDs: []int64{403}, AccountOrder: []int64{403}}},
+	}))
+	svc := &OpenAIGatewayService{settingService: settings}
+	ctx := context.WithValue(openAIModelRoutingTestContext(groupID, map[string][]int64{"gpt-*": {401}}, nil), ctxkey.UserID, int64(17))
+	normal := svc.resolveOpenAIModelRoutingPreference(ctx, &groupID, PlatformOpenAI, "gpt-test")
+	require.Less(t, normal.tier(&Account{ID: 401}), normal.tier(&Account{ID: 404}))
+	fallback := svc.resolveOpenAIModelRoutingPreference(context.WithValue(ctx, openAIModelRotationFallbackKey{}, true), &groupID, PlatformOpenAI, "gpt-test")
+	require.Equal(t, 0, fallback.tier(&Account{ID: 403}))
+	require.Equal(t, fallback.tier(&Account{ID: 401}), fallback.tier(&Account{ID: 402}))
+}
+
 func TestOpenAIModelPriorityWaitDoesNotEscapeToLowerRankStickyHint(t *testing.T) {
 	groupID := int64(12009)
 	first := openAIModelRoutingTestAccount(201, groupID, 1, "")

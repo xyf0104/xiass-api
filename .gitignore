@@ -132,6 +132,7 @@ vite.config.js
 docs/*
 !docs/multi-proxy-routing.md
 !docs/ANTIGRAVITY_ATTRIBUTION_429.md
+!docs/UPSTREAM_0_2_21.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

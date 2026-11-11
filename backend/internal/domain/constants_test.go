@@ -68,6 +68,18 @@ func TestDefaultAntigravityModelMapping_Gemini4ArgonTiers(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMapping_Gemini4CarbonTiers(t *testing.T) {
+	for _, tier := range []string{"high", "medium", "low"} {
+		model := AntigravityGemini4CarbonModel + "-" + tier
+		if got := DefaultAntigravityModelMapping[model]; got != model {
+			t.Errorf("Carbon tier %q must retain its upstream identity, got %q", model, got)
+		}
+	}
+	if got := DefaultAntigravityModelMapping[AntigravityGemini4CarbonModel]; got != "gemini-4-carbon-high" {
+		t.Errorf("unexpected Carbon base alias: %q", got)
+	}
+}
+
 func TestDefaultAntigravityModelMapping_PreservesExplicitSonnet45AndMigratesLegacyAliases(t *testing.T) {
 	t.Parallel()
 
@@ -175,9 +187,11 @@ func TestDefaultBedrockModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"claude-fable-5-1": "anthropic.claude-fable-5-1",
-		"claude-fable-5":   "anthropic.claude-fable-5",
-		"claude-opus-4-8":  "us.anthropic.claude-opus-4-8-v1",
+		"claude-fable-5-2":  "anthropic.claude-fable-5-2",
+		"claude-mythos-5-2": "anthropic.claude-mythos-5-2",
+		"claude-fable-5-1":  "anthropic.claude-fable-5-1",
+		"claude-fable-5":    "anthropic.claude-fable-5",
+		"claude-opus-4-8":   "us.anthropic.claude-opus-4-8-v1",
 	}
 	for from, want := range cases {
 		got, ok := DefaultBedrockModelMapping[from]

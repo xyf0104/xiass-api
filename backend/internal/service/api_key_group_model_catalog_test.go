@@ -24,6 +24,23 @@ func TestModelsForAPIKeyGroupUsesExistingAvailableModelSource(t *testing.T) {
 	require.Equal(t, []string{"gpt-a", "gpt-shared"}, models)
 }
 
+func TestModelsForAPIKeyGroupCarbonRequiresCapableAccount(t *testing.T) {
+	pro := Account{ID: 1, Platform: PlatformAntigravity, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Credentials: map[string]any{"plan_type": "Pro"}}
+	ultra := Account{ID: 2, Platform: PlatformAntigravity, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Credentials: map[string]any{"plan_type": "Ultra"}}
+	for _, platform := range []string{"", PlatformAntigravity} {
+		proModels := modelIDsFromAvailableAccounts([]Account{pro}, platform)
+		mixedModels := modelIDsFromAvailableAccounts([]Account{pro, ultra}, platform)
+		for _, tier := range []string{"high", "medium", "low"} {
+			model := "gemini-4-carbon-" + tier
+			require.NotContains(t, proModels, model)
+			require.Contains(t, mixedModels, model)
+		}
+		require.Contains(t, proModels, "gemini-3.7-flash-high")
+	}
+}
+
 type gatewayModelsCatalogRepoStub struct {
 	AccountRepository
 	accounts []Account

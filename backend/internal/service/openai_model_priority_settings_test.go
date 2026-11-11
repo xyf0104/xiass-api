@@ -229,3 +229,44 @@ func TestOpenAIModelPriorityOrderRoundTripAndValidation(t *testing.T) {
 		require.Error(t, svc.SetOpenAIModelPrioritySettings(context.Background(), settings))
 	}
 }
+
+func TestOpenAIUserPriorityRoundTripAndIsolation(t *testing.T) {
+	repo := &openAIModelPriorityRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	settings := &OpenAIModelPrioritySettings{
+		Enabled: true, Rules: []OpenAIModelPriorityRule{{ModelPattern: "gpt-*", AccountIDs: []int64{3, 4}, AccountOrder: []int64{3, 4}}},
+		UserEnabled: true, UserRules: []OpenAIUserPriorityRule{{UserID: 17, AccountIDs: []int64{4, 5}, AccountOrder: []int64{5, 4}}},
+	}
+	require.NoError(t, svc.SetOpenAIModelPrioritySettings(context.Background(), settings))
+	fresh := NewSettingService(repo, &config.Config{})
+	loaded, err := fresh.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, loaded.UserEnabled)
+	require.Equal(t, []int64{5, 4}, loaded.UserRules[0].AccountOrder)
+	for id, tier := range map[int64]int{5: 0, 4: 1, 3: 2, 9: 4} {
+		require.Equal(t, tier, fresh.resolveOpenAIAccountPriorityPreference(context.Background(), "gpt-test", 17).tier(&Account{ID: id}))
+	}
+	require.Equal(t, 0, fresh.resolveOpenAIAccountPriorityPreference(context.Background(), "gpt-test", 18).tier(&Account{ID: 3}))
+	loaded.UserRules[0].AccountOrder[0] = 99
+	again, err := fresh.GetOpenAIModelPrioritySettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(5), again.UserRules[0].AccountOrder[0])
+	settings.UserEnabled = false
+	require.NoError(t, fresh.SetOpenAIModelPrioritySettings(context.Background(), settings))
+	require.Equal(t, 0, fresh.resolveOpenAIAccountPriorityPreference(context.Background(), "gpt-test", 17).tier(&Account{ID: 3}))
+}
+
+func TestOpenAIUserPriorityValidation(t *testing.T) {
+	base := OpenAIUserPriorityRule{UserID: 17, AccountIDs: []int64{2, 3}, AccountOrder: []int64{3, 2}}
+	for _, rules := range [][]OpenAIUserPriorityRule{
+		{{UserID: 0, AccountIDs: []int64{2}}},
+		{{UserID: 17}},
+		{{UserID: 17, AccountIDs: []int64{0}}},
+		{{UserID: 17, AccountIDs: []int64{2, 3}, AccountOrder: []int64{2, 2}}},
+		{{UserID: 17, AccountIDs: []int64{2, 3}, AccountOrder: []int64{2, 4}}},
+		{base, base},
+	} {
+		_, err := normalizeOpenAIModelPrioritySettings(&OpenAIModelPrioritySettings{UserEnabled: true, UserRules: rules})
+		require.Error(t, err)
+	}
+}

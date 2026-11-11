@@ -13,6 +13,7 @@ export interface UserGroupModelPricing {
   input_price: number | null
   output_price: number | null
   cache_write_price: number | null
+  cache_write_12h_price?: number | null
   cache_read_price: number | null
   intervals?: UserPricingInterval[]
 }
@@ -55,6 +56,7 @@ export interface UserPricingInterval {
   output_price: number | null
   cache_write_price: number | null
   cache_write_1h_price?: number | null
+  cache_write_12h_price?: number | null
   cache_read_price: number | null
   input_multiplier?: number | null
   output_multiplier?: number | null
@@ -69,6 +71,7 @@ export interface UserSupportedModelPricing {
   output_price: number | null
   cache_write_price: number | null
   cache_write_1h_price?: number | null
+  cache_write_12h_price?: number | null
   cache_read_price: number | null
   max_reasoning_effort_multiplier?: number | null
   image_input_price: number | null

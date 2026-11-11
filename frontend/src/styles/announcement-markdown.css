@@ -1,4 +1,26 @@
-/* Shared rich-text styles for announcement popup and bell detail content. */
+/* Shared layout and rich-text styles for announcement popup and bell details. */
+.announcement-dialog-overlay {
+  @apply fixed inset-0 flex items-center justify-center overflow-hidden p-3 sm:p-6;
+}
+
+.announcement-dialog {
+  @apply flex min-w-0 w-full max-w-[1020px] flex-col overflow-hidden;
+  max-height: calc(100vh - 1.5rem);
+  max-height: calc(100dvh - 1.5rem);
+}
+
+@media (min-width: 640px) {
+  .announcement-dialog {
+    max-height: calc(100vh - 3rem);
+    max-height: calc(100dvh - 3rem);
+  }
+}
+
+.announcement-dialog-content {
+  @apply min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-8 sm:py-5;
+  overflow-wrap: anywhere;
+}
+
 .markdown-body {
   @apply text-[15px] leading-[1.75];
   @apply text-gray-700 dark:text-gray-300;
@@ -110,4 +132,40 @@
 
 .markdown-body em {
   @apply italic text-gray-600 dark:text-gray-400;
+}
+
+.announcement-dialog-content .markdown-body h3,
+.announcement-dialog-content .markdown-body h4 {
+  @apply mb-2 mt-4 text-lg;
+}
+
+.announcement-dialog-content .markdown-body p,
+.announcement-dialog-content .markdown-body table {
+  @apply mb-3;
+}
+
+.announcement-dialog-content .markdown-body table {
+  overflow-wrap: normal;
+}
+
+.announcement-dialog-content .markdown-body hr {
+  @apply my-3;
+}
+
+.announcement-dialog-content .markdown-body blockquote {
+  @apply my-3 px-4 py-2;
+}
+
+.announcement-dialog-content .markdown-body th,
+.announcement-dialog-content .markdown-body td {
+  @apply px-2 py-1.5 leading-6 sm:px-3;
+}
+
+.announcement-dialog-content .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.announcement-dialog-content .markdown-body > :last-child,
+.announcement-dialog-content .markdown-body blockquote > :last-child {
+  margin-bottom: 0;
 }

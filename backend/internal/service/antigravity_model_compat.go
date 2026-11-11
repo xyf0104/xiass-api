@@ -153,7 +153,7 @@ func publicAntigravityModelIDs(models []string) []string {
 	publicModels := make([]string, 0, len(models)+4)
 	for _, model := range models {
 		model = strings.TrimSpace(model)
-		if model == "" {
+		if model == "" || strings.HasSuffix(strings.ToLower(model), "-disabled") {
 			continue
 		}
 		if family, ok := antigravityGeminiFlashFamilyForModel(model); ok && isAntigravityGeminiFlashInternalModel(model) {

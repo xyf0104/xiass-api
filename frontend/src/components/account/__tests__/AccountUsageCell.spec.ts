@@ -455,6 +455,62 @@ describe('AccountUsageCell', () => {
     expect(getUsage).not.toHaveBeenCalled()
   })
 
+  it('renders real Antigravity windows by group without mixing their resets or hiding zero usage', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota_groups: [
+        {
+          key: 'gemini', name: 'Gemini', description: 'Shared Gemini quota',
+          windows: [
+            { window: '5h', utilization: 0, resets_at: '2099-03-01T05:00:00Z' },
+            { window: 'weekly', utilization: 75, resets_at: '2099-03-07T00:00:00Z' }
+          ]
+        },
+        { key: 'claude', name: 'Claude', windows: [{ window: 'weekly', utilization: 25 }] },
+        { key: 'empty', name: 'Empty group', windows: [] }
+      ],
+      antigravity_quota: { 'gemini-3-flash': { utilization: 99, reset_time: '2099-03-02T00:00:00Z' } },
+      ai_credits: [{ amount: 25 }]
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 1101 }) },
+      global: { stubs: { UsageProgressBar: {
+        props: ['label', 'utilization', 'resetsAt'],
+        template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+      }, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+    const groups = wrapper.get('[data-test="antigravity-quota-groups"]')
+    expect(groups.findAll('.usage-bar').map(bar => bar.text())).toEqual([
+      '5h|0|2099-03-01T05:00:00Z',
+      'admin.accounts.usageWindow.antigravityWeekly|75|2099-03-07T00:00:00Z',
+      'admin.accounts.usageWindow.antigravityWeekly|25|'
+    ])
+    expect(groups.text()).toContain('Gemini')
+    expect(groups.text()).toContain('Claude')
+    expect(groups.text()).not.toContain('Empty group')
+    expect(groups.text()).toContain('admin.accounts.aiCreditsBalance: 25')
+    expect(wrapper.text()).not.toContain('admin.accounts.usageWindow.gemini3Flash|99')
+    wrapper.unmount()
+  })
+
+  it('falls back to model quotas when Antigravity summary has no usable windows', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota_groups: [{ key: 'empty', name: 'Empty', windows: [] }],
+      antigravity_quota: { 'gemini-3-flash': { utilization: 42, reset_time: '2099-03-02T00:00:00Z' } }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 1102 }) },
+      global: { stubs: { UsageProgressBar: {
+        props: ['label', 'utilization', 'resetsAt'],
+        template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+      }, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-test="antigravity-quota-groups"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.gemini3Flash|42|2099-03-02T00:00:00Z')
+    wrapper.unmount()
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {

@@ -10,8 +10,8 @@ import (
 )
 
 // openAIModelRoutingPreference is a soft tier above the normal account
-// priority. It combines the existing group-scoped routing with the global
-// model priority panel. An empty preference leaves scheduling unchanged.
+// priority. It combines user, model, and group-scoped routing preferences.
+// An empty preference leaves scheduling unchanged.
 type openAIModelRoutingPreference struct {
 	accountIDs   map[int64]struct{}
 	poolIDs      map[string]struct{}
@@ -66,10 +66,9 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	platform string,
 	requestedModel string,
 ) openAIModelRoutingPreference {
+	var bypassModelPreference bool
 	if ctx != nil {
-		if bypass, _ := ctx.Value(openAIModelRotationFallbackKey{}).(bool); bypass {
-			return openAIModelRoutingPreference{}
-		}
+		bypassModelPreference, _ = ctx.Value(openAIModelRotationFallbackKey{}).(bool)
 	}
 	if s == nil || strings.TrimSpace(requestedModel) == "" ||
 		normalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
@@ -77,9 +76,17 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	}
 	preference := openAIModelRoutingPreference{}
 	if s.settingService != nil {
-		preference = s.settingService.resolveOpenAIModelPriorityPreference(ctx, requestedModel)
+		var userID int64
+		if ctx != nil {
+			userID, _ = ctx.Value(ctxkey.UserID).(int64)
+		}
+		priorityModel := requestedModel
+		if bypassModelPreference {
+			priorityModel = ""
+		}
+		preference = s.settingService.resolveOpenAIAccountPriorityPreference(ctx, priorityModel, userID)
 	}
-	if groupID == nil {
+	if groupID == nil || bypassModelPreference {
 		return preference
 	}
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
+import { routeLocationKey } from "vue-router";
 
 import SettingsView from "../SettingsView.vue";
 
@@ -547,9 +548,10 @@ const baseSettingsResponse = {
   },
 };
 
-function mountView() {
+function mountView(route?: { query: { tab: string }; hash: string }) {
   return mount(SettingsView, {
     global: {
+      provide: route ? { [routeLocationKey as symbol]: route } : {},
       stubs: {
         AppLayout: AppLayoutStub,
         RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
@@ -701,6 +703,13 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  it("opens the gateway tab from the account routing deep link", async () => {
+    const wrapper = mountView({ query: { tab: "gateway" }, hash: "#openai-account-priority" });
+    await flushPromises();
+    expect(wrapper.get("#settings-tab-gateway").attributes("aria-selected")).toBe("true");
+    expect(wrapper.find("#openai-account-priority").exists()).toBe(true);
   });
 
   it("keeps the only global save action in the sticky settings header", async () => {

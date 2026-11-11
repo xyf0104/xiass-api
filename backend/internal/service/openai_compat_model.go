@@ -125,6 +125,9 @@ func openAIReasoningEffortToClaudeOutputEffort(effort string) string {
 // normally translated to OpenAI xhigh, but GPT-5.6 accepts the original max
 // value on Responses and Chat Completions.
 func openAICompatAnthropicReasoningEffort(req *apicompat.AnthropicRequest, upstreamModel, convertedEffort string) string {
+	if req != nil && req.Thinking != nil && req.Thinking.Type == "disabled" {
+		return "none"
+	}
 	if convertedEffort == "none" {
 		return convertedEffort
 	}

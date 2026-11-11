@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,18 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func usageLogInsertColumnIndex(t *testing.T, name string) int {
+	t.Helper()
+	for i, column := range strings.Split(usageLogSelectColumns, ", ") {
+		if column == name {
+			require.Greater(t, i, 0, "id is not an insert argument")
+			return i - 1
+		}
+	}
+	t.Fatalf("usage log column %q is absent", name)
+	return -1
+}
 
 func TestUsageLogAccountCostExpression(t *testing.T) {
 	require.Equal(t,
@@ -114,6 +127,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // egress
+			0,                // cache_creation_30m_tokens
+			0,                // cache_creation_12h_tokens
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -210,6 +225,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // egress
+			0,                // cache_creation_30m_tokens
+			0,                // cache_creation_12h_tokens
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -291,8 +308,9 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
-	require.Equal(t, true, prepared.args[len(prepared.args)-3])
+	idx := usageLogInsertColumnIndex(t, "native_compaction_v2")
+	require.Equal(t, "boolean", usageLogInsertArgTypes[idx])
+	require.Equal(t, true, prepared.args[idx])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -974,6 +992,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			false,            // native_compaction_v2
 			sql.NullString{}, // egress
+			0,                // cache_creation_30m_tokens
+			0,                // cache_creation_12h_tokens
 			now,
 		}})
 		require.NoError(t, err)
@@ -1055,6 +1075,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			sql.NullString{},  // egress
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			now,
 		}})
 		require.NoError(t, err)
@@ -1119,6 +1141,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
 			sql.NullString{},  // egress
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			now,
 		}})
 		require.NoError(t, err)
@@ -1184,6 +1208,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
 			sql.NullString{},  // egress
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			now,
 		}})
 		require.NoError(t, err)

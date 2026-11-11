@@ -179,6 +179,22 @@ func TestOpenAIReasoningEffortPolicyForCompositeTarget(t *testing.T) {
 	require.Equal(t, body, got)
 }
 
+func TestMessagesReasoningPolicyBindsExplicitNoneMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	key := &service.APIKey{Group: &service.Group{
+		Platform:                service.PlatformOpenAI,
+		MaxReasoningEffort:      "medium",
+		ReasoningEffortMappings: []service.ReasoningEffortMapping{{From: "none", To: "high"}},
+	}}
+	bindOpenAIReasoningEffortPolicyForMessagesRequest(c, key, []byte(`{"model":"gpt-6-astra","thinking":{"type":"disabled"}}`))
+	body, changed, err := service.ApplyOpenAIReasoningEffortPolicyFromContext(c.Request.Context(), []byte(`{"reasoning":{"effort":"none"}}`))
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.JSONEq(t, `{"reasoning":{"effort":"medium"}}`, string(body))
+}
+
 func TestOpenAIShapedReasoningEffortPolicyForAnthropicGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

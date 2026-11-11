@@ -1416,9 +1416,17 @@ export interface OpenAIModelPriorityRule {
   account_order?: number[];
 }
 
+export interface OpenAIUserPriorityRule {
+  user_id: number;
+  account_ids: number[];
+  account_order: number[];
+}
+
 export interface OpenAIModelPrioritySettings {
   enabled: boolean;
   rules: OpenAIModelPriorityRule[];
+  user_enabled?: boolean;
+  user_rules?: OpenAIUserPriorityRule[];
   smart_rotation_enabled?: boolean;
   smart_rotation_cooldown_minutes?: number;
 }

@@ -957,6 +957,26 @@ describe('admin UsageTable deleted-user badge', () => {
 })
 
 describe('admin UsageTable cache hit rate', () => {
+  it('shows reported TTL buckets without counting them twice in cache hit rate', async () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, billing_mode: 'token', image_count: 0,
+          input_tokens: 170, output_tokens: 13, cache_creation_tokens: 170,
+          cache_creation_30m_tokens: 70, cache_creation_12h_tokens: 100, cache_read_tokens: 1700 }],
+        loading: false, columns: []
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } }
+    })
+    expect(wrapper.get('[data-testid="cache-summary"]').text()).toContain('12h')
+    expect(wrapper.get('[data-testid="cache-hit-rate"]').text()).toBe('83.3%')
+    await wrapper.find('.group.relative').trigger('mouseenter')
+    await nextTick()
+    expect(wrapper.text()).toContain('30m')
+    expect(wrapper.text()).toContain('70')
+    expect(wrapper.text()).toContain('100')
+    wrapper.unmount()
+  })
+
   it.each([
     { input: 170, creation: 0, read: 1700, expected: '90.9%' },
     { input: 170, creation: 170, read: 1700, expected: '83.3%' },

@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import OpenAIModelPrioritySettings from '../OpenAIModelPrioritySettings.vue'
 
-const { getSettings, updateSettings, listAccounts, getGroups, getPools, showError, showSuccess } = vi.hoisted(() => ({
+const { getSettings, updateSettings, listAccounts, listUsers, getUser, getGroups, getPools, showError, showSuccess } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
   listAccounts: vi.fn(),
+  listUsers: vi.fn(),
+  getUser: vi.fn(),
   getGroups: vi.fn(),
   getPools: vi.fn(),
   showError: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock('@/api/admin', () => ({
       updateOpenAIModelPrioritySettings: updateSettings
     },
     accounts: { list: listAccounts },
+    users: { list: listUsers, getById: getUser },
     groups: { getAllIncludingInactive: getGroups },
     accountPools: { list: getPools }
   }
@@ -83,6 +86,8 @@ describe('OpenAIModelPrioritySettings', () => {
     })
     getGroups.mockResolvedValue([{ id: 14, name: 'ChatGPT Pro 20x' }])
     getPools.mockResolvedValue({ items: [{ id: 5, name: 'QQ-plus', proxy_id: null, account_ids: [1], account_count: 1 }] })
+    listUsers.mockResolvedValue({ items: [{ id: 17, username: 'customer', email: 'customer@example.com' }], total: 1 })
+    getUser.mockResolvedValue({ id: 17, username: 'customer', email: 'customer@example.com' })
   })
 
   function mountComponent() {
@@ -126,6 +131,8 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      user_enabled: false,
+      user_rules: [],
       smart_rotation_enabled: false,
       smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2], account_order: [1, 2] }]
@@ -153,6 +160,8 @@ describe('OpenAIModelPrioritySettings', () => {
     await flushPromises()
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      user_enabled: false,
+      user_rules: [],
       smart_rotation_enabled: false,
       smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 99, 2, 1] }]
@@ -176,6 +185,8 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      user_enabled: false,
+      user_rules: [],
       smart_rotation_enabled: false,
       smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3, 1, 2], account_order: [3, 1, 2] }]
@@ -228,6 +239,8 @@ describe('OpenAIModelPrioritySettings', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       enabled: true,
+      user_enabled: false,
+      user_rules: [],
       smart_rotation_enabled: false,
       smart_rotation_cooldown_minutes: 30,
       rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [1, 2] }]
@@ -248,6 +261,56 @@ describe('OpenAIModelPrioritySettings', () => {
       smart_rotation_enabled: false,
       smart_rotation_cooldown_minutes: 30
     }))
+  })
+
+  it('loads and reorders user accounts independently of model rules', async () => {
+    getSettings.mockResolvedValue({
+      enabled: true, rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3] }],
+      user_enabled: true, user_rules: [{ user_id: 17, account_ids: [1, 2], account_order: [2, 1] }]
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-user-priority-settings"]').text()).toContain('customer')
+    await wrapper.get('[data-testid="user-priority-configure-0"]').trigger('click')
+    await flushPromises()
+    expect(selectedIDs(wrapper)).toEqual([2, 1])
+    await wrapper.get('[data-testid="model-priority-up-1"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-apply-accounts"]').trigger('click')
+    await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+    await flushPromises()
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      rules: [{ model_pattern: 'gpt-5.6-luna', account_ids: [3] }],
+      user_enabled: true, user_rules: [{ user_id: 17, account_ids: [1, 2], account_order: [1, 2] }]
+    }))
+  })
+
+  it('adds a searched user rule and saves with model priority disabled', async () => {
+    getSettings.mockResolvedValue({ enabled: false, rules: [] })
+    const wrapper = mountComponent()
+    await flushPromises()
+    vi.useFakeTimers()
+    try {
+      await wrapper.get('[data-testid="user-priority-search"]').setValue('customer')
+      await vi.advanceTimersByTimeAsync(250)
+      await flushPromises()
+      expect(listUsers).toHaveBeenCalledWith(1, 30, { search: 'customer' })
+      await wrapper.get('[data-testid="user-priority-add-17"]').trigger('click')
+      expect(wrapper.get('[data-testid="model-priority-save"]').attributes()).toHaveProperty('disabled')
+      await wrapper.get('[data-testid="user-priority-configure-0"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="model-priority-account-2"]').trigger('click')
+      await wrapper.get('[data-testid="model-priority-apply-accounts"]').trigger('click')
+      await wrapper.get('[data-testid="user-priority-toggle"]').trigger('click')
+      await wrapper.get('[data-testid="model-priority-save"]').trigger('click')
+      await flushPromises()
+      expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+        enabled: false, rules: [], user_enabled: true,
+        user_rules: [{ user_id: 17, account_ids: [2], account_order: [2] }]
+      }))
+    } finally {
+      vi.useRealTimers()
+      wrapper.unmount()
+    }
   })
 
   it('keeps smart rotation inactive while overall model priority is disabled', async () => {

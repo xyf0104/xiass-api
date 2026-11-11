@@ -12,6 +12,30 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('SupportedModelChip', () => {
+  it('shows distinct OpenAI 30m and 12h write prices including free 12h', async () => {
+    const wrapper = mount(SupportedModelChip, {
+      attachTo: document.body,
+      props: {
+        model: {
+          name: 'gpt-6-luna', platform: 'openai',
+          pricing: {
+            billing_mode: 'token', input_price: 0.65e-6, output_price: 3.25e-6,
+            cache_write_price: 0.8125e-6, cache_write_12h_price: 0,
+            cache_read_price: 0.065e-6, image_input_price: null,
+            image_output_price: null, per_request_price: null, intervals: []
+          }
+        }
+      }
+    })
+    await wrapper.find('[tabindex="0"]').trigger('mouseenter')
+    await nextTick()
+    expect(document.body.textContent).toContain('cacheWrite30mPrice')
+    expect(document.body.textContent).toContain('cacheWrite12hPrice')
+    expect(document.body.textContent).toContain('¥0.8125')
+    expect(document.body.textContent).toContain('¥0')
+    wrapper.unmount()
+  })
+
   it('仅配置区间倍率时按基础价展示 token 档位', async () => {
     const wrapper = mount(SupportedModelChip, {
       attachTo: document.body,

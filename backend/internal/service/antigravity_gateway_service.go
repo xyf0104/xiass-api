@@ -278,6 +278,9 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 
 	// 通过映射表查询（支持精确匹配 + 通配符）
 	mapped := account.GetMappedModel(requestedModel)
+	if !antigravityAccountAllowsModel(account, mapped) {
+		return ""
+	}
 
 	// 判断是否映射成功（mapped != requestedModel 说明找到了映射规则）
 	if mapped != requestedModel {
@@ -362,6 +365,10 @@ type TestConnectionResult struct {
 // 通过 antigravityRetryLoop 的只读 probe 模式发出一次真实上游请求，
 // 原样报告上游状态，但不读取或修改正式调度状态。
 func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
+	return s.TestConnectionWithPrompt(ctx, account, modelID, "")
+}
+
+func (s *AntigravityGatewayService) TestConnectionWithPrompt(ctx context.Context, account *Account, modelID, prompt string) (*TestConnectionResult, error) {
 	ctx = withAntigravityReadOnlyProbeContext(ctx)
 	// 获取 token
 	if s.tokenProvider == nil {
@@ -393,9 +400,9 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	// 构建请求体
 	var requestBody []byte
 	if strings.HasPrefix(modelID, "gemini-") {
-		requestBody, err = s.buildGeminiTestRequest(projectID, mappedModel)
+		requestBody, err = s.buildGeminiTestRequestWithPrompt(projectID, mappedModel, prompt)
 	} else {
-		requestBody, err = s.buildClaudeTestRequest(projectID, mappedModel)
+		requestBody, err = s.buildClaudeTestRequestWithPrompt(projectID, mappedModel, prompt)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("构建请求失败: %w", err)
@@ -454,15 +461,20 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	return &TestConnectionResult{Text: text, MappedModel: mappedModel}, nil
 }
 
-// buildGeminiTestRequest 构建 Gemini 格式测试请求
-// 推理模型会先消耗内部思考 token；过小的输出上限会造成 HTTP 200 但正文为空。
-func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model string) ([]byte, error) {
+func antigravityTestPrompt(prompt string) string {
+	if prompt = strings.TrimSpace(prompt); prompt != "" {
+		return prompt
+	}
+	return antigravityConnectionTestPrompt
+}
+
+func (s *AntigravityGatewayService) buildGeminiTestRequestWithPrompt(projectID, model, prompt string) ([]byte, error) {
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
 				"role": "user",
 				"parts": []map[string]any{
-					{"text": antigravityConnectionTestPrompt},
+					{"text": antigravityTestPrompt(prompt)},
 				},
 			},
 		},
@@ -480,15 +492,17 @@ func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model stri
 	return s.wrapV1InternalRequest(projectID, model, payloadBytes)
 }
 
-// buildClaudeTestRequest 构建 Claude 格式测试请求并转换为 Gemini 格式
-// 与 Gemini 测试保持相同的最小有效输出空间，确保界面能展示真实响应。
-func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedModel string) ([]byte, error) {
+func (s *AntigravityGatewayService) buildClaudeTestRequestWithPrompt(projectID, mappedModel, prompt string) ([]byte, error) {
+	content, err := json.Marshal(antigravityTestPrompt(prompt))
+	if err != nil {
+		return nil, err
+	}
 	claudeReq := &antigravity.ClaudeRequest{
 		Model: mappedModel,
 		Messages: []antigravity.ClaudeMessage{
 			{
 				Role:    "user",
-				Content: json.RawMessage(`"` + antigravityConnectionTestPrompt + `"`),
+				Content: json.RawMessage(content),
 			},
 		},
 		MaxTokens: antigravityConnectionTestMaxOutputTokens,
@@ -628,20 +642,33 @@ func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("解析 Gemini 请求失败: %w", err)
 	}
 
+	identityFound := false
+	systemChanged := false
 	// 检查现有 systemInstruction 是否已包含身份提示词
 	if sysInst, ok := request["systemInstruction"].(map[string]any); ok {
 		if parts, ok := sysInst["parts"].([]any); ok {
 			for _, part := range parts {
 				if partMap, ok := part.(map[string]any); ok {
 					if text, ok := partMap["text"].(string); ok {
-						if strings.Contains(text, "You are Antigravity") {
-							// 已包含身份提示词，直接返回原始请求
-							return body, nil
+						neutral := antigravity.NeutralizeSystemIdentity(text)
+						if neutral != text {
+							partMap["text"] = neutral
+							systemChanged = true
+						}
+						if strings.Contains(neutral, "You are Antigravity") {
+							identityFound = true
 						}
 					}
 				}
 			}
 		}
+	}
+
+	if identityFound {
+		if systemChanged {
+			return json.Marshal(request)
+		}
+		return body, nil
 	}
 
 	// 获取默认身份提示词

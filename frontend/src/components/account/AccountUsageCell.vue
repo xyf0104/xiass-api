@@ -369,6 +369,25 @@
         {{ error }}
       </div>
 
+      <div v-else-if="antigravityQuotaGroups.length" class="min-w-0 max-w-[18.5rem] space-y-1.5" data-test="antigravity-quota-groups">
+        <div v-for="(group, groupIndex) in antigravityQuotaGroups" :key="`${group.key}-${groupIndex}`" class="min-w-0 space-y-1">
+          <div class="break-words text-center text-[10px] font-medium text-gray-600 dark:text-gray-300 sm:text-left" :title="group.description">
+            {{ group.name || group.key }}
+          </div>
+          <UsageProgressBar
+            v-for="(window, windowIndex) in group.windows"
+            :key="`${window.window}-${windowIndex}`"
+            :label="window.window === 'weekly' ? t('admin.accounts.usageWindow.antigravityWeekly') : '5h'"
+            :utilization="window.utilization"
+            :resets-at="window.resets_at"
+            :color="group.key.startsWith('claude') ? 'amber' : group.key.startsWith('gemini') ? 'emerald' : 'indigo'"
+          />
+        </div>
+        <div v-if="aiCreditsDisplay" class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
+        </div>
+      </div>
+
       <!-- Usage data from API -->
       <div v-else-if="hasAntigravityQuotaFromAPI" class="space-y-1">
         <!-- Gemini 3 Pro -->
@@ -945,6 +964,17 @@ interface AntigravityUsageResult {
 }
 
 // ===== Antigravity quota from API (usageInfo.antigravity_quota) =====
+
+const antigravityQuotaGroups = computed(() =>
+  (usageInfo.value?.antigravity_quota_groups ?? [])
+    .map(group => ({
+      ...group,
+      windows: group.windows.filter(window =>
+        (window.window === '5h' || window.window === 'weekly') && Number.isFinite(window.utilization)
+      )
+    }))
+    .filter(group => group.windows.length > 0)
+)
 
 // 检查是否有从 API 获取的配额数据
 const hasAntigravityQuotaFromAPI = computed(() => {

@@ -53,10 +53,11 @@ type UpstreamModelMetadata struct {
 }
 
 type UpstreamModelMetadataSnapshot struct {
-	Identity string                           `json:"identity,omitempty"`
-	Source   string                           `json:"source"`
-	SyncedAt string                           `json:"synced_at"`
-	Models   map[string]UpstreamModelMetadata `json:"models"`
+	Identity       string                           `json:"identity,omitempty"`
+	Source         string                           `json:"source"`
+	SyncedAt       string                           `json:"synced_at"`
+	Models         map[string]UpstreamModelMetadata `json:"models"`
+	DisabledModels []string                         `json:"disabled_models,omitempty"`
 }
 
 type upstreamModelMetadataCASRepository interface {
@@ -132,7 +133,7 @@ func (a *Account) GetUpstreamModelMetadataSnapshot() *UpstreamModelMetadataSnaps
 		return nil
 	}
 	var snapshot UpstreamModelMetadataSnapshot
-	if err := json.Unmarshal(body, &snapshot); err != nil || len(snapshot.Models) == 0 {
+	if err := json.Unmarshal(body, &snapshot); err != nil || (len(snapshot.Models) == 0 && len(snapshot.DisabledModels) == 0) {
 		return nil
 	}
 	expectedIdentity := upstreamModelCapabilityIdentity(a)
@@ -242,6 +243,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		Models:   models,
 		Metadata: make(map[string]UpstreamModelMetadata),
 	}
+	var disabledModels []string
 	if mappingFallback {
 		catalog.Warnings = append(catalog.Warnings, UpstreamModelSyncWarning{
 			Code:    UpstreamModelListFallbackCode,
@@ -249,10 +251,15 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		})
 	}
 	if len(body) > 0 {
-		_, directMetadata, parseErr := extractUpstreamModelCatalog(body, account != nil && account.IsGrok())
+		directModels, directMetadata, parseErr := extractUpstreamModelCatalog(body, account != nil && account.IsGrok())
 		if parseErr == nil {
 			catalog.Metadata = directMetadata
 			if antigravityOAuth {
+				for _, modelID := range directModels {
+					if strings.HasSuffix(strings.ToLower(modelID), "-disabled") {
+						disabledModels = append(disabledModels, modelID)
+					}
+				}
 				catalog.Metadata = publicAntigravityModelMetadata(catalog.Metadata)
 			}
 		}
@@ -305,12 +312,13 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
 	persistedCapabilities := false
-	if len(completeMetadata) > 0 && account.ID > 0 && s != nil && s.accountRepo != nil {
+	if (len(completeMetadata) > 0 || len(disabledModels) > 0) && account.ID > 0 && s != nil && s.accountRepo != nil {
 		snapshot := UpstreamModelMetadataSnapshot{
-			Identity: capabilityIdentity,
-			Source:   upstreamModelCapabilitySource(sourceParts),
-			SyncedAt: time.Now().UTC().Format(time.RFC3339),
-			Models:   completeMetadata,
+			Identity:       capabilityIdentity,
+			Source:         upstreamModelCapabilitySource(sourceParts),
+			SyncedAt:       time.Now().UTC().Format(time.RFC3339),
+			Models:         completeMetadata,
+			DisabledModels: disabledModels,
 		}
 		if err := validateUpstreamModelMetadataSnapshot(snapshot); err != nil {
 			catalog.Warnings = append(catalog.Warnings, UpstreamModelSyncWarning{
@@ -359,7 +367,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 func publicAntigravityModelMetadata(metadata map[string]UpstreamModelMetadata) map[string]UpstreamModelMetadata {
 	public := make(map[string]UpstreamModelMetadata, len(metadata))
 	for modelID, entry := range metadata {
-		if !isAntigravityGeminiFlashInternalModel(modelID) {
+		if !isAntigravityGeminiFlashInternalModel(modelID) && !strings.HasSuffix(strings.ToLower(modelID), "-disabled") {
 			public[modelID] = entry
 		}
 	}
@@ -392,8 +400,13 @@ func validateUpstreamModelMetadataSnapshot(snapshot UpstreamModelMetadataSnapsho
 	if snapshot.Identity == "" {
 		return errors.New("model metadata identity is empty")
 	}
-	if len(snapshot.Models) > upstreamModelMetadataMaxModels {
+	if len(snapshot.Models)+len(snapshot.DisabledModels) > upstreamModelMetadataMaxModels {
 		return fmt.Errorf("model metadata contains %d models", len(snapshot.Models))
+	}
+	for _, modelID := range snapshot.DisabledModels {
+		if len(modelID) == 0 || len(modelID) > upstreamModelMetadataMaxIDBytes {
+			return fmt.Errorf("disabled model ID exceeds the storage limit")
+		}
 	}
 	for modelID, metadata := range snapshot.Models {
 		if len(modelID) == 0 || len(modelID) > upstreamModelMetadataMaxIDBytes || len(metadata.ID) > upstreamModelMetadataMaxIDBytes {

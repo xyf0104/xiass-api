@@ -1,9 +1,12 @@
 package apicompat
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 )
 
 // ResponsesToAnthropicRequest converts a Responses API request into an
@@ -11,7 +14,8 @@ import (
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input)
+	isClaude52 := claude.IsFable52(req.Model) || claude.IsMythos52(req.Model)
+	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, isClaude52)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +53,43 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 			return nil, fmt.Errorf("convert tool_choice: %w", err)
 		}
 		out.ToolChoice = tc
+	}
+
+	// Fable/Mythos 5.2 require adaptive thinking and retain xhigh distinctly.
+	// The caller must resolve account model aliases before conversion.
+	if isClaude52 {
+		var choice struct {
+			Type string `json:"type"`
+		}
+		if len(out.ToolChoice) > 0 {
+			if err := json.Unmarshal(out.ToolChoice, &choice); err != nil {
+				return nil, fmt.Errorf("invalid tool_choice: %w", err)
+			}
+		}
+		if choice.Type == "any" || choice.Type == "tool" {
+			return nil, fmt.Errorf("%s does not support forced tool_choice; use auto or none", req.Model)
+		}
+		if req.Temperature != nil && *req.Temperature != 1 {
+			return nil, fmt.Errorf("%s does not support non-default temperature", req.Model)
+		}
+		if req.TopP != nil && *req.TopP != 0.99 {
+			return nil, fmt.Errorf("%s does not support non-default top_p", req.Model)
+		}
+		if req.Temperature != nil && req.TopP != nil {
+			return nil, fmt.Errorf("%s does not allow temperature and top_p together; omit both", req.Model)
+		}
+		effort := "high"
+		if req.Reasoning != nil && req.Reasoning.Effort != "" {
+			effort = req.Reasoning.Effort
+		}
+		switch effort {
+		case "low", "medium", "high", "xhigh", "max":
+		default:
+			return nil, fmt.Errorf("%s does not support reasoning effort %q; use low, medium, high, xhigh or max", req.Model, effort)
+		}
+		out.Thinking = &AnthropicThinking{Type: "adaptive"}
+		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
+		return out, nil
 	}
 
 	// reasoning.effort → output_config.effort + thinking
@@ -100,7 +141,7 @@ func mapResponsesEffortToAnthropic(effort string) string {
 // convertResponsesInputToAnthropic extracts system prompt and messages from
 // a Responses API instructions + input array. Returns the system as raw JSON
 // (for Anthropic's polymorphic system field) and a list of Anthropic messages.
-func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage) (json.RawMessage, []AnthropicMessage, error) {
+func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage, preserveThinking ...bool) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []string
 	if strings.TrimSpace(instructions) != "" {
 		systemParts = append(systemParts, strings.TrimSpace(instructions))
@@ -165,6 +206,26 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "reasoning":
+			if len(preserveThinking) > 0 && preserveThinking[0] && strings.HasPrefix(item.EncryptedContent, anthropicThinkingEnvelopePrefix) {
+				raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(item.EncryptedContent, anthropicThinkingEnvelopePrefix))
+				if err != nil {
+					return nil, nil, fmt.Errorf("invalid Anthropic thinking envelope: %w", err)
+				}
+				var block AnthropicContentBlock
+				if err := json.Unmarshal(raw, &block); err != nil {
+					return nil, nil, fmt.Errorf("invalid Anthropic thinking block: %w", err)
+				}
+				if (block.Type != "thinking" || block.Signature == "") && (block.Type != "redacted_thinking" || block.Data == "") {
+					return nil, nil, fmt.Errorf("invalid Anthropic signed thinking block")
+				}
+				// Only replay signed-thinking fields, never arbitrary envelope fields.
+				block = AnthropicContentBlock{Type: block.Type, Thinking: block.Thinking, Signature: block.Signature, Data: block.Data}
+				content, err := json.Marshal([]AnthropicContentBlock{block})
+				if err != nil {
+					return nil, nil, err
+				}
+				messages = append(messages, AnthropicMessage{Role: "assistant", Content: content})
+			}
 			// Anthropic 无法摄入 OpenAI 的 reasoning：encrypted_content 是不透明的，
 			// 而 thinking 块的重放需要 Anthropic 自己签发的 signature，无法伪造。
 			// Codex 常见形态（只带 summary + encrypted_content）本来就会被丢弃，

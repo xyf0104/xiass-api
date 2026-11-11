@@ -89,14 +89,15 @@ type userAvailableGroup struct {
 // userGroupModelPricing exposes final user prices and their public context
 // tiers. Internal IDs and account-cost controls remain administrator-only.
 type userGroupModelPricing struct {
-	Models          []string                 `json:"models"`
-	BillingMode     string                   `json:"billing_mode"`
-	PriceMode       string                   `json:"price_mode"`
-	InputPrice      *float64                 `json:"input_price"`
-	OutputPrice     *float64                 `json:"output_price"`
-	CacheWritePrice *float64                 `json:"cache_write_price"`
-	CacheReadPrice  *float64                 `json:"cache_read_price"`
-	Intervals       []userPricingIntervalDTO `json:"intervals,omitempty"`
+	Models             []string                 `json:"models"`
+	BillingMode        string                   `json:"billing_mode"`
+	PriceMode          string                   `json:"price_mode"`
+	InputPrice         *float64                 `json:"input_price"`
+	OutputPrice        *float64                 `json:"output_price"`
+	CacheWritePrice    *float64                 `json:"cache_write_price"`
+	CacheWrite12hPrice *float64                 `json:"cache_write_12h_price"`
+	CacheReadPrice     *float64                 `json:"cache_read_price"`
+	Intervals          []userPricingIntervalDTO `json:"intervals,omitempty"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
@@ -107,6 +108,7 @@ type userSupportedModelPricing struct {
 	OutputPrice                  *float64                 `json:"output_price"`
 	CacheWritePrice              *float64                 `json:"cache_write_price"`
 	CacheWrite1hPrice            *float64                 `json:"cache_write_1h_price"`
+	CacheWrite12hPrice           *float64                 `json:"cache_write_12h_price"`
 	CacheReadPrice               *float64                 `json:"cache_read_price"`
 	MaxReasoningEffortMultiplier *float64                 `json:"max_reasoning_effort_multiplier,omitempty"`
 	ImageInputPrice              *float64                 `json:"image_input_price"`
@@ -124,6 +126,7 @@ type userPricingIntervalDTO struct {
 	OutputPrice          *float64 `json:"output_price"`
 	CacheWritePrice      *float64 `json:"cache_write_price"`
 	CacheWrite1hPrice    *float64 `json:"cache_write_1h_price"`
+	CacheWrite12hPrice   *float64 `json:"cache_write_12h_price"`
 	CacheReadPrice       *float64 `json:"cache_read_price"`
 	InputMultiplier      *float64 `json:"input_multiplier"`
 	OutputMultiplier     *float64 `json:"output_multiplier"`
@@ -328,6 +331,13 @@ func filterUserVisibleGroups(
 	return visible
 }
 
+func firstNonNilFloat(first, second *float64) *float64 {
+	if first != nil {
+		return first
+	}
+	return second
+}
+
 func toUserGroupModelPricing(pricing []service.ChannelModelPricing) []userGroupModelPricing {
 	out := make([]userGroupModelPricing, 0, len(pricing))
 	for _, p := range pricing {
@@ -349,6 +359,7 @@ func toUserGroupModelPricing(pricing []service.ChannelModelPricing) []userGroupM
 			entry.InputPrice = p.InputPrice
 			entry.OutputPrice = p.OutputPrice
 			entry.CacheWritePrice = p.CacheWritePrice
+			entry.CacheWrite12hPrice = p.CacheWrite12hPrice
 			entry.CacheReadPrice = p.CacheReadPrice
 			for _, interval := range p.Intervals {
 				resolveTier := func(base, override, multiplier *float64) *float64 {
@@ -371,7 +382,8 @@ func toUserGroupModelPricing(pricing []service.ChannelModelPricing) []userGroupM
 						interval.OutputMultiplier),
 					CacheWritePrice: resolveTier(p.CacheWritePrice, interval.CacheWritePrice,
 						interval.CacheWriteMultiplier),
-					CacheWrite1hPrice: interval.CacheWrite1hPrice,
+					CacheWrite1hPrice:  interval.CacheWrite1hPrice,
+					CacheWrite12hPrice: resolveTier(p.CacheWrite12hPrice, firstNonNilFloat(interval.CacheWrite12hPrice, interval.CacheWritePrice), interval.CacheWriteMultiplier),
 					CacheReadPrice: resolveTier(p.CacheReadPrice, interval.CacheReadPrice,
 						interval.CacheReadMultiplier),
 				})
@@ -421,6 +433,7 @@ func toUserPricing(p *service.ChannelModelPricing) *userSupportedModelPricing {
 			OutputPrice:          iv.OutputPrice,
 			CacheWritePrice:      iv.CacheWritePrice,
 			CacheWrite1hPrice:    iv.CacheWrite1hPrice,
+			CacheWrite12hPrice:   iv.CacheWrite12hPrice,
 			CacheReadPrice:       iv.CacheReadPrice,
 			InputMultiplier:      iv.InputMultiplier,
 			OutputMultiplier:     iv.OutputMultiplier,
@@ -440,6 +453,7 @@ func toUserPricing(p *service.ChannelModelPricing) *userSupportedModelPricing {
 		OutputPrice:                  p.OutputPrice,
 		CacheWritePrice:              p.CacheWritePrice,
 		CacheWrite1hPrice:            p.CacheWrite1hPrice,
+		CacheWrite12hPrice:           p.CacheWrite12hPrice,
 		CacheReadPrice:               p.CacheReadPrice,
 		MaxReasoningEffortMultiplier: p.MaxReasoningEffortMultiplier,
 		ImageInputPrice:              p.ImageInputPrice,

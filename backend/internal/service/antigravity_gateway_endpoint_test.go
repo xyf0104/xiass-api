@@ -118,41 +118,47 @@ func TestConfiguredAntigravityForwardBaseURLs_HardOverrides(t *testing.T) {
 	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLs())
 }
 
-func TestConfiguredAntigravityForwardBaseURLs_FollowPaidPlanRouting(t *testing.T) {
+func TestConfiguredAntigravityForwardBaseURLs_PaidPlansStillNegotiateFromProd(t *testing.T) {
 	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	svc := &AntigravityGatewayService{}
 	p := antigravityEndpointTestParams(nil)
 	for _, plan := range []string{"Ultra", "g1-ultra-lite-tier", "Pro", "g1-pro-tier"} {
 		p.account.Credentials = map[string]any{"plan_type": plan}
-		require.Equal(t, []string{dailyURL, prodURL}, svc.antigravityForwardBaseURLs(p), plan)
+		require.Equal(t, []string{prodURL, dailyURL}, svc.antigravityForwardBaseURLs(p), plan)
+		require.Equal(t, []string{dailyURL}, configuredAntigravityCatalogBaseURLs(p.account), plan)
 	}
 	for _, plan := range []string{"Free", "free-tier", "", "unknown"} {
 		p.account.Credentials = map[string]any{"plan_type": plan}
 		require.Equal(t, []string{prodURL, dailyURL}, svc.antigravityForwardBaseURLs(p), plan)
+		require.Equal(t, []string{prodURL, dailyURL}, configuredAntigravityCatalogBaseURLs(p.account), plan)
 	}
 
 	t.Setenv(antigravityForwardBaseURLEnv, "prod")
 	require.Equal(t, []string{prodURL}, configuredAntigravityForwardBaseURLs())
 	require.Equal(t, []string{prodURL}, configuredAntigravityForwardBaseURLsForAccount(p.account))
+	require.Equal(t, []string{prodURL}, configuredAntigravityCatalogBaseURLs(p.account))
 	t.Setenv(antigravityForwardBaseURLEnv, "daily")
 	require.Equal(t, []string{dailyURL}, configuredAntigravityForwardBaseURLsForAccount(p.account))
 }
 
-func TestAntigravityReadOnlyProbeUsesPaidPlanEndpoint(t *testing.T) {
-	_, dailyURL := withAntigravityEndpointURLs(t)
+func TestAntigravityReadOnlyProbeNegotiatesPaidPlanWithoutSharedPreference(t *testing.T) {
+	prodURL, dailyURL := withAntigravityEndpointURLs(t)
 	upstream := &sequencedAntigravityEndpointUpstream{steps: []antigravityEndpointStep{
+		{status: http.StatusTooManyRequests, body: bareAntigravityEndpoint429},
 		{status: http.StatusOK, body: `{}`},
 	}}
 	p := antigravityEndpointTestParams(upstream)
 	p.account.Credentials = map[string]any{"plan_type": "Pro"}
 	p.readOnlyProbe = true
 
-	result, err := (&AntigravityGatewayService{}).antigravityReadOnlyProbe(p)
+	svc := &AntigravityGatewayService{}
+	result, err := svc.antigravityReadOnlyProbe(p)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, http.StatusOK, result.resp.StatusCode)
-	require.Equal(t, []string{dailyURL + "/v1internal:generateContent"}, upstream.calls)
+	require.Equal(t, []string{prodURL + "/v1internal:generateContent", dailyURL + "/v1internal:generateContent"}, upstream.calls)
+	require.Empty(t, svc.endpointPreferences)
 	_ = result.resp.Body.Close()
 }
 

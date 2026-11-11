@@ -158,10 +158,10 @@ const TablePageLayoutStub = {
 
 const DataTableStub = {
   name: 'DataTable',
-  props: ['columns', 'data'],
+  props: ['columns', 'data', 'loading'],
   emits: ['sort'],
   template: `
-    <div>
+    <div :data-loading="loading">
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, sortable: !!col.sortable }))) }}</div>
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
@@ -354,6 +354,19 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_at')
     expect(visibleColumnKeys(wrapper)).not.toContain('last_used_ip')
     expect(visibleColumnKeys(wrapper)).not.toContain('id')
+  })
+
+  it('renders keys before delayed usage statistics finish', async () => {
+    let resolveUsage!: (value: { stats: Record<string, unknown> }) => void
+    getDashboardApiKeysUsage.mockReturnValueOnce(new Promise((resolve) => { resolveUsage = resolve }))
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('test-key')
+    expect(wrapper.findComponent({ name: 'DataTable' }).props('loading')).toBe(false)
+    resolveUsage({ stats: {} })
+    await flushPromises()
+    expect(showError).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('shows a hidden column when toggled and persists the preference', async () => {

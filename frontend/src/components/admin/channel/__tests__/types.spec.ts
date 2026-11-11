@@ -8,6 +8,18 @@ import {
 } from '../types'
 
 describe('interval multiplier conversion', () => {
+  it('round-trips separate 12h prices including explicit free values', () => {
+    for (const value of [null, 0, 0.000001625]) {
+      const api = formIntervalsToAPI([makeInterval({ cache_write_price: 0.8125, cache_write_12h_price: value == null ? null : value * 1e6 })])
+      expect(api[0].cache_write_12h_price).toBe(value)
+      const form = apiIntervalsToForm(api)
+      expect(form[0].cache_write_price).toBe(0.8125)
+      expect(form[0].cache_write_12h_price).toBe(value == null ? null : value * 1e6)
+    }
+    expect(validateIntervals([makeInterval({ cache_write_12h_price: -1 })], 'token', t)).toContain('negativePrice')
+    expect(validateIntervals([makeInterval({ cache_write_12h_price: 0 })], 'token', t)).toBeNull()
+  })
+
   it('preserves component multipliers without MTok conversion', () => {
     const form = apiIntervalsToForm([{
       min_tokens: 272000,

@@ -124,6 +124,15 @@ func TestPublicAntigravityModelIDs_PreservesArgonAndClaude55Catalog(t *testing.T
 	}, models)
 }
 
+func TestPublicAntigravityModelIDs_CarbonCatalogExcludesUnavailableMarkers(t *testing.T) {
+	models := publicAntigravityModelIDs([]string{
+		"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low",
+		"gemini-4-carbon-high", "gemini-4-carbon-disabled", "gemini-4-argon-disabled",
+	})
+	require.Equal(t, []string{"gemini-4-carbon-high", "gemini-4-carbon-low", "gemini-4-carbon-medium"}, models)
+	require.Empty(t, publicAntigravityModelIDs([]string{"gemini-4-carbon-disabled"}))
+}
+
 func TestAntigravityGateway_Gemini38ResponsesUsesPublicIdentityAndTieredRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
@@ -141,6 +150,28 @@ func TestAntigravityGateway_Gemini38ResponsesUsesPublicIdentityAndTieredRoute(t 
 	written := upstream.requestBodies[0]
 	require.Equal(t, domain.AntigravityGemini38FlashTieredModel, gjson.GetBytes(written, "model").String())
 	require.Equal(t, int64(4000), gjson.GetBytes(written, "request.generationConfig.thinkingConfig.thinkingBudget").Int())
+}
+
+func TestAntigravityGateway_CarbonResponsesPreservesSelectedTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tier := range []string{"high", "medium", "low"} {
+		t.Run(tier, func(t *testing.T) {
+			model := "gemini-4-carbon-" + tier
+			upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
+			svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, upstream)
+			body := []byte(`{"model":"` + model + `","input":"ok","stream":true}`)
+			c := newAntigravityTierContext("/v1/responses", body)
+			account := newAntigravityTierAccount()
+			account.Credentials["plan_type"] = "Ultra"
+			result, err := svc.ForwardAsResponses(context.Background(), c, account, body, nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, model, result.Model)
+			require.Equal(t, model, result.UpstreamModel)
+			require.Len(t, upstream.requestBodies, 1)
+			require.Equal(t, model, gjson.GetBytes(upstream.requestBodies[0], "model").String())
+		})
+	}
 }
 
 func TestApplyAntigravityWrappedModelProfile_Gemini37PreservesUnknownFields(t *testing.T) {

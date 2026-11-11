@@ -183,15 +183,15 @@
       <Transition name="modal-fade">
         <div
           v-if="detailModalOpen && selectedAnnouncement"
-          class="fixed inset-0 z-[110] flex items-start justify-center overflow-y-auto bg-gradient-to-br from-black/70 via-black/60 to-black/70 p-4 pt-[6vh] backdrop-blur-md"
+          class="announcement-dialog-overlay z-[110] bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-md"
           @click="closeDetail"
         >
           <div
-            class="w-full max-w-[780px] overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
+            class="announcement-dialog rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
             @click.stop
           >
             <!-- Header with Decorative Elements -->
-            <div class="relative overflow-hidden border-b border-gray-100 bg-gradient-to-br from-blue-50/80 via-indigo-50/50 to-purple-50/30 px-8 py-6 dark:border-dark-700 dark:from-blue-900/20 dark:via-indigo-900/10 dark:to-purple-900/5">
+            <div class="relative shrink-0 overflow-hidden border-b border-gray-100 bg-gradient-to-br from-blue-50/80 via-indigo-50/50 to-purple-50/30 px-4 py-4 sm:px-8 dark:border-dark-700 dark:from-blue-900/20 dark:via-indigo-900/10 dark:to-purple-900/5">
               <!-- Decorative background elements -->
               <div class="absolute right-0 top-0 h-full w-64 bg-gradient-to-l from-indigo-100/30 to-transparent dark:from-indigo-900/20"></div>
               <div class="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/20 blur-3xl"></div>
@@ -200,7 +200,7 @@
               <div class="relative z-10 flex items-start justify-between gap-4">
                 <div class="flex-1 min-w-0">
                   <!-- Icon and Category -->
-                  <div class="mb-3 flex items-center gap-2">
+                  <div class="mb-2 flex items-center gap-2">
                     <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30">
                       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -224,12 +224,12 @@
                   </div>
 
                   <!-- Title -->
-                  <h2 class="mb-3 text-2xl font-bold leading-tight text-gray-900 dark:text-white">
+                  <h2 class="mb-2 break-words text-xl font-bold leading-tight text-gray-900 sm:text-2xl dark:text-white">
                     {{ selectedAnnouncement.title }}
                   </h2>
 
                   <!-- Meta Info -->
-                  <div class="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                  <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600 dark:text-gray-400">
                     <div class="flex items-center gap-1.5">
                       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -258,13 +258,13 @@
             </div>
 
             <!-- Body with Enhanced Markdown -->
-            <div class="max-h-[60vh] overflow-y-auto bg-white px-8 py-8 dark:bg-dark-800">
+            <div class="announcement-dialog-content bg-white dark:bg-dark-800">
               <!-- Content with decorative border -->
               <div class="relative">
                 <!-- Decorative left border -->
                 <div class="absolute left-0 top-0 bottom-0 w-1 rounded-full bg-gradient-to-b from-blue-500 via-indigo-500 to-purple-500"></div>
 
-                <div class="pl-6">
+                <div class="pl-3 sm:pl-5">
                   <div
                     class="markdown-body prose prose-sm max-w-none dark:prose-invert"
                     v-html="renderMarkdown(selectedAnnouncement.content)"
@@ -274,8 +274,8 @@
             </div>
 
             <!-- Footer with Actions -->
-            <div class="border-t border-gray-100 bg-gray-50/50 px-8 py-5 dark:border-dark-700 dark:bg-dark-900/30">
-              <div class="flex items-center justify-between">
+            <div class="shrink-0 border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:px-8 dark:border-dark-700 dark:bg-dark-900/30">
+              <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />

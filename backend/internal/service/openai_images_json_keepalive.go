@@ -36,6 +36,11 @@ func StartOpenAIImagesJSONKeepalive(c *gin.Context, interval time.Duration) func
 	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
 	}
+	// Native Codex relies on the status to distinguish errors from image JSON.
+	// A heartbeat would commit 200 before a late upstream error can be returned.
+	if c.GetHeader("X-Codex-Image-Turn-Id") != "" {
+		return func() {}
+	}
 	originalWriter := c.Writer
 	k := &openAIImagesJSONKeepalive{
 		writer: originalWriter,

@@ -220,7 +220,8 @@ type UsageInfo struct {
 	GeminiFlashMinute  *UsageProgress `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
 	// Antigravity 多模型配额
-	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
+	AntigravityQuota       map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
+	AntigravityQuotaGroups []*AntigravityQuotaGroup          `json:"antigravity_quota_groups,omitempty"`
 
 	// Grok / xAI 被动额度快照
 	GrokRequestQuota       *xai.QuotaWindow `json:"grok_request_quota,omitempty"`

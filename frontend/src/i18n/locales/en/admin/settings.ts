@@ -1,7 +1,17 @@
 export default {
     modelPriority: {
+      accountRoutingTitle: 'OpenAI account routing',
       modelPriorityTitle: 'Model priority scheduling',
       modelPriorityDescription: 'Choose first-priority accounts for a model. Ordinary scheduling is used immediately when those accounts have no available slots.',
+      userPriorityTitle: 'User priority accounts',
+      userPriorityDescription: 'OpenAI requests try the user account order, then model rules, then ordinary scheduling. Continuation sessions keep their account.',
+      searchUsers: 'Search username or email',
+      addUserRule: 'Select a user to add a rule',
+      noMatchingUsers: 'No matching users',
+      noUserRules: 'No user priority rules are configured.',
+      configureUserAccounts: 'Preferred accounts for {user}',
+      missingUser: 'User #{id}',
+      userSearchFailed: 'Failed to search users',
       smartRotationTitle: 'Smart Full-Model Rotation',
       smartRotationDescription: 'Evaluate each user and API key independently. A model mismatch detected before content is sent is blocked with a retry notice; subsequent requests rotate in account order. Missing models do not count as matches. Exhausted accounts fall back to ordinary scheduling; fixed continuation chains keep their account.',
       smartRotationRequiresPriority: 'Turn on model priority scheduling first. Smart rotation applies to every configured rule that matches the requested model.',

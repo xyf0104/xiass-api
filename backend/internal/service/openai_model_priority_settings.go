@@ -34,9 +34,17 @@ type OpenAIModelPriorityRule struct {
 	AccountOrder []int64 `json:"account_order,omitempty"`
 }
 
+type OpenAIUserPriorityRule struct {
+	UserID       int64   `json:"user_id"`
+	AccountIDs   []int64 `json:"account_ids"`
+	AccountOrder []int64 `json:"account_order"`
+}
+
 type OpenAIModelPrioritySettings struct {
 	Enabled                      bool                      `json:"enabled"`
 	Rules                        []OpenAIModelPriorityRule `json:"rules"`
+	UserEnabled                  bool                      `json:"user_enabled"`
+	UserRules                    []OpenAIUserPriorityRule  `json:"user_rules"`
 	SmartRotationEnabled         bool                      `json:"smart_rotation_enabled"`
 	SmartRotationCooldownMinutes int                       `json:"smart_rotation_cooldown_minutes"`
 }
@@ -50,6 +58,8 @@ type compiledOpenAIModelPriorityRule struct {
 type compiledOpenAIModelPrioritySettings struct {
 	enabled                      bool
 	rules                        []compiledOpenAIModelPriorityRule
+	userEnabled                  bool
+	userRules                    map[int64]compiledOpenAIModelPriorityRule
 	smartRotationEnabled         bool
 	smartRotationCooldownMinutes int
 }
@@ -64,6 +74,7 @@ func DefaultOpenAIModelPrioritySettings() *OpenAIModelPrioritySettings {
 	return &OpenAIModelPrioritySettings{
 		Enabled:                      false,
 		Rules:                        []OpenAIModelPriorityRule{},
+		UserRules:                    []OpenAIUserPriorityRule{},
 		SmartRotationEnabled:         false,
 		SmartRotationCooldownMinutes: openAIModelPriorityDefaultSmartRotationCooldownMinutes,
 	}
@@ -73,12 +84,21 @@ func cloneOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) *Ope
 	cloned := OpenAIModelPrioritySettings{
 		Enabled:                      settings.Enabled,
 		Rules:                        make([]OpenAIModelPriorityRule, len(settings.Rules)),
+		UserEnabled:                  settings.UserEnabled,
+		UserRules:                    make([]OpenAIUserPriorityRule, len(settings.UserRules)),
 		SmartRotationEnabled:         settings.SmartRotationEnabled,
 		SmartRotationCooldownMinutes: settings.SmartRotationCooldownMinutes,
 	}
 	for i, rule := range settings.Rules {
 		cloned.Rules[i] = OpenAIModelPriorityRule{
 			ModelPattern: rule.ModelPattern,
+			AccountIDs:   append([]int64(nil), rule.AccountIDs...),
+			AccountOrder: append([]int64(nil), rule.AccountOrder...),
+		}
+	}
+	for i, rule := range settings.UserRules {
+		cloned.UserRules[i] = OpenAIUserPriorityRule{
+			UserID:       rule.UserID,
 			AccountIDs:   append([]int64(nil), rule.AccountIDs...),
 			AccountOrder: append([]int64(nil), rule.AccountOrder...),
 		}
@@ -93,6 +113,9 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 	if len(settings.Rules) > openAIModelPriorityMaxRules {
 		return nil, fmt.Errorf("rules cannot exceed %d", openAIModelPriorityMaxRules)
 	}
+	if len(settings.UserRules) > openAIModelPriorityMaxRules {
+		return nil, fmt.Errorf("user_rules cannot exceed %d", openAIModelPriorityMaxRules)
+	}
 	cooldownMinutes := settings.SmartRotationCooldownMinutes
 	if cooldownMinutes == 0 {
 		cooldownMinutes = openAIModelPriorityDefaultSmartRotationCooldownMinutes
@@ -104,6 +127,8 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 	normalized := &OpenAIModelPrioritySettings{
 		Enabled:                      settings.Enabled,
 		Rules:                        make([]OpenAIModelPriorityRule, 0, len(settings.Rules)),
+		UserEnabled:                  settings.UserEnabled,
+		UserRules:                    make([]OpenAIUserPriorityRule, 0, len(settings.UserRules)),
 		SmartRotationEnabled:         settings.SmartRotationEnabled,
 		SmartRotationCooldownMinutes: cooldownMinutes,
 	}
@@ -157,6 +182,51 @@ func normalizeOpenAIModelPrioritySettings(settings *OpenAIModelPrioritySettings)
 			ModelPattern: pattern, AccountIDs: ids, AccountOrder: append([]int64(nil), rule.AccountOrder...),
 		})
 	}
+	seenUsers := make(map[int64]struct{}, len(settings.UserRules))
+	for i, rule := range settings.UserRules {
+		if rule.UserID <= 0 {
+			return nil, fmt.Errorf("user_rules[%d]: user_id must be positive", i)
+		}
+		if _, exists := seenUsers[rule.UserID]; exists {
+			return nil, fmt.Errorf("user_rules[%d]: duplicate user_id", i)
+		}
+		seenUsers[rule.UserID] = struct{}{}
+		if len(rule.AccountIDs) == 0 || len(rule.AccountIDs) > openAIModelPriorityMaxAccounts {
+			return nil, fmt.Errorf("user_rules[%d]: account_ids must contain 1 to %d accounts", i, openAIModelPriorityMaxAccounts)
+		}
+		selected := make(map[int64]struct{}, len(rule.AccountIDs))
+		ids := make([]int64, 0, len(rule.AccountIDs))
+		for _, id := range rule.AccountIDs {
+			if id <= 0 {
+				return nil, fmt.Errorf("user_rules[%d]: account_ids must be positive", i)
+			}
+			if _, exists := selected[id]; !exists {
+				selected[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+		order := rule.AccountOrder
+		if len(order) == 0 {
+			order = append([]int64(nil), ids...)
+		}
+		if len(order) != len(ids) {
+			return nil, fmt.Errorf("user_rules[%d]: account_order must contain every selected account exactly once", i)
+		}
+		seenOrder := make(map[int64]struct{}, len(order))
+		for _, id := range order {
+			if _, exists := selected[id]; !exists {
+				return nil, fmt.Errorf("user_rules[%d]: account_order contains an unselected account", i)
+			}
+			if _, exists := seenOrder[id]; exists {
+				return nil, fmt.Errorf("user_rules[%d]: account_order contains a duplicate account", i)
+			}
+			seenOrder[id] = struct{}{}
+		}
+		sort.Slice(ids, func(left, right int) bool { return ids[left] < ids[right] })
+		normalized.UserRules = append(normalized.UserRules, OpenAIUserPriorityRule{
+			UserID: rule.UserID, AccountIDs: ids, AccountOrder: append([]int64(nil), order...),
+		})
+	}
 	return normalized, nil
 }
 
@@ -164,6 +234,8 @@ func compileOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) co
 	compiled := compiledOpenAIModelPrioritySettings{
 		enabled:                      settings.Enabled,
 		rules:                        make([]compiledOpenAIModelPriorityRule, 0, len(settings.Rules)),
+		userEnabled:                  settings.UserEnabled,
+		userRules:                    make(map[int64]compiledOpenAIModelPriorityRule, len(settings.UserRules)),
 		smartRotationEnabled:         settings.SmartRotationEnabled,
 		smartRotationCooldownMinutes: settings.SmartRotationCooldownMinutes,
 	}
@@ -181,6 +253,17 @@ func compileOpenAIModelPrioritySettings(settings OpenAIModelPrioritySettings) co
 			accountIDs:   accountIDs,
 			accountRanks: ranks,
 		})
+	}
+	for _, rule := range settings.UserRules {
+		ids := make(map[int64]struct{}, len(rule.AccountIDs))
+		for _, id := range rule.AccountIDs {
+			ids[id] = struct{}{}
+		}
+		ranks := make(map[int64]int, len(rule.AccountOrder))
+		for rank, id := range rule.AccountOrder {
+			ranks[id] = rank
+		}
+		compiled.userRules[rule.UserID] = compiledOpenAIModelPriorityRule{accountIDs: ids, accountRanks: ranks}
 	}
 	return compiled
 }
@@ -318,7 +401,11 @@ func (s *SettingService) ResolveOpenAIModelPriorityAccountIDs(ctx context.Contex
 }
 
 func (s *SettingService) resolveOpenAIModelPriorityPreference(ctx context.Context, model string) openAIModelRoutingPreference {
-	if s == nil || strings.TrimSpace(model) == "" {
+	return s.resolveOpenAIAccountPriorityPreference(ctx, model, 0)
+}
+
+func (s *SettingService) resolveOpenAIAccountPriorityPreference(ctx context.Context, model string, userID int64) openAIModelRoutingPreference {
+	if s == nil || (strings.TrimSpace(model) == "" && userID <= 0) {
 		return openAIModelRoutingPreference{}
 	}
 	cached, _ := s.openAIModelPriorityCache.Load().(*cachedOpenAIModelPrioritySettings)
@@ -343,8 +430,40 @@ func (s *SettingService) resolveOpenAIModelPriorityPreference(ctx context.Contex
 	if cached == nil {
 		return openAIModelRoutingPreference{}
 	}
-	if rule := cached.compiled.ruleForModel(model); rule != nil {
-		return openAIModelRoutingPreference{accountIDs: rule.accountIDs, accountRanks: rule.accountRanks}
+	modelRule := cached.compiled.ruleForModel(model)
+	var userRule *compiledOpenAIModelPriorityRule
+	if cached.compiled.userEnabled && userID > 0 {
+		if rule, exists := cached.compiled.userRules[userID]; exists {
+			userRule = &rule
+		}
 	}
-	return openAIModelRoutingPreference{}
+	if userRule == nil && modelRule == nil {
+		return openAIModelRoutingPreference{}
+	}
+	if userRule == nil {
+		return openAIModelRoutingPreference{accountIDs: modelRule.accountIDs, accountRanks: modelRule.accountRanks}
+	}
+	preference := openAIModelRoutingPreference{
+		accountIDs:   make(map[int64]struct{}, len(userRule.accountIDs)),
+		accountRanks: make(map[int64]int, len(userRule.accountRanks)),
+	}
+	for id := range userRule.accountIDs {
+		preference.accountIDs[id] = struct{}{}
+		preference.accountRanks[id] = userRule.accountRanks[id]
+	}
+	if modelRule != nil {
+		for id := range modelRule.accountIDs {
+			preference.accountIDs[id] = struct{}{}
+		}
+		ordered := make([]int64, len(modelRule.accountRanks))
+		for id, rank := range modelRule.accountRanks {
+			ordered[rank] = id
+		}
+		for _, id := range ordered {
+			if _, exists := preference.accountRanks[id]; !exists {
+				preference.accountRanks[id] = len(preference.accountRanks)
+			}
+		}
+	}
+	return preference
 }

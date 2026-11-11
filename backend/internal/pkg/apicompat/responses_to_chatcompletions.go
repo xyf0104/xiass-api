@@ -52,11 +52,7 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 				},
 			})
 		case "reasoning":
-			for _, s := range item.Summary {
-				if s.Type == "summary_text" && s.Text != "" {
-					reasoningText += s.Text
-				}
-			}
+			reasoningText += responsesReasoningText(item)
 		case "web_search_call":
 			// silently consumed — results already incorporated into text output
 		}
@@ -483,11 +479,13 @@ func generateChatCmplID() string {
 // ---------------------------------------------------------------------------
 
 type bufferedFuncCall struct {
-	OutputIndex int
-	Type        string
-	CallID      string
-	Name        string
-	Args        strings.Builder
+	OutputIndex           int
+	Type                  string
+	CallID                string
+	Name                  string
+	Namespace             string
+	EncryptedFunctionArgs json.RawMessage
+	Args                  strings.Builder
 }
 
 type bufferedTextPart struct {
@@ -527,11 +525,26 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 			idx := len(a.funcCalls)
 			a.outputIndexToFuncIdx[event.OutputIndex] = idx
 			a.funcCalls = append(a.funcCalls, bufferedFuncCall{
-				OutputIndex: event.OutputIndex,
-				Type:        event.Item.Type,
-				CallID:      event.Item.CallID,
-				Name:        event.Item.Name,
+				OutputIndex:           event.OutputIndex,
+				Type:                  event.Item.Type,
+				CallID:                event.Item.CallID,
+				Name:                  event.Item.Name,
+				Namespace:             event.Item.Namespace,
+				EncryptedFunctionArgs: event.Item.EncryptedFunctionArgs,
 			})
+		}
+	case "response.output_item.done":
+		if idx, ok := a.outputIndexToFuncIdx[event.OutputIndex]; ok && event.Item != nil {
+			call := &a.funcCalls[idx]
+			if call.Type != event.Item.Type || (event.Item.CallID != "" && call.CallID != event.Item.CallID) {
+				break
+			}
+			if event.Item.Namespace != "" {
+				call.Namespace = event.Item.Namespace
+			}
+			if len(event.Item.EncryptedFunctionArgs) > 0 {
+				call.EncryptedFunctionArgs = event.Item.EncryptedFunctionArgs
+			}
 		}
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if event.Delta != "" {
@@ -618,10 +631,12 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 
 	for i := range a.funcCalls {
 		out = append(out, ResponsesOutput{
-			Type:      "function_call",
-			CallID:    a.funcCalls[i].CallID,
-			Name:      a.funcCalls[i].Name,
-			Arguments: a.funcCalls[i].Args.String(),
+			Type:                  "function_call",
+			CallID:                a.funcCalls[i].CallID,
+			Name:                  a.funcCalls[i].Name,
+			Namespace:             a.funcCalls[i].Namespace,
+			EncryptedFunctionArgs: a.funcCalls[i].EncryptedFunctionArgs,
+			Arguments:             a.funcCalls[i].Args.String(),
 		})
 	}
 
@@ -674,6 +689,12 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 				item.Input = call.Args.String()
 			} else {
 				item.Arguments = call.Args.String()
+				if item.Namespace == "" {
+					item.Namespace = call.Namespace
+				}
+				if len(item.EncryptedFunctionArgs) == 0 {
+					item.EncryptedFunctionArgs = call.EncryptedFunctionArgs
+				}
 			}
 			break
 		}

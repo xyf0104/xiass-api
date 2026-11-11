@@ -304,13 +304,15 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 		return *ptr
 	}
 	p := &ModelPricing{
-		InputPricePerToken:         deref(pricing.InputPrice),
-		OutputPricePerToken:        deref(pricing.OutputPrice),
-		CacheCreationPricePerToken: deref(pricing.CacheWritePrice),
-		CacheCreation5mPrice:       deref(pricing.CacheWritePrice),
-		CacheCreation1hPrice:       deref(pricing.CacheWritePrice),
-		CacheReadPricePerToken:     deref(pricing.CacheReadPrice),
-		ImageOutputPricePerToken:   deref(pricing.ImageOutputPrice),
+		InputPricePerToken:            deref(pricing.InputPrice),
+		OutputPricePerToken:           deref(pricing.OutputPrice),
+		CacheCreationPricePerToken:    deref(pricing.CacheWritePrice),
+		CacheCreation12hPricePerToken: pricing.CacheWrite12hPrice,
+		SupportsCacheBreakdown:        true,
+		CacheCreation5mPrice:          deref(pricing.CacheWritePrice),
+		CacheCreation1hPrice:          deref(pricing.CacheWritePrice),
+		CacheReadPricePerToken:        deref(pricing.CacheReadPrice),
+		ImageOutputPricePerToken:      deref(pricing.ImageOutputPrice),
 	}
 	if pricing.CacheWrite1hPrice != nil {
 		p.CacheCreation1hPrice = *pricing.CacheWrite1hPrice
@@ -319,7 +321,7 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 	if iv := FindMatchingInterval(pricing.Intervals, contextTokens); iv != nil {
 		p = intervalToModelPricing(iv, p, pricing)
 	}
-	cacheCost, _, _ := (&BillingService{}).computeCacheCreationBreakdownCosts(p, tokens, 1)
+	cacheCost := (&BillingService{}).computeCacheCreationCost(p, tokens, p.CacheCreationPricePerToken, 1)
 	// Reuse interval/cache semantics without applying customer tier policies or
 	// changing the legacy account-statistics image-output calculation.
 	cost := float64(tokens.InputTokens)*p.InputPricePerToken +

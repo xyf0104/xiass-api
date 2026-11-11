@@ -87,6 +87,12 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	claude52FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken: 8e-6, OutputCostPerToken: 40e-6,
+		CacheCreationInputTokenCost: 10e-6, CacheCreationInputTokenCostAbove1hr: 16e-6,
+		CacheReadInputTokenCost: 0.2e-6,
+		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
 	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6,
 		CacheCreationInputTokenCost: 5e-6, CacheCreationInputTokenCostAbove1hr: 8e-6,
@@ -98,7 +104,7 @@ var (
 	claudeSonnet55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
 		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
-		CacheReadInputTokenCost: 0.2e-6,
+		CacheReadInputTokenCost: 0.1e-6,
 		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
 	}
 	claudeHaiku55FallbackPricing = &LiteLLMModelPricing{
@@ -580,10 +586,10 @@ func (s *PricingService) downloadPricingData() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save file: %v", err)
 	}
 
-	// 使用远程哈希作为同步锚点，防止重复下载
-	// 当远程哈希不可用时，回退到数据本身的哈希
+	// Only a matching remote hash can mark the downloaded catalog as current.
+	// Retain the body hash on mismatch so the next sync retries stale content.
 	syncHash := dataHashStr
-	if remoteHash != "" {
+	if strings.EqualFold(remoteHash, dataHashStr) {
 		syncHash = remoteHash
 	}
 	hashFile := s.getHashFilePath()
@@ -1121,6 +1127,10 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 
 // GetModelPricing 获取模型价格（带模糊匹配）
 func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing {
+	return s.GetModelPricingAt(modelName, time.Now())
+}
+
+func (s *PricingService) GetModelPricingAt(modelName string, pricingAt time.Time) *LiteLLMModelPricing {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1140,6 +1150,10 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 		if pricing, ok := s.pricingData[candidate]; ok {
 			return pricing
 		}
+	}
+
+	if pricing := carbonFallbackPricingAt(modelLower, pricingAt); pricing != nil {
+		return pricing
 	}
 
 	// 2. 处理常见的模型名称变体
@@ -1216,7 +1230,10 @@ func (s *PricingService) GetIdentifiedModelPricing(modelName string) *LiteLLMMod
 	if modelLower == "" {
 		return nil
 	}
-	return s.lookupIdentifiedModelPricingLocked(s.buildModelLookupCandidates(modelLower))
+	if pricing := s.lookupIdentifiedModelPricingLocked(s.buildModelLookupCandidates(modelLower)); pricing != nil {
+		return pricing
+	}
+	return carbonFallbackPricingAt(modelLower, time.Now())
 }
 
 func (s *PricingService) buildModelLookupCandidates(modelLower string) []string {
@@ -1309,7 +1326,7 @@ func normalizeAntigravityClaudeTierAlias(model string) string {
 // behavior, not the published token rate, so this keeps -high/-low/-medium and
 // -tiered requests on the corresponding base price card.
 func normalizeGeminiThinkingTierAlias(model string) string {
-	for _, baseModel := range []string{"gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon"} {
+	for _, baseModel := range []string{"gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon"} {
 		for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
 			if model == baseModel+tier {
 				return baseModel
@@ -1348,6 +1365,19 @@ func (s *PricingService) extractBaseName(model string) string {
 // matchByModelFamily 基于模型系列匹配
 func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	model = normalizeAntigravityClaudeTierAlias(model)
+	var claude52Model string
+	switch {
+	case claude.IsFable52(model):
+		claude52Model = "claude-fable-5-2"
+	case claude.IsMythos52(model):
+		claude52Model = "claude-mythos-5-2"
+	}
+	if claude52Model != "" {
+		if pricing, ok := s.pricingData[claude52Model]; ok {
+			return pricing
+		}
+		return claude52FallbackPricing
+	}
 	if claude.IsOpus55(model) {
 		if pricing, ok := s.pricingData["claude-opus-5-5"]; ok {
 			return pricing

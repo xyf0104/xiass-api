@@ -665,6 +665,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if s == nil {
 		return errors.New("service is nil")
 	}
+	firstTurnStartedAt := time.Now()
 	if clientConn == nil {
 		return errors.New("client websocket is nil")
 	}
@@ -949,6 +950,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return replaceOpenAIWSMessageModel(payload, upstreamModel, requestModel)
 		},
 	}
+	var acceptedTurnStartedAt atomic.Pointer[time.Time]
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
 		inner: clientFrameConn,
 		// 注意线程安全：filter 仅在 runClientToUpstream 这一条
@@ -956,6 +958,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		// capturedSessionModel 的读写都发生在该 goroutine 内，因此无需
 		// 加锁/原子化。
 		filter: func(msgType coderws.MessageType, payload []byte) (out []byte, blocked *OpenAIFastBlockedError, filterErr error) {
+			turnStartedAt := time.Now()
 			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
 				return payload, nil, nil
 			}
@@ -1082,6 +1085,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				turnHasSemanticOutput.Store(false)
 				acceptedTurn = true
+				acceptedTurnStartedAt.Store(&turnStartedAt)
 			}
 			return out, blocked, policyErr
 		},
@@ -1134,7 +1138,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		UpstreamConn:       relayUpstreamFrameConn,
 		FirstClientMessage: firstClientMessage,
 		Options: openaiwsv2.RelayOptions{
-			WriteTimeout: s.openAIWSWriteTimeout(),
+			WriteTimeout:       s.openAIWSWriteTimeout(),
+			FirstTurnStartedAt: firstTurnStartedAt,
+			IsFirstTokenEvent:  openAIWSFirstTokenEventFunc(s.openAITTFTMode(ctx)),
+			TakeNextTurnStartedAt: func() time.Time {
+				if startedAt := acceptedTurnStartedAt.Swap(nil); startedAt != nil {
+					return *startedAt
+				}
+				return time.Time{}
+			},
 			// Passthrough idle is enforced only after a completed turn by
 			// clientFrameConn. The relay-wide activity watchdog would also
 			// terminate a healthy active upstream turn.
@@ -1517,6 +1529,15 @@ func relayErrorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func openAIWSFirstTokenEventFunc(mode string) func(eventType string, message []byte) bool {
+	return func(eventType string, message []byte) bool {
+		if strings.HasPrefix(strings.TrimSpace(eventType), "codex.") {
+			return false
+		}
+		return openAIStreamDataStartsTTFT(string(message), eventType, false, mode)
+	}
 }
 
 func openAIWSFirstTokenMsForLog(firstTokenMs *int) int {

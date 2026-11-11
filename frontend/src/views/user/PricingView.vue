@@ -353,7 +353,7 @@ type PricingGroup = UserAvailableGroup & {
   video_price_1080p?: number | null
 }
 
-type FinalTokenPriceField = 'input_price' | 'output_price' | 'cache_write_price' | 'cache_read_price'
+type FinalTokenPriceField = 'input_price' | 'output_price' | 'cache_write_price' | 'cache_write_12h_price' | 'cache_read_price'
 
 interface DisplayPriceItem {
   key: string
@@ -474,17 +474,21 @@ function normalizePricingModelName(model: string): string {
 function finalTokenPricingFor(model: UserSupportedModel): UserGroupModelPricing | null {
   const entries = activeGroup.value?.model_pricing ?? []
   const modelName = normalizePricingModelName(model.name)
-  let wildcard: UserGroupModelPricing | null = null
-  for (const entry of entries) {
-    for (const pattern of entry.models) {
-      const normalized = normalizePricingModelName(pattern)
-      if (normalized === modelName) return entry.price_mode === 'final' ? entry : null
-      if (normalized.endsWith('*') && modelName.startsWith(normalized.slice(0, -1)) && !wildcard) {
-        wildcard = entry
+  const match = (name: string): UserGroupModelPricing | null => {
+    let wildcard: UserGroupModelPricing | null = null
+    for (const entry of entries) {
+      for (const pattern of entry.models) {
+        const normalized = normalizePricingModelName(pattern)
+        if (normalized === name) return entry
+        if (normalized.endsWith('*') && name.startsWith(normalized.slice(0, -1)) && !wildcard) {
+          wildcard = entry
+        }
       }
     }
+    return wildcard
   }
-  return wildcard?.price_mode === 'final' ? wildcard : null
+  const entry = match(modelName) ?? (/^gemini-4-carbon-(high|medium|low)$/.test(modelName) ? match('gemini-4-carbon') : null)
+  return entry?.price_mode === 'final' ? entry : null
 }
 
 function finalTokenPriceFor(model: UserSupportedModel, field: FinalTokenPriceField): number | null {
@@ -497,7 +501,7 @@ function priceMultiplierFor(model: UserSupportedModel, field: FinalTokenPriceFie
 
 function modelSavingsPercent(model: UserSupportedModel): number | null {
   const final = finalTokenPricingFor(model)
-  if (final && [final.input_price, final.output_price, final.cache_write_price, final.cache_read_price]
+  if (final && [final.input_price, final.output_price, final.cache_write_price, final.cache_write_12h_price, final.cache_read_price]
     .some(value => normalizedPrice(value) != null)) {
     return null
   }
@@ -588,6 +592,14 @@ function tokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
     tokenItem('cache-write', '缓存创建', pricing.cache_write_price),
     tokenItem('cache-read', '缓存读取', pricing.cache_read_price)
   ]
+  const finalLongWrite = finalTokenPriceFor(model, 'cache_write_12h_price')
+    ?? finalTokenPriceFor(model, 'cache_write_price')
+  if (pricing.cache_write_12h_price != null || finalTokenPriceFor(model, 'cache_write_12h_price') != null) {
+    items.push({
+      ...tokenItem('cache-write-12h', '缓存创建（12h）', pricing.cache_write_12h_price ?? pricing.cache_write_price),
+      groupBasePrice: finalLongWrite
+    })
+  }
   if ((normalizedPrice(pricing.image_output_price) ?? 0) > 0) {
     items.push(tokenItem('image-output', '图片输出', pricing.image_output_price))
   }
@@ -600,6 +612,9 @@ function tokenPriceItems(model: UserSupportedModel): DisplayPriceItem[] {
       tokenItem(`interval-${index}-cache-write`, `${prefix} · 缓存创建`, interval.cache_write_price),
       tokenItem(`interval-${index}-cache-read`, `${prefix} · 缓存读取`, interval.cache_read_price)
     ]
+    if (interval.cache_write_12h_price != null) {
+      intervalPrices.push(tokenItem('interval-' + index + '-cache-write-12h', prefix + ' · 缓存创建（12h）', interval.cache_write_12h_price))
+    }
     items.push(...intervalPrices.filter(item => item.basePrice != null))
   }
   return items
@@ -615,6 +630,7 @@ function supplementalTokenPriceItems(model: UserSupportedModel): DisplayPriceIte
       ['input_price', 'input_multiplier', '输入'],
       ['output_price', 'output_multiplier', '输出'],
       ['cache_write_price', 'cache_write_multiplier', '缓存创建'],
+      ['cache_write_12h_price', 'cache_write_multiplier', '缓存创建（12h）'],
       ['cache_read_price', 'cache_read_multiplier', '缓存读取']
     ] as const
     for (const [field, multiplierField, label] of intervalItems) {

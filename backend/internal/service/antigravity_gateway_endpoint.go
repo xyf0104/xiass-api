@@ -43,15 +43,13 @@ func isAutomaticAntigravityForwardMode() bool {
 	return mode == "" || mode == "auto"
 }
 
-// configuredAntigravityForwardBaseURLsForAccount honors explicit endpoint
-// overrides. In automatic mode, paid OAuth accounts use the same daily-first
-// endpoint selection as the upstream implementation; other accounts start
-// with prod.
+// Inference starts at prod; only the narrowly classified endpoint errors below
+// permit a replay. Catalog discovery is read-only and uses the plan's catalog.
 func configuredAntigravityForwardBaseURLs() []string {
 	return configuredAntigravityForwardBaseURLsForAccount(nil)
 }
 
-func configuredAntigravityForwardBaseURLsForAccount(account *Account) []string {
+func configuredAntigravityForwardBaseURLsForAccount(_ *Account) []string {
 	baseURLs := append([]string(nil), antigravity.BaseURLs...)
 	if len(baseURLs) == 0 {
 		return nil
@@ -59,9 +57,6 @@ func configuredAntigravityForwardBaseURLsForAccount(account *Account) []string {
 
 	switch antigravityForwardMode() {
 	case "", "auto":
-		if accountHasAntigravityPaidTier(account) && len(baseURLs) > 1 {
-			return append([]string{baseURLs[1]}, baseURLs[:1]...)
-		}
 		return baseURLs
 	case "daily", "sandbox":
 		if len(baseURLs) > 1 {
@@ -73,6 +68,14 @@ func configuredAntigravityForwardBaseURLsForAccount(account *Account) []string {
 	default:
 		return []string{baseURLs[0]}
 	}
+}
+
+func configuredAntigravityCatalogBaseURLs(account *Account) []string {
+	baseURLs := configuredAntigravityForwardBaseURLsForAccount(account)
+	if isAutomaticAntigravityForwardMode() && accountHasAntigravityPaidTier(account) && len(baseURLs) > 1 {
+		return []string{baseURLs[1]}
+	}
+	return baseURLs
 }
 
 func accountHasAntigravityPaidTier(account *Account) bool {

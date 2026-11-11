@@ -93,6 +93,25 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
 	}
+	// Validate the actual model before any mimicry or passthrough dispatch.
+	if account != nil && account.Platform == PlatformAnthropic {
+		validationModel := parsed.Model
+		if account.IsBedrock() {
+			if resolved, ok := ResolveBedrockModelID(account, validationModel); ok {
+				validationModel = resolved
+			}
+		} else if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
+			validationModel = account.GetMappedModel(validationModel)
+		} else {
+			validationModel = claude.NormalizeModelID(validationModel)
+		}
+		if err := validateClaude52Request(parsed.Body.Bytes(), validationModel); err != nil {
+			if c != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
+			}
+			return nil, err
+		}
+	}
 	// Anthropic Fast is requested with speed=fast rather than OpenAI's
 	// service_tier. Attach it at this shared boundary so passthrough, OAuth and
 	// partial-stream results all use the same billing and usage-log path.
@@ -910,7 +929,7 @@ func anthropicSpeedModel(parsed *ParsedRequest, result *ForwardResult) string {
 
 // anthropicSpeedServiceTier 把 Anthropic 的 speed=fast 归一成可计费的 "fast" tier。
 //
-// Fast mode 目前只在 Claude Opus 5 / Opus 4.8 上存在，且不支持 Bedrock 等第三方
+// Fast mode 支持 Fable/Mythos 5.2、Opus 5 / Opus 4.8，且不支持 Bedrock 等第三方
 // 承载（Opus 4.7 的 fast mode 已被移除，传 speed=fast 会直接报错）。这里按模型和
 // 平台收紧，避免上游根本没跑 fast 时仍然按 2x 计费——宁可漏收也不能多收。
 //
@@ -927,8 +946,11 @@ func anthropicSpeedServiceTier(account *Account, speed, model string) *string {
 	return &tier
 }
 
-// modelSupportsAnthropicFastMode 判断模型是否属于支持 fast mode 的 Opus 5 / Opus 4.8。
+// modelSupportsAnthropicFastMode 判断模型是否支持 Anthropic fast mode。
 func modelSupportsAnthropicFastMode(model string) bool {
+	if claude.IsFable52(model) || claude.IsMythos52(model) {
+		return true
+	}
 	modelLower := strings.ToLower(strings.TrimSpace(model))
 	if !strings.Contains(modelLower, "opus") {
 		return false

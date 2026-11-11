@@ -189,6 +189,9 @@ var geminiModels = []modelDef{
 	{ID: "gemini-4-argon-high", DisplayName: "Gemini 4 Argon (High)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-4-argon-medium", DisplayName: "Gemini 4 Argon (Medium)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-4-argon-low", DisplayName: "Gemini 4 Argon (Low)", CreatedAt: "2026-10-13T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-carbon-high", DisplayName: "Gemini 4 Carbon (High)", CreatedAt: "2026-11-11T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-carbon-medium", DisplayName: "Gemini 4 Carbon (Medium)", CreatedAt: "2026-11-11T00:00:00Z", IsReasoning: true},
+	{ID: "gemini-4-carbon-low", DisplayName: "Gemini 4 Carbon (Low)", CreatedAt: "2026-11-11T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-medium", DisplayName: "Gemini 3.5 Flash Medium", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash Low", CreatedAt: "2026-06-01T00:00:00Z", IsReasoning: true},
 	{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", CreatedAt: "2026-06-01T00:00:00Z"},
@@ -259,7 +262,7 @@ func FallbackGeminiModel(model string) GeminiModel {
 // IsGeminiReasoningModel 判断是否为不支持参数和强制 ToolConfig 的 Gemini 推理模型
 func IsGeminiReasoningModel(modelID string) bool {
 	lowerID := strings.ToLower(modelID)
-	if strings.Contains(lowerID, "gemini-4-argon") {
+	if strings.Contains(lowerID, "gemini-4-argon") || strings.Contains(lowerID, "gemini-4-carbon") {
 		return true
 	}
 	// Gemini 3.7 exposes public tiers, but requests are routed through this

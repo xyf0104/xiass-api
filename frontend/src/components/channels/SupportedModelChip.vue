@@ -79,7 +79,7 @@
                 :scale="perMillionScale"
               />
               <PricingRow
-                :label="t(prefixKey('cacheWrite5mPrice'))"
+                :label="t(prefixKey(model.platform === 'openai' ? 'cacheWrite30mPrice' : 'cacheWrite5mPrice'))"
                 :value="model.pricing.cache_write_price"
                 :unit="t(prefixKey('unitPerMillion'))"
                 :scale="perMillionScale"
@@ -88,6 +88,13 @@
                 v-if="model.pricing.cache_write_1h_price != null"
                 :label="t(prefixKey('cacheWrite1hPrice'))"
                 :value="model.pricing.cache_write_1h_price"
+                :unit="t(prefixKey('unitPerMillion'))"
+                :scale="perMillionScale"
+              />
+              <PricingRow
+                v-if="model.pricing.cache_write_12h_price != null"
+                :label="t(prefixKey('cacheWrite12hPrice'))"
+                :value="model.pricing.cache_write_12h_price"
                 :unit="t(prefixKey('unitPerMillion'))"
                 :scale="perMillionScale"
               />
@@ -252,7 +259,8 @@ function formatInterval(iv: UserPricingInterval, pricing: UserSupportedModelPric
   const resolved = resolveIntervalPrices(iv, pricing)
   const input = formatScaled(resolved.input_price, perMillionScale)
   const output = formatScaled(resolved.output_price, perMillionScale)
-  return `${input} / ${output}`
+  const longWrite = resolved.cache_write_12h_price == null ? '' : ' · 12h ' + formatScaled(resolved.cache_write_12h_price, perMillionScale)
+  return input + ' / ' + output + longWrite
 }
 
 // ── Popover positioning ─────────────────────────────────────────────

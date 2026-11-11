@@ -109,7 +109,7 @@ func TestReleaseGoToolchainsUseSecurityPatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, module.Go)
 	version := module.Go.Version
-	require.GreaterOrEqual(t, semver.Compare("v"+version, "v1.27.3"), 0)
+	require.GreaterOrEqual(t, semver.Compare("v"+version, "v1.27.4"), 0)
 
 	for _, name := range []string{"Dockerfile", "backend/Dockerfile", "deploy/Dockerfile"} {
 		content, err := os.ReadFile(filepath.Join("../../..", name))
@@ -136,7 +136,7 @@ func TestReleaseGoToolchainsUseSecurityPatch(t *testing.T) {
 		if semver.MajorMinor(version) == "v1.26" {
 			require.GreaterOrEqual(t, semver.Compare(version, "v1.26.10"), 0, name)
 		} else {
-			require.GreaterOrEqual(t, semver.Compare(version, "v1.27.3"), 0, name)
+			require.GreaterOrEqual(t, semver.Compare(version, "v1.27.4"), 0, name)
 		}
 	}
 	for _, job := range readSecurityWorkflow(t, "codex-helper-release.yml") {

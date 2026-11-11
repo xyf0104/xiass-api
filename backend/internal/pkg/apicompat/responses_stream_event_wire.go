@@ -40,7 +40,11 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		e.putItemID(m)
 		m["output_index"] = e.OutputIndex
 		m["content_index"] = e.ContentIndex
-		m["part"] = outputTextPartWire(e.Part)
+		if e.Part != nil && e.Part.Type == "refusal" {
+			m["part"] = map[string]any{"type": "refusal", "refusal": e.Part.Refusal}
+		} else {
+			m["part"] = outputTextPartWire(e.Part)
+		}
 		return json.Marshal(m)
 
 	case "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done":
@@ -137,14 +141,22 @@ func (e ResponsesStreamEvent) putItemID(m map[string]any) {
 // carrying text/annotations/logprobs (matching cc-switch's push_text_delta).
 func outputTextPartWire(part *ResponsesContentPart) map[string]any {
 	text := ""
+	annotations := []json.RawMessage{}
+	logprobs := []json.RawMessage{}
 	if part != nil {
 		text = part.Text
+		if part.Annotations != nil {
+			annotations = part.Annotations
+		}
+		if part.Logprobs != nil {
+			logprobs = part.Logprobs
+		}
 	}
 	return map[string]any{
 		"type":        "output_text",
 		"text":        text,
-		"annotations": []any{},
-		"logprobs":    []any{},
+		"annotations": annotations,
+		"logprobs":    logprobs,
 	}
 }
 
@@ -197,6 +209,9 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		if item.Namespace != "" {
 			m["namespace"] = item.Namespace
 		}
+		if len(item.EncryptedFunctionArgs) > 0 {
+			m["encrypted_function_args"] = item.EncryptedFunctionArgs
+		}
 	case "custom_tool_call":
 		// custom/freeform 工具调用（如 codex 的 exec）：input 为自由文本。缺少
 		// call_id/name 时 codex 无法路由该调用（表现为 unsupported call）。
@@ -222,7 +237,14 @@ func messageContentWire(parts []ResponsesContentPart) []map[string]any {
 		if typ == "" {
 			typ = "output_text"
 		}
-		out = append(out, map[string]any{"type": typ, "text": p.Text})
+		switch typ {
+		case "output_text":
+			out = append(out, outputTextPartWire(&p))
+		case "refusal":
+			out = append(out, map[string]any{"type": typ, "refusal": p.Refusal})
+		default:
+			out = append(out, map[string]any{"type": typ, "text": p.Text})
+		}
 	}
 	return out
 }

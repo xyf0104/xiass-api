@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // PricingSource 定价来源标识
@@ -45,6 +46,7 @@ type ResolvedPricing struct {
 	pricingPolicySource string
 
 	longContextPricingEnabled bool
+	pricingAt                 time.Time
 }
 
 // ModelPricingResolver 统一模型定价解析器。
@@ -64,15 +66,24 @@ func NewModelPricingResolver(channelService *ChannelService, billingService *Bil
 
 // PricingInput 定价解析输入
 type PricingInput struct {
-	Model   string
-	GroupID *int64 // nil 表示不检查渠道
-	Group   *Group
+	Model     string
+	GroupID   *int64 // nil 表示不检查渠道
+	Group     *Group
+	PricingAt time.Time
 }
 
 // Resolve 解析模型定价。
 // 1. 获取基础定价（LiteLLM → Fallback）
 // 2. 如果指定了 GroupID，查找渠道定价并覆盖
-func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
+func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) (result *ResolvedPricing) {
+	if input.PricingAt.IsZero() {
+		input.PricingAt = time.Now()
+	}
+	defer func() {
+		if result != nil {
+			result.pricingAt = input.PricingAt
+		}
+	}()
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
 		// Group token cards only override flat/base prices. Their interval ladder
@@ -89,8 +100,9 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 		if groupPricing.PriceMode == PriceModeFinal &&
 			(groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken) {
 			resolved := r.Resolve(ctx, PricingInput{
-				Model:   input.Model,
-				GroupID: input.GroupID,
+				Model:     input.Model,
+				GroupID:   input.GroupID,
+				PricingAt: input.PricingAt,
 			})
 			// A fully specified final token price can still bill the user when a
 			// newly introduced model has no catalog/channel account-cost price yet.
@@ -105,7 +117,7 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 			resolved.longContextPricingEnabled = longContextPricingEnabled
 			return resolved
 		}
-		resolved := r.resolveConfiguredPricing(groupPricing, input.Model, PricingSourceGroup)
+		resolved := r.resolveConfiguredPricing(groupPricing, input.Model, PricingSourceGroup, input.PricingAt)
 		resolved.longContextPricingEnabled = longContextPricingEnabled
 		return resolved
 	}
@@ -132,7 +144,7 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	}
 
 	// 1. 获取基础定价
-	basePricing, source := r.resolveBasePricing(input.Model)
+	basePricing, source := r.resolveBasePricing(input.Model, input.PricingAt)
 
 	resolved := &ResolvedPricing{
 		Mode:                   BillingModeToken,
@@ -154,7 +166,7 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 	return resolved
 }
 
-func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPricing, model, source string) *ResolvedPricing {
+func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPricing, model, source string, pricingAt time.Time) *ResolvedPricing {
 	mode := config.BillingMode
 	if mode == "" {
 		mode = BillingModeToken
@@ -164,7 +176,7 @@ func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPric
 		r.applyRequestTierOverrides(config, resolved)
 		return resolved
 	}
-	resolved.BasePricing, _ = r.resolveBasePricing(model)
+	resolved.BasePricing, _ = r.resolveBasePricing(model, pricingAt)
 	resolved.SupportsCacheBreakdown = resolved.BasePricing != nil && resolved.BasePricing.SupportsCacheBreakdown
 	r.applyTokenOverrides(config, resolved)
 	return resolved
@@ -183,6 +195,17 @@ func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 		return nil
 	}
 	model = normalizeChannelPricingModelName(model)
+	// Keep exact tier and wildcard cards ahead of Carbon's base-card fallback.
+	if isCarbonPricingModel(model) && model != "gemini-4-carbon" {
+		if pricing := matchGroupModelPricingExact(group, model); pricing != nil {
+			return pricing
+		}
+		return matchGroupModelPricingExact(group, "gemini-4-carbon")
+	}
+	return matchGroupModelPricingExact(group, model)
+}
+
+func matchGroupModelPricingExact(group *Group, model string) *ChannelModelPricing {
 	var wildcard *ChannelModelPricing
 	for i := range group.ModelPricing {
 		entry := &group.ModelPricing[i]
@@ -202,8 +225,8 @@ func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 }
 
 // resolveBasePricing 从 LiteLLM 或 Fallback 获取基础定价
-func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, string) {
-	pricing, err := r.billingService.GetModelPricing(model)
+func (r *ModelPricingResolver) resolveBasePricing(model string, pricingAt time.Time) (*ModelPricing, string) {
+	pricing, err := r.billingService.getModelPricingAt(model, pricingAt)
 	if err != nil {
 		slog.Debug("failed to get model pricing from LiteLLM, using fallback",
 			"model", model, "error", err)
@@ -230,6 +253,9 @@ func (r *ModelPricingResolver) lookupChannelPricingNormalized(ctx context.Contex
 		return pricing
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
+	if isCarbonPricingModel(model) {
+		normalized = "gemini-4-carbon"
+	}
 	if normalized == "" || strings.EqualFold(normalized, strings.TrimSpace(model)) {
 		return nil
 	}
@@ -311,7 +337,7 @@ func filterValidIntervals(intervals []PricingInterval) []PricingInterval {
 	var valid []PricingInterval
 	for _, iv := range intervals {
 		if iv.InputPrice != nil || iv.OutputPrice != nil ||
-			iv.CacheWritePrice != nil || iv.CacheWrite1hPrice != nil || iv.CacheReadPrice != nil ||
+			iv.CacheWritePrice != nil || iv.CacheWrite1hPrice != nil || iv.CacheWrite12hPrice != nil || iv.CacheReadPrice != nil ||
 			iv.PerRequestPrice != nil || iv.InputMultiplier != nil ||
 			iv.OutputMultiplier != nil || iv.CacheWriteMultiplier != nil ||
 			iv.CacheReadMultiplier != nil {
@@ -377,6 +403,15 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.CacheCreationPricePerTokenPriority = applyMultiplier(pricing.CacheCreationPricePerTokenPriority, iv.CacheWriteMultiplier)
 		pricing.CacheCreation5mPrice = applyMultiplier(pricing.CacheCreation5mPrice, iv.CacheWriteMultiplier)
 		pricing.CacheCreation1hPrice = applyMultiplier(pricing.CacheCreation1hPrice, iv.CacheWriteMultiplier)
+		if pricing.CacheCreation12hPricePerToken != nil {
+			price := applyMultiplier(*pricing.CacheCreation12hPricePerToken, iv.CacheWriteMultiplier)
+			pricing.CacheCreation12hPricePerToken = &price
+		}
+	}
+	if iv.CacheWrite12hPrice != nil {
+		pricing.CacheCreation12hPricePerToken = iv.CacheWrite12hPrice
+	} else if iv.CacheWritePrice != nil {
+		pricing.CacheCreation12hPricePerToken = nil
 	}
 	if iv.CacheWrite1hPrice != nil {
 		pricing.CacheCreation1hPrice = *iv.CacheWrite1hPrice

@@ -4843,7 +4843,7 @@
             </div>
           </div>
 
-          <OpenAIModelPrioritySettings v-if="activeTab === 'gateway'" />
+          <OpenAIModelPrioritySettings v-if="activeTab === 'gateway'" id="openai-account-priority" class="scroll-mt-24" />
 
           <!-- Gateway Scheduling Settings -->
           <div class="card">
@@ -8566,7 +8566,8 @@
 
 <script setup lang="ts">
 import OpenAIModelPrioritySettings from "@/components/admin/account/OpenAIModelPrioritySettings.vue";
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, watch, nextTick, inject } from "vue";
+import { routeLocationKey } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
 import {
@@ -8674,6 +8675,7 @@ type SettingsTab =
   | "email"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
+const route = inject(routeLocationKey, undefined);
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
   { key: "agreement" as SettingsTab, icon: "document" as const },
@@ -8739,6 +8741,19 @@ function handleSettingsTabKeydown(event: KeyboardEvent, tab: SettingsTab): void 
 const { copyToClipboard } = useClipboard();
 
 const loading = ref(true);
+watch(
+  [() => route?.query.tab, () => route?.hash, loading],
+  async ([tab, hash, isLoading]) => {
+    if (typeof tab === "string" && settingsTabs.some(item => item.key === tab)) {
+      activeTab.value = tab as SettingsTab;
+    }
+    if (!isLoading && activeTab.value === "gateway" && hash === "#openai-account-priority") {
+      await nextTick();
+      document.getElementById("openai-account-priority")?.scrollIntoView({ block: "start" });
+    }
+  },
+  { immediate: true },
+);
 const loadFailed = ref(false);
 const saving = ref(false);
 const testingSmtp = ref(false);

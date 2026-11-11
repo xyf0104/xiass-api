@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // AvailableGroupRef 渠道视图中关联分组的简要信息。
@@ -145,10 +146,22 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 //
 // 当 s.pricingService 为 nil（测试场景），跳过回落。
 func (s *ChannelService) fillGlobalPricingFallback(models []SupportedModel) {
+	s.fillGlobalPricingFallbackAt(models, time.Now())
+}
+
+func (s *ChannelService) fillGlobalPricingFallbackAt(models []SupportedModel, pricingAt time.Time) {
 	if s.pricingService == nil {
 		return
 	}
 	for i := range models {
+		if isCarbonPricingModel(models[i].Name) {
+			lp := s.pricingService.GetModelPricingAt(models[i].Name, pricingAt)
+			if lp == nil || lp.TokenPricingAbsent {
+				lp = carbonFallbackPricingAt(models[i].Name, pricingAt)
+			}
+			models[i].Pricing = fillCarbonDisplayPricing(lp, models[i].Pricing)
+			continue
+		}
 		if !pricingNeedsFallback(models[i].Pricing) {
 			continue
 		}
@@ -157,6 +170,14 @@ func (s *ChannelService) fillGlobalPricingFallback(models []SupportedModel) {
 			continue
 		}
 		models[i].Pricing = synthesizePricingFromLiteLLM(lp, models[i].Pricing)
+		if models[i].Pricing.BillingMode == BillingModeToken {
+			policy := (&BillingService{}).applyModelSpecificPricingPolicyEx(models[i].Name, &ModelPricing{
+				InputPricePerToken:         lp.InputCostPerToken,
+				CacheCreationPricePerToken: lp.CacheCreationInputTokenCost,
+			}, true, pricingAt)
+			models[i].Pricing.CacheWritePrice = nonZeroPtr(policy.CacheCreationPricePerToken)
+			models[i].Pricing.CacheWrite12hPrice = policy.CacheCreation12hPricePerToken
+		}
 	}
 }
 
@@ -167,13 +188,13 @@ func pricingNeedsFallback(p *ChannelModelPricing) bool {
 		return true
 	}
 	if p.InputPrice != nil || p.OutputPrice != nil ||
-		p.CacheWritePrice != nil || p.CacheReadPrice != nil ||
+		p.CacheWritePrice != nil || p.CacheWrite1hPrice != nil || p.CacheWrite12hPrice != nil || p.CacheReadPrice != nil ||
 		p.ImageOutputPrice != nil || p.PerRequestPrice != nil {
 		return false
 	}
 	for _, iv := range p.Intervals {
 		if iv.InputPrice != nil || iv.OutputPrice != nil ||
-			iv.CacheWritePrice != nil || iv.CacheReadPrice != nil ||
+			iv.CacheWritePrice != nil || iv.CacheWrite1hPrice != nil || iv.CacheWrite12hPrice != nil || iv.CacheReadPrice != nil ||
 			iv.PerRequestPrice != nil {
 			return false
 		}
@@ -214,13 +235,36 @@ func synthesizePricingFromLiteLLM(lp *LiteLLMModelPricing, existing *ChannelMode
 		}
 	}
 	return &ChannelModelPricing{
-		BillingMode:      mode,
-		InputPrice:       nonZeroPtr(lp.InputCostPerToken),
-		OutputPrice:      nonZeroPtr(lp.OutputCostPerToken),
-		CacheWritePrice:  nonZeroPtr(lp.CacheCreationInputTokenCost),
-		CacheReadPrice:   nonZeroPtr(lp.CacheReadInputTokenCost),
-		ImageOutputPrice: nonZeroPtr(lp.OutputCostPerImageToken),
+		BillingMode:       mode,
+		InputPrice:        nonZeroPtr(lp.InputCostPerToken),
+		OutputPrice:       nonZeroPtr(lp.OutputCostPerToken),
+		CacheWritePrice:   nonZeroPtr(lp.CacheCreationInputTokenCost),
+		CacheWrite1hPrice: nonZeroPtr(lp.CacheCreationInputTokenCostAbove1hr),
+		CacheReadPrice:    nonZeroPtr(lp.CacheReadInputTokenCost),
+		ImageOutputPrice:  nonZeroPtr(lp.OutputCostPerImageToken),
 	}
+}
+
+// Carbon's partial channel cards inherit the same dated dimensions as billing.
+// Preserve explicit zeroes, modes and interval ladders without mutating a card.
+func fillCarbonDisplayPricing(lp *LiteLLMModelPricing, existing *ChannelModelPricing) *ChannelModelPricing {
+	if existing == nil {
+		return synthesizePricingFromLiteLLM(lp, nil)
+	}
+	if existing.BillingMode != "" && existing.BillingMode != BillingModeToken {
+		return existing
+	}
+	p := existing.Clone()
+	if p.InputPrice == nil {
+		p.InputPrice = nonZeroPtr(lp.InputCostPerToken)
+	}
+	if p.OutputPrice == nil {
+		p.OutputPrice = nonZeroPtr(lp.OutputCostPerToken)
+	}
+	if p.CacheReadPrice == nil {
+		p.CacheReadPrice = nonZeroPtr(lp.CacheReadInputTokenCost)
+	}
+	return &p
 }
 
 func nonZeroPtr(v float64) *float64 {

@@ -143,7 +143,7 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	idx := len(prepared.args) - 5
+	idx := usageLogInsertColumnIndex(t, "upstream_request_id")
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)
@@ -181,7 +181,7 @@ func TestPrepareUsageLogInsert_EgressJSONWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	idx := len(prepared.args) - 2
+	idx := usageLogInsertColumnIndex(t, "egress")
 	raw, ok := prepared.args[idx].(string)
 	require.True(t, ok, "egress arg should be JSON text, got %T", prepared.args[idx])
 	require.Equal(t, "jsonb", usageLogInsertArgTypes[idx])

@@ -164,6 +164,9 @@ func modelIDsFromAvailableAccounts(accounts []Account, platform string) []string
 		}
 		for _, modelID := range modelIDs {
 			modelID = strings.TrimSpace(modelID)
+			if account.Platform == PlatformAntigravity && !account.IsModelSupported(modelID) {
+				continue
+			}
 			if modelID != "" {
 				modelSet[modelID] = struct{}{}
 			}

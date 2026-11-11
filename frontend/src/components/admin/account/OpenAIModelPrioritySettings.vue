@@ -98,11 +98,40 @@
       <datalist id="openai-model-priority-model-options">
         <option v-for="model in modelOptions" :key="model" :value="model" />
       </datalist>
-      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
+      <div class="px-5 pb-4 sm:px-6">
         <button type="button" class="btn btn-secondary" :disabled="saving" data-testid="model-priority-add" @click="addRule">
-          <Icon name="plus" size="sm" />
-          <span>{{ t('admin.modelPriority.addModelPriorityRule') }}</span>
+          <Icon name="plus" size="sm" /><span>{{ t('admin.modelPriority.addModelPriorityRule') }}</span>
         </button>
+      </div>
+      <div class="border-t border-gray-100 dark:border-dark-700" data-testid="openai-user-priority-settings">
+        <div class="flex flex-wrap items-start justify-between gap-4 px-5 py-4 sm:px-6">
+          <div class="min-w-0">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.modelPriority.userPriorityTitle') }}</h3>
+            <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('admin.modelPriority.userPriorityDescription') }}</p>
+          </div>
+          <Toggle v-model="draft.user_enabled" :disabled="saving" :aria-label="t('admin.modelPriority.userPriorityTitle')" data-testid="user-priority-toggle" />
+        </div>
+        <div v-if="draft.user_rules.length" class="divide-y divide-gray-100 dark:divide-dark-700">
+          <div v-for="(rule, index) in draft.user_rules" :key="rule.key" class="grid gap-3 px-5 py-3 sm:px-6 lg:grid-cols-[minmax(14rem,1fr)_11rem_auto_auto] lg:items-center">
+            <div class="min-w-0 truncate text-sm font-medium text-gray-900 dark:text-white" :title="userName(rule.user_id)">{{ userName(rule.user_id) }}</div>
+            <span class="text-sm text-gray-600 dark:text-gray-300">{{ t('admin.modelPriority.selectedAccounts', { count: rule.account_ids.length }) }}</span>
+            <button type="button" class="btn btn-secondary" :disabled="saving" :data-testid="`user-priority-configure-${index}`" @click="openAccountPicker(index, 'user')"><Icon name="users" size="sm" /><span>{{ t('admin.modelPriority.configureAccounts') }}</span></button>
+            <button type="button" class="btn btn-secondary flex h-10 w-10 items-center justify-center p-0 text-red-600 dark:text-red-400" :disabled="saving" :title="t('admin.modelPriority.removeRule')" :aria-label="t('admin.modelPriority.removeRule')" @click="removeUserRule(index)"><Icon name="trash" size="sm" /></button>
+          </div>
+        </div>
+        <div v-else class="px-5 pb-3 text-sm text-gray-500 dark:text-gray-400 sm:px-6">{{ t('admin.modelPriority.noUserRules') }}</div>
+        <div class="border-t border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
+          <SearchInput v-model="userSearch" :placeholder="t('admin.modelPriority.searchUsers')" :aria-label="t('admin.modelPriority.searchUsers')" class="w-full sm:max-w-sm" data-testid="user-priority-search" />
+          <div v-if="userSearch.trim()" class="mt-2 max-h-40 overflow-y-auto border border-gray-200 dark:border-dark-700" data-testid="user-priority-results">
+            <div v-if="userLoading" class="flex justify-center py-3"><Icon name="refresh" size="sm" class="animate-spin text-gray-500" /></div>
+            <button v-for="user in userResults" :key="user.id" type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-50 dark:hover:bg-dark-800" :disabled="saving || draft.user_rules.some(rule => rule.user_id === user.id)" :data-testid="`user-priority-add-${user.id}`" @click="addUserRule(user)">
+              <span class="min-w-0 truncate text-gray-900 dark:text-white">{{ user.username }} <span class="text-gray-500 dark:text-gray-400">{{ user.email }}</span></span><Icon name="plus" size="sm" />
+            </button>
+            <div v-if="!userResults.length && !userLoading" class="px-3 py-3 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.modelPriority.noMatchingUsers') }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 border-t border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
         <button type="button" class="btn btn-primary" :disabled="saving || !canSave" data-testid="model-priority-save" @click="save">
           <Icon :name="saving ? 'refresh' : 'check'" size="sm" :class="saving ? 'animate-spin' : ''" />
           <span>{{ saving ? t('admin.modelPriority.saving') : t('admin.modelPriority.save') }}</span>
@@ -110,7 +139,7 @@
       </div>
     </div>
 
-    <BaseDialog :show="pickerRuleIndex !== null" :title="pickerTitle" width="full" @close="closeAccountPicker">
+    <BaseDialog :show="pickerRule !== null" :title="pickerTitle" width="full" @close="closeAccountPicker">
       <div class="space-y-4">
         <div class="flex flex-wrap items-center gap-3">
           <SearchInput v-model="filters.search" :placeholder="t('admin.modelPriority.searchPriorityAccounts')" class="w-full sm:w-64" />
@@ -221,7 +250,7 @@
       </div>
       <template #footer>
         <button type="button" class="btn btn-secondary" data-testid="model-priority-cancel-accounts" @click="closeAccountPicker">{{ t('common.cancel') }}</button>
-        <button type="button" class="btn btn-primary" :disabled="catalogLoading || pickerRuleIndex === null || pickerSelected.size === 0" data-testid="model-priority-apply-accounts" @click="applyAccountPicker">
+        <button type="button" class="btn btn-primary" :disabled="catalogLoading || pickerRule === null || pickerSelected.size === 0" data-testid="model-priority-apply-accounts" @click="applyAccountPicker">
           <Icon name="check" size="sm" />
           <span>{{ t('admin.modelPriority.applySelectedAccounts') }}</span>
         </button>
@@ -231,12 +260,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
 import { adminAPI } from '@/api/admin'
-import type { OpenAIModelPriorityRule, OpenAIModelPrioritySettings } from '@/api/admin/settings'
-import type { Account, AdminGroup } from '@/types'
+import type { OpenAIModelPriorityRule, OpenAIModelPrioritySettings, OpenAIUserPriorityRule } from '@/api/admin/settings'
+import type { Account, AdminGroup, AdminUser } from '@/types'
 import type { AccountPool } from '@/api/admin/accountPools'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -250,8 +279,11 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores/app'
 
 interface DraftRule extends OpenAIModelPriorityRule { key: number }
+interface DraftUserRule extends OpenAIUserPriorityRule { key: number }
 interface DraftSettings {
   enabled: boolean
+  user_enabled: boolean
+  user_rules: DraftUserRule[]
   smart_rotation_enabled: boolean
   smart_rotation_cooldown_minutes: number
   rules: DraftRule[]
@@ -269,19 +301,27 @@ const catalogLoaded = ref(false)
 const accounts = ref<Account[]>([])
 const groups = ref<AdminGroup[]>([])
 const pools = ref<AccountPool[]>([])
+const usersByID = ref<Map<number, AdminUser>>(new Map())
+const userResults = ref<AdminUser[]>([])
+const userSearch = ref('')
+const userLoading = ref(false)
 const draft = reactive<DraftSettings>({
   enabled: false,
+  user_enabled: false,
+  user_rules: [],
   smart_rotation_enabled: false,
   smart_rotation_cooldown_minutes: SMART_ROTATION_DEFAULT_COOLDOWN_MINUTES,
   rules: []
 })
 const pickerRuleIndex = ref<number | null>(null)
+const pickerUserRuleIndex = ref<number | null>(null)
 const pickerSelected = ref<Set<number>>(new Set())
 const pickerOrder = ref<number[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 let ruleSequence = 0
 let pickerRequestSequence = 0
+let userSearchSequence = 0
 
 const filters = reactive({ search: '', group: '', pool: '', plan: '', type: '', status: '' })
 const modelOptions = getModelsByPlatform('openai')
@@ -394,12 +434,21 @@ const filteredAccounts = computed(() => {
 })
 const pageAccounts = computed(() => filteredAccounts.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 const pickerTitle = computed(() => {
+  if (pickerUserRuleIndex.value !== null) {
+    const rule = draft.user_rules[pickerUserRuleIndex.value]
+    return t('admin.modelPriority.configureUserAccounts', { user: userName(rule?.user_id ?? 0) })
+  }
   const index = pickerRuleIndex.value
   const model = index === null ? '' : draft.rules[index]?.model_pattern
   return model ? t('admin.modelPriority.configureModelAccounts', { model }) : t('admin.modelPriority.configureAccounts')
 })
+const pickerRule = computed(() => pickerUserRuleIndex.value !== null
+  ? draft.user_rules[pickerUserRuleIndex.value] ?? null
+  : pickerRuleIndex.value !== null ? draft.rules[pickerRuleIndex.value] ?? null : null)
 const canSave = computed(() => {
   if (draft.enabled && draft.rules.length === 0) return false
+  if (draft.user_enabled && draft.user_rules.length === 0) return false
+  if (draft.user_rules.some(rule => rule.account_ids.length === 0)) return false
   const patterns = new Set<string>()
   return draft.rules.every(rule => {
     const pattern = rule.model_pattern.trim().toLowerCase()
@@ -410,10 +459,49 @@ const canSave = computed(() => {
 })
 
 watch(() => [filters.search, filters.group, filters.pool, filters.plan, filters.type, filters.status], () => { page.value = 1 })
+watch(userSearch, (value, _, onCleanup) => {
+  const sequence = ++userSearchSequence
+  userResults.value = []
+  userLoading.value = false
+  if (!value.trim()) return
+  userLoading.value = true
+  const timer = window.setTimeout(async () => {
+    try {
+      const result = await adminAPI.users.list(1, 30, { search: value.trim() })
+      if (sequence !== userSearchSequence) return
+      userResults.value = result.items
+      const next = new Map(usersByID.value)
+      for (const user of result.items) next.set(user.id, user)
+      usersByID.value = next
+    } catch (error) {
+      if (sequence === userSearchSequence) appStore.showError(extractApiErrorMessage(error, t('admin.modelPriority.userSearchFailed')))
+    } finally {
+      if (sequence === userSearchSequence) userLoading.value = false
+    }
+  }, 250)
+  onCleanup(() => window.clearTimeout(timer))
+})
 
 function resetFilters(): void { Object.assign(filters, { search: '', group: '', pool: '', plan: '', type: '', status: '' }); page.value = 1 }
 function addRule(): void { draft.rules.push({ key: ++ruleSequence, model_pattern: '', account_ids: [] }) }
 function removeRule(index: number): void { draft.rules.splice(index, 1) }
+function userName(userID: number): string { return usersByID.value.get(userID)?.username ?? t('admin.modelPriority.missingUser', { id: userID }) }
+function addUserRule(user: AdminUser): void {
+  if (draft.user_rules.some(rule => rule.user_id === user.id)) return
+  draft.user_rules.push({ key: ++ruleSequence, user_id: user.id, account_ids: [], account_order: [] })
+  userSearch.value = ''
+}
+function removeUserRule(index: number): void { draft.user_rules.splice(index, 1) }
+
+async function loadSelectedUsers(): Promise<void> {
+  const ids = draft.user_rules.map(rule => rule.user_id).filter(id => !usersByID.value.has(id))
+  for (let start = 0; start < ids.length; start += 5) {
+    const results = await Promise.allSettled(ids.slice(start, start + 5).map(id => adminAPI.users.getById(id)))
+    const next = new Map(usersByID.value)
+    for (const result of results) if (result.status === 'fulfilled') next.set(result.value.id, result.value)
+    usersByID.value = next
+  }
+}
 function toggleAccount(accountID: number): void {
   const next = new Set(pickerSelected.value)
   if (next.has(accountID)) {
@@ -461,7 +549,7 @@ function movePickerAccount(index: number, offset: -1 | 1): void {
   ;[next[index], next[target]] = [next[target], next[index]]
   pickerOrder.value = next
 }
-function initialAccountOrder(rule: OpenAIModelPriorityRule): number[] {
+function initialAccountOrder(rule: OpenAIModelPriorityRule | OpenAIUserPriorityRule): number[] {
   const selected = new Set(rule.account_ids)
   if (rule.account_order) {
     const ordered = rule.account_order.filter((id, index, values) => selected.has(id) && values.indexOf(id) === index)
@@ -499,23 +587,24 @@ async function loadAccountCatalog(): Promise<void> {
   }
 }
 
-async function openAccountPicker(index: number): Promise<void> {
-  const ruleKey = draft.rules[index]?.key
+async function openAccountPicker(index: number, kind: 'model' | 'user' = 'model'): Promise<void> {
+  const ruleKey = (kind === 'user' ? draft.user_rules[index] : draft.rules[index])?.key
   if (ruleKey === undefined) return
   const requestSequence = ++pickerRequestSequence
-  pickerRuleIndex.value = index
+  pickerRuleIndex.value = kind === 'model' ? index : null
+  pickerUserRuleIndex.value = kind === 'user' ? index : null
   resetFilters()
   await loadAccountCatalog()
-  const rule = draft.rules[index]
-  if (requestSequence !== pickerRequestSequence || pickerRuleIndex.value !== index || rule?.key !== ruleKey) return
+  const rule = pickerRule.value
+  if (requestSequence !== pickerRequestSequence || rule?.key !== ruleKey) return
   pickerOrder.value = initialAccountOrder(rule)
   pickerSelected.value = new Set(pickerOrder.value)
 }
-function closeAccountPicker(): void { pickerRequestSequence++; pickerRuleIndex.value = null; pickerSelected.value = new Set(); pickerOrder.value = [] }
+function closeAccountPicker(): void { pickerRequestSequence++; pickerRuleIndex.value = null; pickerUserRuleIndex.value = null; pickerSelected.value = new Set(); pickerOrder.value = [] }
 function applyAccountPicker(): void {
-  if (pickerRuleIndex.value === null || pickerSelected.value.size === 0) return
-  draft.rules[pickerRuleIndex.value].account_ids = [...pickerOrder.value]
-  draft.rules[pickerRuleIndex.value].account_order = [...pickerOrder.value]
+  if (pickerRule.value === null || pickerSelected.value.size === 0) return
+  pickerRule.value.account_ids = [...pickerOrder.value]
+  pickerRule.value.account_order = [...pickerOrder.value]
   closeAccountPicker()
 }
 
@@ -524,6 +613,9 @@ async function load(): Promise<void> {
   try {
     const settings = await adminAPI.settings.getOpenAIModelPrioritySettings()
     draft.enabled = settings.enabled
+    draft.user_enabled = settings.user_enabled === true
+    draft.user_rules = (settings.user_rules ?? []).map(rule => ({ key: ++ruleSequence, user_id: rule.user_id, account_ids: [...rule.account_ids], account_order: [...(rule.account_order ?? rule.account_ids)] }))
+    void loadSelectedUsers()
     draft.smart_rotation_enabled = settings.smart_rotation_enabled === true
     draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(settings.smart_rotation_cooldown_minutes)
     draft.rules = (settings.rules ?? []).map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
@@ -540,12 +632,16 @@ async function save(): Promise<void> {
   try {
     const payload: OpenAIModelPrioritySettings = {
       enabled: draft.enabled,
+      user_enabled: draft.user_enabled,
+      user_rules: draft.user_rules.map(rule => ({ user_id: rule.user_id, account_ids: [...rule.account_ids], account_order: [...rule.account_order] })),
       smart_rotation_enabled: draft.smart_rotation_enabled,
       smart_rotation_cooldown_minutes: draft.smart_rotation_cooldown_minutes,
       rules: draft.rules.map(rule => ({ model_pattern: rule.model_pattern.trim(), account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
     }
     const updated = await adminAPI.settings.updateOpenAIModelPrioritySettings(payload)
     draft.enabled = updated.enabled
+    draft.user_enabled = updated.user_enabled === true
+    draft.user_rules = (updated.user_rules ?? []).map(rule => ({ key: ++ruleSequence, user_id: rule.user_id, account_ids: [...rule.account_ids], account_order: [...rule.account_order] }))
     draft.smart_rotation_enabled = updated.smart_rotation_enabled ?? payload.smart_rotation_enabled ?? false
     draft.smart_rotation_cooldown_minutes = normalizeSmartRotationCooldown(updated.smart_rotation_cooldown_minutes ?? payload.smart_rotation_cooldown_minutes)
     draft.rules = updated.rules.map(rule => ({ key: ++ruleSequence, model_pattern: rule.model_pattern, account_ids: [...rule.account_ids], ...(rule.account_order ? { account_order: [...rule.account_order] } : {}) }))
@@ -558,4 +654,5 @@ async function save(): Promise<void> {
 }
 
 onMounted(() => { void load(); void loadAccountCatalog() })
+onBeforeUnmount(() => { userSearchSequence++; pickerRequestSequence++ })
 </script>

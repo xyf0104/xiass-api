@@ -393,6 +393,31 @@ describe('PricingView', () => {
     vi.useRealTimers()
   })
 
+  it('matches Carbon tiers to a final base card and inherits dated channel prices', async () => {
+    const channels = grokChannelFixture()
+    const section = channels[0]!.platforms[0]!
+    section.platform = 'antigravity'
+    section.groups[0]!.platform = 'antigravity'
+    section.groups[0]!.model_pricing = [{ models: ['gemini-4-carbon'], billing_mode: 'token', price_mode: 'final',
+      input_price: 5e-6, output_price: null, cache_write_price: null, cache_read_price: null }]
+    section.supported_models = ['high', 'medium', 'low'].map(tier => ({
+      name: `gemini-4-carbon-${tier}`, platform: 'antigravity',
+      pricing: pricing({ input_price: 4e-6, output_price: 20e-6, cache_read_price: 0.2e-6 })
+    }))
+    getPricing.mockResolvedValue(channels)
+    getUserGroupRates.mockResolvedValue({ 9: 7 })
+    const wrapper = mount(PricingView, { global: { stubs: {
+      AppLayout: { template: '<main><slot /></main>' }, Icon: true, PlatformBrandIcon: true
+    } } })
+    await flushPromises()
+    for (const tier of ['high', 'medium', 'low']) {
+      expect(wrapper.get(`[data-test="price-gemini-4-carbon-${tier}-input"]`).text()).toContain('¥5')
+      expect(wrapper.get(`[data-test="price-gemini-4-carbon-${tier}-output"]`).text()).toContain('¥140')
+      expect(wrapper.get(`[data-test="price-gemini-4-carbon-${tier}-cache-read"]`).text()).toContain('¥1.4')
+    }
+    wrapper.unmount()
+  })
+
   it('matches base exact before final wildcard and does not multiply final fields', async () => {
 	vi.useFakeTimers({ toFake: ['Date'] })
 	vi.setSystemTime(new Date('2026-07-10T07:00:00Z'))

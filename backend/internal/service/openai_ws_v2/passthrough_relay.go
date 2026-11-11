@@ -67,6 +67,8 @@ type RelayOptions struct {
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
 	UpstreamDrainTimeout            time.Duration
+	FirstTurnStartedAt              time.Time
+	TakeNextTurnStartedAt           func() time.Time
 	FirstMessageType                coderws.MessageType
 	FirstMessageSent                bool
 	StartClientAfterFirstDownstream bool
@@ -78,7 +80,9 @@ type RelayOptions struct {
 	BeforeRelayCancel               func(exit RelayExit)
 	ReadClientFrame                 func(ctx context.Context, clientConn FrameConn) (coderws.MessageType, []byte, error)
 	OnTrace                         func(event RelayTraceEvent)
-	Now                             func() time.Time
+	// Nil preserves the default delta-based first-token rule.
+	IsFirstTokenEvent func(eventType string, message []byte) bool
+	Now               func() time.Time
 }
 
 type RelayTraceEvent struct {
@@ -95,6 +99,8 @@ type relayState struct {
 	usage                   Usage
 	requestModelMu          sync.RWMutex
 	requestModel            string
+	pendingTurnStart        atomic.Pointer[time.Time]
+	isFirstTokenEvent       func(eventType string, message []byte) bool
 	lastResponseID          string
 	lastResponseModel       string
 	lastResponseServiceTier string
@@ -164,7 +170,14 @@ func Relay(
 		firstMessageType = coderws.MessageText
 	}
 	startAt := nowFn()
-	state := &relayState{requestModel: result.RequestModel}
+	state := &relayState{requestModel: result.RequestModel, isFirstTokenEvent: options.IsFirstTokenEvent}
+	if isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
+		firstTurnStartedAt := options.FirstTurnStartedAt
+		if firstTurnStartedAt.IsZero() {
+			firstTurnStartedAt = startAt
+		}
+		state.setPendingTurnStartedAt(firstTurnStartedAt)
+	}
 	onTrace := options.OnTrace
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
@@ -182,8 +195,16 @@ func Relay(
 		return upstreamConn.WriteFrame(writeCtx, msgType, payload)
 	}
 	writeClientFrameUpstream := func(msgType coderws.MessageType, payload []byte) error {
-		if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
+		if isClientResponseCreateFrame(msgType, payload) {
 			state.setRequestModel(strings.TrimSpace(gjson.GetBytes(payload, "model").String()))
+			turnStartedAt := time.Time{}
+			if options.TakeNextTurnStartedAt != nil {
+				turnStartedAt = options.TakeNextTurnStartedAt()
+			}
+			if turnStartedAt.IsZero() {
+				turnStartedAt = nowFn()
+			}
+			state.setPendingTurnStartedAt(turnStartedAt)
 		}
 		return writeUpstream(msgType, payload)
 	}
@@ -688,16 +709,10 @@ func observeUpstreamMessage(
 	}
 	now := nowFn()
 
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
+	if state.firstTokenMs == nil && state.startsFirstToken(eventType, message) {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms >= 0 {
 			state.firstTokenMs = &ms
-		}
-		if state.activeTurn != nil && state.activeTurn.firstTokenMs == nil {
-			tms := int(now.Sub(state.activeTurn.startAt).Milliseconds())
-			if tms >= 0 {
-				state.activeTurn.firstTokenMs = &tms
-			}
 		}
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
@@ -709,14 +724,15 @@ func observeUpstreamMessage(
 	var turnTiming *relayTurnTiming
 	if responseID != "" {
 		turnTiming = openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
-			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms >= 0 {
-				turnTiming.firstTokenMs = &ms
-			}
-		}
 	} else {
 		turnTiming = state.activeTurn
+	}
+	// Deltas without response.id still belong to the active turn.
+	if turnTiming != nil && turnTiming.firstTokenMs == nil && state.startsFirstToken(eventType, message) {
+		ms := int(now.Sub(turnTiming.startAt).Milliseconds())
+		if ms >= 0 {
+			turnTiming.firstTokenMs = &ms
+		}
 	}
 	observeRelayTurnResponseModel(turnTiming, firstRelayResponseModel(message), isTerminalEvent(eventType))
 	if !isTerminalEvent(eventType) {
@@ -838,12 +854,25 @@ func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now 
 	}
 	timing, ok := state.turnTimingByID[responseID]
 	if !ok || timing == nil || timing.startAt.IsZero() {
-		timing = &relayTurnTiming{startAt: now}
+		startAt := now
+		if pending := state.pendingTurnStart.Swap(nil); pending != nil {
+			startAt = *pending
+		}
+		timing = &relayTurnTiming{startAt: startAt}
 		state.turnTimingByID[responseID] = timing
 		state.activeTurn = timing
 		return timing
 	}
 	return timing
+}
+
+func (s *relayState) setPendingTurnStartedAt(startedAt time.Time) {
+	s.pendingTurnStart.Store(&startedAt)
+}
+
+func isClientResponseCreateFrame(msgType coderws.MessageType, payload []byte) bool {
+	return (msgType == coderws.MessageText || msgType == coderws.MessageBinary) &&
+		strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create"
 }
 
 func openAIWSRelayDeleteTurnTiming(state *relayState, responseID string) (relayTurnTiming, bool) {
@@ -1056,6 +1085,13 @@ func shouldParseUsage(eventType string) bool {
 	default:
 		return false
 	}
+}
+
+func (s *relayState) startsFirstToken(eventType string, message []byte) bool {
+	if s.isFirstTokenEvent != nil {
+		return !isTerminalEvent(eventType) && s.isFirstTokenEvent(eventType, message)
+	}
+	return isTokenEvent(eventType)
 }
 
 func isTokenEvent(eventType string) bool {

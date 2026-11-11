@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+func isAntigravityGeminiImageModel(model string) bool {
+	model = normalizeAntigravityModelName(model)
+	return strings.HasPrefix(model, "gemini-") && strings.Contains(model, "-image")
+}
+
 func normalizeAntigravityModelName(model string) string {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	if idx := strings.LastIndex(normalized, "/publishers/google/models/"); idx != -1 {

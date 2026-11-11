@@ -21,6 +21,9 @@
             @create="showCreate = true"
           >
             <template #beforeCreate>
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-priority-settings" @click="openAccountPrioritySettings">
+                <Icon name="sort" size="sm" /><span>{{ t('admin.modelPriority.accountRoutingTitle') }}</span>
+              </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-pools" @click="showAccountPools = true">
                 <Icon name="users" size="sm" /><span>号池管理</span>
               </button>
@@ -266,12 +269,12 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden" :aria-busy="loading" :inert="loading && accounts.length > 0">
         <DataTable
           ref="dataTableRef"
           :columns="cols"
           :data="accounts"
-          :loading="loading"
+          :loading="loading && accounts.length === 0"
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"
@@ -697,6 +700,10 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const route = useRoute() as ReturnType<typeof useRoute> | undefined
 const router = useRouter() as ReturnType<typeof useRouter> | undefined
+
+function openAccountPrioritySettings() {
+  void router?.push({ name: 'AdminSettings', query: { tab: 'gateway' }, hash: '#openai-account-priority' })
+}
 
 function openOpenAIAccountWorkbench() {
   void router?.push({

@@ -43,6 +43,9 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 		"gemini-4-argon-high",
 		"gemini-4-argon-medium",
 		"gemini-4-argon-low",
+		"gemini-4-carbon-high",
+		"gemini-4-carbon-medium",
+		"gemini-4-carbon-low",
 		"claude-opus-5-5-high",
 		"claude-opus-5-5-medium",
 		"claude-opus-5-5-low",
@@ -180,5 +183,26 @@ func TestGeminiModels_Gemini35PublicTierLabels(t *testing.T) {
 	}
 	if got := models["gemini-3.5-flash-low"].DisplayName; got != "Gemini 3.5 Flash Low" {
 		t.Fatalf("unexpected low display name: %q", got)
+	}
+}
+
+func TestGeminiModels_CarbonTiersPreserveReasoningSemantics(t *testing.T) {
+	for _, tier := range []string{"high", "medium", "low"} {
+		id := "gemini-4-carbon-" + tier
+		if !IsGeminiReasoningModel(id) {
+			t.Errorf("%q must use Gemini reasoning request semantics", id)
+		}
+		count := 0
+		for _, model := range DefaultGeminiModels() {
+			if model.Name == "models/"+id {
+				count++
+				if model.DisplayName != "Gemini 4 Carbon ("+strings.ToUpper(tier[:1])+tier[1:]+")" {
+					t.Errorf("unexpected Carbon display name: %q", model.DisplayName)
+				}
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected one Gemini entry for %q, got %d", id, count)
+		}
 	}
 }

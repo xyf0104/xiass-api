@@ -566,6 +566,44 @@ func StripEmptyTextBlocks(body []byte) []byte {
 	return out
 }
 
+// validateClaude52Request runs before mimicry can remove tool_choice or alter
+// sampling. Other model families keep their existing compatibility behavior.
+func validateClaude52Request(body []byte, model string) error {
+	if !claude.IsFable52(model) && !claude.IsMythos52(model) {
+		return nil
+	}
+	if thinking := gjson.GetBytes(body, "thinking.type"); thinking.Exists() && thinking.String() != "adaptive" {
+		return fmt.Errorf("%s requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort", model)
+	}
+	if effort := gjson.GetBytes(body, "output_config.effort"); effort.Exists() {
+		switch effort.String() {
+		case "low", "medium", "high", "xhigh", "max":
+		default:
+			return fmt.Errorf("%s does not support reasoning effort %q; use low, medium, high, xhigh or max", model, effort.String())
+		}
+	}
+	if gjson.GetBytes(body, "tool_choice").String() == "required" {
+		return fmt.Errorf("%s does not support forced tool_choice; use auto or none", model)
+	}
+	switch gjson.GetBytes(body, "tool_choice.type").String() {
+	case "any", "tool", "function", "custom", "namespace":
+		return fmt.Errorf("%s does not support forced tool_choice; use auto or none", model)
+	}
+	if temperature := gjson.GetBytes(body, "temperature"); temperature.Exists() && (temperature.Type != gjson.Number || temperature.Float() != 1) {
+		return fmt.Errorf("%s does not support non-default temperature", model)
+	}
+	if topP := gjson.GetBytes(body, "top_p"); topP.Exists() && (topP.Type != gjson.Number || topP.Float() != 0.99) {
+		return fmt.Errorf("%s does not support non-default top_p", model)
+	}
+	if gjson.GetBytes(body, "top_k").Exists() {
+		return fmt.Errorf("%s does not support top_k", model)
+	}
+	if gjson.GetBytes(body, "temperature").Exists() && gjson.GetBytes(body, "top_p").Exists() {
+		return fmt.Errorf("%s does not allow temperature and top_p together; omit both", model)
+	}
+	return nil
+}
+
 // FilterThinkingBlocks removes thinking blocks from request body
 // Returns filtered body or original body if filtering fails (fail-safe)
 // This prevents 400 errors from invalid thinking block signatures.
@@ -580,11 +618,12 @@ func StripEmptyTextBlocks(body []byte) []byte {
 //   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
 //   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块（避免 400）
 //     (blocks with missing/empty/dummy signatures that would cause 400 errors)
+//   - Fable/Mythos 5.2 默认开启 thinking；保留完整签名历史，遇到无效块则清除全部历史 thinking。
 func FilterThinkingBlocks(body []byte, mappedModel string) []byte {
 	if !ShouldPreFilterThinkingBlocks(mappedModel) {
 		return body
 	}
-	return filterThinkingBlocksInternal(body, false)
+	return filterThinkingBlocksInternal(body, claude.IsFable52(mappedModel) || claude.IsMythos52(mappedModel))
 }
 
 // FilterThinkingBlocksForRetry strips thinking-related constructs for retry scenarios.
@@ -1321,7 +1360,7 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 // 策略：
 //   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
 //   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块
-func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
+func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
@@ -1338,7 +1377,7 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 	}
 
 	// Check if thinking is enabled
-	thinkingEnabled := false
+	thinkingEnabled := alwaysThinking
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
 			thinkingEnabled = true
@@ -1379,6 +1418,12 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 				// When thinking is enabled and this is an assistant message,
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
+					if alwaysThinking && blockType == "redacted_thinking" {
+						if data, ok := blockMap["data"].(string); ok && data != "" {
+							newContent = append(newContent, block)
+							continue
+						}
+					}
 					signature, _ := blockMap["signature"].(string)
 					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
@@ -1409,6 +1454,41 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 
 	if !filtered {
 		return body
+	}
+	if alwaysThinking {
+		// A partial signed history is invalid for 5.2: drop all thinking if
+		// any block was invalid, preserving text and tool order across turns.
+		for _, msg := range messages {
+			msgMap, ok := msg.(map[string]any)
+			if !ok {
+				continue
+			}
+			content, ok := msgMap["content"].([]any)
+			if !ok {
+				continue
+			}
+			cleaned := make([]any, 0, len(content))
+			for _, block := range content {
+				if blockMap, ok := block.(map[string]any); ok {
+					blockType, _ := blockMap["type"].(string)
+					if blockType == "thinking" || blockType == "redacted_thinking" {
+						continue
+					}
+					if _, hasThinking := blockMap["thinking"]; blockType == "" && hasThinking {
+						continue
+					}
+				}
+				cleaned = append(cleaned, block)
+			}
+			if len(cleaned) == 0 {
+				placeholder := "(content removed)"
+				if msgMap["role"] == "assistant" {
+					placeholder = "(assistant content removed)"
+				}
+				cleaned = append(cleaned, map[string]any{"type": "text", "text": placeholder})
+			}
+			msgMap["content"] = cleaned
+		}
 	}
 
 	newBody, err := json.Marshal(req)
