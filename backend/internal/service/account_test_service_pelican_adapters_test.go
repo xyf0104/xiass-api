@@ -150,14 +150,16 @@ func TestPelicanAllAdaptersPromptProxyCompletionAndContinuation(t *testing.T) {
 				default:
 					require.Equal(t, actual, body["model"])
 				}
-				messages := body[key].([]any)
+				messages, ok := body[key].([]any)
+				require.True(t, ok)
 				want := []string{benchmark.Prompt}
 				if continuing {
 					want = append(want, "<html>animation", "继续")
 				}
 				require.Len(t, messages, len(want))
 				for i, item := range messages {
-					message := item.(map[string]any)
+					message, ok := item.(map[string]any)
+					require.True(t, ok)
 					role := []string{"user", "assistant", "user"}[i]
 					if role == "assistant" && key == "contents" {
 						role = "model"
@@ -165,9 +167,17 @@ func TestPelicanAllAdaptersPromptProxyCompletionAndContinuation(t *testing.T) {
 					require.Equal(t, role, message["role"])
 					content := message["content"]
 					if key == "contents" {
-						content = message["parts"].([]any)[0].(map[string]any)["text"]
+						parts, ok := message["parts"].([]any)
+						require.True(t, ok)
+						require.NotEmpty(t, parts)
+						part, ok := parts[0].(map[string]any)
+						require.True(t, ok)
+						content = part["text"]
 					} else if parts, ok := content.([]any); ok {
-						content = parts[0].(map[string]any)["text"]
+						require.NotEmpty(t, parts)
+						part, ok := parts[0].(map[string]any)
+						require.True(t, ok)
+						content = part["text"]
 					}
 					require.Equal(t, want[i], content)
 				}
