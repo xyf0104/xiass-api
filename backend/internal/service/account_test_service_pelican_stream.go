@@ -13,6 +13,10 @@ import (
 // Connectivity probes can accept EOF or any finish reason. A benchmark must
 // see the protocol's successful terminal event, even for apparently valid HTML.
 func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body io.Reader, protocol string) error {
+	probe := pelicanProbe(c)
+	completion := &pelicanCompletion{protocol: protocol}
+	probe.completion = completion
+	defer probe.recordCompletionError()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4096), 8*benchmark.MaxHTMLBytes)
 	var data strings.Builder
@@ -53,13 +57,17 @@ func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body i
 			case "message_delta":
 				delta, _ := event["delta"].(map[string]any)
 				if reason, _ := delta["stop_reason"].(string); reason != "" {
+					completion.setReason(reason)
 					if reason != "end_turn" {
+						completion.cause = completion.stopCause()
 						return s.pelicanError(c, "upstream_incomplete")
 					}
 					stopped = true
 				}
 			case "message_stop":
+				completion.terminal = true
 				if !stopped {
+					completion.cause = "stop_reason_missing"
 					return s.pelicanError(c, "upstream_incomplete")
 				}
 				finished = true
@@ -75,6 +83,7 @@ func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body i
 			return s.pelicanStreamError(c, raw)
 		}
 		if feedback, ok := event["promptFeedback"].(map[string]any); ok && feedback["blockReason"] != nil {
+			completion.cause = "prompt_blocked"
 			return s.pelicanError(c, "upstream_incomplete")
 		}
 		candidates, _ := event["candidates"].([]any)
@@ -95,7 +104,10 @@ func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body i
 				}
 			}
 			if reason, _ := candidate["finishReason"].(string); reason != "" {
+				completion.setReason(reason)
+				completion.terminal = true
 				if reason != "STOP" {
+					completion.cause = completion.stopCause()
 					return s.pelicanError(c, "upstream_incomplete")
 				}
 				finished = true
@@ -138,6 +150,10 @@ func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body i
 }
 
 func (s *AccountTestService) processPelicanClaudeJSON(c *gin.Context, body io.Reader) error {
+	probe := pelicanProbe(c)
+	completion := &pelicanCompletion{protocol: "claude"}
+	probe.completion = completion
+	defer probe.recordCompletionError()
 	var response struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -150,6 +166,8 @@ func (s *AccountTestService) processPelicanClaudeJSON(c *gin.Context, body io.Re
 	if decoder.Decode(&response) != nil {
 		return s.pelicanError(c, "upstream_stream_error")
 	}
+	completion.setReason(response.StopReason)
+	completion.terminal = response.StopReason != ""
 	if len(response.Error) > 0 {
 		return s.pelicanStreamError(c, `{"error":`+string(response.Error)+`}`)
 	}
@@ -159,7 +177,12 @@ func (s *AccountTestService) processPelicanClaudeJSON(c *gin.Context, body io.Re
 		}
 	}
 	var extra any
-	if response.StopReason != "end_turn" || decoder.Decode(&extra) != io.EOF {
+	if response.StopReason != "end_turn" {
+		completion.cause = completion.stopCause()
+		return s.pelicanError(c, "upstream_incomplete")
+	}
+	if decoder.Decode(&extra) != io.EOF {
+		completion.cause = "invalid_response_trailer"
 		return s.pelicanError(c, "upstream_incomplete")
 	}
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})

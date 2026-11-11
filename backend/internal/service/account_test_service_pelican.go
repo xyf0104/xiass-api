@@ -26,6 +26,7 @@ type openAIPelicanProbe struct {
 	errorCode    string
 	errorMessage string
 	secrets      []string
+	completion   *pelicanCompletion
 }
 
 var pelicanSensitiveText = regexp.MustCompile(`(?i)https?://[^\s]+|socks5?://[^\s]+|bearer\s+[^\s]+|sk-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_.-]+|[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}`)
@@ -227,11 +228,9 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	// Call the existing protocol adapters, bypassing TestAccountConnection's
 	// last_used write and the admin handler's scheduling recovery.
 	err = s.testAccountProtocolConnection(c, &local, model, benchmark.Prompt, AccountTestModeDefault)
-	text := capture.text.String()
-	if html := pelicanUnwrapHTML(text); pelicanCompleteHTML(html) {
-		text = html
-	} else {
-		text = previous + text
+	text := pelicanUnwrapHTML(capture.text.String())
+	if !pelicanCompleteHTML(text) {
+		text = pelicanUnwrapHTML(pelicanUnwrapHTML(previous) + text)
 	}
 	if capture.tooLarge || len(text) > benchmark.MaxHTMLBytes {
 		return benchmark.Output{HTML: pelicanBoundedText(text), ErrorCode: "html_too_large"}, benchmark.ErrTooLarge
@@ -248,7 +247,11 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	}
 	html := pelicanUnwrapHTML(text)
 	if !pelicanCompleteHTML(html) {
-		return benchmark.Output{HTML: text, ErrorCode: "upstream_incomplete"}, errors.New("upstream_incomplete")
+		message := "cause=html_incomplete; terminal=received"
+		if probe.completion != nil {
+			message = probe.completion.message("html_incomplete")
+		}
+		return benchmark.Output{HTML: text, ErrorCode: "upstream_incomplete", ErrorMessage: message}, errors.New("upstream_incomplete")
 	}
 	return benchmark.Output{HTML: html}, nil
 }
@@ -266,18 +269,60 @@ func pelicanBoundedText(text string) string {
 
 func pelicanUnwrapHTML(text string) string {
 	html := strings.TrimSpace(text)
-	if strings.HasPrefix(html, "```") {
-		if start := strings.IndexByte(html, '\n'); start >= 0 && strings.HasSuffix(html, "```") {
-			html = strings.TrimSpace(html[start+1 : len(html)-3])
+	if pelicanCompleteHTML(html) {
+		return html
+	}
+	// Raw documents may contain Markdown examples inside scripts. Only remove
+	// an orphan closing fence after a complete document (a continuation tail).
+	rawHTML := pelicanStartsHTML(html)
+	var marker byte
+	fenceLen, contentStart := 0, 0
+	eligible := false
+	for offset := 0; offset < len(text); {
+		line, rest, found := strings.Cut(text[offset:], "\n")
+		next := len(text)
+		if found {
+			next -= len(rest)
 		}
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) >= 3 && (trimmed[0] == '`' || trimmed[0] == '~') {
+			count := 1
+			for count < len(trimmed) && trimmed[count] == trimmed[0] {
+				count++
+			}
+			info := strings.TrimSpace(trimmed[count:])
+			if rawHTML {
+				if count >= 3 && info == "" && pelicanCompleteHTML(strings.TrimSpace(text[:offset])) {
+					return strings.TrimSpace(text[:offset])
+				}
+			} else if marker == 0 && count >= 3 {
+				marker, fenceLen, contentStart = trimmed[0], count, next
+				eligible = strings.EqualFold(info, "html") || (info == "" && pelicanStartsHTML(strings.TrimSpace(text[next:])))
+			} else if trimmed[0] == marker && count >= fenceLen && info == "" {
+				if eligible {
+					return pelicanNormalizeHTMLFragment(text[contentStart:offset])
+				}
+				marker = 0
+			}
+		}
+		offset = next
+	}
+	if marker != 0 && eligible {
+		return pelicanNormalizeHTMLFragment(text[contentStart:])
+	}
+	return text
+}
+
+// Preserve whitespace in partial output: a stream can stop inside a text
+// node, attribute, or script token, and the next fragment must join exactly.
+func pelicanNormalizeHTMLFragment(html string) string {
+	if trimmed := strings.TrimSpace(html); pelicanCompleteHTML(trimmed) {
+		return trimmed
 	}
 	return html
 }
 
-func pelicanCompleteHTML(html string) bool {
-	if !utf8.ValidString(html) || strings.ContainsRune(html, '\x00') {
-		return false
-	}
+func pelicanStartsHTML(html string) bool {
 	document := strings.ToLower(html)
 	if strings.HasPrefix(document, "<!doctype html>") {
 		document = strings.TrimSpace(strings.TrimPrefix(document, "<!doctype html>"))
@@ -287,10 +332,15 @@ func pelicanCompleteHTML(html string) bool {
 	}
 	switch document[len("<html")] {
 	case '>', ' ', '\t', '\r', '\n':
-		return strings.HasSuffix(document, "</html>")
+		return true
 	default:
 		return false
 	}
+}
+
+func pelicanCompleteHTML(html string) bool {
+	return utf8.ValidString(html) && !strings.ContainsRune(html, '\x00') &&
+		pelicanStartsHTML(html) && strings.HasSuffix(strings.ToLower(html), "</html>")
 }
 
 // The normal background test uses an unbounded httptest recorder. This writer
@@ -378,6 +428,13 @@ func boundPelicanResponse(c *gin.Context, resp *http.Response) {
 // Keep diagnostics out of model text, and consume buffered data even when the
 // request context has been canceled. Only model text deltas reach the capture.
 func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader, chat bool) error {
+	probe := pelicanProbe(c)
+	completion := &pelicanCompletion{protocol: "responses"}
+	if chat {
+		completion.protocol = "chat"
+	}
+	probe.completion = completion
+	defer probe.recordCompletionError()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4096), 8*benchmark.MaxHTMLBytes)
 	var data strings.Builder
@@ -416,7 +473,10 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
 				}
 				if reason, _ := choice["finish_reason"].(string); reason != "" {
+					completion.setReason(reason)
+					completion.terminal = true
 					if reason != "stop" {
+						completion.cause = completion.stopCause()
 						return s.pelicanError(c, "upstream_incomplete")
 					}
 					finished = true
@@ -430,8 +490,12 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 				s.sendEvent(c, TestEvent{Type: "content", Text: text})
 			}
 		case "response.completed", "response.done":
+			completion.terminal = true
+			completion.setReason("completed")
 			response, _ := event["response"].(map[string]any)
 			if status, _ := response["status"].(string); status != "" && status != "completed" {
+				completion.setReason(status)
+				completion.cause = completion.stopCause()
 				if status == "failed" {
 					return s.pelicanStreamError(c, raw)
 				}
@@ -439,8 +503,20 @@ func (s *AccountTestService) processPelicanStream(c *gin.Context, body io.Reader
 			}
 			finished = true
 		case "response.incomplete":
+			completion.terminal = true
+			completion.setReason("incomplete")
+			response, _ := event["response"].(map[string]any)
+			details, _ := response["incomplete_details"].(map[string]any)
+			if reason, _ := details["reason"].(string); reason != "" {
+				completion.setReason(reason)
+			}
+			completion.cause = completion.stopCause()
 			return s.pelicanError(c, "upstream_incomplete")
-		case "error", "response.failed":
+		case "response.failed":
+			completion.terminal = true
+			completion.setReason("failed")
+			return s.pelicanStreamError(c, raw)
+		case "error":
 			return s.pelicanStreamError(c, raw)
 		}
 		return nil

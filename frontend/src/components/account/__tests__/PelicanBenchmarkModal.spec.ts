@@ -781,6 +781,32 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
   })
 
+  it.each(['continue', 'retry'] as const)('offers %s for an incomplete non-OpenAI result without discarding its partial output', async action => {
+    const source = run('partial', { model: 'claude-fable-5-2', status: 'failed', error_code: 'upstream_incomplete', html_bytes: 1700 })
+    api.getPelicanCurrent.mockResolvedValue({ items: [source] })
+    api.getPelicanResult.mockResolvedValue(source)
+    api.restartPelicanTest.mockResolvedValue({ items: [run('next', { source_id: source.id, model: source.model, status: 'queued' })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.find('[data-testid="continue-partial"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-partial"]').exists()).toBe(true)
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    await wrapper.get(`[data-testid="${action}-partial"]`).trigger('click')
+    await flushPromises()
+    expect(api.restartPelicanTest).toHaveBeenCalledExactlyOnceWith(source.id, action, expect.any(AbortSignal))
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+  })
+
+  it.each(['html_too_large', 'invalid_html', 'upstream_http_401'])('does not offer continuation for nonrecoverable %s output', async error_code => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('partial', { status: 'failed', error_code, html_bytes: 1700 })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.find('[data-testid="continue-partial"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="retry-partial"]').exists()).toBe(true)
+  })
+
   it('selects multiple accounts and select-all excludes unavailable accounts', async () => {
     const wrapper = render()
     await flushPromises()

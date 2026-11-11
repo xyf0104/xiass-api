@@ -69,6 +69,7 @@
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
                 <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
                   <button type="button" class="btn btn-primary min-h-10 !px-4 !py-2 text-sm font-semibold" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
+                  <button v-if="canContinuePartial(run)" type="button" class="btn btn-secondary h-10 w-10 !p-0" :disabled="busy || loading" :title="t(`${prefix}.retry`)" :aria-label="`${run.account_name}: ${t(`${prefix}.retry`)}`" :data-testid="`retry-${run.id}`" @click="restart(run, 'retry')"><Icon name="refresh" size="sm" /></button>
                 </div>
               </div>
             </div>
@@ -138,7 +139,9 @@ let modelQueue: { account: PelicanBenchmarkAccount; selection: string | undefine
 let activeModelRequests = 0
 
 const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].includes(run.status)
-const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => run.status === 'canceled' ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
+const canContinuePartial = (run: PelicanBenchmarkRun) => run.html_bytes > 0 && (run.status === 'interrupted' ||
+  (run.status === 'failed' && ['upstream_incomplete', 'upstream_stream_error', 'timeout'].includes(run.error_code)))
+const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => run.status === 'canceled' || canContinuePartial(run) ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
 const isAccountRunning = (id: number) => current.value.some(run => run.account_id === id && active(run))
 const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
 const startable = computed(() => accounts.value.filter(canStart))
