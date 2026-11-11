@@ -262,7 +262,7 @@ func (s *AccountTestService) testPelicanAntigravityConnection(c *gin.Context, a 
 		return s.pelicanError(c, "upstream_incomplete")
 	}
 	resp := result.resp
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	boundPelicanResponse(c, resp)
 	if resp.StatusCode != http.StatusOK {
 		return s.pelicanHTTPError(c, resp)

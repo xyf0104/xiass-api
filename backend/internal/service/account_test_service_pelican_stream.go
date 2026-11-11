@@ -120,8 +120,8 @@ func (s *AccountTestService) processPelicanProtocolStream(c *gin.Context, body i
 			if data.Len()+len(line) > 8*benchmark.MaxHTMLBytes {
 				return s.pelicanError(c, "upstream_stream_error")
 			}
-			data.WriteString(strings.TrimPrefix(line, "data:"))
-			data.WriteByte('\n')
+			_, _ = data.WriteString(strings.TrimPrefix(line, "data:"))
+			_ = data.WriteByte('\n')
 		}
 	}
 	if err := process(); err != nil {

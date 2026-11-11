@@ -120,12 +120,17 @@ func TestPelicanAllAdaptersPromptProxyCompletionAndContinuation(t *testing.T) {
 				switch tc.wire {
 				case "wrapped":
 					require.Equal(t, actual, body["model"])
-					body = body["request"].(map[string]any)
+					wrapped, ok := body["request"].(map[string]any)
+					require.True(t, ok)
+					body = wrapped
 					key = "contents"
 					if tc.model == "gemini-3.7-flash-medium" {
 						require.Equal(t, "gemini-3.7-flash-tiered", actual)
-						config := body["generationConfig"].(map[string]any)
-						require.Equal(t, float64(4000), config["thinkingConfig"].(map[string]any)["thinkingBudget"])
+						config, ok := body["generationConfig"].(map[string]any)
+						require.True(t, ok)
+						thinking, ok := config["thinkingConfig"].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, float64(4000), thinking["thinkingBudget"])
 					}
 				case "gemini":
 					if wrapped, ok := body["request"].(map[string]any); ok {
@@ -158,7 +163,7 @@ func TestPelicanAllAdaptersPromptProxyCompletionAndContinuation(t *testing.T) {
 						role = "model"
 					}
 					require.Equal(t, role, message["role"])
-					var content any = message["content"]
+					content := message["content"]
 					if key == "contents" {
 						content = message["parts"].([]any)[0].(map[string]any)["text"]
 					} else if parts, ok := content.([]any); ok {

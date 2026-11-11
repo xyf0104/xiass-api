@@ -552,7 +552,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 
 	accessToken, err := pelicanAccessToken(ctx, account, func() (string, error) {
 		if s.claudeTokenProvider == nil {
-			return "", errors.New("Claude token provider not configured")
+			return "", errors.New("claude token provider not configured")
 		}
 		return s.claudeTokenProvider.GetAccessToken(ctx, account)
 	})
@@ -957,7 +957,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		// 也应能被管理员探测（#4598），与 Codex/OpenAI 测试行为一致。
 		authToken, err = pelicanAccessToken(ctx, account, func() (string, error) {
 			if s.grokTokenProvider == nil {
-				return "", errors.New("Grok token provider not configured")
+				return "", errors.New("grok token provider not configured")
 			}
 			return s.grokTokenProvider.GetAccessTokenForManualTest(ctx, account)
 		})

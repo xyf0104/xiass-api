@@ -101,9 +101,10 @@ func TestMultiGroupAuthMaintainsOnlySelectedSubscription(t *testing.T) {
 					loaded.Status = service.SubscriptionStatusSuspended
 					expectedStatus = http.StatusForbidden
 				}
-				if mode == "maintenance-failure" {
+				switch mode {
+				case "maintenance-failure":
 					expectedStatus = http.StatusInternalServerError
-				} else if mode == "reread-limit" {
+				case "reread-limit":
 					expectedStatus = http.StatusTooManyRequests
 				}
 				before := *loaded
