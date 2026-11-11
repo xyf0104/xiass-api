@@ -74,9 +74,15 @@ type pelicanRecordingUpstream struct {
 	reader    io.ReadCloser
 	auth      string
 	headers   http.Header
+	calls     int
+	onSend    func(*http.Request)
 }
 
 func (u *pelicanRecordingUpstream) DoWithTLS(req *http.Request, proxy string, id int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	if u.onSend != nil {
+		u.onSend(req)
+	}
+	u.calls++
 	u.called, u.proxy, u.accountID, u.url = true, proxy, id, req.URL.String()
 	u.auth = req.Header.Get("Authorization")
 	u.headers = req.Header.Clone()
@@ -91,6 +97,10 @@ func (u *pelicanRecordingUpstream) DoWithTLS(req *http.Request, proxy string, id
 		body = io.NopCloser(strings.NewReader(u.response))
 	}
 	return &http.Response{StatusCode: u.status, Header: http.Header{"X-Codex-Primary-Used-Percent": []string{"50"}}, Body: body}, nil
+}
+
+func (u *pelicanRecordingUpstream) Do(req *http.Request, proxy string, id int64, concurrency int) (*http.Response, error) {
+	return u.DoWithTLS(req, proxy, id, concurrency, nil)
 }
 
 func pelicanResponses(html string) string {
@@ -239,7 +249,7 @@ func TestPelicanEligibility(t *testing.T) {
 		{PlatformOpenAI, AccountTypeOAuth, "plus", true}, {PlatformOpenAI, AccountTypeOAuth, "pro", true},
 		{PlatformOpenAI, AccountTypeOAuth, " Free ", false}, {PlatformOpenAI, AccountTypeOAuth, "", false},
 		{PlatformOpenAI, AccountTypeAPIKey, "", true}, {PlatformOpenAI, AccountTypeAPIKey, "free", false},
-		{PlatformOpenAI, AccountTypeSetupToken, "plus", false}, {PlatformAnthropic, AccountTypeOAuth, "plus", false},
+		{PlatformOpenAI, AccountTypeSetupToken, "plus", false}, {PlatformAnthropic, AccountTypeOAuth, "plus", true},
 	} {
 		a := &Account{Platform: tc.platform, Type: tc.typ, Credentials: map[string]any{"plan_type": tc.plan}}
 		require.Equal(t, tc.allowed, PelicanBenchmarkEligibility(a, benchmark.DefaultModel) == "", tc)

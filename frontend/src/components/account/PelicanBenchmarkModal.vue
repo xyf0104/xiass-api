@@ -20,11 +20,11 @@
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : current.length }) }}</span>
           <div class="flex flex-wrap items-center gap-2">
             <template v-if="tab === 'new'">
-              <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || loadingModels.size > 0 || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
               <button type="button" class="btn btn-primary" data-testid="start-selected" :disabled="!ready || busy || loading || !selectedStartable.length" @click="start(selectedStartable)"><Icon name="play" size="sm" />{{ t(`${prefix}.startSelected`, { count: selectedStartable.length }) }}</button>
             </template>
             <Select v-else-if="tab === 'current'" v-model="filters.current" class="w-32" :options="filterOptions" :aria-label="t(`${prefix}.filter`)" data-testid="result-filter" />
-            <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || !startable.length" @click="start(startable)">
+            <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || loadingModels.size > 0 || !startable.length" @click="start(startable)">
               <Icon name="play" size="sm" />{{ t(`${prefix}.startAll`) }}
             </button>
             <button v-if="tab === 'current'" type="button" class="btn btn-secondary" data-testid="stop-all" :disabled="busy || !stoppable.length" @click="stop(stoppable, true)">
@@ -49,7 +49,7 @@
             </div>
             <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
             <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
-            <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || isAccountRunning(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
+            <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :loading="loadingModels.has(account.id)" :placeholder="loadingModels.has(account.id) ? t('common.loading') : t(`${prefix}.model`)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || loading || loadingModels.has(account.id) || isAccountRunning(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
             <span class="hidden text-gray-400 lg:block">--</span><span class="hidden text-gray-400 lg:block">--</span>
             <button type="button" class="row-action btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${canStart(account) ? 'start' : 'unavailable'}`)" :aria-label="`${account.name}: ${t(`${prefix}.start`)}`" :disabled="!ready || busy || loading || !canStart(account)" :data-testid="`start-${account.id}`" @click="start([account])"><Icon name="play" size="sm" /></button>
           </div>
@@ -95,7 +95,7 @@ import Icon from '@/components/icons/Icon.vue'
 import PelicanResultPreview from './PelicanResultPreview.vue'
 import {
   DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
-  getPelicanModels, getPelicanResult, restartPelicanTest, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
+  getPelicanModels, isPelicanTextModelCandidate, getPelicanResult, restartPelicanTest, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
   type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkStatus, type PelicanBenchmarkSkipped
 } from '@/api/admin/pelicanBenchmark'
 
@@ -131,7 +131,11 @@ let readVersion = 0
 let currentVersion = 0
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 const loadedModels = new Set<number>()
-const loadingModels = new Set<number>()
+const loadingModels = ref(new Set<number>())
+const modelConcurrency = 4
+let modelRequest = new AbortController()
+let modelQueue: { account: PelicanBenchmarkAccount; selection: string | undefined }[] = []
+let activeModelRequests = 0
 
 const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].includes(run.status)
 const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => run.status === 'canceled' ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
@@ -160,22 +164,47 @@ function errorLabel(code: string) {
   return http ? `HTTP ${http[1]} · ${label}` : label
 }
 
-async function loadModels(account: PelicanBenchmarkAccount) {
-  if (busy.value || !account.can_test || loadedModels.has(account.id) || loadingModels.has(account.id)) return
-  const signal = controller.signal
-  loadingModels.add(account.id)
+function cancelModelLoads() {
+  modelRequest.abort()
+  modelQueue = []
+  activeModelRequests = 0
+  loadingModels.value.clear()
+  loadedModels.clear()
+}
+
+function loadModels(account: PelicanBenchmarkAccount, selection = models.value[account.id]) {
+  if (!props.show || tab.value !== 'new' || modelRequest.signal.aborted || busy.value || !account.can_test || loadedModels.has(account.id) || loadingModels.value.has(account.id)) return
+  account.model_ids = []
+  models.value[account.id] = ''
+  loadingModels.value.add(account.id)
+  modelQueue.push({ account, selection })
+  drainModelQueue()
+}
+
+function drainModelQueue() {
+  while (!modelRequest.signal.aborted && activeModelRequests < modelConcurrency && modelQueue.length) {
+    const job = modelQueue.shift()!
+    ++activeModelRequests
+    void fetchModels(job.account, job.selection, modelRequest.signal)
+  }
+}
+
+async function fetchModels(account: PelicanBenchmarkAccount, selection: string | undefined, signal: AbortSignal) {
   try {
-    const ids = await getPelicanModels(account.id, signal)
+    const ids = (await getPelicanModels(account.id, signal)).filter(isPelicanTextModelCandidate)
     if (signal.aborted) return
-    const currentAccount = accounts.value.find(item => item.id === account.id)
-    if (currentAccount) {
-      currentAccount.model_ids = [...new Set([DEFAULT_PELICAN_MODEL, ...ids])]
-      loadedModels.add(account.id)
-    }
+    account.model_ids = [...new Set(ids)]
+    models.value[account.id] = selection && ids.includes(selection) ? selection
+      : account.platform === 'openai' && ids.includes(DEFAULT_PELICAN_MODEL) ? DEFAULT_PELICAN_MODEL : ids[0] ?? ''
+    loadedModels.add(account.id)
   } catch (cause) {
     if (!signal.aborted) error.value = message(cause, 'modelsFailed')
   } finally {
-    if (!signal.aborted) loadingModels.delete(account.id)
+    if (!signal.aborted) {
+      loadingModels.value.delete(account.id)
+      --activeModelRequests
+      drainModelQueue()
+    }
   }
 }
 
@@ -202,9 +231,7 @@ function statusClass(status: PelicanBenchmarkStatus) {
 }
 
 function modelOptions(account: PelicanBenchmarkAccount) {
-  return [...new Set([DEFAULT_PELICAN_MODEL, ...account.model_ids])].map(value => ({
-    value, label: value, disabled: !account.model_ids.includes(value)
-  }))
+  return account.model_ids.map(value => ({ value, label: value }))
 }
 
 function formatDate(value: string) {
@@ -264,11 +291,15 @@ async function refresh() {
   try {
     if (tab.value === 'new') {
       ready.value = false
+      cancelModelLoads()
+      const previousModels = models.value
+      models.value = {}
+      for (const account of accounts.value) account.model_ids = []
       const result = await getPelicanAccounts(signal)
       if (ownSession !== session || version !== readVersion || signal.aborted) return
-      const previous = new Map(accounts.value.map(account => [account.id, account]))
-      accounts.value = result.items.map(account => ({ ...account, model_ids: previous.get(account.id)?.model_ids ?? account.model_ids }))
-      for (const account of accounts.value) models.value[account.id] ??= DEFAULT_PELICAN_MODEL
+      accounts.value = result.items.map(account => ({ ...account, model_ids: [] }))
+      modelRequest = new AbortController()
+      for (const account of accounts.value) loadModels(account, previousModels[account.id])
     }
     const success = await loadCurrent(true)
     if (ownSession === session && version === readVersion && !signal.aborted) ready.value = success === true
@@ -415,6 +446,7 @@ function dispose() {
   ++readVersion
   ++currentVersion
   controller.abort()
+  cancelModelLoads()
   currentRequest?.abort()
   cancelPoll()
   clearInterval(clockTimer)
@@ -438,6 +470,7 @@ function navigateTabs(event: KeyboardEvent, item: Tab) {
 
 watch(tab, () => {
   cancelPoll()
+  cancelModelLoads()
   currentRequest?.abort()
   ++currentVersion
   ++readVersion
@@ -466,8 +499,6 @@ watch(() => props.show, show => {
   selectedIds.value = []
   filters.value = { current: '', history: '' }
   waitingForExit.value = false
-  loadedModels.clear()
-  loadingModels.clear()
   notice.value = ''
   ready.value = false
   busy.value = false

@@ -34,6 +34,9 @@ func boundGroupsForAPIKey(apiKey *service.APIKey) []*service.Group {
 		if group == nil {
 			continue
 		}
+		if apiKey.User != nil && !group.IsSubscriptionType() && !apiKey.User.CanBindGroup(group.ID, group.IsExclusive) {
+			continue
+		}
 		if _, ok := seen[group.ID]; ok {
 			continue
 		}

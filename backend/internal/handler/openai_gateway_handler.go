@@ -466,7 +466,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body))
+	if !routeAPIKeyGroupForModel(c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)) {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1182,7 +1184,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, reqModel, h.gatewayService, false)
+	if !routeAPIKeyGroupForModel(c, apiKey, reqModel, h.gatewayService, false) {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1959,9 +1963,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	setOpenAIClientTransportWS(c)
 
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
-	if !ok {
+	if !ok || apiKey == nil {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
+	}
+	if len(apiKey.BoundGroups()) > 1 {
+		requestKey := *apiKey
+		apiKey = &requestKey
+		c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+		middleware2.SetOpsFallbackAPIKey(c, apiKey)
 	}
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -2065,19 +2075,34 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
-	selectAPIKeyGroupForModel(ctx, c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage))
+	if !selectAPIKeyGroupForModel(ctx, c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Model is not available for the selected API key groups")
+		return
+	}
+	if len(apiKey.BoundGroups()) > 1 && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && (h.cfg == nil || h.cfg.RunMode != config.RunModeSimple) && selectedAPIKeySubscription(c, apiKey) == nil {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "No active subscription found for this group")
+		return
+	}
 	if err := validateOpenAIWSModelAllowlist(apiKey.Group, firstMessage, reqModel); err != nil {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, err.Error())
 		return
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	ctx = c.Request.Context()
+	if apiKey.Group != nil && len(apiKey.BoundGroups()) > 1 && apiKey.Group.Platform != service.PlatformComposite && !isResponsesWebSocketCompositePlatform(apiKey.Group.Platform) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket API only supports OpenAI-compatible models")
+		return
+	}
 	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
 		platform, ok := service.ResolvedTargetPlatformFromContext(ctx)
 		if !ok || !isResponsesWebSocketCompositePlatform(platform) {
 			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket API only supports OpenAI-compatible models for composite groups")
 			return
 		}
+	}
+	if status, message := middleware2.ValidateSelectedAPIKeyGroupSubscription(c, apiKey); status != 0 {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, message)
+		return
 	}
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)

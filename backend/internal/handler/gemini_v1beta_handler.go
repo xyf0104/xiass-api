@@ -39,9 +39,37 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
 	}
+	if len(apiKey.BoundGroups()) > 1 {
+		forced, _ := middleware.GetForcePlatformFromContext(c)
+		groups := make([]*service.Group, 0)
+		for _, group := range boundGroupsForAPIKey(apiKey) {
+			if group.Platform == service.PlatformGemini || group.Platform == service.PlatformAntigravity || group.Platform == service.PlatformComposite {
+				groups = append(groups, group)
+			}
+		}
+		ids, _, err := unionAPIKeyGroupModels(c.Request.Context(), h.gatewayService, groups, forced, func(models []string, group *service.Group) []string {
+			filtered := make([]string, 0, len(models))
+			for _, model := range models {
+				if (group.Platform == service.PlatformGemini || strings.HasPrefix(model, "gemini-")) && (!group.ModelAllowlistEnabled() || group.ModelAllowlist.Allows(model)) {
+					filtered = append(filtered, model)
+				}
+			}
+			return filtered
+		})
+		if err != nil {
+			googleError(c, http.StatusServiceUnavailable, "Unable to list models")
+			return
+		}
+		models := make([]gemini.Model, 0, len(ids))
+		for _, id := range ids {
+			models = append(models, gemini.FallbackModel(id))
+		}
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: models})
+		return
+	}
 	// 检查平台：优先使用强制平台（/antigravity 路由），否则要求 gemini 分组
 	forcePlatform, hasForcePlatform := middleware.GetForcePlatformFromContext(c)
-	if !hasForcePlatform && effectiveAPIKeyPlatform(c, apiKey) != service.PlatformGemini {
+	if !hasForcePlatform && !geminiNativeAPIKeyPlatformAllowed(c, apiKey) {
 		googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 		return
 	}
@@ -212,7 +240,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	}
 	// 检查平台：优先使用强制平台（/antigravity 路由），否则要求 gemini 分组
 	forcePlatform, hasForcePlatform := middleware.GetForcePlatformFromContext(c)
-	if !hasForcePlatform && effectiveAPIKeyPlatform(c, apiKey) != service.PlatformGemini {
+	if !hasForcePlatform && !geminiNativeAPIKeyPlatformAllowed(c, apiKey) {
 		googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 		return
 	}
@@ -233,7 +261,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	}
 
 	// 强制 antigravity 模式：返回 antigravity 模型信息
-	if forcePlatform == service.PlatformAntigravity {
+	if forcePlatform == service.PlatformAntigravity || effectiveAPIKeyPlatform(c, apiKey) == service.PlatformAntigravity {
 		c.JSON(http.StatusOK, antigravity.FallbackGeminiModel(modelName))
 		return
 	}
@@ -288,7 +316,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// 检查平台：优先使用强制平台（/antigravity 路由，中间件已设置 request.Context），否则要求 gemini 分组
 	if !middleware.HasForcePlatform(c) {
-		if effectiveAPIKeyPlatform(c, apiKey) != service.PlatformGemini {
+		if !geminiNativeAPIKeyPlatformAllowed(c, apiKey) {
 			googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 			return
 		}
@@ -736,6 +764,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		)
 		return
 	}
+}
+
+func geminiNativeAPIKeyPlatformAllowed(c *gin.Context, apiKey *service.APIKey) bool {
+	platform := effectiveAPIKeyPlatform(c, apiKey)
+	return platform == service.PlatformGemini || (apiKey != nil && len(apiKey.BoundGroups()) > 1 && platform == service.PlatformAntigravity)
 }
 
 func parseGeminiModelAction(rest string) (model string, action string, err error) {

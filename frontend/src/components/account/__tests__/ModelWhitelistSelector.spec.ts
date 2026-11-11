@@ -196,8 +196,8 @@ describe('ModelWhitelistSelector', () => {
     expect(selector.emitted('update:modelValue')).toEqual([[['grok-4.7']]])
   })
 
-  it('Antigravity 上游同步把内部 3.7/3.8 模型转换成各自三档外部模型', async () => {
-    vi.spyOn(accountsAPI, 'syncUpstreamModels').mockResolvedValue({
+  it('创建前的 Antigravity 预览同步仍把内部 3.7/3.8 模型转换成各自三档外部模型', async () => {
+    vi.spyOn(accountsAPI, 'syncUpstreamModelsPreview').mockResolvedValue({
       models: [
         'gemini-3.8-flash-tiered',
         'gemini-3.8-flash',
@@ -206,7 +206,7 @@ describe('ModelWhitelistSelector', () => {
         'gemini-3.7-flash-high'
       ]
     } as any)
-    const selector = mountSelector({ platform: 'antigravity', accountId: 7 })
+    const selector = mountSelector({ platform: 'antigravity', syncCredentials: { platform: 'antigravity', type: 'apikey', api_key: 'test-key' } })
     const syncButton = selector
       .findAll('button')
       .find((button) => button.text().includes('admin.accounts.syncUpstreamModels'))

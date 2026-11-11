@@ -71,18 +71,19 @@ func pelicanError(c *gin.Context, err error) {
 func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 	pelicanHeaders(c)
 	var req struct {
-		AccountIDs []int64 `json:"account_ids"`
-		All        bool    `json:"all"`
-		Model      string  `json:"model"`
-		SourceID   string  `json:"source_id"`
-		Action     string  `json:"action"`
+		AccountIDs []int64          `json:"account_ids"`
+		All        bool             `json:"all"`
+		Model      string           `json:"model"`
+		Models     map[int64]string `json:"models"`
+		SourceID   string           `json:"source_id"`
+		Action     string           `json:"action"`
 	}
 	single := c.Param("id") != ""
 	if !pelicanJSON(c, &req, single) {
 		return
 	}
 	if req.SourceID != "" || req.Action != "" {
-		if single || req.All || len(req.AccountIDs) > 0 || req.Model != "" ||
+		if single || req.All || len(req.AccountIDs) > 0 || req.Model != "" || len(req.Models) > 0 ||
 			(req.Action != "continue" && req.Action != "retry") {
 			response.BadRequest(c, "invalid benchmark follow-up")
 			return
@@ -118,18 +119,29 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "benchmark batch exceeds 2000 accounts")
 		return
 	}
-	if req.Model == "" {
-		req.Model = benchmark.DefaultModel
-	}
-	if !benchmark.ValidModel(req.Model) {
+	if req.Model != "" && !benchmark.ValidModel(req.Model) {
 		response.BadRequest(c, "invalid model")
 		return
+	}
+	if len(req.Models) > benchmark.MaxBatchSize {
+		response.BadRequest(c, "benchmark batch exceeds 2000 accounts")
+		return
+	}
+	selected := make(map[int64]bool, len(req.AccountIDs))
+	for _, id := range req.AccountIDs {
+		selected[id] = true
+	}
+	for id, model := range req.Models {
+		if id <= 0 || !benchmark.ValidModel(model) || (!req.All && !selected[id]) {
+			response.BadRequest(c, "invalid per-account model")
+			return
+		}
 	}
 	ctx := c.Request.Context()
 	var accounts []*service.Account
 	if req.All {
 		for page := 1; ; page++ {
-			items, total, err := h.accounts.ListAccounts(ctx, page, 200, service.PlatformOpenAI, "", "", "", 0, "", "id", "asc")
+			items, total, err := h.accounts.ListAccounts(ctx, page, 200, "", "", "", "", 0, "", "id", "asc")
 			if err != nil {
 				pelicanError(c, err)
 				return
@@ -170,12 +182,19 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			continue
 		}
 		seen[account.ID] = true
-		reason := service.PelicanBenchmarkEligibility(account, req.Model)
+		model := req.Models[account.ID]
+		if model == "" {
+			model = req.Model
+		}
+		if model == "" {
+			model = service.PelicanBenchmarkDefaultModel(account)
+		}
+		reason := service.PelicanBenchmarkEligibility(account, model)
 		if reason != "" {
 			result.Skipped = append(result.Skipped, benchmark.Skipped{AccountID: account.ID, Reason: reason})
 			continue
 		}
-		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: req.Model,
+		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: model,
 			SourceID: req.SourceID, Action: req.Action})
 	}
 	for _, id := range req.AccountIDs {

@@ -30,12 +30,12 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "invalid_request_error", "API key group is required")
 		return
 	}
-	if apiKey.Group.Platform != service.PlatformOpenAI && apiKey.Group.Platform != service.PlatformComposite {
+	if len(apiKey.BoundGroups()) <= 1 && apiKey.Group.Platform != service.PlatformOpenAI && apiKey.Group.Platform != service.PlatformComposite {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Codex models manifest is only available for OpenAI and Composite groups")
 		return
 	}
 	boundGroups := boundGroupsForAPIKey(apiKey)
-	if len(boundGroups) > 1 {
+	if len(apiKey.BoundGroups()) > 1 {
 		forcedPlatform := ""
 		if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
 			forcedPlatform = strings.TrimSpace(value)

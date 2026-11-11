@@ -170,23 +170,23 @@ func pelicanProbe(c *gin.Context) *openAIPelicanProbe {
 }
 
 func PelicanBenchmarkEligibility(account *Account, model string) string {
-	if account == nil || account.Platform != PlatformOpenAI ||
-		(account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey) ||
+	if account == nil || !pelicanAccountSupported(account) ||
 		account.IsCredentialShadow() || account.IsSyntheticUITest() {
 		return "ineligible"
 	}
-	if strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free") {
-		return "free_plan"
+	if account.Platform == PlatformOpenAI {
+		if strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free") {
+			return "free_plan"
+		}
+		if account.Type == AccountTypeOAuth && !account.IsOpenAIChatGPTSubscription() {
+			return "unknown_plan"
+		}
+		// Agent Identity registration/recovery mutates credentials.
+		if account.IsOpenAIAgentIdentity() {
+			return "unsupported_auth_mode"
+		}
 	}
-	if account.Type == AccountTypeOAuth && !account.IsOpenAIChatGPTSubscription() {
-		return "unknown_plan"
-	}
-	// Agent Identity registration/recovery mutates credentials. Do not quietly
-	// use that flow in this explicitly read-only benchmark adapter.
-	if account.IsOpenAIAgentIdentity() {
-		return "unsupported_auth_mode"
-	}
-	if !account.IsModelSupported(model) || isOpenAIImageModel(account.GetMappedModel(model)) {
+	if !account.IsModelSupported(model) || pelicanNonTextModel(model) || pelicanNonTextModel(account.GetMappedModel(model)) {
 		return "model_not_supported"
 	}
 	return ""
@@ -218,18 +218,15 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	c, _ := gin.CreateTestContext(capture)
 	c.Request, _ = http.NewRequestWithContext(ctx, http.MethodPost, "/internal/pelican-benchmark", nil)
 	probe := &openAIPelicanProbe{beforeSend: beforeSend}
-	for _, value := range local.Credentials {
-		if secret, ok := value.(string); ok {
-			probe.secrets = append(probe.secrets, secret)
-		}
-	}
-	if local.Proxy != nil {
-		probe.secrets = append(probe.secrets, local.Proxy.Password)
+	probe.addSecrets(local.Credentials)
+	if proxy := local.requestProxy(); proxy != nil {
+		probe.secrets = append(probe.secrets, proxy.Password, proxy.Username, proxy.Host)
 	}
 	c.Set(pelicanProbeKey, probe)
-	// Call the existing OpenAI-only test path, bypassing TestAccountConnection's
+	c.Request = c.Request.WithContext(context.WithValue(ctx, pelicanContextKey{}, probe))
+	// Call the existing protocol adapters, bypassing TestAccountConnection's
 	// last_used write and the admin handler's scheduling recovery.
-	err = s.testOpenAIAccountConnection(c, &local, model, benchmark.Prompt, AccountTestModeDefault)
+	err = s.testAccountProtocolConnection(c, &local, model, benchmark.Prompt, AccountTestModeDefault)
 	text := capture.text.String()
 	if html := pelicanUnwrapHTML(text); pelicanCompleteHTML(html) {
 		text = html

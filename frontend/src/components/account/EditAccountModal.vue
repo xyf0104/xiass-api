@@ -1240,12 +1240,28 @@
             <button
               type="button"
               @click="syncAntigravityUpstreamModels"
-              :disabled="isSyncingAntigravityUpstream || !account?.id"
+              :disabled="isSyncingAntigravityUpstream || antigravityAccountCatalog.loading || !account?.id"
               class="rounded-lg border border-emerald-200 px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
             >
               {{ isSyncingAntigravityUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
             </button>
           </div>
+
+          <div v-if="antigravityAccountCatalog.loading" class="mb-3 text-sm text-gray-500" role="status">
+            {{ t('common.loading') }}
+          </div>
+          <div v-else-if="antigravityAccountCatalog.error" class="mb-3 flex items-center gap-2 text-sm">
+            <span role="alert" class="min-w-0 break-words text-red-500">{{ antigravityAccountCatalog.error }}</span>
+            <button type="button" data-testid="retry-antigravity-models" class="flex shrink-0 items-center gap-1 text-primary-600" @click="loadAntigravityAccountModels(true)">
+              <Icon name="refresh" size="sm" />{{ t('common.retry') }}
+            </button>
+          </div>
+          <p v-else-if="antigravityAccountCatalog.models?.length === 0" class="mb-3 text-sm text-gray-500">
+            {{ t('admin.accounts.syncUpstreamModelsEmpty') }}
+          </p>
+          <datalist :id="antigravityModelSuggestionsId" data-testid="antigravity-model-suggestions">
+            <option v-for="model in antigravityAccountCatalog.models || []" :key="model" :value="model" />
+          </datalist>
 
           <div v-if="antigravityModelMappings.length > 0" class="mb-3 space-y-2">
             <div
@@ -1256,6 +1272,7 @@
               <div class="flex items-center gap-2">
                 <input
                   v-model="mapping.from"
+                  :list="antigravityModelSuggestionsId"
                   type="text"
                   :class="[
                     'input flex-1',
@@ -1269,6 +1286,7 @@
                 </svg>
                 <input
                   v-model="mapping.to"
+                  :list="antigravityModelSuggestionsId"
                   type="text"
                   :class="[
                     'input flex-1',
@@ -1291,6 +1309,9 @@
                   </svg>
                 </button>
               </div>
+              <p v-if="isUnavailableAntigravityMapping(mapping)" data-testid="unavailable-antigravity-mapping" class="text-xs text-amber-600 dark:text-amber-400">
+                {{ t('common.notAvailable') }}
+              </p>
               <!-- 校验错误提示 -->
               <p v-if="!isValidWildcardPattern(mapping.from)" class="text-xs text-red-500">
                 {{ t('admin.accounts.wildcardOnlyAtEnd') }}
@@ -1316,6 +1337,7 @@
             <button
               v-for="preset in antigravityPresetMappings"
               :key="preset.label"
+              data-testid="antigravity-model-preset"
               type="button"
               @click="addAntigravityPresetMapping(preset.from, preset.to)"
               :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
@@ -2836,11 +2858,12 @@
 
 <script setup lang="ts">
 import OpenAIAutoResetSettings from './OpenAIAutoResetSettings.vue'
-import { ref, reactive, computed, nextTick, watch } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onBeforeUnmount, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
+import type { SyncUpstreamModelsResult } from '@/api/admin/accounts'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type {
   Account,
@@ -2907,6 +2930,7 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
@@ -2953,7 +2977,12 @@ const baseUrlHint = computed(() => {
   return t('admin.accounts.baseUrlHint')
 })
 
-const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
+const antigravityPresetMappings = computed(() => {
+  const models = new Set(antigravityAccountCatalog.value.models || [])
+  return getPresetMappingsByPlatform('antigravity').filter(preset =>
+    models.has(preset.to) && (preset.from.includes('*') || models.has(preset.from))
+  )
+})
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
 // Model mapping type
@@ -3223,6 +3252,33 @@ const antigravityProjectId = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
+const initialAntigravityModelMappings = ref<ModelMapping[]>([])
+const antigravityModelSuggestionsId = useId()
+const antigravityCatalogModels = ref<string[] | null>(null)
+const antigravityCatalogComplete = ref(false)
+const antigravityCatalogLoading = ref(false)
+const antigravityCatalogError = ref('')
+const antigravityCatalogAccountId = ref<number | null>(null)
+let antigravityCatalogGeneration = 0
+let antigravityCatalogRequest: Promise<string[] | null> | null = null
+const antigravityAccountCatalog = computed(() => {
+  const current = props.show && props.account?.platform === 'antigravity' &&
+    props.account.id === antigravityCatalogAccountId.value
+  return {
+    accountId: props.account?.id || 0,
+    models: current ? antigravityCatalogModels.value : null,
+    loading: current && antigravityCatalogLoading.value,
+    error: current ? antigravityCatalogError.value : ''
+  }
+})
+const knownAntigravityModels = new Set(getModelsByPlatform('antigravity'))
+const isUnavailableAntigravityMapping = (mapping: ModelMapping) => {
+  const models = antigravityAccountCatalog.value.models
+  // A failed or qualified catalog cannot establish that a saved model is unavailable.
+  return antigravityCatalogComplete.value && models !== null && mapping.from === mapping.to && knownAntigravityModels.has(mapping.from) &&
+    initialAntigravityModelMappings.value.some(initial => initial.from === mapping.from && initial.to === mapping.to) &&
+    !models.includes(mapping.from)
+}
 const isSyncingAntigravityUpstream = ref(false)
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
@@ -3940,6 +3996,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     antigravityWhitelistModels.value = []
     antigravityModelMappings.value = []
   }
+  initialAntigravityModelMappings.value = antigravityModelMappings.value.map(mapping => ({ ...mapping }))
 
   // Load quota control settings (Anthropic OAuth/SetupToken only)
   loadQuotaControlSettings(newAccount)
@@ -4153,12 +4210,12 @@ async function loadTLSProfiles() {
 }
 
 watch(
-  [() => props.show, () => props.account],
-  ([show, newAccount], [wasShow, previousAccount]) => {
+  [() => props.show, () => props.account, () => props.account?.id],
+  ([show, newAccount, accountId], [wasShow, previousAccount, previousId]) => {
     if (!show || !newAccount) {
       return
     }
-    if (!wasShow || newAccount !== previousAccount) {
+    if (!wasShow || newAccount !== previousAccount || accountId !== previousId) {
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
@@ -4201,6 +4258,7 @@ const removeAntigravityModelMapping = (index: number) => {
 }
 
 const addAntigravityPresetMapping = (from: string, to: string) => {
+  if (!antigravityPresetMappings.value.some(preset => preset.from === from && preset.to === to)) return
   const exists = antigravityModelMappings.value.some((m) => m.from === from)
   if (exists) {
     appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
@@ -4210,12 +4268,13 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
 }
 
 const syncAntigravityUpstreamModels = async () => {
-  if (!props.account?.id || isSyncingAntigravityUpstream.value) return
+  if (!props.account?.id || props.account.platform !== 'antigravity' || !props.show || isSyncingAntigravityUpstream.value) return
 
+  const generation = antigravityCatalogGeneration
   isSyncingAntigravityUpstream.value = true
   try {
-    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
-    const upstreamModels = normalizeAntigravityModelsForDisplay(result.models)
+    const upstreamModels = await loadAntigravityAccountModels(true)
+    if (generation !== antigravityCatalogGeneration || !upstreamModels) return
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
       return
@@ -4235,29 +4294,8 @@ const syncAntigravityUpstreamModels = async () => {
     } else {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
-    for (const warning of result.warnings ?? []) {
-      switch (warning.code) {
-        case 'upstream_model_list_mapping_fallback':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMappingFallback'))
-          break
-        case 'upstream_model_metadata_partial':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
-          break
-        case 'upstream_model_metadata_incomplete':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
-          break
-        case 'upstream_model_metadata_too_large':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataTooLarge'))
-          break
-        default:
-          if (warning.message) appStore.showWarning(warning.message)
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
-    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
-    isSyncingAntigravityUpstream.value = false
+    if (generation === antigravityCatalogGeneration) isSyncingAntigravityUpstream.value = false
   }
 }
 
@@ -4602,6 +4640,7 @@ const parseDateTimeLocal = parseDateTimeLocalInput
 
 // Methods
 const handleClose = () => {
+  invalidateAntigravityCatalog()
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')
@@ -5049,18 +5088,23 @@ const handleSubmit = async () => {
         applyAntigravityProjectID(newCredentials, antigravityProjectId.value, 'edit')
       }
 
-      // 移除旧字段
-      delete newCredentials.model_whitelist
-      delete newCredentials.model_mapping
-
-      // 只使用映射模式
-      const antigravityModelMapping = buildModelMappingObject(
-        'mapping',
-        [],
-        antigravityModelMappings.value
-      )
-      if (antigravityModelMapping) {
-        newCredentials.model_mapping = antigravityModelMapping
+      const mappingsUnchanged = antigravityModelMappings.value.length === initialAntigravityModelMappings.value.length &&
+        antigravityModelMappings.value.every((mapping, index) =>
+          mapping.from === initialAntigravityModelMappings.value[index].from &&
+          mapping.to === initialAntigravityModelMappings.value[index].to
+        )
+      if (mappingsUnchanged) {
+        // Display normalization and availability checks must not rewrite saved configuration.
+        const originalCredentials = props.account.credentials || {}
+        for (const key of ['model_mapping', 'model_whitelist'] as const) {
+          if (Object.prototype.hasOwnProperty.call(originalCredentials, key)) newCredentials[key] = originalCredentials[key]
+          else delete newCredentials[key]
+        }
+      } else {
+        delete newCredentials.model_whitelist
+        delete newCredentials.model_mapping
+        const antigravityModelMapping = buildModelMappingObject('mapping', [], antigravityModelMappings.value)
+        if (antigravityModelMapping) newCredentials.model_mapping = antigravityModelMapping
       }
 
       updatePayload.credentials = newCredentials
@@ -5417,4 +5461,81 @@ const handleMixedChannelConfirm = async () => {
 const handleMixedChannelCancel = () => {
   clearMixedChannelDialog()
 }
+
+function invalidateAntigravityCatalog() {
+  antigravityCatalogGeneration += 1
+  antigravityCatalogRequest = null
+  antigravityCatalogAccountId.value = null
+  antigravityCatalogModels.value = null
+  antigravityCatalogComplete.value = false
+  antigravityCatalogLoading.value = false
+  antigravityCatalogError.value = ''
+  isSyncingAntigravityUpstream.value = false
+}
+
+function showAntigravityCatalogWarnings(warnings: SyncUpstreamModelsResult['warnings']) {
+  const warningKeys: Record<string, string> = {
+    upstream_model_list_mapping_fallback: 'admin.accounts.syncUpstreamModelsMappingFallback',
+    upstream_model_metadata_partial: 'admin.accounts.syncUpstreamModelsMetadataPartial',
+    upstream_model_metadata_incomplete: 'admin.accounts.syncUpstreamModelsMetadataIncomplete',
+    upstream_model_metadata_too_large: 'admin.accounts.syncUpstreamModelsMetadataTooLarge'
+  }
+  for (const warning of warnings ?? []) {
+    const message = warningKeys[warning.code] ? t(warningKeys[warning.code]) : warning.message
+    if (message) appStore.showWarning(message)
+  }
+}
+
+function loadAntigravityAccountModels(refresh = false): Promise<string[] | null> {
+  const id = antigravityCatalogAccountId.value
+  if (!props.show || props.account?.platform !== 'antigravity' || !id || props.account.id !== id) return Promise.resolve(null)
+  if (antigravityCatalogRequest) return antigravityCatalogRequest
+  if (!refresh && antigravityCatalogModels.value !== null) return Promise.resolve(antigravityCatalogModels.value)
+
+  const generation = antigravityCatalogGeneration
+  const isCurrent = () => generation === antigravityCatalogGeneration && props.show &&
+    props.account?.platform === 'antigravity' && props.account.id === id
+  antigravityCatalogModels.value = null
+  antigravityCatalogComplete.value = false
+  antigravityCatalogLoading.value = true
+  antigravityCatalogError.value = ''
+  const request = (async () => {
+    try {
+      const result = await adminAPI.accounts.syncUpstreamModels(id)
+      if (!isCurrent()) return null
+      const ids = normalizeAntigravityModelsForDisplay(result.models)
+      antigravityCatalogModels.value = ids
+      antigravityCatalogComplete.value = !result.warnings?.length
+      showAntigravityCatalogWarnings(result.warnings)
+      return ids
+    } catch (error) {
+      if (!isCurrent()) return null
+      antigravityCatalogError.value = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+      appStore.showError(antigravityCatalogError.value)
+      return null
+    } finally {
+      if (isCurrent()) {
+        antigravityCatalogLoading.value = false
+        antigravityCatalogRequest = null
+      }
+    }
+  })()
+  antigravityCatalogRequest = request
+  return request
+}
+
+watch(
+  [() => props.show, () => props.account?.id, () => props.account?.platform],
+  () => {
+    invalidateAntigravityCatalog()
+    if (props.show && props.account?.platform === 'antigravity') {
+      antigravityCatalogAccountId.value = props.account.id
+      void loadAntigravityAccountModels()
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(invalidateAntigravityCatalog)
 </script>

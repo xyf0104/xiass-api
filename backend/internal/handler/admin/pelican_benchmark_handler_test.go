@@ -17,18 +17,22 @@ import (
 
 type pelicanHandlerAccounts struct {
 	service.AdminService
-	items []*service.Account
+	items    []*service.Account
+	platform string
 }
 
 func (s *pelicanHandlerAccounts) GetAccountsByIDs(context.Context, []int64) ([]*service.Account, error) {
 	return s.items, nil
 }
-func (s *pelicanHandlerAccounts) ListAccounts(context.Context, int, int, string, string, string, string, int64, string, string, string) ([]service.Account, int64, error) {
+func (s *pelicanHandlerAccounts) ListAccounts(_ context.Context, page, size int, platform, _, _, _ string, _ int64, _, _, _ string) ([]service.Account, int64, error) {
+	s.platform = platform
 	items := []service.Account{}
 	for _, a := range s.items {
 		items = append(items, *a)
 	}
-	return items, int64(len(items)), nil
+	total := len(items)
+	start := min((page-1)*size, total)
+	return items[start:min(start+size, total)], int64(total), nil
 }
 
 type pelicanHandlerStore struct {
@@ -83,7 +87,7 @@ func TestPelicanFollowupRejectsActiveSourceAndOverrides(t *testing.T) {
 		require.Equal(t, http.StatusConflict, w.Code)
 		require.Empty(t, store.tasks)
 	}
-	for _, fields := range []string{`,"account_ids":[2]`, `,"all":true`, `,"model":"gpt-5.6-sol"`, `,"prompt":"override"`} {
+	for _, fields := range []string{`,"account_ids":[2]`, `,"all":true`, `,"model":"gpt-5.6-sol"`, `,"models":{"1":"gpt-5.6-sol"}`, `,"prompt":"override"`} {
 		h := &PelicanBenchmarkHandler{}
 		w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+id+`","action":"retry"`+fields+`}`, h.Create, nil)
 		require.Equal(t, http.StatusBadRequest, w.Code)
@@ -117,14 +121,17 @@ func TestPelicanHandlerCreateFiltersAndDefaults(t *testing.T) {
 		h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
 		w := pelicanHandlerRequest("POST", "/", body, h.Create, nil)
 		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
-		require.Len(t, store.tasks, 2)
+		require.Len(t, store.tasks, 3)
 		require.Equal(t, benchmark.DefaultModel, store.tasks[0].Model)
 		require.Equal(t, int64(1), store.tasks[0].AccountID)
-		require.Equal(t, int64(4), store.tasks[1].AccountID)
+		require.Equal(t, int64(3), store.tasks[1].AccountID)
+		require.Equal(t, service.PelicanBenchmarkDefaultModel(accounts.items[2]), store.tasks[1].Model)
+		require.Equal(t, int64(4), store.tasks[2].AccountID)
+		require.Empty(t, accounts.platform)
 		require.NotContains(t, w.Body.String(), "credentials")
 		require.NotContains(t, w.Body.String(), "execution_node_id")
 		require.Contains(t, w.Body.String(), "free_plan")
-		require.Contains(t, w.Body.String(), "ineligible")
+		require.NotContains(t, w.Body.String(), "ineligible")
 	}
 }
 
@@ -182,5 +189,60 @@ func TestPelicanHandlerInvalidFilters(t *testing.T) {
 	for _, query := range []string{"page=-1", "page_size=0", "account_id=abc", "batch_id=invalid", "status=unknown"} {
 		w := pelicanHandlerRequest("GET", "/?"+query, "", h.List, nil)
 		require.Equal(t, http.StatusBadRequest, w.Code, query)
+	}
+}
+
+func TestPelicanHandlerMixedModelsAndAllPlatforms(t *testing.T) {
+	for _, selector := range []string{`"all":true`, `"account_ids":[1,2,3,4]`} {
+		accounts := &pelicanHandlerAccounts{items: []*service.Account{
+			{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+			{ID: 2, Platform: service.PlatformAnthropic, Type: service.AccountTypeSetupToken},
+			{ID: 3, Platform: service.PlatformGemini, Type: service.AccountTypeOAuth},
+			{ID: 4, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}},
+		}}
+		store := &pelicanHandlerStore{}
+		h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
+		w := pelicanHandlerRequest("POST", "/", `{`+selector+`,"models":{"2":"claude-sonnet-4-5@20250929","3":"gemini-2.5-flash"}}`, h.Create, nil)
+		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+		require.Len(t, store.tasks, 4)
+		require.Equal(t, benchmark.DefaultModel, store.tasks[0].Model)
+		require.Equal(t, "claude-sonnet-4-5@20250929", store.tasks[1].Model)
+		require.Equal(t, "gemini-2.5-flash", store.tasks[2].Model)
+		require.Equal(t, service.PelicanBenchmarkDefaultModel(accounts.items[3]), store.tasks[3].Model)
+		require.Empty(t, accounts.platform)
+	}
+}
+
+func TestPelicanHandlerInvalidPerAccountModels(t *testing.T) {
+	for _, body := range []string{
+		`{"account_ids":[1],"models":{"2":"claude-sonnet-4-5"}}`,
+		`{"all":true,"models":{"0":"grok-4"}}`,
+		`{"all":true,"models":{"1":"bad\nmodel"}}`,
+		`{"all":true,"models":{"1":""}}`,
+		`{"all":true,"models":{"bad":"grok-4"}}`,
+	} {
+		h := &PelicanBenchmarkHandler{}
+		w := pelicanHandlerRequest("POST", "/", body, h.Create, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+	}
+}
+
+func TestPelicanAllPlatformsPaginationAndQueueBound(t *testing.T) {
+	for _, count := range []int{201, benchmark.MaxBatchSize + 1} {
+		accounts := &pelicanHandlerAccounts{}
+		for i := 1; i <= count; i++ {
+			accounts.items = append(accounts.items, &service.Account{ID: int64(i), Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey})
+		}
+		store := &pelicanHandlerStore{}
+		h := &PelicanBenchmarkHandler{store: store, accounts: accounts}
+		w := pelicanHandlerRequest("POST", "/", `{"all":true}`, h.Create, nil)
+		if count > benchmark.MaxBatchSize {
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Empty(t, store.tasks)
+		} else {
+			require.Equal(t, http.StatusAccepted, w.Code)
+			require.Len(t, store.tasks, count)
+		}
+		require.Empty(t, accounts.platform)
 	}
 }

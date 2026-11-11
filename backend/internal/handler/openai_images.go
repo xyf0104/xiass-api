@@ -74,7 +74,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		return
 	}
 	requestModel := parsed.Model
-	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, requestModel, h.gatewayService, true)
+	if !routeAPIKeyGroupForModel(c, apiKey, requestModel, h.gatewayService, true) {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, requestModel)
 	clientRequestModel := clientRequestedModel(c, requestModel)
 	routingModel := requestModel

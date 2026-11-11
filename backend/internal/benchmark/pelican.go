@@ -21,7 +21,7 @@ var (
 	ErrBusy      = errors.New("account already has an active benchmark")
 	ErrTooLarge  = errors.New("benchmark HTML exceeds 1 MiB")
 	ErrStopped   = errors.New("benchmark no longer running")
-	modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$`)
+	modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,199}$`)
 )
 
 func ValidModel(model string) bool { return modelPattern.MatchString(model) }

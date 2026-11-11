@@ -678,14 +678,16 @@ describe('user KeysView column settings', () => {
     }))
   })
 
-  it('renders the ordered group badges and count for multi-group keys', async () => {
+  it('shows every selected group instead of a collapsed count', async () => {
     const groups = [
       { id: 1, name: 'OpenAI', platform: 'openai', rate_multiplier: 0.1, is_exclusive: false },
       { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 0.1, is_exclusive: false },
       { id: 3, name: 'Gemini', platform: 'gemini', rate_multiplier: 0.1, is_exclusive: false },
+      { id: 4, name: 'Antigravity', platform: 'antigravity', rate_multiplier: 0.4, is_exclusive: false },
+      { id: 5, name: 'Grok', platform: 'grok', rate_multiplier: 0.2, is_exclusive: false },
     ]
     listKeys.mockResolvedValueOnce({
-      items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1, 3], groups: [groups[1], groups[0], groups[2]] }],
+      items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1, 3, 4, 5], groups: [groups[1], groups[0], ...groups.slice(2)] }],
       total: 1,
       page: 1,
       page_size: 20,
@@ -693,7 +695,7 @@ describe('user KeysView column settings', () => {
     })
     const wrapper = await mountView()
 
-    expect(wrapper.findAll('[data-test="group-badge"]').map((badge) => badge.text())).toEqual(['Claude', 'OpenAI'])
-    expect(wrapper.get('[data-test="group-cell"]').text()).toContain('+1')
+    expect(wrapper.findAll('[data-test="group-badge"]').map((badge) => badge.text())).toEqual(['Claude', 'OpenAI', 'Gemini', 'Antigravity', 'Grok'])
+    expect(wrapper.get('[data-test="group-cell"]').text()).not.toContain('+3')
   })
 })

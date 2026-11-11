@@ -21,6 +21,10 @@ vi.mock('@/composables/useClipboard', () => ({
   })
 }))
 
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({ showError: vi.fn() })
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   const messages: Record<string, string> = {
@@ -145,11 +149,10 @@ describe('AccountTestModal', () => {
     expect(preview.attributes('src')).toBe('data:image/png;base64,QUJD')
   })
 
-  it('Antigravity 测试列表优先展示 Gemini 3.8/3.7 Flash 三档且隐藏内部路由', async () => {
+  it('Antigravity 仅归一化 Gemini 3.7 别名且保留后端返回的其他公开档位', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash' },
-      { id: 'gemini-3.8-flash-tiered', display_name: 'Gemini 3.8 Flash Tiered' },
-      { id: 'gemini-3.8-flash', display_name: 'Gemini 3.8 Flash' },
+      { id: 'gemini-3.8-flash-low', display_name: 'Gemini 3.8 Flash Low' },
       { id: 'gemini-3.7-flash-tiered', display_name: 'Gemini 3.7 Flash Tiered' },
       { id: 'gemini-3.7-flash-low', display_name: 'Gemini 3.7 Flash Low' },
       { id: 'gemini-3.7-flash-medium', display_name: 'Gemini 3.7 Flash Medium' },
@@ -168,8 +171,6 @@ describe('AccountTestModal', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual([
-      'gemini-3.8-flash-high',
-      'gemini-3.8-flash-medium',
       'gemini-3.8-flash-low',
       'gemini-3.7-flash-high',
       'gemini-3.7-flash-medium',
@@ -177,7 +178,7 @@ describe('AccountTestModal', () => {
       'gemini-3.5-flash-medium',
       'gemini-2.5-flash'
     ])
-    expect((wrapper.vm as any).selectedModelId).toBe('gemini-3.8-flash-high')
+    expect((wrapper.vm as any).selectedModelId).toBe('gemini-3.8-flash-low')
     expect(JSON.stringify((wrapper.vm as any).availableModels)).not.toContain('gemini-3.7-flash-tiered')
     expect(JSON.stringify((wrapper.vm as any).availableModels)).not.toContain('gemini-3.8-flash-tiered')
     expect((wrapper.vm as any).availableModels.map((model: { display_name: string }) => model.display_name)).toEqual(
@@ -185,8 +186,6 @@ describe('AccountTestModal', () => {
         'Gemini 3.7 Flash High',
         'Gemini 3.7 Flash Medium',
         'Gemini 3.7 Flash Low',
-        'Gemini 3.8 Flash High',
-        'Gemini 3.8 Flash Medium',
         'Gemini 3.8 Flash Low'
       ])
     )

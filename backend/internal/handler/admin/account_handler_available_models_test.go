@@ -29,10 +29,14 @@ func (s *availableModelsAdminService) GetAccount(_ context.Context, id int64) (*
 	return s.stubAdminService.GetAccount(context.Background(), id)
 }
 
-func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
+func setupAvailableModelsRouter(adminSvc service.AdminService, testers ...*service.AccountTestService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	var tester *service.AccountTestService
+	if len(testers) > 0 {
+		tester = testers[0]
+	}
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, tester, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
 	return router
 }
@@ -124,14 +128,18 @@ func TestAccountHandlerGetAvailableModels_AntigravityHidesGemini37InternalRoutes
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
 		account: service.Account{
-			ID:       47,
-			Name:     "antigravity-oauth",
-			Platform: service.PlatformAntigravity,
-			Type:     service.AccountTypeOAuth,
-			Status:   service.StatusActive,
+			ID:          47,
+			Name:        "antigravity-api-key",
+			Platform:    service.PlatformAntigravity,
+			Type:        service.AccountTypeAPIKey,
+			Status:      service.StatusActive,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://upstream.example.com/antigravity"},
 		},
 	}
-	router := setupAvailableModelsRouter(svc)
+	tester := service.NewAccountTestService(nil, nil, nil, nil, nil, &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"gemini-3.7-flash-tiered"},{"id":"gemini-4-argon-disabled"}]}`)),
+	}}, &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}, nil)
+	router := setupAvailableModelsRouter(svc, tester)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/47/models", nil)
@@ -153,6 +161,18 @@ func TestAccountHandlerGetAvailableModels_AntigravityHidesGemini37InternalRoutes
 	require.Contains(t, ids, "gemini-3.7-flash-low")
 	require.NotContains(t, ids, "gemini-3.7-flash")
 	require.NotContains(t, ids, "gemini-3.7-flash-tiered")
+	require.NotContains(t, ids, "gemini-4-argon-high")
+	require.NotContains(t, ids, "gemini-4-carbon-high")
+}
+
+func TestAccountHandlerGetAvailableModels_AntigravityFailsWithoutAccountCatalog(t *testing.T) {
+	svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
+		ID: 47, Platform: service.PlatformAntigravity, Type: service.AccountTypeOAuth,
+	}}
+	rec := httptest.NewRecorder()
+	setupAvailableModelsRouter(svc).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/47/models", nil))
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.NotContains(t, rec.Body.String(), "claude-sonnet-5-5")
 }
 
 func TestAccountHandlerGetAntigravityDefaultModelMapping_HidesGemini37InternalRoutes(t *testing.T) {

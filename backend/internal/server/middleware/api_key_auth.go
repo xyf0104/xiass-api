@@ -17,6 +17,8 @@ import (
 
 const maxAPIKeyAuthorizationHeaderBytes = service.MaxAPIKeyCredentialBytes + 128
 
+const selectedGroupSubscriptionServiceKey = "xiass_selected_group_subscription_service"
+
 // NewAPIKeyAuthMiddleware 创建 API Key 认证中间件
 func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) APIKeyAuthMiddleware {
 	return APIKeyAuthMiddleware(apiKeyAuthWithSubscription(apiKeyService, subscriptionService, cfg))
@@ -219,6 +221,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			}
 		}
 		if multiGroupKey && subscriptionService != nil && !billingInfoRequest {
+			if !skipBilling {
+				c.Set(selectedGroupSubscriptionServiceKey, subscriptionService)
+			}
 			subscriptions := make(map[int64]*service.UserSubscription)
 			for _, group := range apiKey.BoundGroups() {
 				if group == nil || !group.IsSubscriptionType() {
@@ -428,6 +433,50 @@ func GetGroupSubscriptionFromContext(c *gin.Context, groupID int64) (*service.Us
 	return subscription, ok && subscription != nil
 }
 
+// ValidateSelectedAPIKeyGroupSubscription runs only after model routing has
+// selected the billing group, including the first frame of a WebSocket request.
+func ValidateSelectedAPIKeyGroupSubscription(c *gin.Context, apiKey *service.APIKey) (int, string) {
+	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType() {
+		return 0, ""
+	}
+	value, exists := c.Get(selectedGroupSubscriptionServiceKey)
+	if !exists {
+		return 0, ""
+	}
+	subscriptionService, ok := value.(*service.SubscriptionService)
+	if !ok || subscriptionService == nil {
+		return 0, ""
+	}
+	subscription, ok := GetGroupSubscriptionFromContext(c, apiKey.Group.ID)
+	if !ok {
+		return http.StatusForbidden, "No active subscription found for this group"
+	}
+	// Validation adjusts expired usage in memory. Keep the auth/cache snapshot
+	// intact until conditional window maintenance returns its database snapshot.
+	selected := *subscription
+	subscription = &selected
+	needsMaintenance, err := subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+	if needsMaintenance {
+		refreshed, maintenanceErr := subscriptionService.EnsureWindowMaintenance(c.Request.Context(), subscription)
+		if maintenanceErr != nil || refreshed == nil {
+			return http.StatusInternalServerError, "Failed to maintain subscription usage windows"
+		}
+		subscription = refreshed
+		_, err = subscriptionService.ValidateAndCheckLimits(subscription, apiKey.Group)
+	}
+	if err != nil {
+		status := http.StatusForbidden
+		if errors.Is(err, service.ErrDailyLimitExceeded) || errors.Is(err, service.ErrWeeklyLimitExceeded) || errors.Is(err, service.ErrMonthlyLimitExceeded) {
+			status = http.StatusTooManyRequests
+		}
+		return status, err.Error()
+	}
+	subscriptions, _ := c.Get(string(ContextKeyGroupSubscriptions))
+	subscriptions.(map[int64]*service.UserSubscription)[apiKey.Group.ID] = subscription
+	c.Set(string(ContextKeySubscription), subscription)
+	return 0, ""
+}
+
 func setGroupContext(c *gin.Context, group *service.Group) {
 	if !service.IsGroupContextValid(group) {
 		return
@@ -472,9 +521,16 @@ func abortIfAPIKeyGroupNotAllowed(c *gin.Context, apiKey *service.APIKey) bool {
 }
 
 func abortIfAPIKeyGroupsUnavailable(c *gin.Context, apiKey *service.APIKey) bool {
-	if apiKey == nil {
+	if apiKey == nil || hasAvailableAPIKeyGroup(apiKey) {
 		return false
 	}
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
+	MarkIngressRejected(c, IngressRejectGroupDisabled)
+	AbortWithError(c, 403, "GROUP_DISABLED", "API Key 所属分组均不可用")
+	return true
+}
+
+func hasAvailableAPIKeyGroup(apiKey *service.APIKey) bool {
 	for _, group := range apiKey.BoundGroups() {
 		if group == nil {
 			continue
@@ -482,13 +538,10 @@ func abortIfAPIKeyGroupsUnavailable(c *gin.Context, apiKey *service.APIKey) bool
 		active := strings.TrimSpace(group.Status) == "" || group.IsActive()
 		allowed := group.IsSubscriptionType() || apiKey.User == nil || apiKey.User.CanBindGroup(group.ID, group.IsExclusive)
 		if active && allowed {
-			return false
+			return true
 		}
 	}
-	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
-	MarkIngressRejected(c, IngressRejectGroupDisabled)
-	AbortWithError(c, 403, "GROUP_DISABLED", "API Key 所属分组均不可用")
-	return true
+	return false
 }
 
 func validateAPIKeyGroupAllowed(apiKey *service.APIKey) bool {

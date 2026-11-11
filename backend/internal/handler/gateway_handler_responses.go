@@ -75,7 +75,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body))
+	if !routeAPIKeyGroupForModel(c, apiKey, reqModel, h.gatewayService, service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)) {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
 		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")

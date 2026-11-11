@@ -170,7 +170,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
 	bindRequestedReasoningEffort(c, body, reqModel)
-	selectAPIKeyGroupForModel(c.Request.Context(), c, apiKey, reqModel, h.gatewayService, false)
+	if !routeAPIKeyGroupForModel(c, apiKey, reqModel, h.gatewayService, false) {
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if policyBody, changed, err := applyAnthropicReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
 		respondOpenAIReasoningEffortPolicyError(c, err, h.errorResponse)
@@ -1130,12 +1132,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 	boundGroups := boundGroupsForAPIKey(apiKey)
-	if len(boundGroups) > 1 {
+	if apiKey != nil && len(apiKey.BoundGroups()) > 1 {
 		forcedPlatform := ""
 		if value, ok := middleware2.GetForcePlatformFromContext(c); ok {
 			forcedPlatform = strings.TrimSpace(value)
 		}
-		platform := boundGroups[0].Platform
+		platform := service.PlatformComposite
 		if forcedPlatform != "" {
 			platform = forcedPlatform
 		}
@@ -1241,7 +1243,7 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 	boundGroups := boundGroupsForAPIKey(apiKey)
-	if len(boundGroups) > 1 {
+	if len(apiKey.BoundGroups()) > 1 {
 		forcedPlatform := ""
 		if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
 			forcedPlatform = strings.TrimSpace(value)
@@ -1576,6 +1578,20 @@ func mergeModelIDs(primary, secondary []string) []string {
 // GET /antigravity/models
 // 分组级模型白名单开启时按白名单过滤。
 func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
+	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil && len(apiKey.BoundGroups()) > 1 {
+		models, _, err := unionAPIKeyGroupModels(c.Request.Context(), h.gatewayService, boundGroupsForAPIKey(apiKey), service.PlatformAntigravity, func(models []string, group *service.Group) []string {
+			if group.ModelAllowlistEnabled() {
+				return group.ModelAllowlist.FilterForListing(models)
+			}
+			return models
+		})
+		if err != nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Unable to list Antigravity models")
+			return
+		}
+		writeModelsList(c, service.PlatformAntigravity, models)
+		return
+	}
 	models := antigravity.DefaultModels()
 	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		filtered := make([]antigravity.ClaudeModel, 0, len(models))

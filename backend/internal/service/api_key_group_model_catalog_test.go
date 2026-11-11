@@ -41,9 +41,53 @@ func TestModelsForAPIKeyGroupCarbonRequiresCapableAccount(t *testing.T) {
 	}
 }
 
+func TestModelsForAPIKeyGroupOpenAIOAuthMatchesFirstFrameCatalog(t *testing.T) {
+	group := &Group{ID: 46, Platform: PlatformOpenAI}
+	for _, accountType := range []string{AccountTypeOAuth, AccountTypeAPIKey} {
+		t.Run(accountType, func(t *testing.T) {
+			repo := &gatewayModelsCatalogRepoStub{accounts: []Account{{ID: 1, Platform: PlatformOpenAI, Type: accountType, Status: StatusActive, Schedulable: true}}}
+			gateway := &GatewayService{accountRepo: repo}
+			openAI := &OpenAIGatewayService{accountRepo: repo}
+			models, err := gateway.ModelsForAPIKeyGroup(context.Background(), group)
+			require.NoError(t, err)
+			wsModels, err := openAI.ModelsForAPIKeyGroup(context.Background(), group)
+			require.NoError(t, err)
+			require.Equal(t, wsModels, models)
+			if accountType == AccountTypeOAuth {
+				require.Contains(t, models, "gpt-5.6-luna")
+			} else {
+				require.Empty(t, models, "an undeclared upstream key must not inherit OAuth models")
+			}
+		})
+	}
+}
+
 type gatewayModelsCatalogRepoStub struct {
 	AccountRepository
 	accounts []Account
+}
+
+func TestModelsForAPIKeyGroupNativeGeminiChecksCompositeDestination(t *testing.T) {
+	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGrok, PlatformGemini, PlatformAntigravity} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(platform+map[bool]string{false: "/account", true: "/explicit"}[explicit], func(t *testing.T) {
+				const model = "gemini-3.7-flash-high"
+				accountPlatform := platform
+				var resolver *CompositeRouteResolver
+				if explicit {
+					// Explicit routes must win even when a same-named account
+					// mapping belongs to a different provider.
+					accountPlatform = PlatformOpenAI
+					resolver = NewCompositeRouteResolver(compositeRouteRepoStub{routes: []CompositeModelRoute{{ID: 1, GroupID: 1, PublicModel: model, MatchType: CompositeRouteMatchExact, TargetPlatform: platform, Endpoint: CompositeRouteEndpointGemini, Enabled: true}}})
+				}
+				repo := &gatewayModelsCatalogRepoStub{accounts: []Account{{ID: 1, Platform: accountPlatform, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{model: model}}}}}
+				svc := &GatewayService{accountRepo: repo, compositeResolver: resolver}
+				allowed, err := svc.SupportsAPIKeyGroupGeminiModel(context.Background(), &Group{ID: 1, Platform: PlatformComposite}, model)
+				require.NoError(t, err)
+				require.Equal(t, platform == PlatformGemini || platform == PlatformAntigravity, allowed)
+			})
+		}
+	}
 }
 
 func (r *gatewayModelsCatalogRepoStub) ListSchedulableByGroupID(context.Context, int64) ([]Account, error) {

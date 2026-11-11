@@ -8,7 +8,10 @@ const api = vi.hoisted(() => ({
   getPelicanAccounts: vi.fn(), getPelicanCurrent: vi.fn(), getPelicanHistory: vi.fn(),
   getPelicanResult: vi.fn(), getPelicanModels: vi.fn(), startPelicanTests: vi.fn(), restartPelicanTest: vi.fn(), stopPelicanTests: vi.fn(), stopAllPelicanTests: vi.fn()
 }))
-vi.mock('@/api/admin/pelicanBenchmark', () => ({ ...api, DEFAULT_PELICAN_MODEL: 'gpt-6-astra', PelicanPartialStartError: class extends Error {
+vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('@/api/admin/pelicanBenchmark', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/admin/pelicanBenchmark')>()), ...api,
+  DEFAULT_PELICAN_MODEL: 'gpt-6-astra', PelicanPartialStartError: class extends Error {
   constructor(public items: PelicanBenchmarkRun[], public skipped: unknown[], public cause: unknown) { super('Partial start') }
 } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({
@@ -22,7 +25,7 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({
 }) }))
 
 function account(id = 1, overrides: Partial<PelicanBenchmarkAccount> = {}): PelicanBenchmarkAccount {
-  return { id, name: `账号-${id}`, status: 'active', plan_type: 'pro', model_ids: ['gpt-6-astra', 'gpt-5.6-luna'], can_test: true, ...overrides }
+  return { id, name: `账号-${id}`, status: 'active', platform: 'openai', type: 'oauth', plan_type: 'pro', model_ids: [], can_test: true, ...overrides }
 }
 function run(id = 'run-1', overrides: Partial<PelicanBenchmarkRun> = {}): PelicanBenchmarkRun {
   return {
@@ -33,8 +36,9 @@ function run(id = 'run-1', overrides: Partial<PelicanBenchmarkRun> = {}): Pelica
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(r => { resolve = r })
-  return { promise, resolve }
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
 }
 const wrappers: VueWrapper[] = []
 function render(show = true) {
@@ -172,14 +176,16 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('starts all eligible accounts, excludes busy or unavailable accounts, and never substitutes an unsupported default', async () => {
-    api.getPelicanAccounts.mockResolvedValue({ items: [account(), account(2), account(3, { can_test: false }), account(4, { model_ids: ['gpt-5.6-luna'] })] })
+    api.getPelicanAccounts.mockResolvedValue({ items: [account(), account(2), account(3, { can_test: false }), account(4)] })
+    api.getPelicanModels.mockImplementation(async (id: number) => id === 4 ? ['gpt-5.6-luna'] : ['gpt-6-astra'])
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-2', { account_id: 2 })] })
     const wrapper = render()
     await flushPromises()
     expect(wrapper.get('[data-testid="start-2"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-testid="start-3"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="start-4"]').attributes('disabled')).toBeDefined()
-    await wrapper.get('[data-testid="model-4"]').setValue('gpt-5.6-luna')
+    expect(wrapper.get('[data-testid="start-4"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="model-4"]').findAll('option').map(option => option.text())).toEqual(['gpt-5.6-luna'])
+    expect(api.getPelicanModels.mock.calls.map(call => call[0])).toEqual([1, 2, 4])
     await wrapper.get('[data-testid="start-all"]').trigger('click')
     expect(api.startPelicanTests.mock.calls[0][0]).toEqual([{ account_id: 1, model: 'gpt-6-astra' }, { account_id: 4, model: 'gpt-5.6-luna' }])
   })
@@ -444,10 +450,10 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('[data-testid="run-run-1"]').exists()).toBe(false)
   })
 
-  it('loads model choices on demand and keeps the selection across account refresh', async () => {
+  it('loads each account catalog once and keeps the selection only after refresh revalidates it', async () => {
     const wrapper = render()
     await flushPromises()
-    expect(api.getPelicanModels).not.toHaveBeenCalled()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(3)
     await wrapper.get('[data-testid="model-1"]').trigger('focusin')
     await flushPromises()
     expect(api.getPelicanModels).toHaveBeenCalledWith(1, expect.any(AbortSignal))
@@ -456,7 +462,209 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     expect((wrapper.get('[data-testid="model-1"]').element as HTMLSelectElement).value).toBe('gpt-5.6-luna')
     await wrapper.get('[data-testid="model-1"]').trigger('focusin')
-    expect(api.getPelicanModels).toHaveBeenCalledTimes(1)
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(6)
+  })
+
+  it.each(['row', 'selected', 'all'] as const)('starts mixed-platform accounts with their own catalog using %s controls', async mode => {
+    const accounts = [account(), account(2, { platform: 'anthropic', plan_type: null }),
+      account(3, { platform: 'anthropic', type: 'apikey', plan_type: null }),
+      account(4, { platform: 'antigravity', plan_type: 'free' }),
+      account(5, { platform: 'gemini', type: 'service_account', plan_type: null }),
+      account(6, { platform: 'grok', plan_type: null }), account(7, { platform: 'deepseek', type: 'apikey', plan_type: null })]
+    const catalogs: Record<number, string[]> = {
+      1: ['gpt-5.6-luna', 'gpt-6-astra'], 2: ['claude-sonnet-4-5'], 3: ['claude-opus-4-5'],
+      4: ['claude-sonnet-4-5', 'gemini-3.7-flash-high'], 5: ['gemini-2.5-pro'], 6: ['grok-4'], 7: ['deepseek-chat']
+    }
+    api.getPelicanAccounts.mockResolvedValue({ items: accounts })
+    api.getPelicanModels.mockImplementation(async (id: number) => catalogs[id])
+    api.startPelicanTests.mockResolvedValue({ items: [] })
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="account-"]')).toHaveLength(accounts.length)
+    for (const account of accounts) {
+      const select = wrapper.get(`[data-testid="model-${account.id}"]`)
+      expect(select.findAll('option').map(option => option.text())).toEqual(catalogs[account.id])
+      expect((select.element as HTMLSelectElement).value).toBe(account.id === 1 ? 'gpt-6-astra' : catalogs[account.id][0])
+    }
+    await wrapper.get('[data-testid="model-4"]').setValue('gemini-3.7-flash-high')
+    if (mode === 'row') await wrapper.get('[data-testid="start-4"]').trigger('click')
+    else if (mode === 'selected') {
+      await wrapper.get('[data-testid="select-2"]').setValue(true)
+      await wrapper.get('[data-testid="select-6"]').setValue(true)
+      await wrapper.get('[data-testid="start-selected"]').trigger('click')
+    } else await wrapper.get('[data-testid="start-all"]').trigger('click')
+    const ids = mode === 'row' ? [4] : mode === 'selected' ? [2, 6] : accounts.map(account => account.id)
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith(ids.map(account_id => ({
+      account_id, model: account_id === 1 ? 'gpt-6-astra' : account_id === 4 ? 'gemini-3.7-flash-high' : catalogs[account_id][0]
+    })), expect.any(AbortSignal))
+  })
+
+  it('limits model reads to four, deduplicates focus events, and keeps ready rows usable while the queue drains', async () => {
+    const pending = Array.from({ length: 12 }, () => deferred<string[]>())
+    api.getPelicanAccounts.mockResolvedValue({ items: pending.map((_, index) => account(index + 1, { platform: 'antigravity' })) })
+    api.getPelicanModels.mockImplementation((id: number) => pending[id - 1].promise)
+    api.startPelicanTests.mockResolvedValue({ items: [] })
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="account-"]')).toHaveLength(12)
+    expect(api.getPelicanModels.mock.calls.map(call => call[0])).toEqual([1, 2, 3, 4])
+    expect(wrapper.get('[data-testid="start-all"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option')).toHaveLength(0)
+    await wrapper.get('[data-testid="model-1"]').trigger('focusin')
+    await wrapper.get('[data-testid="model-8"]').trigger('pointerdown')
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(4)
+    pending[0].resolve(['gemini-3.7-flash-high'])
+    await flushPromises()
+    expect(api.getPelicanModels.mock.calls.map(call => call[0])).toEqual([1, 2, 3, 4, 5])
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="start-all"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="select-all"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    await flushPromises()
+    expect(api.startPelicanTests).toHaveBeenCalledWith([{ account_id: 1, model: 'gemini-3.7-flash-high' }], expect.any(AbortSignal))
+    pending[1].reject(new Error('private catalog failure'))
+    await flushPromises()
+    expect(api.getPelicanModels.mock.calls.map(call => call[0])).toEqual([1, 2, 3, 4, 5, 6])
+    expect(wrapper.get('[data-testid="start-2"]').attributes('disabled')).toBeDefined()
+    for (const item of pending.slice(2)) item.resolve(['claude-sonnet-4-5'])
+    await flushPromises()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(12)
+    expect(wrapper.get('[data-testid="start-all"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('private catalog failure')
+  })
+
+  it.each(['empty', 'error'] as const)('clears old models when refresh returns %s and never starts with the previous choice', async outcome => {
+    api.getPelicanAccounts.mockResolvedValue({ items: [account(1, { platform: 'antigravity' })] })
+    api.getPelicanModels.mockResolvedValueOnce(['claude-sonnet-4-5', 'gemini-3.7-flash-high'])
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="model-1"]').setValue('gemini-3.7-flash-high')
+    const pending = deferred<string[]>()
+    api.getPelicanModels.mockReturnValueOnce(pending.promise)
+    await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    if (outcome === 'empty') pending.resolve([])
+    else pending.reject(new Error('private upstream response'))
+    await flushPromises()
+    const select = wrapper.get('[data-testid="model-1"]')
+    expect(select.findAll('option')).toHaveLength(0)
+    expect((select.element as HTMLSelectElement).value).toBe('')
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    await wrapper.get('[data-testid="start-all"]').trigger('click')
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('gpt-6-astra')
+    expect(wrapper.text()).not.toContain('private upstream response')
+    api.getPelicanModels.mockResolvedValueOnce(['gemini-3.7-flash-low'])
+    if (outcome === 'error') await select.trigger('focusin')
+    else await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="model-1"]').element as HTMLSelectElement).value).toBe('gemini-3.7-flash-low')
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('replaces a removed selection using only the new supported catalog', async () => {
+    api.getPelicanAccounts.mockResolvedValue({ items: [account()] })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="model-1"]').setValue('gpt-5.6-luna')
+    api.getPelicanModels.mockResolvedValueOnce(['custom-supported-model'])
+    await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option').map(option => option.text())).toEqual(['custom-supported-model'])
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledWith([{ account_id: 1, model: 'custom-supported-model' }], expect.any(AbortSignal))
+  })
+
+  it('starts only text candidates and disables a dedicated-model-only catalog without a default fallback', async () => {
+    api.getPelicanAccounts.mockResolvedValue({ items: [
+      account(1, { platform: 'antigravity' }), account(2, { platform: 'gemini' })
+    ] })
+    api.getPelicanModels.mockImplementation(async (id: number) => id === 1
+      ? ['gemini-3-pro-image', 'gemini-3.7-flash-high', 'vendor/image-understanding']
+      : ['text-embedding-3-large', 'gemini-2.5-flash-native-audio-preview-12-2025', 'gemini-2.5-flash-preview-tts'])
+    api.startPelicanTests.mockResolvedValue({ items: [] })
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option').map(option => option.text()))
+      .toEqual(['gemini-3.7-flash-high', 'vendor/image-understanding'])
+    expect((wrapper.get('[data-testid="model-1"]').element as HTMLSelectElement).value).toBe('gemini-3.7-flash-high')
+    expect(wrapper.get('[data-testid="model-2"]').findAll('option')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="start-2"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="select-2"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="select-all"]').setValue(true)
+    expect((wrapper.get('[data-testid="select-2"]').element as HTMLInputElement).checked).toBe(false)
+    await wrapper.get('[data-testid="start-all"]').trigger('click')
+    await flushPromises()
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gemini-3.7-flash-high' }], expect.any(AbortSignal))
+    api.getPelicanModels.mockResolvedValue(['gpt-image-2', 'whisper-1'])
+    await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="start-all"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="start-selected"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('gpt-6-astra')
+  })
+
+  it('ignores a late model response from before a refresh, including when the same account ID changes platform', async () => {
+    api.getPelicanAccounts.mockResolvedValueOnce({ items: [account()] })
+      .mockResolvedValueOnce({ items: [account(1, { platform: 'grok', plan_type: null })] })
+    const pending = deferred<string[]>()
+    api.getPelicanModels.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(['grok-4'])
+    const wrapper = render()
+    await flushPromises()
+    const signal = api.getPelicanModels.mock.calls[0][1] as AbortSignal
+    await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(signal.aborted).toBe(true)
+    pending.resolve(['gpt-6-astra'])
+    await flushPromises()
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option').map(option => option.text())).toEqual(['grok-4'])
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledWith([{ account_id: 1, model: 'grok-4' }], expect.any(AbortSignal))
+  })
+
+  it.each(['close', 'hide', 'unmount', 'history', 'current'] as const)('cancels active and queued catalog reads on %s', async action => {
+    const pending = deferred<string[]>()
+    api.getPelicanAccounts.mockResolvedValue({ items: Array.from({ length: 12 }, (_, index) => account(index + 1)) })
+    api.getPelicanModels.mockReturnValue(pending.promise)
+    const wrapper = render()
+    await flushPromises()
+    const signals = api.getPelicanModels.mock.calls.map(call => call[1] as AbortSignal)
+    expect(signals).toHaveLength(4)
+    if (action === 'hide') await wrapper.setProps({ show: false })
+    else if (action === 'unmount') { wrapper.unmount(); wrappers.splice(wrappers.indexOf(wrapper), 1) }
+    else await wrapper.get(`[data-testid="${action === 'close' ? 'close' : `tab-${action}`}"]`).trigger('click')
+    expect(signals.every(signal => signal.aborted)).toBe(true)
+    pending.resolve(['stale-model'])
+    await flushPromises()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(4)
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('stale-model')
+  })
+
+  it('keeps the reopened queue bounded when old requests finish late', async () => {
+    const pending = Array.from({ length: 9 }, () => deferred<string[]>())
+    api.getPelicanAccounts.mockResolvedValue({ items: Array.from({ length: 8 }, (_, index) => account(index + 1)) })
+    let next = 0
+    api.getPelicanModels.mockImplementation(() => pending[next++].promise)
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(8)
+    for (const item of pending.slice(0, 4)) item.resolve(['stale-model'])
+    await flushPromises()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(8)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    pending[4].resolve(['fresh-model'])
+    await flushPromises()
+    expect(api.getPelicanModels).toHaveBeenCalledTimes(9)
+    expect(wrapper.get('[data-testid="model-1"]').findAll('option').map(option => option.text())).toEqual(['fresh-model'])
+    expect(wrapper.text()).not.toContain('stale-model')
   })
 
   it('does not let a late running poll overwrite a successful stop', async () => {
@@ -527,6 +735,50 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('[data-testid="stop-c"]').exists()).toBe(true)
     await vi.advanceTimersByTimeAsync(3000)
     expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the same compact rows, sandboxed thumbnails and history for non-OpenAI results', async () => {
+    const accounts = [account(1, { platform: 'anthropic' }), account(2, { platform: 'antigravity' }), account(3, { platform: 'grok' })]
+    const items = ['claude-sonnet-4-5', 'gemini-3.7-flash-high', 'grok-4'].map((model, index) =>
+      run(`platform-${index}`, { account_id: index + 1, model, upstream_model: model, status: 'succeeded', html_bytes: 120 }))
+    api.getPelicanAccounts.mockResolvedValue({ items: accounts })
+    api.getPelicanModels.mockImplementation(async (id: number) => [items[id - 1].model])
+    api.getPelicanCurrent.mockResolvedValue({ items })
+    api.getPelicanHistory.mockResolvedValue({ items, total: 3, page: 1, page_size: 20, pages: 1 })
+    const wrapper = render()
+    await flushPromises()
+    for (const tab of ['current', 'history']) {
+      await wrapper.get(`[data-testid="tab-${tab}"]`).trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(3)
+      expect(wrapper.findAll('iframe')).toHaveLength(3)
+      for (const item of items) {
+        const row = wrapper.get(`[data-testid="run-${item.id}"]`)
+        expect(row.get('.benchmark-row').classes()).toContain('grid')
+        expect(row.get('.model-select').text()).toBe(item.model)
+        expect(row.get('iframe').attributes('sandbox')).toBe('allow-scripts')
+        expect(row.get('iframe').attributes('referrerpolicy')).toBe('no-referrer')
+        expect(row.get('iframe').attributes('srcdoc')).toContain("connect-src 'none'")
+      }
+    }
+  })
+
+  it.each(['continue', 'retry'] as const)('keeps non-OpenAI %s on the existing source task contract', async action => {
+    const source = run('antigravity-source', { model: 'gemini-3.7-flash-high', upstream_model: 'gemini-3.7-flash-tiered', status: action === 'continue' ? 'canceled' : 'failed' })
+    api.getPelicanAccounts.mockResolvedValue({ items: [account(1, { platform: 'antigravity', plan_type: null })] })
+    api.getPelicanModels.mockResolvedValue(['gemini-3.7-flash-high'])
+    api.getPelicanCurrent.mockResolvedValue({ items: [source] })
+    api.getPelicanResult.mockResolvedValue(source)
+    api.restartPelicanTest.mockResolvedValue({ items: [run('next', { source_id: source.id, model: source.model, status: 'queued' })] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get(`[data-testid="${action}-${source.id}"]`).trigger('click')
+    await flushPromises()
+    expect(api.restartPelicanTest).toHaveBeenCalledExactlyOnceWith(source.id, action, expect.any(AbortSignal))
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="run-next"] .model-select').text()).toBe(source.model)
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
   })
 
   it('selects multiple accounts and select-all excludes unavailable accounts', async () => {

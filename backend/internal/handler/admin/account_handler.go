@@ -21,7 +21,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
@@ -3273,8 +3272,13 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Antigravity accounts: return Claude + Gemini models
 	if account.Platform == service.PlatformAntigravity {
-		// 直接复用 antigravity.DefaultModels()，与 /v1/models 端点保持同步
-		response.Success(c, antigravity.DefaultModels())
+		models, err := h.accountTestService.AvailableAntigravityModels(c.Request.Context(), account)
+		if err != nil {
+			slog.Warn("antigravity_available_models_failed", "account_id", accountID)
+			response.Error(c, http.StatusBadGateway, "Failed to load this account's available models. Check its authorization and proxy, then retry.")
+			return
+		}
+		response.Success(c, models)
 		return
 	}
 

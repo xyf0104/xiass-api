@@ -20,6 +20,79 @@ type APIKeyGroupModelCatalog interface {
 	ModelsForAPIKeyGroup(ctx context.Context, group *Group) ([]string, error)
 }
 
+// APIKeyGroupModelPassthrough is a routing-only capability. It must never add
+// invented model IDs to discovery or guess the platform of an unknown alias.
+type APIKeyGroupModelPassthrough interface {
+	AllowsAPIKeyGroupModelPassthrough(context.Context, *Group, string) (bool, error)
+}
+
+// APIKeyGroupGeminiModelCatalog checks the actual destination of composite
+// aliases before admitting them to a native Gemini endpoint.
+type APIKeyGroupGeminiModelCatalog interface {
+	SupportsAPIKeyGroupGeminiModel(context.Context, *Group, string) (bool, error)
+}
+
+func (s *GatewayService) SupportsAPIKeyGroupGeminiModel(ctx context.Context, group *Group, model string) (bool, error) {
+	if group == nil {
+		return false, nil
+	}
+	platform := group.Platform
+	if platform == PlatformComposite {
+		if s == nil {
+			return false, nil
+		}
+		resolver := s.compositeResolver
+		if resolver == nil {
+			resolver = NewCompositeRouteResolver(nil)
+			resolver.SetModelOwnershipResolver(s.resolveCompositeModelOwnership)
+		}
+		decision, err := resolver.Resolve(ctx, group.ID, model, CompositeRouteEndpointGemini)
+		if err != nil || !decision.Matched {
+			return false, err
+		}
+		platform = decision.TargetPlatform
+	}
+	return platform == PlatformGemini || platform == PlatformAntigravity, nil
+}
+
+func (s *GatewayService) AllowsAPIKeyGroupModelPassthrough(ctx context.Context, group *Group, model string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	return allowsAPIKeyGroupModelPassthrough(ctx, s.accountRepo, group, model, s.filterAccountCandidates)
+}
+
+func (s *OpenAIGatewayService) AllowsAPIKeyGroupModelPassthrough(ctx context.Context, group *Group, model string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	return allowsAPIKeyGroupModelPassthrough(ctx, s.accountRepo, group, model, s.filterAccountCandidates)
+}
+
+func allowsAPIKeyGroupModelPassthrough(ctx context.Context, repo AccountRepository, group *Group, model string, filter func(context.Context, *int64, []Account) ([]Account, error)) (bool, error) {
+	platform, known := DetectModelPlatform(model)
+	if !known || platform != PlatformOpenAI || group == nil || repo == nil || (group.Platform != PlatformOpenAI && group.Platform != PlatformComposite) {
+		return false, nil
+	}
+	if group.ModelAllowlistEnabled() && !group.ModelAllowlist.Allows(model) {
+		return false, nil
+	}
+	accounts, err := repo.ListSchedulableByGroupID(ctx, group.ID)
+	if err != nil {
+		return false, err
+	}
+	accounts, err = filter(ctx, &group.ID, accounts)
+	if err != nil {
+		return false, err
+	}
+	for i := range accounts {
+		if accounts[i].IsOpenAIPassthroughEnabled() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ModelsForAPIKeyGroup returns the concrete catalog currently supported by the
 // group's schedulable account candidates. It intentionally does not apply
 // default-model fallback; single-group HTTP handlers retain that legacy
@@ -31,7 +104,23 @@ func (s *GatewayService) ModelsForAPIKeyGroup(ctx context.Context, group *Group)
 	}
 
 	if group.Platform != PlatformComposite {
-		return s.GetAvailableModels(ctx, &group.ID, group.Platform), nil
+		models := s.GetAvailableModels(ctx, &group.ID, group.Platform)
+		if len(models) == 0 && group.Platform == PlatformOpenAI {
+			// OAuth has a supported built-in catalog even without an explicit
+			// mapping. Match the OpenAI gateway's discovery/first-frame selector.
+			accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, group.ID)
+			if err != nil {
+				return nil, err
+			}
+			accounts, err = s.filterAccountCandidates(ctx, &group.ID, accounts)
+			if err != nil {
+				return nil, err
+			}
+			if hasOpenAIOAuthCatalogAccount(accounts) {
+				return openai.DefaultModelIDs(), nil
+			}
+		}
+		return models, nil
 	}
 
 	platforms := []string{

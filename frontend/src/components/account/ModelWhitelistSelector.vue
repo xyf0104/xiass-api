@@ -90,7 +90,16 @@
                 <Icon name="copy" size="sm" />
               </button>
             </div>
-            <div v-if="filteredModels.length === 0" class="px-3 py-4 text-center text-sm text-gray-500">
+            <div v-if="accountModelsLoading" class="px-3 py-4 text-center text-sm text-gray-500" role="status">
+              {{ t('common.loading') }}
+            </div>
+            <div v-else-if="accountModelsError" class="flex items-center gap-2 px-3 py-4 text-sm">
+              <span role="alert" class="min-w-0 break-words text-red-500">{{ accountModelsError }}</span>
+              <button type="button" data-testid="retry-account-models" class="flex shrink-0 items-center gap-1 text-primary-600" @click="loadAvailableAccountModels(true)">
+                <Icon name="refresh" size="sm" />{{ t('common.retry') }}
+              </button>
+            </div>
+            <div v-else-if="filteredModels.length === 0" class="px-3 py-4 text-center text-sm text-gray-500">
               {{ t('admin.accounts.noMatchingModels') }}
             </div>
           </div>
@@ -103,6 +112,7 @@
       <button
         type="button"
         @click="fillRelated"
+        :disabled="accountModelsLoading"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
       >
         {{ t('admin.accounts.fillRelatedModels') }}
@@ -111,7 +121,7 @@
         v-if="canSyncUpstream"
         type="button"
         @click="syncUpstreamModels"
-        :disabled="isSyncingUpstream"
+        :disabled="isSyncingUpstream || accountModelsLoading"
         class="rounded-lg border border-emerald-200 px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
       >
         {{ isSyncingUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
@@ -151,11 +161,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { accountsAPI } from '@/api/admin/accounts'
-import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
+import type { SyncUpstreamModelsResult, SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import { useClipboard } from '@/composables/useClipboard'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -295,7 +305,60 @@ const isAntigravitySync = computed(() =>
   props.syncCredentials?.platform.toLowerCase() === 'antigravity'
 )
 
+const scopedAccountId = computed(() => props.accountId && normalizedPlatforms.value.length === 1 &&
+  normalizedPlatforms.value[0].toLowerCase() === 'antigravity' ? props.accountId : null)
+const localAccountModels = ref<string[] | null>(null)
+const localAccountModelsLoading = ref(false)
+const localAccountModelsError = ref('')
+let accountModelsGeneration = 0
+let accountModelsRequest: Promise<string[] | null> | null = null
+const availableAccountModels = computed(() => {
+  if (!scopedAccountId.value) return null
+  return localAccountModels.value
+})
+const accountModelsLoading = computed(() => !!scopedAccountId.value && localAccountModelsLoading.value)
+const accountModelsError = computed(() => scopedAccountId.value ? localAccountModelsError.value : '')
+
+function loadAvailableAccountModels(refresh = false): Promise<string[] | null> {
+  const id = scopedAccountId.value
+  if (!id) return Promise.resolve(null)
+  if (accountModelsRequest) return accountModelsRequest
+  if (!refresh && localAccountModels.value !== null) return Promise.resolve(localAccountModels.value)
+
+  const generation = accountModelsGeneration
+  const isCurrent = () => generation === accountModelsGeneration && scopedAccountId.value === id
+  localAccountModels.value = null
+  localAccountModelsLoading.value = true
+  localAccountModelsError.value = ''
+  const request = (async () => {
+    try {
+      const result = await accountsAPI.syncUpstreamModels(id)
+      if (!isCurrent()) return null
+      const ids = normalizeAntigravityModelsForDisplay(result.models)
+      localAccountModels.value = ids
+      showCatalogWarnings(result.warnings)
+      return ids
+    } catch (error) {
+      if (!isCurrent()) return null
+      localAccountModelsError.value = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+      appStore.showError(localAccountModelsError.value)
+      return null
+    } finally {
+      if (isCurrent()) {
+        localAccountModelsLoading.value = false
+        accountModelsRequest = null
+      }
+    }
+  })()
+  accountModelsRequest = request
+  return request
+}
+
 const availableOptions = computed(() => {
+  if (scopedAccountId.value) {
+    return (availableAccountModels.value || []).map(model => ({ value: model, label: model }))
+  }
   if (normalizedPlatforms.value.length === 0) {
     return allModels
   }
@@ -326,6 +389,7 @@ const toggleDropdown = () => {
 
   updateDropdownPosition()
   showDropdown.value = true
+  if (scopedAccountId.value) void loadAvailableAccountModels()
   startPositionTracking()
   nextTick(updateDropdownPosition)
 }
@@ -351,6 +415,7 @@ const toggleModel = (model: string) => {
   if (props.modelValue.includes(model)) {
     removeModel(model)
   } else {
+    if (scopedAccountId.value && !availableAccountModels.value?.includes(model)) return
     emit('update:modelValue', [...props.modelValue, model])
   }
 }
@@ -374,7 +439,14 @@ const handleEnter = () => {
   if (!isComposing.value) addCustom()
 }
 
-const fillRelated = () => {
+const fillRelated = async () => {
+  if (scopedAccountId.value) {
+    const generation = accountModelsGeneration
+    const models = await loadAvailableAccountModels()
+    if (!models || generation !== accountModelsGeneration) return
+    emit('update:modelValue', [...new Set([...props.modelValue, ...models])])
+    return
+  }
   const newModels = [...props.modelValue]
   for (const platform of normalizedPlatforms.value) {
     for (const model of getModelsByPlatform(platform)) {
@@ -390,19 +462,28 @@ const syncUpstreamModels = async () => {
   if (isSyncingUpstream.value) return
   if (!props.accountId && !props.syncCredentials) return
 
+  const generation = accountModelsGeneration
+  const id = props.accountId
   isSyncingUpstream.value = true
   try {
     let result
-    if (props.accountId) {
+    if (scopedAccountId.value) {
+      const models = await loadAvailableAccountModels(true)
+      if (!models || generation !== accountModelsGeneration) return
+      result = { models }
+    } else if (props.accountId) {
       result = await accountsAPI.syncUpstreamModels(props.accountId)
     } else if (props.syncCredentials) {
       result = await accountsAPI.syncUpstreamModelsPreview(props.syncCredentials as SyncUpstreamPreviewParams)
     } else {
       return
     }
+    if (generation !== accountModelsGeneration || props.accountId !== id) return
+    // Account-scoped loads already report warnings once for all coalesced callers.
+    if (!scopedAccountId.value) showCatalogWarnings(result.warnings)
 
     const rawUpstreamModels = result.models.map(model => model.trim()).filter(Boolean)
-    const upstreamModels = isAntigravitySync.value
+    const upstreamModels = isAntigravitySync.value && !scopedAccountId.value
       ? normalizeAntigravityModelsForDisplay(rawUpstreamModels)
       : rawUpstreamModels
     if (upstreamModels.length === 0) {
@@ -425,29 +506,25 @@ const syncUpstreamModels = async () => {
     } else {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
-    for (const warning of result.warnings ?? []) {
-      switch (warning.code) {
-        case 'upstream_model_list_mapping_fallback':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMappingFallback'))
-          break
-        case 'upstream_model_metadata_partial':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
-          break
-        case 'upstream_model_metadata_incomplete':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
-          break
-        case 'upstream_model_metadata_too_large':
-          appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataTooLarge'))
-          break
-        default:
-          if (warning.message) appStore.showWarning(warning.message)
-      }
-    }
   } catch (error) {
+    if (generation !== accountModelsGeneration || props.accountId !== id) return
     const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
-    isSyncingUpstream.value = false
+    if (generation === accountModelsGeneration) isSyncingUpstream.value = false
+  }
+}
+
+function showCatalogWarnings(warnings: SyncUpstreamModelsResult['warnings']) {
+  const warningKeys: Record<string, string> = {
+    upstream_model_list_mapping_fallback: 'admin.accounts.syncUpstreamModelsMappingFallback',
+    upstream_model_metadata_partial: 'admin.accounts.syncUpstreamModelsMetadataPartial',
+    upstream_model_metadata_incomplete: 'admin.accounts.syncUpstreamModelsMetadataIncomplete',
+    upstream_model_metadata_too_large: 'admin.accounts.syncUpstreamModelsMetadataTooLarge'
+  }
+  for (const warning of warnings ?? []) {
+    const message = warningKeys[warning.code] ? t(warningKeys[warning.code]) : warning.message
+    if (message) appStore.showWarning(message)
   }
 }
 
@@ -455,12 +532,27 @@ const clearAll = () => {
   emit('update:modelValue', [])
 }
 
+function invalidateAccountModels() {
+  accountModelsGeneration += 1
+  accountModelsRequest = null
+  localAccountModels.value = null
+  localAccountModelsLoading.value = false
+  localAccountModelsError.value = ''
+  isSyncingUpstream.value = false
+}
+
+watch([() => props.accountId, scopedAccountId], () => {
+  invalidateAccountModels()
+  if (showDropdown.value && scopedAccountId.value) void loadAvailableAccountModels()
+})
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleEscape)
 })
 
 onUnmounted(() => {
+  invalidateAccountModels()
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('keydown', handleEscape)
   stopPositionTracking()

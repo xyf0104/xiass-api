@@ -319,7 +319,7 @@ function mountModal(account = buildAccount()) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
-    syncUpstreamModelsMock.mockReset()
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: ['gemini-2.5-flash'] })
   })
 
   it('exposes auto Reset only while editing an OpenAI OAuth parent', async () => {

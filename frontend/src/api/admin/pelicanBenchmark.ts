@@ -19,9 +19,10 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
  * Plan labels come from the redacted account list; Task has no historical plan snapshot.
  * Existing server account/model eligibility and active-task uniqueness remain authoritative.
  */
+// Preserve the OpenAI preference only when the account's catalog includes it.
 export const DEFAULT_PELICAN_MODEL = 'gpt-6-astra'
 
-export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | 'status'> {
+export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | 'status' | 'platform' | 'type'> {
   plan_type: string | null
   model_ids: string[]
   can_test: boolean
@@ -66,19 +67,34 @@ export class PelicanPartialStartError extends Error {
 }
 
 const base = '/admin/pelican-benchmarks'
+// Match pelicanAccountSupported; eligibility and model validation remain server-owned.
+const supportedAccountTypes: Record<Account['platform'], readonly Account['type'][]> = {
+  openai: ['oauth', 'apikey'],
+  anthropic: ['oauth', 'setup-token', 'apikey', 'bedrock', 'service_account'],
+  gemini: ['oauth', 'apikey', 'service_account'],
+  antigravity: ['oauth', 'apikey', 'upstream'],
+  grok: ['oauth', 'apikey'],
+  kimi: ['apikey'],
+  zhipu: ['apikey'],
+  deepseek: ['apikey'],
+  minimax: ['apikey'],
+  opencode_go: ['apikey']
+}
 
 export async function getPelicanAccounts(signal?: AbortSignal): Promise<{ items: PelicanBenchmarkAccount[] }> {
   const result = new Map<number, PelicanBenchmarkAccount>()
   for (let page = 1; ; page++) {
-    const data = await listAccounts(page, 200, { platform: 'openai', sort_by: 'id', sort_order: 'asc', include_scheduler_score: '0' }, { signal })
+    signal?.throwIfAborted()
+    const data = await listAccounts(page, 200, { sort_by: 'id', sort_order: 'asc', include_scheduler_score: '0' }, { signal })
+    signal?.throwIfAborted()
     for (const account of data.items) {
       const rawPlan = account.credentials?.plan_type ?? account.parent_plan_type
       const plan = typeof rawPlan === 'string' ? rawPlan.trim().toLowerCase() : ''
-      if (account.platform !== 'openai' || !['oauth', 'apikey'].includes(account.type) || account.parent_account_id || account.extra?.synthetic_ui_test === true) continue
-      if (plan === 'free' || (account.type === 'oauth' && (!plan || plan === 'abnormal'))) continue
+      if (!supportedAccountTypes[account.platform]?.includes(account.type) || account.parent_account_id || account.extra?.synthetic_ui_test === true) continue
+      if (account.platform === 'openai' && (plan === 'free' || (account.type === 'oauth' && (!plan || plan === 'abnormal')))) continue
       result.set(account.id, {
-        id: account.id, name: account.name, status: account.status, plan_type: plan || null,
-        model_ids: [DEFAULT_PELICAN_MODEL], can_test: true
+        id: account.id, name: account.name, status: account.status, platform: account.platform, type: account.type, plan_type: plan || null,
+        model_ids: [], can_test: true
       })
     }
     if (page >= data.pages || !data.items.length) break
@@ -86,9 +102,28 @@ export async function getPelicanAccounts(signal?: AbortSignal): Promise<{ items:
   return { items: [...result.values()] }
 }
 
+const nonTextModelPatterns = [
+  /^(?:gpt-image-|dall-e-|imagen-|veo-|sora-)/,
+  /^grok-imagine(?:-|$)/,
+  /^grok-2-image(?:-|$)/,
+  /^(?:imagine(?:-|$)|grok-video-1\.5$)/,
+  /^chatgpt-image-latest$/,
+  /^gemini-(?:2\.5-flash|3-pro|3\.1-flash)-image(?:-|$)/,
+  /^(?:whisper-|tts-|embedding-|rerank-|textembedding-|multimodalembedding(?:@|$))/,
+  /(?:-embedding|-rerank|-moderation|-transcribe|-tts)(?:-|$)/,
+  /^gemini-2\.5-flash-(?:preview-)?native-audio(?:-|$)/
+]
+
+export function isPelicanTextModelCandidate(model: string): boolean {
+  const id = model.trim().toLowerCase().split('/').pop() ?? ''
+  // Exclude known dedicated generation/embedding/audio families, not vision input
+  // or arbitrary "image"/"audio" aliases. Mapped targets remain server-validated.
+  return !!id && !nonTextModelPatterns.some(pattern => pattern.test(id))
+}
+
 export async function getPelicanModels(id: number, signal?: AbortSignal): Promise<string[]> {
-  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`, { signal })
-  return data.map(model => model.id)
+  const { data } = await apiClient.get<ClaudeModel[] | null>(`/admin/accounts/${id}/models`, { signal })
+  return [...new Set((data ?? []).map(model => model.id?.trim()).filter((id): id is string => !!id && isPelicanTextModelCandidate(id)))]
 }
 
 async function listRuns(params: { page: number; page_size: number; batch_id?: string; status?: PelicanBenchmarkStatus }, signal?: AbortSignal): Promise<Page> {

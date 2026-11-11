@@ -271,7 +271,11 @@ func (s *OpenAIGatewayService) BuildCodexModelsManifestForAPIKeyGroups(
 		}
 		groupModels := make([]string, 0, len(modelIDs))
 		available := make(map[string]struct{})
-		for _, modelID := range modelIDsFromAvailableAccounts(accounts, catalogGroup.Platform) {
+		catalogModels, err := s.ModelsForAPIKeyGroup(ctx, catalogGroup)
+		if err != nil {
+			return nil, err
+		}
+		for _, modelID := range FilterCodexModelIDsForGroup(catalogModels, catalogGroup) {
 			available[strings.ToLower(strings.TrimSpace(modelID))] = struct{}{}
 		}
 		for _, modelID := range modelIDs {
@@ -521,6 +525,7 @@ type codexModelMetadataOverride struct {
 	UpstreamModelMetadata
 	reasoningConflict       bool
 	inputModalitiesConflict bool
+	disableWebSockets       bool
 }
 
 func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescriptor {
@@ -1086,6 +1091,13 @@ func buildCodexModelsManifestForAccounts(
 		); ok {
 			modelMetadata[modelID] = metadata
 		}
+		targetPlatform := effectivePlatform
+		if targetPlatform == PlatformComposite {
+			targetPlatform, _, _ = resolveCodexCompositeModelTarget(modelID, accounts, compositeRoutes, compositeRoutesAvailable)
+		}
+		metadata := modelMetadata[modelID]
+		metadata.disableWebSockets = targetPlatform != PlatformOpenAI && targetPlatform != PlatformGrok
+		modelMetadata[modelID] = metadata
 	}
 	return buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
 }
@@ -1140,6 +1152,19 @@ func buildCodexModelsManifest(
 				return nil, err
 			}
 			applyCodexToolCapabilities(fields, capabilities, true)
+			encoded, err = json.Marshal(fields)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if modelMetadata[modelID].disableWebSockets {
+			// HTTP protocol adapters do not provide a Responses WebSocket bridge.
+			// Do not inherit an upstream/alias descriptor's WS preference.
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				return nil, err
+			}
+			fields["prefer_websockets"] = json.RawMessage("false")
 			encoded, err = json.Marshal(fields)
 			if err != nil {
 				return nil, err

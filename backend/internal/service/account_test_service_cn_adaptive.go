@@ -67,6 +67,7 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create adaptive Anthropic test payload")
 	}
+	pelicanClaudePayload(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过原生 /v1/messages 测试自适应 Anthropic 端点"})
@@ -87,12 +88,19 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.doCNProviderAdaptiveRequest(req, account)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Adaptive Anthropic endpoint request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	boundPelicanResponse(c, resp)
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("Adaptive Anthropic endpoint returned %d: %s", resp.StatusCode, string(body))
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
@@ -109,6 +117,9 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 }
 
 func (s *AccountTestService) processCNProviderAdaptiveAnthropicStream(c *gin.Context, body io.Reader) error {
+	if pelicanProbe(c) != nil {
+		return s.processPelicanProtocolStream(c, body, "claude")
+	}
 	reader := bufio.NewReader(body)
 	for {
 		line, err := reader.ReadString('\n')
@@ -162,6 +173,9 @@ func (s *AccountTestService) testCNProviderAdaptiveResponsesConnection(c *gin.Co
 	apiURL := buildOpenAIResponsesURLForPlatform(account.Platform, baseURL)
 
 	payload := createOpenAITestPayload(testModelID, false)
+	if pelicanProbe(c) != nil {
+		payload["input"] = pelicanMessages(ctx, true)
+	}
 	// DeepSeek / Kimi native Responses endpoints are stateless and do not need
 	// the OpenAI probe's synthetic instructions.
 	delete(payload, "instructions")
@@ -181,12 +195,19 @@ func (s *AccountTestService) testCNProviderAdaptiveResponsesConnection(c *gin.Co
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.doCNProviderAdaptiveRequest(req, account)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Adaptive Responses endpoint request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	boundPelicanResponse(c, resp)
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("Adaptive Responses endpoint returned %d: %s", resp.StatusCode, string(body))
 		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
@@ -195,6 +216,9 @@ func (s *AccountTestService) testCNProviderAdaptiveResponsesConnection(c *gin.Co
 		return s.sendErrorAndEnd(c, errMsg)
 	}
 
+	if pelicanProbe(c) != nil {
+		return s.processPelicanStream(c, resp.Body, false)
+	}
 	if err := s.processOpenAIStream(c, resp.Body); err != nil {
 		return err
 	}
@@ -250,6 +274,7 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Anthropic test payload")
 	}
+	pelicanClaudePayload(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -270,12 +295,19 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.doCNProviderAdaptiveRequest(req, account)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Anthropic endpoint request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	boundPelicanResponse(c, resp)
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("Anthropic endpoint returned %d: %s", resp.StatusCode, string(body))
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && s.accountRepo != nil {

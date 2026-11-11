@@ -53,6 +53,15 @@
           label-key="display_name"
           :placeholder="loadingModels ? t('common.loading') + '...' : t('admin.accounts.selectTestModel')"
         />
+        <div v-if="modalActive && !loadingModels && availableModels.length === 0" class="flex items-center justify-between gap-3 text-sm">
+          <span :role="modelLoadError ? 'alert' : undefined" class="text-gray-500 dark:text-gray-400">
+            {{ modelLoadError || t('common.noData') }}
+          </span>
+          <button type="button" class="flex shrink-0 items-center gap-1 text-primary-600 dark:text-primary-400" @click="loadAvailableModels">
+            <Icon name="refresh" size="sm" :stroke-width="2" />
+            {{ t('common.retry') }}
+          </button>
+        </div>
       </div>
 
       <div v-if="isOpenAIAccount" class="space-y-1.5">
@@ -205,10 +214,10 @@
         </button>
         <button
           @click="startTest"
-          :disabled="status === 'connecting' || !selectedModelId"
+          :disabled="!canStartTest"
           :class="[
             'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-            status === 'connecting' || !selectedModelId
+            !canStartTest
               ? 'cursor-not-allowed bg-primary-400 text-white'
               : status === 'success'
                 ? 'bg-green-500 text-white hover:bg-green-600'
@@ -242,7 +251,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -251,10 +260,16 @@ import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
 import { adminAPI } from '@/api/admin'
+import { useAppStore } from '@/stores/app'
+import {
+  ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS,
+  isAntigravityGemini37InternalModel
+} from '@/composables/useModelWhitelist'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
+const appStore = useAppStore()
 
 interface OutputLine {
   text: string
@@ -284,7 +299,15 @@ const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
 const loadingModels = ref(false)
+const modelLoadError = ref('')
+const modalActive = ref(false)
+let modelRequestId = 0
 let abortController: AbortController | null = null
+const canStartTest = computed(() =>
+  props.show && modalActive.value && !!props.account && !loadingModels.value &&
+  status.value !== 'connecting' && !!selectedModelId.value &&
+  availableModels.value.some((model) => model.id === selectedModelId.value)
+)
 const generatedImages = ref<PreviewImage[]>([])
 const testMode = ref<'default' | 'compact'>('default')
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
@@ -320,20 +343,35 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
-// Load available models when modal opens
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      testPrompt.value = ''
-      testMode.value = 'default'
-      resetState()
-      await loadAvailableModels()
+const antigravityGeminiFlashDisplayNames: Record<string, string> = {
+  'gemini-3.7-flash-high': 'Gemini 3.7 Flash High',
+  'gemini-3.7-flash-medium': 'Gemini 3.7 Flash Medium',
+  'gemini-3.7-flash-low': 'Gemini 3.7 Flash Low'
+}
+
+const normalizeAntigravityTestModels = (models: ClaudeModel[]): ClaudeModel[] => {
+  const displayModels = new Map(
+    models
+      .filter((model) => !isAntigravityGemini37InternalModel(model.id))
+      .map((model) => [model.id, model])
+  )
+  const normalized = new Map<string, ClaudeModel>()
+  for (const model of models) {
+    // Only the XIASS 3.7 compatibility alias expands into public model names.
+    if (isAntigravityGemini37InternalModel(model.id)) {
+      for (const id of ANTIGRAVITY_GEMINI_37_PUBLIC_MODELS) {
+        normalized.set(id, displayModels.get(id) || {
+          ...model,
+          id,
+          display_name: antigravityGeminiFlashDisplayNames[id]
+        })
+      }
     } else {
-      abortStream()
+      normalized.set(model.id, model)
     }
   }
-)
+  return [...normalized.values()]
+}
 
 watch(selectedModelId, () => {
   if (supportsImageTest.value && !testPrompt.value.trim()) {
@@ -342,18 +380,27 @@ watch(selectedModelId, () => {
 })
 
 const loadAvailableModels = async () => {
-  if (!props.account) return
+  if (!props.show || !modalActive.value || !props.account || loadingModels.value || status.value === 'connecting') return
 
+  const { id, platform } = props.account
+  const requestId = ++modelRequestId
+  const isCurrentRequest = () => requestId === modelRequestId && modalActive.value && props.show && props.account?.id === id
   loadingModels.value = true
-  selectedModelId.value = '' // Reset selection before loading
+  availableModels.value = []
+  selectedModelId.value = ''
+  modelLoadError.value = ''
   try {
-    const models = await adminAPI.accounts.getAvailableModels(props.account.id)
-    availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
-      ? sortTestModels(models)
+    const models = await adminAPI.accounts.getAvailableModels(id)
+    if (!isCurrentRequest()) return
+    const displayModels = platform === 'antigravity'
+      ? normalizeAntigravityTestModels(models)
       : models
+    availableModels.value = platform === 'gemini' || platform === 'antigravity'
+      ? sortTestModels(displayModels)
+      : displayModels
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
+      if (platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
@@ -362,12 +409,17 @@ const loadAvailableModels = async () => {
       }
     }
   } catch (error) {
+    if (!isCurrentRequest()) return
     console.error('Failed to load available models:', error)
     // Fallback to empty list
     availableModels.value = []
     selectedModelId.value = ''
+    modelLoadError.value = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+      ? error.message
+      : t('admin.accounts.syncUpstreamModelsFailed')
+    appStore.showError(modelLoadError.value)
   } finally {
-    loadingModels.value = false
+    if (isCurrentRequest()) loadingModels.value = false
   }
 }
 
@@ -381,7 +433,7 @@ const resetState = () => {
 }
 
 const handleClose = () => {
-  abortStream()
+  invalidateModal()
   emit('close')
 }
 
@@ -405,7 +457,8 @@ const scrollToBottom = async () => {
 }
 
 const startTest = async () => {
-  if (!props.account || !selectedModelId.value) return
+  if (!props.account || !canStartTest.value) return
+  const accountID = props.account.id
 
   resetState()
   status.value = 'connecting'
@@ -415,11 +468,14 @@ const startTest = async () => {
 
   abortStream()
 
-  abortController = new AbortController()
+  const controller = new AbortController()
+  abortController = controller
+  const isCurrentTest = () => abortController === controller && !controller.signal.aborted &&
+    modalActive.value && props.show && props.account?.id === accountID
 
   try {
     // Use the configured API base; EventSource does not support POST.
-    const url = buildApiUrl(`/admin/accounts/${props.account.id}/test`)
+    const url = buildApiUrl(`/admin/accounts/${accountID}/test`)
 
     // Use fetch with streaming for SSE since EventSource doesn't support POST
     const response = await fetch(url, {
@@ -433,9 +489,10 @@ const startTest = async () => {
         prompt: supportsImageTest.value ? testPrompt.value.trim() : '',
         mode: isOpenAIAccount.value ? testMode.value : 'default'
       }),
-      signal: abortController.signal
+      signal: controller.signal
     })
 
+    if (!isCurrentTest()) return
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
@@ -450,6 +507,7 @@ const startTest = async () => {
 
     while (true) {
       const { done, value } = await reader.read()
+      if (!isCurrentTest()) return
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
@@ -471,6 +529,7 @@ const startTest = async () => {
       }
     }
   } catch (error: unknown) {
+    if (!isCurrentTest()) return
     if (error instanceof DOMException && error.name === 'AbortError') {
       status.value = 'idle'
       return
@@ -479,6 +538,8 @@ const startTest = async () => {
     const msg = error instanceof Error ? error.message : 'Unknown error'
     errorMessage.value = msg
     addLine(`Error: ${msg}`, 'text-red-400')
+  } finally {
+    if (abortController === controller) abortController = null
   }
 }
 
@@ -559,6 +620,33 @@ const copyOutput = () => {
   const text = outputLines.value.map((l) => l.text).join('\n')
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
+
+const invalidateModal = () => {
+  modalActive.value = false
+  modelRequestId += 1
+  loadingModels.value = false
+  availableModels.value = []
+  selectedModelId.value = ''
+  modelLoadError.value = ''
+  abortStream()
+  resetState()
+}
+
+watch(
+  [() => props.show, () => props.account?.id, () => props.account?.platform, () => props.account?.type],
+  () => {
+    invalidateModal()
+    testPrompt.value = ''
+    testMode.value = 'default'
+    if (props.show && props.account) {
+      modalActive.value = true
+      void loadAvailableModels()
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(invalidateModal)
 </script>
 
 <style>

@@ -8,9 +8,9 @@
     <!-- Platform logo -->
     <PlatformIcon v-if="platform" :platform="platform" size="sm" />
     <!-- Group name -->
-    <span class="truncate">{{ name }}</span>
+    <span :class="wrapName ? 'min-w-0 whitespace-normal break-words text-left' : 'truncate'">{{ name }}</span>
     <!-- Right side label -->
-    <span v-if="showLabel" :class="labelClass">
+    <span v-if="showLabel" :class="[labelClass, { 'shrink-0 whitespace-nowrap': wrapName }]">
       <template v-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
@@ -45,6 +45,7 @@ interface Props {
   peakEnd?: string
   peakRateMultiplier?: number
   showRate?: boolean
+  wrapName?: boolean
   daysRemaining?: number | null // 剩余天数（订阅类型时使用）
   /**
    * 订阅分组默认在右侧 label 展示"订阅"或剩余天数；
@@ -57,6 +58,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
   showRate: true,
+  wrapName: false,
   daysRemaining: null,
   userRateMultiplier: null,
   peakRateEnabled: false,

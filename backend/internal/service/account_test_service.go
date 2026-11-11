@@ -287,10 +287,18 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return nil
 	}
 
-	// Route to platform-specific test method
+	return s.testAccountProtocolConnection(c, account, modelID, prompt, mode)
+}
+
+func (s *AccountTestService) testAccountProtocolConnection(c *gin.Context, account *Account, modelID, prompt, mode string) error {
+	// Route to platform-specific test method. Pelican skips the activity writes
+	// above and makes one generation, not the adaptive connectivity suite.
 	if account.IsCNProvider() {
 		switch account.GetAPIProtocol() {
 		case APIProtocolAdaptive:
+			if pelicanProbe(c) != nil {
+				return s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt)
+			}
 			return s.testCNProviderAdaptiveConnection(c, account, modelID, prompt)
 		case APIProtocolResponses:
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
@@ -446,6 +454,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	pelicanClaudePayload(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -483,13 +492,20 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		proxyURL = account.requestProxyURL()
 	}
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	boundPelicanResponse(c, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body))
 
@@ -527,16 +543,19 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	pelicanClaudePayload(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 	vertexBody, err := buildVertexAnthropicRequestBody(payloadBytes)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to create Vertex request body: %s", err.Error()))
 	}
 
-	if s.claudeTokenProvider == nil {
-		return s.sendErrorAndEnd(c, "Claude token provider not configured")
-	}
-	accessToken, err := s.claudeTokenProvider.GetAccessToken(ctx, account)
+	accessToken, err := pelicanAccessToken(ctx, account, func() (string, error) {
+		if s.claudeTokenProvider == nil {
+			return "", errors.New("Claude token provider not configured")
+		}
+		return s.claudeTokenProvider.GetAccessToken(ctx, account)
+	})
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get service account access token: %s", err.Error()))
 	}
@@ -560,13 +579,20 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 		proxyURL = account.requestProxyURL()
 	}
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	boundPelicanResponse(c, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body))
 		if resp.StatusCode == http.StatusForbidden {
@@ -611,6 +637,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		"max_tokens":  256,
 		"temperature": 1,
 	}
+	pelicanClaudePayload(c, bedrockPayload)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
 	// Use non-streaming endpoint (response is standard Claude JSON)
@@ -646,12 +673,22 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		proxyURL = account.requestProxyURL()
 	}
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, nil)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if pelicanProbe(c) != nil {
+		boundPelicanResponse(c, resp)
+		if resp.StatusCode != http.StatusOK {
+			return s.pelicanHTTPError(c, resp)
+		}
+		return s.processPelicanClaudeJSON(c, resp.Body)
+	}
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -915,13 +952,15 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	var authToken string
 	switch account.Type {
 	case AccountTypeOAuth:
-		if s.grokTokenProvider == nil {
-			return s.sendErrorAndEnd(c, "Grok token provider not configured")
-		}
 		var err error
 		// 手动测试不走生产调度资格门：关闭调度、限流/过载/临时冷却中的账号
 		// 也应能被管理员探测（#4598），与 Codex/OpenAI 测试行为一致。
-		authToken, err = s.grokTokenProvider.GetAccessTokenForManualTest(ctx, account)
+		authToken, err = pelicanAccessToken(ctx, account, func() (string, error) {
+			if s.grokTokenProvider == nil {
+				return "", errors.New("Grok token provider not configured")
+			}
+			return s.grokTokenProvider.GetAccessTokenForManualTest(ctx, account)
+		})
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get Grok access token: %s", err.Error()))
 		}
@@ -949,6 +988,12 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Grok test payload")
 	}
+	if pelicanProbe(c) != nil {
+		payload := createOpenAITestPayload(testModelID, false)
+		payload["input"] = pelicanMessages(ctx, true)
+		delete(payload, "instructions")
+		payloadBytes, _ = json.Marshal(payload)
+	}
 
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -972,12 +1017,22 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		proxyURL = account.requestProxyURL()
 	}
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if pelicanProbe(c) != nil {
+		boundPelicanResponse(c, resp)
+		if resp.StatusCode != http.StatusOK {
+			return s.pelicanHTTPError(c, resp)
+		}
+		return s.processPelicanStream(c, resp.Body, false)
+	}
 	now := time.Now()
 	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
 	stampGrokQuotaSnapshotForPlan(account, snapshot, testModelID)
@@ -1331,8 +1386,10 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// For static upstream credentials with model mapping, map the model
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
+	// Pelican uses the same resolved model for validation, URL and task metadata.
+	if pelicanProbe(c) != nil {
+		testModelID = strings.TrimPrefix(account.GetMappedModel(testModelID), "models/")
+	} else if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
 		mapping := account.GetModelMapping()
 		if len(mapping) > 0 {
 			if mappedModel, exists := mapping[testModelID]; exists {
@@ -1349,7 +1406,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	// Create test payload (Gemini format)
-	payload := createGeminiTestPayload(testModelID, prompt)
+	payload := pelicanGeminiPayload(c, createGeminiTestPayload(testModelID, prompt))
 
 	// Build request based on account type
 	var req *http.Request
@@ -1379,13 +1436,20 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		proxyURL = account.requestProxyURL()
 	}
 
+	if err := pelicanBeforeSend(c, testModelID); err != nil {
+		return err
+	}
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	boundPelicanResponse(c, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if pelicanProbe(c) != nil {
+			return s.pelicanHTTPError(c, resp)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -1398,7 +1462,11 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 // APIKey 类型走原生协议（与 gateway_handler 路由一致），OAuth/Upstream 走 CRS 中转。
 func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Account, modelID string, prompt string) error {
 	if account.Type == AccountTypeAPIKey {
-		if strings.HasPrefix(modelID, "gemini-") {
+		protocolModel := modelID
+		if pelicanProbe(c) != nil {
+			protocolModel = strings.TrimPrefix(account.GetMappedModel(modelID), "models/")
+		}
+		if strings.HasPrefix(protocolModel, "gemini-") {
 			return s.testGeminiAccountConnection(c, account, modelID, prompt)
 		}
 		return s.testClaudeAccountConnection(c, account, modelID)
@@ -1409,6 +1477,9 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 // testAntigravityAccountConnection tests an Antigravity account's connection
 // 支持 Claude 和 Gemini 两种协议，使用非流式请求
 func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID, prompt string) error {
+	if pelicanProbe(c) != nil {
+		return s.testPelicanAntigravityConnection(c, account, modelID)
+	}
 	ctx := c.Request.Context()
 
 	// 默认模型：Claude 使用 claude-sonnet-4-5，Gemini 使用 gemini-3-pro-preview
@@ -1481,12 +1552,13 @@ func (s *AccountTestService) buildGeminiAPIKeyRequest(ctx context.Context, accou
 
 // buildGeminiOAuthRequest builds request for Gemini OAuth accounts
 func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
-	if s.geminiTokenProvider == nil {
-		return nil, fmt.Errorf("gemini token provider not configured")
-	}
-
 	// Get access token (auto-refreshes if needed)
-	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
+	accessToken, err := pelicanAccessToken(ctx, account, func() (string, error) {
+		if s.geminiTokenProvider == nil {
+			return "", errors.New("gemini token provider not configured")
+		}
+		return s.geminiTokenProvider.GetAccessToken(ctx, account)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get access token: %w", err)
 	}
@@ -1521,10 +1593,12 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 }
 
 func (s *AccountTestService) buildGeminiServiceAccountRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
-	if s.geminiTokenProvider == nil {
-		return nil, fmt.Errorf("gemini token provider not configured")
-	}
-	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
+	accessToken, err := pelicanAccessToken(ctx, account, func() (string, error) {
+		if s.geminiTokenProvider == nil {
+			return "", errors.New("gemini token provider not configured")
+		}
+		return s.geminiTokenProvider.GetAccessToken(ctx, account)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get service account access token: %w", err)
 	}
@@ -1628,6 +1702,9 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 
 // processGeminiStream processes SSE stream from Gemini API
 func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader) error {
+	if pelicanProbe(c) != nil {
+		return s.processPelicanProtocolStream(c, body, "gemini")
+	}
 	reader := bufio.NewReader(body)
 
 	for {
@@ -1756,6 +1833,9 @@ func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[s
 
 // processClaudeStream processes the SSE stream from Claude API
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
+	if pelicanProbe(c) != nil {
+		return s.processPelicanProtocolStream(c, body, "claude")
+	}
 	reader := bufio.NewReader(body)
 	var streamEvent string
 	const incompleteResponseError = "Claude stream ended without message_stop (empty, incomplete or non-model response); check the account Base URL"
