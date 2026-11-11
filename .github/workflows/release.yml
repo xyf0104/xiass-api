@@ -196,9 +196,8 @@ jobs:
         working-directory: tools/xiass-proxy-agent
 
   test-deploy-scripts:
-    # Playwright 1.55.1 does not support Ubuntu 26.04's dependency/runtime image.
-    # Keep this browser-backed job on a supported runner so the real Chromium
-    # fixtures continue to execute instead of silently becoming skipped tests.
+    # Keep host-side deployment checks on their supported runner. Browser tests
+    # use the matching Playwright image so OS mirror outages cannot skip them.
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -226,14 +225,14 @@ jobs:
       - name: Test OAuth automation
         working-directory: deploy/team-child-automation
         run: |
-          # Use the runner's official Ubuntu fallback mirrors for browser dependencies.
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
-            test -s /etc/apt/apt-mirrors.txt
-          fi
+          docker run --rm --init --shm-size=1g -i \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=true \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/deploy/team-child-automation \
+            mcr.microsoft.com/playwright:v1.55.1-noble sh -e <<'SCRIPT'
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          node -e 'require("node:fs").accessSync(require("@playwright/test").chromium.executablePath(), 1)'
           npm test
+          SCRIPT
 
       - name: Test install download integrity
         run: bash deploy/test-install-download-integrity.sh
