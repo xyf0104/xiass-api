@@ -27,7 +27,7 @@ BEGIN
     END IF;
 END $$;
 
--- Different tests may execute concurrently for one account. Duplicate tests
+-- Different tests may execute in parallel for one account. Duplicate tests
 -- remain guarded across processes, including until cancellation is acknowledged.
 CREATE UNIQUE INDEX IF NOT EXISTS pelican_benchmarks_active_account_test
     ON pelican_benchmarks (account_id, test_type)

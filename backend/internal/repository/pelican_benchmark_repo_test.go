@@ -9,9 +9,19 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/benchmark"
+	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIQMigrationUsesTransactionalExecutionMode(t *testing.T) {
+	const name = "274_iq_benchmarks.sql"
+	content, err := migrations.FS.ReadFile(name)
+	require.NoError(t, err)
+	nonTx, err := validateMigrationExecutionMode(name, string(content))
+	require.NoError(t, err)
+	require.False(t, nonTx)
+}
 
 func TestPelicanRepositoryMetadataQueriesDoNotSelectHTML(t *testing.T) {
 	db, mock := newSQLMock(t)
