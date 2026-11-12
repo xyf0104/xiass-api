@@ -12,7 +12,12 @@
   // The sandbox has an opaque origin; the navigated URL identifies the trusted parent.
   const parentOrigin = new URL(location.href).origin;
   const maxHTMLBytes = __MAX_HTML_BYTES__;
+  const documentID = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
   let rendered = false;
+
+  function announceReady() {
+    parent.postMessage({ type: 'xiass-pelican-ready', document_id: documentID }, parentOrigin);
+  }
 
   function sizePreview() {
     addEventListener('load', () => {
@@ -47,15 +52,20 @@
   function render(event) {
     if (rendered || event.source !== parent || event.origin !== parentOrigin) return;
     const message = event.data;
+    if (message?.type === 'xiass-pelican-probe') {
+      announceReady();
+      return;
+    }
     if (!message || typeof message !== 'object' || Array.isArray(message) ||
         message.type !== 'xiass-pelican-render' || typeof message.html !== 'string') return;
+    if (message.document_id !== undefined && message.document_id !== documentID) return;
     const html = message.html;
     if (!html.length || html.length > maxHTMLBytes || new TextEncoder().encode(html).byteLength > maxHTMLBytes) return;
 
     // Consume the message before executing any generated scripts or triggering another load.
     rendered = true;
     removeEventListener('message', render);
-    parent.postMessage({ type: 'xiass-pelican-render-accepted' }, parentOrigin);
+    parent.postMessage({ type: 'xiass-pelican-render-accepted', document_id: documentID }, parentOrigin);
     const sizing = '<script>(' + sizePreview.toString() + ')();<' + '/script>';
     document.open();
     document.write(html + sizing);
@@ -63,6 +73,7 @@
   }
 
   addEventListener('message', render);
+  announceReady();
 })();
 </script>
 </body>

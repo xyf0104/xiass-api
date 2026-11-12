@@ -65,7 +65,7 @@
               <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
               <div class="row-action flex flex-col items-end gap-1">
                 <button v-if="active(run)" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
-                <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
+                <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :key="`${run.id}:${tab === 'history' ? historyRevision : 0}`" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
                 <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
                   <button type="button" class="btn btn-primary min-h-10 !px-4 !py-2 text-sm font-semibold" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
@@ -118,6 +118,7 @@ const history = ref<PelicanBenchmarkRun[]>([])
 const historyPage = ref(1)
 const historyPages = ref(0)
 const historyTotal = ref(0)
+const historyRevision = ref(0)
 const ready = ref(false)
 const loading = ref(false)
 const busy = ref(false)
@@ -329,6 +330,7 @@ async function loadHistory(page: number) {
     const result = await getPelicanHistory(page, signal, 'succeeded')
     if (ownSession !== session || version !== readVersion || signal.aborted) return
     history.value = result.items.filter(run => run.status === 'succeeded')
+    historyRevision.value++
     historyPage.value = result.page
     historyPages.value = result.pages
     historyTotal.value = result.total

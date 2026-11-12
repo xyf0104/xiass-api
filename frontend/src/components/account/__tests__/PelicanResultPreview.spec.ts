@@ -9,6 +9,14 @@ const api = vi.hoisted(() => ({ getPelicanResult: vi.fn() }))
 vi.mock('@/api/admin/pelicanBenchmark', () => api)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const wrappers: VueWrapper[] = []
+function renderMessages(postMessage: ReturnType<typeof vi.fn>) {
+  return postMessage.mock.calls.filter(([message]) => message.type === 'xiass-pelican-render')
+}
+function receive(frameWindow: object, data: object, origin = 'null') {
+  const event = new MessageEvent('message', { data, origin })
+  Object.defineProperty(event, 'source', { value: frameWindow })
+  window.dispatchEvent(event)
+}
 async function render(html: string, preview_html?: string) {
   api.getPelicanResult.mockResolvedValue(Object.freeze({ id: 'result', status: 'succeeded', html, preview_html }))
   const wrapper = mount(PelicanResultPreview, { props: { id: 'result', title: 'Preview' } })
@@ -30,9 +38,9 @@ describe('PelicanResultPreview', () => {
     const postMessage = vi.fn()
     Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
     await iframe.trigger('load')
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html }, '*')
+    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html }, '*']])
     await iframe.trigger('load')
-    expect(postMessage).toHaveBeenCalledTimes(1)
+    expect(renderMessages(postMessage)).toHaveLength(1)
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'pelican-preview-size', height: 20000 } }))
     await flushPromises()
     expect(iframe.attributes('style')).toBeUndefined()
@@ -50,7 +58,7 @@ describe('PelicanResultPreview', () => {
     Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
     await iframe.trigger('load')
     await iframe.trigger('load')
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html: previewHTML }, '*')
+    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: previewHTML }, '*']])
     expect((await api.getPelicanResult.mock.results.at(-1)!.value).html).toBe(html)
   })
 
@@ -61,7 +69,7 @@ describe('PelicanResultPreview', () => {
     const postMessage = vi.fn()
     Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
     await iframe.trigger('load')
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html }, '*')
+    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html }, '*']])
     expect(wrapper.get('[data-testid="result-thumbnail"]').element.children).toHaveLength(1)
   })
 
@@ -91,7 +99,7 @@ describe('PelicanResultPreview', () => {
     const postMessage = vi.fn()
     Object.defineProperty(wrapper.get('iframe').element, 'contentWindow', { value: { postMessage }, configurable: true })
     await wrapper.get('iframe').trigger('load')
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*')
+    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*']])
     const activeSignal = api.getPelicanResult.mock.calls.at(-1)![1] as AbortSignal
     wrapper.unmount()
     expect(activeSignal.aborted).toBe(true)
@@ -116,10 +124,10 @@ describe('PelicanResultPreview', () => {
     const postMessage = vi.fn()
     Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
     await iframe.trigger('load')
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*')
+    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*']])
   })
 
-  it.each([false, true])('shows a failure if the shell never acknowledges the HTML (load=%s)', async loaded => {
+  it.each([false, true])('remounts once before failing if the shell never acknowledges (load=%s)', async loaded => {
     vi.useFakeTimers()
     const wrapper = await render('<html>result</html>')
     const iframe = wrapper.get('iframe')
@@ -131,6 +139,9 @@ describe('PelicanResultPreview', () => {
       Object.defineProperty(event, 'source', { value: source })
       window.dispatchEvent(event)
     }
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(wrapper.get('iframe').element).not.toBe(iframe.element)
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
     await vi.advanceTimersByTimeAsync(15_000)
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.get('[role="status"]').text()).toContain('resultFailed')
@@ -149,7 +160,91 @@ describe('PelicanResultPreview', () => {
     await vi.advanceTimersByTimeAsync(30_000)
     expect(wrapper.find('iframe').exists()).toBe(true)
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
-    expect(frameWindow.postMessage).toHaveBeenCalledTimes(1)
+    expect(renderMessages(frameWindow.postMessage)).toHaveLength(1)
+  })
+
+  it('renders each new document after the same iframe is moved without replaying duplicate ready or load events', async () => {
+    vi.useFakeTimers()
+    const html = '<html>animated scene</html>'
+    const wrapper = await render(html)
+    const iframe = wrapper.get('iframe')
+    const frameWindow = { postMessage: vi.fn() }
+    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
+    const first = 'a'.repeat(32)
+    const second = 'b'.repeat(32)
+    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: first })
+    await iframe.trigger('load')
+    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: first })
+    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: first })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(renderMessages(frameWindow.postMessage)).toEqual([[{ type: 'xiass-pelican-render', html, document_id: first }, '*']])
+    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: second })
+    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: second })
+    await iframe.trigger('load')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(wrapper.get('iframe').element).toBe(iframe.element)
+    expect(renderMessages(frameWindow.postMessage)).toEqual([
+      [{ type: 'xiass-pelican-render', html, document_id: first }, '*'],
+      [{ type: 'xiass-pelican-render', html, document_id: second }, '*']
+    ])
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores foreign readiness, stale acceptance and acknowledgements from a remounted frame', async () => {
+    vi.useFakeTimers()
+    const wrapper = await render('<html>scene</html>')
+    const iframe = wrapper.get('iframe')
+    const oldWindow = { postMessage: vi.fn() }
+    Object.defineProperty(iframe.element, 'contentWindow', { value: oldWindow, configurable: true })
+    const documentID = 'c'.repeat(32)
+    for (const [source, id, origin] of [[{}, documentID, 'null'], [oldWindow, documentID, 'https://foreign.test'], [oldWindow, 'bad-id', 'null']] as const) {
+      receive(source, { type: 'xiass-pelican-ready', document_id: id }, origin)
+    }
+    expect(oldWindow.postMessage).not.toHaveBeenCalled()
+    receive(oldWindow, { type: 'xiass-pelican-ready', document_id: documentID })
+    receive(oldWindow, { type: 'xiass-pelican-render-accepted', document_id: 'd'.repeat(32) })
+    await vi.advanceTimersByTimeAsync(15_000)
+    const replacement = wrapper.get('iframe')
+    expect(replacement.element).not.toBe(iframe.element)
+    const newWindow = { postMessage: vi.fn() }
+    Object.defineProperty(replacement.element, 'contentWindow', { value: newWindow, configurable: true })
+    receive(oldWindow, { type: 'xiass-pelican-render-accepted', document_id: documentID })
+    receive(newWindow, { type: 'xiass-pelican-ready', document_id: 'e'.repeat(32) })
+    receive(newWindow, { type: 'xiass-pelican-render-accepted', document_id: 'e'.repeat(32) })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(wrapper.get('iframe').element).toBe(replacement.element)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds fabricated ready messages without permanently blocking later document loads', async () => {
+    vi.useFakeTimers()
+    const wrapper = await render('<html>scene</html>')
+    const iframe = wrapper.get('iframe')
+    const frameWindow = { postMessage: vi.fn() }
+    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
+    for (let i = 0; i < 40; i++) receive(frameWindow, { type: 'xiass-pelican-ready', document_id: i.toString(16).padStart(32, '0') })
+    expect(renderMessages(frameWindow.postMessage)).toHaveLength(4)
+    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: '3'.padStart(32, '0') })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(renderMessages(frameWindow.postMessage)).toHaveLength(5)
+    expect(renderMessages(frameWindow.postMessage).at(-1)?.[0].document_id).toBe('27'.padStart(32, '0'))
+    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: '27'.padStart(32, '0') })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(renderMessages(frameWindow.postMessage)).toHaveLength(5)
+    expect(wrapper.get('iframe').element).toBe(iframe.element)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels a delayed delivery when the component is removed', async () => {
+    vi.useFakeTimers()
+    const wrapper = await render('<html>scene</html>')
+    const iframe = wrapper.get('iframe')
+    const frameWindow = { postMessage: vi.fn() }
+    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
+    for (let i = 0; i < 5; i++) receive(frameWindow, { type: 'xiass-pelican-ready', document_id: i.toString(16).padStart(32, '0') })
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(renderMessages(frameWindow.postMessage)).toHaveLength(4)
   })
 })
 

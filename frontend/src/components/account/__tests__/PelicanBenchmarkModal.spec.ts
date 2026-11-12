@@ -413,6 +413,24 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
+  it('reloads result frames when history is explicitly refreshed without starting model calls', async () => {
+    const item = run('saved', { status: 'succeeded', html_bytes: 100 })
+    api.getPelicanHistory.mockResolvedValue({ items: [item], total: 1, page: 1, pages: 1 })
+    api.getPelicanResult.mockResolvedValue({ ...item, html: '<html>saved scene</html>' })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
+    await flushPromises()
+    const firstFrame = wrapper.get('iframe').element
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-testid="refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('iframe').element).not.toBe(firstFrame)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    expect(api.restartPelicanTest).not.toHaveBeenCalled()
+  })
+
   it('loads history on demand with independent pagination and no background polling', async () => {
     api.getPelicanHistory.mockImplementation((page: number) => Promise.resolve({ items: [run(`page-${page}`, { status: 'succeeded', html_bytes: 120 })], total: 21, page, page_size: 20, pages: 2 }))
     const wrapper = render()
