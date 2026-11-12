@@ -40,6 +40,47 @@ func pelicanIntegrationDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func TestIQPairedHistoryKeepsSiblingsTogetherAcrossPages(t *testing.T) {
+	db := pelicanIntegrationDB(t)
+	r := NewPelicanBenchmarkRepository(db)
+	ctx := context.Background()
+	firstBatch, secondBatch := uuid.NewString(), uuid.NewString()
+	for _, item := range []struct{ batch, model, kind, status string }{
+		{firstBatch, "model-a", "candy", "failed"},
+		{firstBatch, "model-a", "pelican", "succeeded"},
+		{secondBatch, "model-a", "candy", "succeeded"},
+		{secondBatch, "model-a", "pelican", "succeeded"},
+		{secondBatch, "model-b", "pelican", "succeeded"},
+		{secondBatch, "failed-only", "candy", "failed"},
+	} {
+		_, err := db.Exec(`INSERT INTO pelican_benchmarks (id,batch_id,account_id,account_name,model,test_type,status) VALUES ($1,$2,1,'synthetic',$3,$4,$5)`, uuid.NewString(), item.batch, item.model, item.kind, item.status)
+		require.NoError(t, err)
+	}
+	seen := map[string]bool{}
+	for pageNumber := 1; pageNumber <= 3; pageNumber++ {
+		page, err := r.List(ctx, benchmark.Filter{Status: "succeeded", Paired: true, Page: pageNumber, PageSize: 1})
+		require.NoError(t, err)
+		require.Equal(t, int64(3), page.Total)
+		require.NotEmpty(t, page.Items)
+		key := page.Items[0].BatchID + ":" + page.Items[0].Model
+		require.False(t, seen[key], "a pair cannot repeat on the next page")
+		seen[key] = true
+		if page.Items[0].Model == "model-a" {
+			require.Len(t, page.Items, 2, "include candy even when it failed")
+		} else {
+			require.Len(t, page.Items, 1)
+		}
+		for _, item := range page.Items {
+			require.Equal(t, key, item.BatchID+":"+item.Model)
+			require.Empty(t, item.Prompt)
+		}
+	}
+	legacy, err := r.List(ctx, benchmark.Filter{Status: "succeeded", PageSize: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(4), legacy.Total)
+	require.Len(t, legacy.Items, 1)
+}
+
 func TestPelicanDatabaseConcurrentCreateClaimAndCancellationGuard(t *testing.T) {
 	db := pelicanIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

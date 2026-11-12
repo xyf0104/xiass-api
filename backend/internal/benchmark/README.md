@@ -8,7 +8,7 @@ audit middleware. Responses use the existing `{code, message, data}` envelope.
 | POST `/pelican-benchmarks` | `{account_ids: number[], model?: string, models?: {[account_id]: string}, test_types?: ["pelican", "candy"], prompt?: string}` OR the same options with `all: true` instead of `account_ids` | `{batch_id, tasks, skipped: [{account_id, reason}]}` (202) |
 | POST `/pelican-benchmarks` | `{source_id: UUID, action: "continue" or "retry"}` | Same creation result; source must have stopped |
 | POST `/accounts/:id/pelican-benchmark` | Empty body or `{model?: string, test_types?: ["pelican", "candy"], prompt?: string}` | Same as bulk creation (202) |
-| GET `/pelican-benchmarks` | Query: `page`, `page_size`, `account_id`, `batch_id`, `status` | `{items, total, page, page_size}` |
+| GET `/pelican-benchmarks` | Query: `page`, `page_size`, `account_id`, `batch_id`, `status`, optional `paired` boolean | `{items, total, page, page_size}` |
 | GET `/pelican-benchmarks/:id` | None | Task plus `prompt`, `text_output`, `html`, optional `preview_html` |
 | POST `/pelican-benchmarks/:id/stop` | None | Task metadata |
 | POST `/pelican-benchmarks/stop` | `{all: true}` OR `{account_id: number}` | `{affected}` |
@@ -67,6 +67,13 @@ polling. Cancellation reads occur only while a job is running. A coalescing
 wakeup prevents a create/worker-exit race from losing queued work.
 
 ## Result Handling
+
+With `paired=true`, pagination and `total` count `(batch_id, account_id, model)`
+groups. `items` remains a flat metadata list containing every member of each
+selected group. A status filter selects groups with a matching member, then
+includes their siblings so an unsuccessful candy test stays beside its successful
+HTML result. Omitting `paired` preserves task-based pagination. The frontend
+renders candy grading before the HTML thumbnail in one account/model row.
 
 Lists select metadata only, excluding prompts and generated text. Detail returns
 the prompt snapshot, text output and JSON-escaped HTML, `no-store`,

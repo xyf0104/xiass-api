@@ -72,6 +72,7 @@ type Filter struct {
 	Status    string
 	Page      int
 	PageSize  int
+	Paired    bool
 }
 
 type Page struct {

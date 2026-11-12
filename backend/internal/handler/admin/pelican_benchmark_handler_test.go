@@ -44,14 +44,33 @@ type pelicanHandlerStore struct {
 	textOutput    string
 	source        *benchmark.Task
 	stopAccountID int64
+	filter        benchmark.Filter
 }
 
 func (s *pelicanHandlerStore) Create(_ context.Context, tasks []benchmark.Task) ([]benchmark.Task, []benchmark.Skipped, error) {
 	s.tasks = tasks
 	return tasks, nil, nil
 }
-func (s *pelicanHandlerStore) List(context.Context, benchmark.Filter) (*benchmark.Page, error) {
+func (s *pelicanHandlerStore) List(_ context.Context, filter benchmark.Filter) (*benchmark.Page, error) {
+	s.filter = filter
 	return &benchmark.Page{Items: []benchmark.Task{{ID: "test", AccountID: 1, ExecutionNodeID: "legacy", Status: "running", HTMLBytes: len(s.html)}}, Total: 1, Page: 1, PageSize: 100}, nil
+}
+
+func TestIQHandlerPairedPagination(t *testing.T) {
+	for _, query := range []string{"", "?paired=false", "?paired=true&status=succeeded&page=2&page_size=5"} {
+		store := &pelicanHandlerStore{}
+		h := &PelicanBenchmarkHandler{store: store}
+		w := pelicanHandlerRequest("GET", "/"+query, "", h.List, nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, strings.Contains(query, "paired=true"), store.filter.Paired)
+		if store.filter.Paired {
+			require.Equal(t, "succeeded", store.filter.Status)
+			require.Equal(t, 2, store.filter.Page)
+			require.Equal(t, 5, store.filter.PageSize)
+		}
+	}
+	w := pelicanHandlerRequest("GET", "/?paired=invalid", "", (&PelicanBenchmarkHandler{}).List, nil)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 func (s *pelicanHandlerStore) Detail(context.Context, string) (*benchmark.Detail, error) {
 	if s.source != nil {

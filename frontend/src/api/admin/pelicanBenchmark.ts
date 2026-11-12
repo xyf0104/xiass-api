@@ -144,7 +144,7 @@ export async function getPelicanModels(id: number, signal?: AbortSignal): Promis
   return [...new Set((data ?? []).map(model => model.id?.trim()).filter((id): id is string => !!id && isPelicanTextModelCandidate(id)))]
 }
 
-async function listRuns(params: { page: number; page_size: number; batch_id?: string; status?: PelicanBenchmarkStatus }, signal?: AbortSignal): Promise<Page> {
+async function listRuns(params: { page: number; page_size: number; batch_id?: string; status?: PelicanBenchmarkStatus; paired?: boolean }, signal?: AbortSignal): Promise<Page> {
   const { data } = await apiClient.get<Page>(base, { params, signal })
   return data
 }
@@ -222,7 +222,7 @@ export async function stopAllPelicanTests(signal?: AbortSignal): Promise<{ affec
 }
 
 export async function getPelicanHistory(page = 1, signal?: AbortSignal, status?: 'succeeded'): Promise<PaginatedResponse<PelicanBenchmarkRun>> {
-  const data = await listRuns({ page, page_size: 20, status: status || 'succeeded' }, signal)
+  const data = await listRuns({ page, page_size: 20, status: status || 'succeeded', paired: true }, signal)
   return { ...data, pages: Math.ceil(data.total / data.page_size) }
 }
 

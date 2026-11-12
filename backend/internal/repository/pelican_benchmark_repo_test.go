@@ -35,6 +35,19 @@ func TestPelicanRepositoryMetadataQueriesDoNotSelectHTML(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestIQRepositoryPairedPaginationCountsGroups(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM \(SELECT batch_id,account_id,model,MAX\(created_at\).*GROUP BY batch_id,account_id,model\) AS pairs`).
+		WithArgs(int64(0), "", "succeeded").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectQuery(`WITH pairs AS .*GROUP BY batch_id,account_id,model ORDER BY newest DESC,batch_id DESC,account_id,model LIMIT \$4 OFFSET \$5\).*WHERE \(batch_id,account_id,model\) IN`).
+		WithArgs(int64(0), "", "succeeded", 1, 1).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	page, err := NewPelicanBenchmarkRepository(db).List(context.Background(), benchmark.Filter{Status: "succeeded", Page: 2, PageSize: 1, Paired: true})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), page.Total)
+	require.Equal(t, 1, page.PageSize)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPelicanRepositoryRejectsOversizeBeforeSQL(t *testing.T) {
 	db, mock := newSQLMock(t)
 	err := NewPelicanBenchmarkRepository(db).Finish(context.Background(), uuid.NewString(), uuid.NewString(), "succeeded", benchmark.Output{HTML: strings.Repeat("x", benchmark.MaxHTMLBytes+1)})

@@ -264,6 +264,14 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 func (h *PelicanBenchmarkHandler) List(c *gin.Context) {
 	pelicanHeaders(c)
 	f := benchmark.Filter{BatchID: c.Query("batch_id"), Status: c.Query("status"), Page: 1, PageSize: 20}
+	if raw := c.Query("paired"); raw != "" {
+		var err error
+		f.Paired, err = strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "invalid paired pagination")
+			return
+		}
+	}
 	for name, dest := range map[string]*int{"page": &f.Page, "page_size": &f.PageSize} {
 		if raw := c.Query(name); raw != "" {
 			value, err := strconv.Atoi(raw)

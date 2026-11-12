@@ -64,6 +64,37 @@ async function setDocumentHidden(hidden: boolean) {
 }
 
 describe('PelicanBenchmarkModal', () => {
+  it('pairs candy before HTML in one row and keeps separate batches and models separate', async () => {
+    const items = [
+      run('html', { status: 'succeeded', html_bytes: 120 }),
+      run('candy', { test_type: 'candy', status: 'succeeded', answer: 21, passed: true }),
+      run('other-batch', { batch_id: 'batch-2', status: 'succeeded', html_bytes: 120 }),
+      run('other-model', { model: 'claude-opus-5-5', test_type: 'candy', status: 'succeeded', answer: 22, passed: false })
+    ]
+    api.getPelicanHistory.mockResolvedValue({ items, total: 3, page: 1, pages: 1 })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
+    await flushPromises()
+    const rows = wrapper.findAll('[data-testid="result-row"]')
+    expect(rows).toHaveLength(3)
+    expect(rows[0].findAll('[data-testid^="run-"]').map(item => item.attributes('data-testid'))).toEqual(['run-candy', 'run-html'])
+    expect(rows[0].get('[data-testid="candy-details"]').text()).toBe('✅')
+    expect(rows[0].find('[data-testid="candy-answer"]').exists()).toBe(false)
+    expect(rows[2].get('[data-testid="candy-details"]').text()).toBe('❌')
+  })
+
+  it('keeps a failed candy sibling visible beside successful HTML without grading the timeout', async () => {
+    api.getPelicanHistory.mockResolvedValue({ items: [run('html', { status: 'succeeded', html_bytes: 120 }), run('candy', { test_type: 'candy', status: 'failed', error_code: 'timeout' })], total: 1, page: 1, pages: 1 })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="result-row"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="run-candy"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="candy-result"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('测试超时')
+  })
   it('retries in the same account row and renders upstream HTTP details as text', async () => {
     const failed = run('failed', { status: 'failed', error_code: 'upstream_http_503', error_message: 'Capacity exhausted <script>unsafe()</script>' })
     api.getPelicanCurrent.mockResolvedValue({ items: [failed] })
@@ -89,7 +120,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   it('history never renders unsuccessful records even from a stale response', async () => {
-    api.getPelicanHistory.mockResolvedValue({ items: [run('good', { status: 'succeeded' }), run('bad', { status: 'failed' })], total: 1, page: 1, pages: 1 })
+    api.getPelicanHistory.mockResolvedValue({ items: [run('good', { status: 'succeeded' }), run('bad', { batch_id: 'failed-batch', status: 'failed' })], total: 1, page: 1, pages: 1 })
     const wrapper = render()
     await flushPromises()
     await wrapper.get('[data-testid="tab-history"]').trigger('click')
@@ -151,7 +182,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal))
   })
 
-  it('runs both selected kinds with a custom prompt on the same selected accounts and shows both rows', async () => {
+  it('runs both selected kinds with a custom prompt on the same selected accounts in one row', async () => {
     const items = [run('html', { test_type: 'pelican' }), run('candy', { test_type: 'candy', status: 'queued' })]
     api.startPelicanTests.mockResolvedValue({ items })
     const wrapper = render()
@@ -165,8 +196,9 @@ describe('PelicanBenchmarkModal', () => {
       test_types: ['pelican', 'candy'], prompt: 'Create a self-contained 3D HTML scene using window.THREE.'
     })
     expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(2)
-    expect(wrapper.get('[data-testid="run-html"]').text()).toContain('鹈鹕测试')
-    expect(wrapper.get('[data-testid="run-candy"]').text()).toContain('糖果测试')
+    expect(wrapper.findAll('[data-testid="result-row"]')).toHaveLength(1)
+    expect(wrapper.get('.run-status').attributes('title')).toContain('鹈鹕测试')
+    expect(wrapper.get('.run-status').attributes('title')).toContain('糖果测试')
     expect(wrapper.find('[data-testid="stop-html"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="stop-candy"]').exists()).toBe(true)
   })
@@ -316,10 +348,10 @@ describe('PelicanBenchmarkModal', () => {
     await currentTab(wrapper)
     expect(wrapper.get('[data-testid="run-pass"]').text()).toContain('✅')
     expect(wrapper.get('[data-testid="run-wrong"]').text()).toContain('❌')
-    expect(wrapper.get('[data-testid="run-wrong"]').text()).toContain('最终答案：23 个')
-    expect(wrapper.get('[data-testid="run-error"]').text()).toContain('HTTP 503')
+    expect(wrapper.get('[data-testid="run-wrong"] [data-testid="candy-details"]').attributes('title')).toContain('23')
+    expect(wrapper.text()).toContain('HTTP 503')
     expect(wrapper.get('[data-testid="run-error"]').find('[data-testid="candy-result"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="run-unknown"]').text()).toContain('结果待确认')
+    expect(wrapper.get('[data-testid="run-unknown"] [data-testid="candy-details"]').attributes('title')).toContain('结果待确认')
     expect(api.getPelicanResult).not.toHaveBeenCalled()
     await wrapper.get('[data-testid="result-filter"]').setValue('succeeded')
     expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
@@ -576,7 +608,7 @@ describe('PelicanBenchmarkModal', () => {
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status })] })
     await vi.advanceTimersByTimeAsync(3000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe(zh.accounts.pelicanBenchmark.status[status])
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-status').text()).toBe(zh.accounts.pelicanBenchmark.status[status])
     await setDocumentHidden(true)
     await setDocumentHidden(false)
     await vi.advanceTimersByTimeAsync(60_000)
@@ -621,7 +653,7 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('正在启动')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-status').text()).toBe('正在启动')
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
     expect(api.getPelicanResult).not.toHaveBeenCalled()
     expect(wrapper.find('iframe').exists()).toBe(false)
@@ -631,7 +663,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 1)
     expect(api.getPelicanCurrent).toHaveBeenLastCalledWith(expect.any(AbortSignal), ['batch-1'], false)
     expect(wrapper.get('[data-testid="run-run-1"]').isVisible()).toBe(true)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('测试中')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-status').text()).toBe('测试中')
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
     expect(api.getPelicanResult).not.toHaveBeenCalled()
     expect(wrapper.find('iframe').exists()).toBe(false)
@@ -639,7 +671,7 @@ describe('PelicanBenchmarkModal', () => {
     await vi.advanceTimersByTimeAsync(3000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
     expect(api.getPelicanCurrent).toHaveBeenLastCalledWith(expect.any(AbortSignal), ['batch-1'], false)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-status').text()).toBe('已完成')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-status').text()).toBe('已完成')
     expect(wrapper.find('[data-testid="stop-run-1"]').exists()).toBe(false)
     await flushPromises()
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
@@ -1033,7 +1065,7 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     pending.resolve({ items: [run()] })
     await flushPromises()
-    expect(wrapper.get('[data-testid="run-run-1"]').text()).toContain('已停止')
+    expect(wrapper.get('.run-status').text()).toContain('已停止')
     expect(wrapper.find('[data-testid="stop-run-1"]').exists()).toBe(false)
   })
 
@@ -1073,10 +1105,10 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     await currentTab(wrapper)
     const calls = api.getPelicanCurrent.mock.calls.length
-    expect(wrapper.get('[data-testid="run-run-1"] .run-duration').text()).toBe('1.0 秒')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-duration').text()).toBe('1.0 秒')
     await vi.advanceTimersByTimeAsync(1000)
-    expect(wrapper.get('[data-testid="run-run-1"] .run-duration').text()).toBe('2.0 秒')
-    expect(wrapper.get('[data-testid="run-done"] .run-duration').text()).toBe('1.2 秒')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) .run-duration').text()).toBe('2.0 秒')
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-done"]) .run-duration').text()).toBe('1.2 秒')
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls)
   })
 
@@ -1107,7 +1139,7 @@ describe('PelicanBenchmarkModal', () => {
       expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(3)
       expect(wrapper.findAll('iframe')).toHaveLength(3)
       for (const item of items) {
-        const row = wrapper.get(`[data-testid="run-${item.id}"]`)
+        const row = wrapper.findAll('[data-testid="result-row"]').find(row => row.find(`[data-testid="run-${item.id}"]`).exists())!
         expect(row.get('.benchmark-row').classes()).toContain('grid')
         expect(row.get('.model-select').text()).toBe(item.model)
         expect(row.get('iframe').attributes('sandbox')).toBe('allow-scripts')
@@ -1134,7 +1166,7 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     expect(api.restartPelicanTest).toHaveBeenCalledExactlyOnceWith(source.id, action, expect.any(AbortSignal))
     expect(api.startPelicanTests).not.toHaveBeenCalled()
-    expect(wrapper.get('[data-testid="run-next"] .model-select').text()).toBe(source.model)
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-next"]) .model-select').text()).toBe(source.model)
     expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
   })
 
@@ -1324,8 +1356,8 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     await currentTab(wrapper)
     expect(wrapper.text()).not.toContain(error_code)
-    expect(wrapper.get('[data-testid="run-run-1"] p').text()).not.toContain('admin.accounts.')
-    if (error_code !== 'raw secret error') expect(wrapper.get('[data-testid="run-run-1"] p').text()).toContain(zh.accounts.pelicanBenchmark.errors[error_code as keyof typeof zh.accounts.pelicanBenchmark.errors])
+    expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) p').text()).not.toContain('admin.accounts.')
+    if (error_code !== 'raw secret error') expect(wrapper.get('[data-testid="result-row"]:has([data-testid="run-run-1"]) p').text()).toContain(zh.accounts.pelicanBenchmark.errors[error_code as keyof typeof zh.accounts.pelicanBenchmark.errors])
   })
 
   it.each(['continue', 'retry'] as const)('%s releases busy after 30 seconds without creating a task and keeps stop usable', async action => {

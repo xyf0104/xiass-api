@@ -133,11 +133,23 @@ func (r *PelicanBenchmarkRepository) List(ctx context.Context, f benchmark.Filte
 	where := ` WHERE ($1::bigint=0 OR account_id=$1) AND ($2='' OR batch_id::text=$2) AND ($3='' OR status=$3)`
 	args := []any{f.AccountID, f.BatchID, f.Status}
 	page := &benchmark.Page{Items: []benchmark.Task{}, Page: f.Page, PageSize: f.PageSize}
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pelican_benchmarks`+where, args...).Scan(&page.Total); err != nil {
+	countQuery := `SELECT COUNT(*) FROM pelican_benchmarks` + where
+	listQuery := `SELECT ` + pelicanColumns + ` FROM pelican_benchmarks` + where + ` ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5`
+	if f.Paired {
+		// Page account/model pairs before loading their members so a candy result
+		// and its HTML cannot land on different pages. Output remains metadata only.
+		groups := `SELECT batch_id,account_id,model,MAX(created_at) AS newest FROM pelican_benchmarks` + where + ` GROUP BY batch_id,account_id,model`
+		countQuery = `SELECT COUNT(*) FROM (` + groups + `) AS pairs`
+		listQuery = `WITH pairs AS (` + groups + ` ORDER BY newest DESC,batch_id DESC,account_id,model LIMIT $4 OFFSET $5)
+SELECT ` + pelicanColumns + ` FROM pelican_benchmarks
+WHERE (batch_id,account_id,model) IN (SELECT batch_id,account_id,model FROM pairs)
+ORDER BY created_at DESC,id DESC`
+	}
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&page.Total); err != nil {
 		return nil, err
 	}
 	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
-	rows, err := r.db.QueryContext(ctx, `SELECT `+pelicanColumns+` FROM pelican_benchmarks`+where+` ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5`, args...)
+	rows, err := r.db.QueryContext(ctx, listQuery, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -137,7 +137,7 @@ describe('Pelican benchmark backend contract', () => {
   it('passes the success filter to backend pagination', async () => {
     get.mockResolvedValue({ data: { items: [], total: 45, page: 2, page_size: 20 } })
     expect((await getPelicanHistory(2, undefined, 'succeeded')).pages).toBe(3)
-    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded' }, signal: undefined })
+    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded', paired: true }, signal: undefined })
   })
 
   it('dispatches stops in parallel even while the first request is pending', async () => {
@@ -277,7 +277,7 @@ describe('Pelican benchmark backend contract', () => {
   it('derives history pages from the backend total rather than assuming a pages field exists', async () => {
     get.mockResolvedValue({ data: { items: [task()], total: 21, page: 2, page_size: 20 } })
     expect((await getPelicanHistory(2)).pages).toBe(2)
-    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded' }, signal: undefined })
+    expect(get).toHaveBeenCalledWith('/admin/pelican-benchmarks', { params: { page: 2, page_size: 20, status: 'succeeded', paired: true }, signal: undefined })
   })
 
   it('uses actual detail and single/all stop endpoints, with no invented result or stop-ID-list route', async () => {

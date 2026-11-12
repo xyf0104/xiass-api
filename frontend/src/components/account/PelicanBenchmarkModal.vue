@@ -42,7 +42,7 @@
           <p v-if="settingsError" class="text-xs text-amber-700 dark:text-amber-300" role="status" data-testid="test-settings-error">{{ t(`${prefix}.${settingsError}`, { count: htmlPromptLength, max: maxPromptCharacters }) }}</p>
         </div>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : current.length }) }}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : rows.length }) }}</span>
           <div class="flex flex-wrap items-center gap-2">
             <template v-if="tab === 'new'">
               <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || loadingModels.size > 0 || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
@@ -80,26 +80,28 @@
           </div>
         </template>
         <template v-else>
-          <div v-for="run in rows" :key="run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
+          <div v-for="row in rows" :key="row.id" class="border-b border-gray-100 dark:border-dark-700" data-testid="result-row">
             <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
-              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}<span class="mt-1 block text-xs font-normal text-gray-500 dark:text-gray-400">{{ t(`${prefix}.testNames.${testType(run)}`) }}</span></div>
-              <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
-              <span class="run-status min-w-0 text-xs" :class="statusClass(run)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
-              <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ run.model }}</span>
-              <time class="run-date min-w-0 break-words text-xs text-gray-500 dark:text-gray-400" :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
-              <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
-              <div class="row-action flex flex-col items-end gap-1">
+              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ row.main.account_name }}</div>
+              <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === row.main.account_id)?.plan_type ?? null) }}</span>
+              <span class="run-status min-w-0 text-xs" :class="statusClass(row.state)" :title="row.members.map(run => `${t(`${prefix}.testNames.${testType(run)}`)}: ${run.error_code ? errorLabel(run.error_code) : t(`${prefix}.status.${run.status}`)}`).join('\n')">{{ t(`${prefix}.status.${row.state.status}`) }}</span>
+              <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ row.main.model }}</span>
+              <time class="run-date min-w-0 break-words text-xs text-gray-500 dark:text-gray-400" :datetime="row.main.created_at">{{ formatDate(row.main.created_at) }}</time>
+              <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400" :title="row.members.map(run => `${t(`${prefix}.testNames.${testType(run)}`)}: ${formatDuration(run)}`).join('\n')">{{ formatDuration(row.duration) }}</span>
+              <div class="row-action paired-results" :class="{ 'has-candy': row.members.some(run => testType(run) === 'candy') }">
+                <div v-for="run in row.members" :key="run.id" class="test-result flex min-w-0 flex-col items-center gap-1" :class="`test-result-${testType(run)}`" :data-testid="`run-${run.id}`">
                 <button v-if="active(run)" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
-                <CandyResult v-else-if="run.status === 'succeeded' && testType(run) === 'candy'" :run="run" />
+                <CandyResult v-else-if="run.status === 'succeeded' && testType(run) === 'candy'" :run="run" compact />
                 <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
                 <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
-                  <button type="button" class="btn btn-primary min-h-10 !px-4 !py-2 text-sm font-semibold" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" />{{ t(`${prefix}.${followupAction(run)}`) }}</button>
+                  <button type="button" class="btn btn-primary min-h-10 text-sm font-semibold" :class="testType(run) === 'candy' ? 'h-10 w-10 !p-0' : '!px-4 !py-2'" :title="t(`${prefix}.${followupAction(run)}`)" :aria-label="`${t(`${prefix}.testNames.${testType(run)}`)}: ${t(`${prefix}.${followupAction(run)}`)}`" :disabled="busy || loading" :data-testid="`${followupAction(run)}-${run.id}`" @click="restart(run, followupAction(run)!)"><Icon :name="followupAction(run) === 'continue' ? 'play' : 'refresh'" size="sm" /><template v-if="testType(run) !== 'candy'">{{ t(`${prefix}.${followupAction(run)}`) }}</template></button>
                   <button v-if="canContinuePartial(run)" type="button" class="btn btn-secondary h-10 w-10 !p-0" :disabled="busy || loading" :title="t(`${prefix}.retry`)" :aria-label="`${run.account_name}: ${t(`${prefix}.retry`)}`" :data-testid="`retry-${run.id}`" @click="restart(run, 'retry')"><Icon name="refresh" size="sm" /></button>
+                </div>
                 </div>
               </div>
             </div>
-            <p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ errorLabel(run.error_code) }}<span v-if="run.error_message" class="mt-1 block whitespace-pre-wrap">{{ errorDetail(run.error_message) }}</span><span v-else-if="run.error_code.startsWith('upstream_')" class="mt-1 block">{{ t(`${prefix}.errors.no_upstream_detail`) }}</span></p>
+            <template v-for="run in row.members" :key="`error-${run.id}`"><p v-if="run.error_code" class="pb-2 text-xs text-red-600 [overflow-wrap:anywhere] dark:text-red-400">{{ t(`${prefix}.testNames.${testType(run)}`) }}: {{ errorLabel(run.error_code) }}<span v-if="run.error_message" class="mt-1 block whitespace-pre-wrap">{{ errorDetail(run.error_message) }}</span><span v-else-if="run.error_code.startsWith('upstream_')" class="mt-1 block">{{ t(`${prefix}.errors.no_upstream_detail`) }}</span></p></template>
           </div>
         </template>
 
@@ -210,8 +212,24 @@ function planRank(plan: string | null | undefined) {
   return ({ pro: 0, prolite: 1, plus: 2, team: 3 } as Record<string, number>)[normalized ?? ''] ?? 4
 }
 const sortedAccounts = computed(() => [...accounts.value].sort((a, b) => planRank(a.plan_type) - planRank(b.plan_type) || a.id - b.id))
-const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value.filter(run => !filters.value.current || (run.status === 'succeeded' && (testType(run) !== 'candy' || run.passed === true))))].sort((a, b) =>
-  planRank(accounts.value.find(item => item.id === a.account_id)?.plan_type) - planRank(accounts.value.find(item => item.id === b.account_id)?.plan_type)))
+const pairKey = (run: PelicanBenchmarkRun) => JSON.stringify([run.batch_id, run.account_id, run.model])
+const rows = computed(() => {
+  const groups = new Map<string, PelicanBenchmarkRun[]>()
+  for (const run of tab.value === 'history' ? history.value : current.value) {
+    const id = pairKey(run)
+    const group = groups.get(id) ?? []
+    group.push(run)
+    groups.set(id, group)
+  }
+  return [...groups].map(([id, members]) => {
+    members.sort((a, b) => Number(testType(a) === 'pelican') - Number(testType(b) === 'pelican'))
+    const main = members.find(run => testType(run) === 'pelican') ?? members[0]
+    const state = members.find(active) ?? members.find(run => run.status !== 'succeeded' || (testType(run) === 'candy' && run.passed !== true)) ?? main
+    const duration = members.find(active) ?? members.reduce((a, b) => (a.duration_ms ?? 0) >= (b.duration_ms ?? 0) ? a : b)
+    return { id, members, main, state, duration }
+  }).filter(row => tab.value !== 'current' || !filters.value.current || row.members.every(run => run.status === 'succeeded' && (testType(run) !== 'candy' || run.passed === true)))
+    .sort((a, b) => planRank(accounts.value.find(item => item.id === a.main.account_id)?.plan_type) - planRank(accounts.value.find(item => item.id === b.main.account_id)?.plan_type))
+})
 const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
 function errorLabel(code: string) {
@@ -387,7 +405,8 @@ async function loadHistory(page: number) {
   try {
     const result = await getPelicanHistory(page, signal, 'succeeded')
     if (ownSession !== session || version !== readVersion || signal.aborted) return
-    history.value = result.items.filter(run => run.status === 'succeeded')
+    const completedPairs = new Set(result.items.filter(run => run.status === 'succeeded').map(pairKey))
+    history.value = result.items.filter(run => completedPairs.has(pairKey(run)))
     historyPage.value = result.page
     historyPages.value = result.pages
     historyTotal.value = result.total
@@ -609,10 +628,15 @@ onUnmounted(() => {
 .run-date { grid-area: date; }
 .run-duration { grid-area: duration; }
 .row-action { grid-area: action; }
+.paired-results { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; }
+.test-result-candy { flex: 0 0 44px; }
+.test-result-pelican { min-width: 0; max-width: 220px; }
+.paired-results.has-candy :deep(.preview-shell) { width: min(220px, calc(100vw - 116px)); height: auto; aspect-ratio: 1100 / 690; }
+.paired-results.has-candy :deep(.thumbnail-frame) { transform: scale(min(.2, calc((100vw - 116px) / 1100px))); }
 .pelican-benchmark :deep(.select-trigger) { min-height: 44px; border-radius: 8px; }
 .pelican-benchmark button:focus-visible { outline: 2px solid var(--color-primary-500, #0ea5e9); outline-offset: 2px; }
 @media (min-width: 1024px) {
-  .benchmark-row { grid-template-columns: minmax(0, 1.5fr) 64px 64px minmax(0, 1fr) minmax(0, 1fr) 64px 220px; grid-template-areas: none; }
+  .benchmark-row { grid-template-columns: minmax(0, 1.5fr) 64px 64px minmax(0, 1fr) minmax(0, 1fr) 64px 276px; grid-template-areas: none; }
   .account-name, .plan-label, .model-select, .row-action, .run-status, .run-date, .run-duration { grid-area: auto; }
   .plan-label { text-align: left; }
 }
