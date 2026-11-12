@@ -9,14 +9,6 @@ const api = vi.hoisted(() => ({ getPelicanResult: vi.fn() }))
 vi.mock('@/api/admin/pelicanBenchmark', () => api)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const wrappers: VueWrapper[] = []
-function renderMessages(postMessage: ReturnType<typeof vi.fn>) {
-  return postMessage.mock.calls.filter(([message]) => message.type === 'xiass-pelican-render')
-}
-function receive(frameWindow: object, data: object, origin = 'null') {
-  const event = new MessageEvent('message', { data, origin })
-  Object.defineProperty(event, 'source', { value: frameWindow })
-  window.dispatchEvent(event)
-}
 async function render(html: string, preview_html?: string) {
   api.getPelicanResult.mockResolvedValue(Object.freeze({ id: 'result', status: 'succeeded', html, preview_html }))
   const wrapper = mount(PelicanResultPreview, { props: { id: 'result', title: 'Preview' } })
@@ -24,59 +16,68 @@ async function render(html: string, preview_html?: string) {
   await flushPromises()
   return wrapper
 }
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.clearAllMocks(); vi.useRealTimers() })
+afterEach(() => {
+  wrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  document.querySelectorAll('script[data-test-nonce]').forEach(script => script.remove())
+  vi.clearAllMocks()
+  vi.useRealTimers()
+})
 
 describe('PelicanResultPreview', () => {
-  it('sends the complete HTML once to the isolated shell without inheriting the parent CSP', async () => {
-    const html = '<html><body onload="draw()"><canvas></canvas><script>function draw(){}</script></body></html>'
+  it('renders complete HTML directly without shell requests, handshakes or timeout remounts', async () => {
+    vi.useFakeTimers()
+    const html = '<html><body><canvas></canvas><script>window.drawn=true</script></body></html>'
     const wrapper = await render(html)
-    const iframe = wrapper.get('iframe')
-    expect(iframe.attributes('sandbox')).toBe('allow-scripts')
-    expect(iframe.attributes('referrerpolicy')).toBe('no-referrer')
-    expect(iframe.attributes('src')).toBe('/api/v1/pelican-preview')
-    expect(iframe.attributes('srcdoc')).toBeUndefined()
-    const postMessage = vi.fn()
-    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await iframe.trigger('load')
-    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html }, '*']])
-    await iframe.trigger('load')
-    expect(renderMessages(postMessage)).toHaveLength(1)
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'pelican-preview-size', height: 20000 } }))
-    await flushPromises()
-    expect(iframe.attributes('style')).toBeUndefined()
-  })
-
-  it('sends repaired HTML without adding markup or changing the original result', async () => {
-    const html = '<html><script>const point = { x=1 };</script></html>'
-    const previewHTML = '\n<html><script>const point = { x:1 };</script></html>\n'
-    const original = await render(html)
-    const wrapper = await render(html, previewHTML)
-    expect(wrapper.html()).toBe(original.html())
+    const frame = wrapper.get('iframe')
+    expect(frame.attributes('sandbox')).toBe('allow-scripts')
+    expect(frame.attributes('referrerpolicy')).toBe('no-referrer')
+    expect(frame.attributes('src')).toBeUndefined()
+    expect(frame.attributes('srcdoc')).toContain('<canvas></canvas>')
+    expect(frame.attributes('srcdoc')).toContain('window.drawn=true')
     expect(wrapper.find('script').exists()).toBe(false)
-    const iframe = wrapper.get('iframe')
-    const postMessage = vi.fn()
-    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await iframe.trigger('load')
-    await iframe.trigger('load')
-    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: previewHTML }, '*']])
-    expect((await api.getPelicanResult.mock.results.at(-1)!.value).html).toBe(html)
+    await vi.advanceTimersByTimeAsync(31_000)
+    expect(wrapper.get('iframe').element).toBe(frame.element)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
-  it.each(['', ' \n\t'])('falls back to original HTML for an empty preview (%j)', async previewHTML => {
-    const html = '<html><body>Original result</body></html>'
-    const wrapper = await render(html, previewHTML)
-    const iframe = wrapper.get('iframe')
-    const postMessage = vi.fn()
-    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await iframe.trigger('load')
-    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html }, '*']])
+  it('uses repaired HTML without modifying the saved original or adding visible annotations', async () => {
+    const html = '<html><script>const point = { x=1 };</script></html>'
+    const wrapper = await render(html, '<html><script>const point = { x:1 };</script></html>')
+    expect(wrapper.get('iframe').attributes('srcdoc')).toContain('const point = { x:1 };')
+    expect((await api.getPelicanResult.mock.results.at(-1)!.value).html).toBe(html)
     expect(wrapper.get('[data-testid="result-thumbnail"]').element.children).toHaveLength(1)
   })
 
-  it('never renders failed or mismatched results', async () => {
+  it.each(['', ' \n\t'])('uses original HTML for an empty repaired preview (%j)', async previewHTML => {
+    const wrapper = await render('<html><body>Original result</body></html>', previewHTML)
+    expect(wrapper.get('iframe').attributes('srcdoc')).toContain('Original result')
+  })
+
+  it('keeps nonce CSP compatibility local to the sandbox and never authorizes external scripts', async () => {
+    const bootstrap = document.createElement('script')
+    bootstrap.dataset.testNonce = 'true'
+    bootstrap.nonce = 'test'
+    document.head.appendChild(bootstrap)
+    const wrapper = await render('<body onload="draw()"><script>function draw(){}</script><script src="https://external.test/run.js" nonce="forged"></script><svg><script href="https://external.test/svg.js" nonce="forged"></script></svg></body>')
+    const markup = wrapper.get('iframe').attributes('srcdoc')!
+    const doc = new DOMParser().parseFromString(markup, 'text/html')
+    expect(doc.querySelector('script:not([src])')?.getAttribute('nonce')).toBe('test')
+    expect(doc.querySelector('script[src]')?.hasAttribute('nonce')).toBe(false)
+    expect(doc.querySelector('script[href]')?.hasAttribute('nonce')).toBe(false)
+    expect(doc.body.hasAttribute('onload')).toBe(false)
+    expect(markup).toContain('["onload"]=(function(){')
+    expect(markup).toContain("script-src 'unsafe-inline'")
+    expect(markup).toContain("connect-src 'none'")
+    expect(markup).toContain("frame-src 'none'")
+    expect(wrapper.get('iframe').attributes('sandbox')).not.toContain('allow-same-origin')
+  })
+
+  it('rejects failed, mismatched and empty results', async () => {
     for (const result of [
       { id: 'result', status: 'failed', html: '<html>partial</html>' },
-      { id: 'other', status: 'succeeded', html: '<html>wrong result</html>' }
+      { id: 'other', status: 'succeeded', html: '<html>wrong</html>' },
+      { id: 'result', status: 'succeeded', html: ' ' }
     ]) {
       api.getPelicanResult.mockResolvedValue(result)
       const wrapper = mount(PelicanResultPreview, { props: { id: 'result', title: 'Preview' } })
@@ -87,242 +88,108 @@ describe('PelicanResultPreview', () => {
     }
   })
 
-  it('aborts stale requests and gives changed results a fresh isolated document', async () => {
-    const wrapper = await render('<html>first</html>', '<html>repaired first</html>')
-    const firstFrame = wrapper.get('iframe').element
-    const firstSignal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
-    api.getPelicanResult.mockResolvedValue({ id: 'second', status: 'succeeded', html: '<html>second</html>' })
-    await wrapper.setProps({ id: 'second' })
-    await flushPromises()
-    expect(firstSignal.aborted).toBe(true)
-    expect(wrapper.get('iframe').element).not.toBe(firstFrame)
-    const postMessage = vi.fn()
-    Object.defineProperty(wrapper.get('iframe').element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await wrapper.get('iframe').trigger('load')
-    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*']])
-    const activeSignal = api.getPelicanResult.mock.calls.at(-1)![1] as AbortSignal
-    wrapper.unmount()
-    expect(activeSignal.aborted).toBe(true)
-  })
-
-  it('ignores a repaired response that arrives after the result changes', async () => {
-    let resolveFirst!: (result: { id: string; status: string; html: string; preview_html: string }) => void
+  it('aborts stale requests and ignores responses arriving after the ID changes or unmounts', async () => {
+    let resolveFirst!: (value: object) => void
     api.getPelicanResult.mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve }))
     const wrapper = mount(PelicanResultPreview, { props: { id: 'first', title: 'Preview' } })
     wrappers.push(wrapper)
-    const firstSignal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
+    const signal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
     api.getPelicanResult.mockResolvedValue({ id: 'second', status: 'succeeded', html: '<html>second</html>' })
     await wrapper.setProps({ id: 'second' })
     await flushPromises()
-    const iframe = wrapper.get('iframe')
-    const markup = wrapper.html()
-    resolveFirst({ id: 'first', status: 'succeeded', html: '<html>first</html>', preview_html: '<html>repaired first</html>' })
+    const frame = wrapper.get('iframe').element
+    resolveFirst({ id: 'first', status: 'succeeded', html: '<html>first</html>' })
     await flushPromises()
-    expect(firstSignal.aborted).toBe(true)
-    expect(wrapper.get('iframe').element).toBe(iframe.element)
-    expect(wrapper.html()).toBe(markup)
-    const postMessage = vi.fn()
-    Object.defineProperty(iframe.element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await iframe.trigger('load')
-    expect(renderMessages(postMessage)).toEqual([[{ type: 'xiass-pelican-render', html: '<html>second</html>' }, '*']])
-  })
-
-  it.each([false, true])('remounts once before failing if the shell never acknowledges (load=%s)', async loaded => {
-    vi.useFakeTimers()
-    const wrapper = await render('<html>result</html>')
-    const iframe = wrapper.get('iframe')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
-    if (loaded) await iframe.trigger('load')
-    for (const [origin, source] of [['https://untrusted.example', frameWindow], ['null', {}]] as const) {
-      const event = new MessageEvent('message', { data: { type: 'xiass-pelican-render-accepted' }, origin })
-      Object.defineProperty(event, 'source', { value: source })
-      window.dispatchEvent(event)
-    }
-    await vi.advanceTimersByTimeAsync(15_000)
-    expect(wrapper.get('iframe').element).not.toBe(iframe.element)
-    expect(wrapper.find('[role="status"]').exists()).toBe(false)
-    await vi.advanceTimersByTimeAsync(15_000)
-    expect(wrapper.find('iframe').exists()).toBe(false)
-    expect(wrapper.get('[role="status"]').text()).toContain('resultFailed')
-  })
-
-  it('keeps an acknowledged preview running beyond the shell timeout', async () => {
-    vi.useFakeTimers()
-    const wrapper = await render('<html>result</html>')
-    const iframe = wrapper.get('iframe')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
-    await iframe.trigger('load')
-    const event = new MessageEvent('message', { data: { type: 'xiass-pelican-render-accepted' }, origin: 'null' })
-    Object.defineProperty(event, 'source', { value: frameWindow })
-    window.dispatchEvent(event)
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(wrapper.find('iframe').exists()).toBe(true)
-    expect(wrapper.find('[role="status"]').exists()).toBe(false)
-    expect(renderMessages(frameWindow.postMessage)).toHaveLength(1)
-  })
-
-  it('renders each new document after the same iframe is moved without replaying duplicate ready or load events', async () => {
-    vi.useFakeTimers()
-    const html = '<html>animated scene</html>'
-    const wrapper = await render(html)
-    const iframe = wrapper.get('iframe')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
-    const first = 'a'.repeat(32)
-    const second = 'b'.repeat(32)
-    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: first })
-    await iframe.trigger('load')
-    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: first })
-    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: first })
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(renderMessages(frameWindow.postMessage)).toEqual([[{ type: 'xiass-pelican-render', html, document_id: first }, '*']])
-    receive(frameWindow, { type: 'xiass-pelican-ready', document_id: second })
-    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: second })
-    await iframe.trigger('load')
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(wrapper.get('iframe').element).toBe(iframe.element)
-    expect(renderMessages(frameWindow.postMessage)).toEqual([
-      [{ type: 'xiass-pelican-render', html, document_id: first }, '*'],
-      [{ type: 'xiass-pelican-render', html, document_id: second }, '*']
-    ])
-    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
-  })
-
-  it('ignores foreign readiness, stale acceptance and acknowledgements from a remounted frame', async () => {
-    vi.useFakeTimers()
-    const wrapper = await render('<html>scene</html>')
-    const iframe = wrapper.get('iframe')
-    const oldWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: oldWindow, configurable: true })
-    const documentID = 'c'.repeat(32)
-    for (const [source, id, origin] of [[{}, documentID, 'null'], [oldWindow, documentID, 'https://foreign.test'], [oldWindow, 'bad-id', 'null']] as const) {
-      receive(source, { type: 'xiass-pelican-ready', document_id: id }, origin)
-    }
-    expect(oldWindow.postMessage).not.toHaveBeenCalled()
-    receive(oldWindow, { type: 'xiass-pelican-ready', document_id: documentID })
-    receive(oldWindow, { type: 'xiass-pelican-render-accepted', document_id: 'd'.repeat(32) })
-    await vi.advanceTimersByTimeAsync(15_000)
-    const replacement = wrapper.get('iframe')
-    expect(replacement.element).not.toBe(iframe.element)
-    const newWindow = { postMessage: vi.fn() }
-    Object.defineProperty(replacement.element, 'contentWindow', { value: newWindow, configurable: true })
-    receive(oldWindow, { type: 'xiass-pelican-render-accepted', document_id: documentID })
-    receive(newWindow, { type: 'xiass-pelican-ready', document_id: 'e'.repeat(32) })
-    receive(newWindow, { type: 'xiass-pelican-render-accepted', document_id: 'e'.repeat(32) })
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(wrapper.get('iframe').element).toBe(replacement.element)
-    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
-  })
-
-  it('bounds fabricated ready messages without permanently blocking later document loads', async () => {
-    vi.useFakeTimers()
-    const wrapper = await render('<html>scene</html>')
-    const iframe = wrapper.get('iframe')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
-    for (let i = 0; i < 40; i++) receive(frameWindow, { type: 'xiass-pelican-ready', document_id: i.toString(16).padStart(32, '0') })
-    expect(renderMessages(frameWindow.postMessage)).toHaveLength(4)
-    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: '3'.padStart(32, '0') })
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(renderMessages(frameWindow.postMessage)).toHaveLength(5)
-    expect(renderMessages(frameWindow.postMessage).at(-1)?.[0].document_id).toBe('27'.padStart(32, '0'))
-    receive(frameWindow, { type: 'xiass-pelican-render-accepted', document_id: '27'.padStart(32, '0') })
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(renderMessages(frameWindow.postMessage)).toHaveLength(5)
-    expect(wrapper.get('iframe').element).toBe(iframe.element)
-    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
-  })
-
-  it('cancels a delayed delivery when the component is removed', async () => {
-    vi.useFakeTimers()
-    const wrapper = await render('<html>scene</html>')
-    const iframe = wrapper.get('iframe')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(iframe.element, 'contentWindow', { value: frameWindow, configurable: true })
-    for (let i = 0; i < 5; i++) receive(frameWindow, { type: 'xiass-pelican-ready', document_id: i.toString(16).padStart(32, '0') })
+    expect(signal.aborted).toBe(true)
+    expect(wrapper.get('iframe').element).toBe(frame)
+    expect(wrapper.get('iframe').attributes('srcdoc')).toContain('second')
+    const active = api.getPelicanResult.mock.calls.at(-1)![1] as AbortSignal
     wrapper.unmount()
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(renderMessages(frameWindow.postMessage)).toHaveLength(4)
+    expect(active.aborted).toBe(true)
   })
 })
 
-// Opt in with PELICAN_BROWSER_TEST=1; PLAYWRIGHT_MODULE may point to a shared runtime.
-// These use the component's markup/CSS and the exact embedded server shell.
-// Unit tests above cover the Vue load-event handoff; browser cases cover rendering under CSP.
-describe.skipIf(process.env.PELICAN_BROWSER_TEST !== '1')('Pelican full-document browser regressions', () => {
+// Run against a real browser with PELICAN_BROWSER_TEST=1 and PLAYWRIGHT_MODULE.
+describe.skipIf(process.env.PELICAN_BROWSER_TEST !== '1')('Direct HTML under production CSP', () => {
   const fixtures = {
-    long: '<html><body style="margin:0"><main style="height:6000px;background:#edf6f0;position:relative"><b id="first">FIRST</b><b id="last" style="position:absolute;bottom:0;right:0;background:#e11d48">LAST</b></main></body></html>',
-    wide: '<html><body style="margin:0"><main style="width:3600px;height:900px;background:#eef2ff;position:relative"><b id="first">FIRST</b><b id="last" style="position:absolute;bottom:0;right:0;background:#e11d48">LAST</b></main></body></html>',
-    viewport: '<html><body style="margin:0"><main style="height:200vh;width:150vw;background:#eff6ff;position:relative"><b id="first">FIRST</b><b id="last" style="position:absolute;bottom:0;right:0;background:#e11d48">LAST</b></main></body></html>',
-    dynamic: '<html><body style="margin:0"><main style="height:100vh;background:#f0fdf4;position:relative"><b id="first">FIRST</b><b id="last" style="position:absolute;bottom:0;right:0;background:#e11d48">LAST</b></main><script>setTimeout(()=>{document.querySelector("main").style.height="5000px";document.querySelector("main").style.width="2800px"},200)</script></body></html>',
-    animated: '<html><body style="margin:0"><main style="height:1200px;background:#f0fdf4;position:relative"><b id="first">FIRST</b><svg width="200" height="200"><circle cx="100" cy="100" r="50" fill="blue"/></svg><b id="last" style="position:absolute;bottom:0;right:0;background:#e11d48">LAST</b></main><script>function animate(t){document.querySelector("circle").setAttribute("cx",String(100+Math.sin(t/100)*40));requestAnimationFrame(animate)}requestAnimationFrame(animate)</script></body></html>'
+    long: '<main style="height:6000px;width:1100px">scene</main>',
+    wide: '<main style="height:900px;width:3600px">scene</main>',
+    viewport: '<main style="height:200vh;width:150vw">scene</main>',
+    dynamic: '<main>scene</main><script>setTimeout(()=>{document.querySelector("main").style.height="5000px"},100)</script>',
+    animated: '<main><svg width="200" height="200"><circle cx="100" cy="100" r="50" fill="blue"/></svg></main><script>function animate(t){document.querySelector("circle").setAttribute("cx",String(100+Math.sin(t/100)*40));requestAnimationFrame(animate)}requestAnimationFrame(animate)</script>',
+    handlers: '<main><form><input name="choice" value="form"><button type="button" value="drawn" onclick="document.body.dataset.clicked=value+choice.value;return false">Run</button><button id="local" type="button" value="original" onclick="var value=\'local\';document.body.dataset.local=value">Local</button><textarea oninput="document.body.dataset.input=value">initial text</textarea></form></main><script onerror="document.body.dataset.scriptError=\'yes\'">window.onload=()=>{document.body.dataset.loaded="script"}</script>'
   }
-  it.each(Object.entries(fixtures))('fits the entire %s result without scroll or viewport feedback on desktop and mobile', async (name, html) => {
+  it.each(Object.entries(fixtures))('paints and fits %s on first load, moves and reopen without a network shell', async (name, html) => {
     const require = createRequire(import.meta.url)
-    const browserRequire = createRequire(require.resolve(process.env.PLAYWRIGHT_MODULE || 'playwright'))
     const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
-    const { PNG } = browserRequire('pngjs')
     const browser = await chromium.launch({ headless: true, ...(process.env.PELICAN_CHROME ? { executablePath: process.env.PELICAN_CHROME } : {}) })
+    const bootstrap = document.createElement('script')
+    bootstrap.dataset.testNonce = 'true'
+    bootstrap.nonce = 'test'
+    document.head.appendChild(bootstrap)
     try {
-      const resultHTML = html.replace('id="first"', 'id="first" style="display:block;width:100px;height:100px;background:#16a34a"').replace('background:#e11d48', 'width:100px;height:100px;background:#e11d48')
-      const wrapper = await render(resultHTML)
+      const wrapper = await render(`<html><body style="margin:0" onload="document.body.dataset.loaded='yes'">${html}<script>document.body.dataset.inline='yes'</script></body></html>`)
       const css = readFileSync(fileURLToPath(import.meta.url).replace(/__tests__\/[^/]+$/, 'PelicanResultPreview.vue'), 'utf8').split('<style scoped>')[1].split('</style>')[0]
-      const routes = new URL('../../../../../backend/internal/server/routes/', import.meta.url)
-      const shell = readFileSync(new URL('pelican_preview.html', routes), 'utf8').replaceAll('__MAX_HTML_BYTES__', '1048576')
-      const policy = readFileSync(new URL('pelican_preview.go', routes), 'utf8').match(/const pelicanPreviewCSP = "([^"]+)"/)![1]
-      const payload = JSON.stringify({ type: 'xiass-pelican-render', html: resultHTML }).replace(/</g, '\\u003c')
       for (const width of [1440, 390]) {
         const page = await browser.newPage({ viewport: { width, height: 900 } })
-        await page.route('http://pelican.test/**', async (route: { request: () => { url: () => string }; fulfill: (options: object) => Promise<void> }) => {
-          if (new URL(route.request().url()).pathname === '/api/v1/pelican-preview') {
-            await route.fulfill({ status: 200, contentType: 'text/html', headers: { 'Content-Security-Policy': policy, 'X-Frame-Options': 'SAMEORIGIN' }, body: shell })
-          } else {
-            await route.fulfill({ status: 200, contentType: 'text/html', headers: { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'nonce-test'; style-src 'unsafe-inline'; frame-src 'self'" }, body: `<style>${css}</style>${wrapper.html()}<script nonce="test">const frame=document.querySelector('iframe');frame.addEventListener('load',()=>frame.contentWindow.postMessage(${payload},'*'),{once:true});</script>` })
-          }
-        })
-        await page.goto('http://pelican.test/')
-        await page.waitForTimeout(1200)
-        const frame = page.frames()[1]
-        const inspect = () => frame.evaluate(() => ({
-          viewport: [innerWidth, innerHeight], transform: document.documentElement.style.transform,
-          markers: ['first', 'last'].map(id => {
-            const rect = document.getElementById(id)!.getBoundingClientRect()
-            return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom }
-          })
+        const errors: string[] = []
+        const requests: string[] = []
+        page.on('pageerror', (error: Error) => errors.push(error.message))
+        page.on('request', (request: { url(): string }) => requests.push(request.url()))
+        await page.route('**/*', (route: { fulfill(options: object): Promise<void> }) => route.fulfill({
+          status: 200, contentType: 'text/html',
+          headers: { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'nonce-test'; style-src 'unsafe-inline'; frame-src 'self'; connect-src 'self'" },
+          body: `<style>${css}</style>${wrapper.html()}`
         }))
-        const first = await inspect()
-        expect(first.viewport).toEqual([1100, 690])
-        for (const rect of first.markers) {
-          expect(rect.x).toBeGreaterThanOrEqual(-0.1)
-          expect(rect.y).toBeGreaterThanOrEqual(-0.1)
-          expect(rect.right).toBeLessThanOrEqual(1100.1)
-          expect(rect.bottom).toBeLessThanOrEqual(690.1)
+        await page.goto('http://pelican.test/', { waitUntil: 'load' })
+        for (const phase of ['initial', 'move', 'reopen']) {
+          if (phase === 'move') await page.evaluate(() => document.body.appendChild(document.querySelector('.preview-shell')!))
+          if (phase === 'reopen') await page.evaluate(() => {
+            const old = document.querySelector('.preview-shell')!
+            old.replaceWith(old.cloneNode(true))
+          })
+          await page.waitForTimeout(350)
+          const frame = page.frames()[1]
+          expect(await frame.evaluate(() => document.body.dataset)).toMatchObject({ inline: 'yes', loaded: name === 'handlers' ? 'script' : 'yes' })
+          if (name === 'handlers') {
+            await frame.locator('button').first().evaluate((button: HTMLButtonElement) => button.click())
+            expect(errors).toEqual([])
+            expect(await frame.evaluate(() => document.body.dataset.clicked)).toBe('drawnform')
+            await frame.locator('#local').evaluate((button: HTMLButtonElement) => button.click())
+            expect(await frame.evaluate(() => document.body.dataset.local)).toBe('local')
+            expect(await frame.locator('#local').getAttribute('value')).toBe('original')
+            expect(await frame.locator('textarea').inputValue()).toBe('initial text')
+            await frame.locator('textarea').fill('updated')
+            expect(await frame.evaluate(() => document.body.dataset.input)).toBe('updated')
+          }
+          const geometry = await frame.evaluate(() => {
+            const rect = document.querySelector('main')!.getBoundingClientRect()
+            return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: innerWidth, height: innerHeight }
+          })
+          expect(geometry.width).toBe(1100)
+          expect(geometry.height).toBe(690)
+          expect(geometry.x).toBeGreaterThanOrEqual(-0.1)
+          expect(geometry.y).toBeGreaterThanOrEqual(-0.1)
+          expect(geometry.right).toBeLessThanOrEqual(1100.1)
+          expect(geometry.bottom).toBeLessThanOrEqual(690.1)
+          if (name === 'animated') {
+            const before = await frame.locator('circle').getAttribute('cx')
+            await page.waitForTimeout(180)
+            expect(await frame.locator('circle').getAttribute('cx')).not.toBe(before)
+          }
+          expect(await frame.evaluate(() => {
+            try { void parent.document; return false } catch { return true }
+          })).toBe(true)
+          expect(await frame.evaluate(() => {
+            try { void localStorage.length; return false } catch { return true }
+          })).toBe(true)
+          expect(await frame.evaluate(async () => {
+            try { await fetch('/unexpected-network'); return false } catch { return true }
+          })).toBe(true)
         }
-        await frame.evaluate(() => {
-          const metrics = { writes: 0 }
-          new MutationObserver(records => { metrics.writes += records.length }).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
-          Object.assign(window, { pelicanMetrics: metrics })
-        })
-        await page.waitForTimeout(2200)
-        expect((await inspect()).transform).toBe(first.transform)
-        expect(await frame.evaluate(() => (window as unknown as { pelicanMetrics: { writes: number } }).pelicanMetrics.writes), 'idle and SVG attribute animation must not rescale the document').toBe(0)
-        const box = await page.locator('.preview-shell').boundingBox()
-        expect(box.width).toBe(220)
-        expect(box.height).toBe(138)
+        expect(errors).toEqual([])
+        expect(requests.filter(url => url.includes('pelican-preview'))).toEqual([])
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-        const png = PNG.sync.read(await page.locator('.preview-shell').screenshot())
-        let red = 0
-        let green = 0
-        for (let i = 0; i < png.data.length; i += 4) {
-          const [r, g, b] = png.data.subarray(i, i + 3)
-          if (r > 170 && g < 100 && b < 140) red++
-          if (g > 100 && r < 100 && b < 130) green++
-        }
-        expect(red, 'last marker must actually paint, not merely have in-bounds geometry').toBeGreaterThan(0)
-        expect(green, 'first marker must actually paint').toBeGreaterThan(0)
-        if (process.env.PELICAN_SCREENSHOTS) await page.screenshot({ path: `${process.env.PELICAN_SCREENSHOTS}/full-preview-${name}-${width}.png` })
         await page.close()
       }
     } finally { await browser.close() }

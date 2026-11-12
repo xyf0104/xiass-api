@@ -338,15 +338,8 @@ describe('PelicanBenchmarkModal', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="details-run-1"]').exists()).toBe(false)
     const preview = wrapper.get<HTMLIFrameElement>('[data-testid="result-preview"]')
-    const frameWindow = { postMessage: vi.fn() }
-    Object.defineProperty(preview.element, 'contentWindow', { value: frameWindow, configurable: true })
-    await preview.trigger('load')
-    const accepted = new MessageEvent('message', {
-      origin: 'null',
-      data: { type: 'xiass-pelican-render-accepted' }
-    })
-    Object.defineProperty(accepted, 'source', { value: frameWindow })
-    window.dispatchEvent(accepted)
+    expect(preview.attributes('src')).toBeUndefined()
+    expect(preview.attributes('srcdoc')).toContain('<script>document.body.dataset.animated="yes"</script>')
     await vi.advanceTimersByTimeAsync(60_000)
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(calls + 2)
     expect(wrapper.get('[data-testid="tab-current"]').attributes('aria-selected')).toBe('true')
@@ -354,6 +347,7 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanHistory).not.toHaveBeenCalled()
     expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith('run-1', expect.any(AbortSignal))
     expect(wrapper.get('[data-testid="result-preview"]').isVisible()).toBe(true)
+    expect(wrapper.get('[data-testid="result-preview"]').element).toBe(preview.element)
   })
 
   it('never overlaps polling requests and stops automatic retries after an error', async () => {
@@ -376,8 +370,10 @@ describe('PelicanBenchmarkModal', () => {
     expect(api.getPelicanCurrent).toHaveBeenCalledTimes(failedCalls)
   })
 
-  it('loads completed HTML automatically, retaining scripts inside an isolated preview document', async () => {
+  it('loads complete HTML directly into srcdoc, retaining styles, scene and scripts without a shell handshake', async () => {
+    const html = '<!doctype html><html lang="en"><head><title>Animated scene</title><style>svg { background: #fff; }</style></head><body><svg viewBox="0 0 1100 690"><circle r="10"></circle></svg><canvas width="1100" height="690"></canvas><script>document.body.dataset.animated="yes"</script></body></html>'
     api.getPelicanCurrent.mockResolvedValue({ items: [run('run-1', { status: 'succeeded', html_bytes: 120 }), run('failed', { status: 'failed' })] })
+    api.getPelicanResult.mockResolvedValue({ ...run('run-1', { status: 'succeeded' }), html })
     const wrapper = render()
     await flushPromises()
     await currentTab(wrapper)
@@ -387,12 +383,18 @@ describe('PelicanBenchmarkModal', () => {
     const frame = wrapper.get('iframe')
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('referrerpolicy')).toBe('no-referrer')
-    expect(frame.attributes('src')).toBe('/api/v1/pelican-preview')
-    expect(frame.attributes('srcdoc')).toBeUndefined()
-    const postMessage = vi.fn()
-    Object.defineProperty(frame.element, 'contentWindow', { value: { postMessage }, configurable: true })
-    await frame.trigger('load')
-    expect(postMessage).toHaveBeenCalledWith({ type: 'xiass-pelican-render', html: expect.stringContaining('<script>document.body.dataset.animated="yes"</script>') }, '*')
+    expect(frame.attributes('src')).toBeUndefined()
+    const srcdoc = frame.attributes('srcdoc')
+    expect(srcdoc).toContain('<!doctype html>')
+    const document = new DOMParser().parseFromString(srcdoc, 'text/html')
+    expect(document.documentElement.lang).toBe('en')
+    expect(document.title).toBe('Animated scene')
+    expect(document.querySelector('style')?.textContent).toBe('svg { background: #fff; }')
+    expect(document.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 1100 690')
+    expect(document.querySelector('svg circle')?.getAttribute('r')).toBe('10')
+    expect(document.querySelector('canvas')?.getAttribute('width')).toBe('1100')
+    expect(document.querySelector('canvas')?.getAttribute('height')).toBe('690')
+    expect([...document.querySelectorAll('script')].map(script => script.textContent)).toContain('document.body.dataset.animated="yes"')
     expect(wrapper.find('script').exists()).toBe(false)
     await wrapper.setProps({ show: false })
     expect(wrapper.find('iframe').exists()).toBe(false)
@@ -413,20 +415,36 @@ describe('PelicanBenchmarkModal', () => {
     expect(wrapper.find('iframe').exists()).toBe(false)
   })
 
-  it('reloads result frames when history is explicitly refreshed without starting model calls', async () => {
+  it('preserves the same-ID iframe and HTML across history refresh without repeating detail or model calls', async () => {
     const item = run('saved', { status: 'succeeded', html_bytes: 100 })
     api.getPelicanHistory.mockResolvedValue({ items: [item], total: 1, page: 1, pages: 1 })
-    api.getPelicanResult.mockResolvedValue({ ...item, html: '<html>saved scene</html>' })
+    api.getPelicanResult.mockResolvedValue({ ...item, html: '<html><body>saved scene<script>document.body.dataset.animated="yes"</script></body></html>' })
     const wrapper = render()
     await flushPromises()
     await wrapper.get('[data-testid="tab-history"]').trigger('click')
     await flushPromises()
     const firstFrame = wrapper.get('iframe').element
-    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+    const firstHTML = wrapper.get('iframe').attributes('srcdoc')
+    expect(firstHTML).toContain('saved scene')
+    expect(firstHTML).toContain('<script>document.body.dataset.animated="yes"</script>')
+    expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith('saved', expect.any(AbortSignal))
+    const detailSignal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
+    const pending = deferred<{ items: PelicanBenchmarkRun[]; total: number; page: number; pages: number }>()
+    api.getPelicanHistory.mockReturnValueOnce(pending.promise)
     await wrapper.get('[data-testid="refresh"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('iframe').element).not.toBe(firstFrame)
-    expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('iframe').element).toBe(firstFrame)
+    expect(wrapper.get('iframe').attributes('srcdoc')).toBe(firstHTML)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+    pending.resolve({ items: [{ ...item, account_name: 'Updated account' }], total: 1, page: 1, pages: 1 })
+    await flushPromises()
+    expect(api.getPelicanHistory).toHaveBeenCalledTimes(2)
+    expect(api.getPelicanHistory).toHaveBeenLastCalledWith(1, expect.any(AbortSignal), 'succeeded')
+    expect(wrapper.get('iframe').element).toBe(firstFrame)
+    expect(wrapper.get('iframe').attributes('srcdoc')).toBe(firstHTML)
+    expect(wrapper.get('iframe').attributes('title')).toContain('Updated account')
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+    expect(detailSignal.aborted).toBe(false)
     expect(api.startPelicanTests).not.toHaveBeenCalled()
     expect(api.restartPelicanTest).not.toHaveBeenCalled()
   })
@@ -788,8 +806,10 @@ describe('PelicanBenchmarkModal', () => {
         expect(row.get('.model-select').text()).toBe(item.model)
         expect(row.get('iframe').attributes('sandbox')).toBe('allow-scripts')
         expect(row.get('iframe').attributes('referrerpolicy')).toBe('no-referrer')
-        expect(row.get('iframe').attributes('src')).toBe('/api/v1/pelican-preview')
-        expect(row.get('iframe').attributes('srcdoc')).toBeUndefined()
+        expect(row.get('iframe').attributes('src')).toBeUndefined()
+        const srcdoc = row.get('iframe').attributes('srcdoc')
+        expect(srcdoc).toContain('<svg><circle r="10"></circle></svg>')
+        expect(srcdoc).toContain('<script>document.body.dataset.animated="yes"</script>')
       }
     }
   })
