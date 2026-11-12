@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import PelicanBenchmarkModal from '../PelicanBenchmarkModal.vue'
-import { PelicanPartialStartError, type PelicanBenchmarkAccount, type PelicanBenchmarkRun } from '@/api/admin/pelicanBenchmark'
+import { DEFAULT_PELICAN_PROMPT, PelicanPartialStartError, type PelicanBenchmarkAccount, type PelicanBenchmarkRun } from '@/api/admin/pelicanBenchmark'
 import zh from '@/i18n/locales/zh/admin/accounts'
 
 const api = vi.hoisted(() => ({
@@ -126,6 +126,7 @@ describe('PelicanBenchmarkModal', () => {
   })
 
   beforeEach(() => {
+    localStorage.clear()
     vi.useFakeTimers()
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     for (const mock of Object.values(api)) mock.mockReset()
@@ -137,6 +138,311 @@ describe('PelicanBenchmarkModal', () => {
     api.getPelicanModels.mockResolvedValue(['gpt-6-astra', 'gpt-5.6-luna'])
     api.stopAllPelicanTests.mockResolvedValue({ affected: 2 })
     api.getPelicanResult.mockImplementation((id: string) => Promise.resolve({ ...run(id, { status: 'succeeded', html_bytes: 120 }), html: '<html><body><svg><circle r="10" /></svg><script>document.body.dataset.animated="yes"</script></body></html>' }))
+  })
+
+  it('defaults to the unchanged pelican prompt and retains the legacy request contract', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('h2').text()).toBe('智商测试')
+    expect((wrapper.get('[data-testid="test-type-pelican"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="test-type-candy"]').element as HTMLInputElement).checked).toBe(false)
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe(DEFAULT_PELICAN_PROMPT)
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal))
+  })
+
+  it('runs both selected kinds with a custom prompt on the same selected accounts and shows both rows', async () => {
+    const items = [run('html', { test_type: 'pelican' }), run('candy', { test_type: 'candy', status: 'queued' })]
+    api.startPelicanTests.mockResolvedValue({ items })
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="test-type-candy"]').setValue(true)
+    await wrapper.get('[data-testid="html-prompt"]').setValue('Create a self-contained 3D HTML scene using window.THREE.')
+    await wrapper.get('[data-testid="select-1"]').setValue(true)
+    await wrapper.get('[data-testid="start-selected"]').trigger('click')
+    await flushPromises()
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), {
+      test_types: ['pelican', 'candy'], prompt: 'Create a self-contained 3D HTML scene using window.THREE.'
+    })
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="run-html"]').text()).toContain('鹈鹕测试')
+    expect(wrapper.get('[data-testid="run-candy"]').text()).toContain('糖果测试')
+    expect(wrapper.find('[data-testid="stop-html"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="stop-candy"]').exists()).toBe(true)
+  })
+
+  it('uses the supplied THREE global for the 3D preset and restores the original prompt', async () => {
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="prompt-3d"]').trigger('click')
+    const preset = (wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value
+    expect(preset).toContain('window.THREE')
+    expect(preset).toContain('不要使用 import、模块脚本、CDN、外部脚本或外部素材')
+    expect(preset).not.toMatch(/https?:\/\//)
+    await wrapper.get('[data-testid="prompt-reset"]').trigger('click')
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe(DEFAULT_PELICAN_PROMPT)
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal))
+  })
+
+  it('blocks empty selections and blank HTML prompts, but allows candy alone without leaking its answer', async () => {
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="html-prompt"]').setValue('   ')
+    for (const id of ['start-1', 'start-all', 'start-selected']) expect(wrapper.get(`[data-testid="${id}"]`).attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="test-type-pelican"]').setValue(false)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('请选择至少一项测试')
+    await wrapper.get('[data-testid="test-type-candy"]').setValue(true)
+    expect(wrapper.find('[data-testid="html-prompt"]').exists()).toBe(false)
+    const problem = wrapper.get('[data-testid="candy-problem"]').text()
+    expect(problem).toContain('允许根据已取出的糖果选择后续摸取的形状')
+    expect(problem).not.toContain('21')
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), { test_types: ['candy'] })
+  })
+
+  it('persists only test choices and prompt, including after reopening', async () => {
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="test-type-candy"]').setValue(true)
+    await wrapper.get('[data-testid="html-prompt"]').setValue('Custom HTML animation')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.get('[data-testid="test-type-candy"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe('Custom HTML animation')
+    const persisted = JSON.parse(localStorage.getItem('xiass:intelligence-test:settings:v1')!)
+    expect(persisted).toEqual({ test_types: ['pelican', 'candy'], prompt: 'Custom HTML animation' })
+    const reopened = render()
+    await flushPromises()
+    expect((reopened.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe('Custom HTML animation')
+  })
+
+  it.each(['a', '糖', '😀'])('counts %s as one Unicode character and accepts an exact 8000-character prompt unchanged', async character => {
+    const wrapper = render()
+    await flushPromises()
+    const prompt = character.repeat(8000)
+    await wrapper.get('[data-testid="html-prompt"]').setValue(prompt)
+    expect(wrapper.get('[data-testid="prompt-length"]').text()).toBe('8000 / 8000 字符')
+    expect(wrapper.get('[data-testid="html-prompt"]').attributes('maxlength')).toBeUndefined()
+    expect(wrapper.get('[data-testid="html-prompt"]').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('[data-testid="test-settings-error"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), { test_types: ['pelican'], prompt })
+  })
+
+  it.each(['a', '糖', '😀'])('blocks all start controls for 8001 %s characters without truncating the draft', async character => {
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-testid="select-1"]').setValue(true)
+    const prompt = character.repeat(8001)
+    await wrapper.get('[data-testid="html-prompt"]').setValue(prompt)
+    expect(wrapper.get('[data-testid="prompt-length"]').text()).toBe('8001 / 8000 字符')
+    expect(wrapper.get('[data-testid="html-prompt"]').attributes('aria-invalid')).toBe('true')
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe(prompt)
+    expect(wrapper.get('[data-testid="test-settings-error"]').text()).toContain('提示词最多 8000 个字符，当前 8001 个')
+    for (const id of ['start-1', 'start-selected', 'start-all']) {
+      const button = wrapper.get(`[data-testid="${id}"]`)
+      expect(button.attributes('disabled')).toBeDefined()
+      await button.trigger('click')
+    }
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="html-prompt"]').setValue(character.repeat(7999) + '😀')
+    expect(wrapper.get('[data-testid="prompt-length"]').text()).toBe('8000 / 8000 字符')
+    expect(wrapper.get('[data-testid="start-selected"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="test-settings-error"]').exists()).toBe(false)
+  })
+
+  it('rejects an oversized saved prompt with a visible correction and lets candy run independently', async () => {
+    const prompt = '😀'.repeat(8001)
+    localStorage.setItem('xiass:intelligence-test:settings:v1', JSON.stringify({ test_types: ['pelican', 'candy'], prompt }))
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="prompt-length"]').text()).toBe('8001 / 8000 字符')
+    expect(wrapper.get('[data-testid="test-settings-error"]').text()).toContain('请缩短提示词或恢复默认')
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe(prompt)
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    api.startPelicanTests.mockResolvedValue({ items: [] })
+    await wrapper.get('[data-testid="test-type-pelican"]').setValue(false)
+    expect(wrapper.find('[data-testid="test-settings-error"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    await flushPromises()
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), { test_types: ['candy'] })
+    await wrapper.get('[data-testid="test-type-pelican"]').setValue(true)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="prompt-reset"]').trigger('click')
+    expect(wrapper.find('[data-testid="test-settings-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('ignores malformed saved settings and remains usable when storage writes fail', async () => {
+    localStorage.setItem('xiass:intelligence-test:settings:v1', '{invalid')
+    const wrapper = render()
+    await flushPromises()
+    expect((wrapper.get('[data-testid="html-prompt"]').element as HTMLTextAreaElement).value).toBe(DEFAULT_PELICAN_PROMPT)
+    const failStorage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    try {
+      await wrapper.get('[data-testid="test-type-candy"]').setValue(true)
+      await wrapper.get('[data-testid="start-1"]').trigger('click')
+      expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), { test_types: ['pelican', 'candy'] })
+    } finally { failStorage.mockRestore() }
+  })
+
+  it('can start candy while pelican is running on the same account', async () => {
+    api.getPelicanCurrent.mockResolvedValue({ items: [run('pelican-running')] })
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="test-type-pelican"]').setValue(false)
+    await wrapper.get('[data-testid="test-type-candy"]').setValue(true)
+    expect(wrapper.get('[data-testid="start-1"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="start-1"]').trigger('click')
+    expect(api.startPelicanTests).toHaveBeenCalledExactlyOnceWith([{ account_id: 1, model: 'gpt-6-astra' }], expect.any(AbortSignal), { test_types: ['candy'] })
+  })
+
+  it('keeps correct and incorrect candy history, distinguishes failures, and filters actual passes', async () => {
+    const items = [
+      run('pass', { account_id: 1, test_type: 'candy', status: 'succeeded', answer: 21, passed: true }),
+      run('wrong', { account_id: 2, test_type: 'candy', status: 'succeeded', answer: 23, passed: false }),
+      run('error', { account_id: 3, test_type: 'candy', status: 'failed', error_code: 'upstream_http_503' }),
+      run('unknown', { account_id: 4, test_type: 'candy', status: 'succeeded', answer: null, passed: null })
+    ]
+    api.getPelicanCurrent.mockResolvedValue({ items })
+    api.getPelicanHistory.mockResolvedValue({ items, total: 3, page: 1, pages: 1 })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(wrapper.get('[data-testid="run-pass"]').text()).toContain('✅')
+    expect(wrapper.get('[data-testid="run-wrong"]').text()).toContain('❌')
+    expect(wrapper.get('[data-testid="run-wrong"]').text()).toContain('最终答案：23 个')
+    expect(wrapper.get('[data-testid="run-error"]').text()).toContain('HTTP 503')
+    expect(wrapper.get('[data-testid="run-error"]').find('[data-testid="candy-result"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="run-unknown"]').text()).toContain('结果待确认')
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="result-filter"]').setValue('succeeded')
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="run-pass"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="run-wrong"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="run-unknown"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="result-filter"]').setValue('')
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(4)
+    expect(wrapper.find('[data-testid="run-wrong"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="result-filter"]').setValue('succeeded')
+    await wrapper.get('[data-testid="tab-history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="run-wrong"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="run-error"]').exists()).toBe(false)
+    expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
+  it('loads the full candy answer only on request and escapes HTML in the answer', async () => {
+    const item = run('candy', { test_type: 'candy', status: 'succeeded', answer: 21, passed: true })
+    api.getPelicanCurrent.mockResolvedValue({ items: [item] })
+    api.getPelicanResult.mockResolvedValue({ ...item, html: '', text_output: 'Answer: 21\n<script>alert(1)</script><img src=x onerror=alert(1)>' })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    expect(api.getPelicanResult).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="candy-details"]').trigger('click')
+    await flushPromises()
+    expect(api.getPelicanResult).toHaveBeenCalledExactlyOnceWith(item.id, expect.any(AbortSignal))
+    expect(wrapper.get('[data-testid="candy-output"]').text()).toContain('<script>alert(1)</script>')
+    expect(wrapper.find('script').exists()).toBe(false)
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(JSON.stringify(localStorage)).not.toContain('alert(1)')
+  })
+
+  it('does not load an old candy detail after leaving its tab', async () => {
+    const item = run('candy', { test_type: 'candy', status: 'succeeded', answer: 21, passed: true })
+    api.getPelicanCurrent.mockResolvedValue({ items: [item] })
+    const pending = deferred<unknown>()
+    api.getPelicanResult.mockReturnValue(pending.promise)
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get('[data-testid="candy-details"]').trigger('click')
+    await flushPromises()
+    const signal = api.getPelicanResult.mock.calls[0][1] as AbortSignal
+    await wrapper.get('[data-testid="tab-new"]').trigger('click')
+    await flushPromises()
+    expect(signal.aborted).toBe(true)
+    pending.resolve({ ...item, html: '', text_output: 'stale answer' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="candy-output"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('stale answer')
+  })
+
+  it('retries failed candy detail reads without retrying the model or changing the verdict', async () => {
+    const item = run('candy', { test_type: 'candy', status: 'succeeded', answer: 23, passed: false })
+    api.getPelicanCurrent.mockResolvedValue({ items: [item] })
+    api.getPelicanResult.mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ...item, html: '', text_output: 'Final answer: 23' })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get('[data-testid="candy-details"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('回答加载失败')
+    expect(wrapper.get('[data-testid="candy-result"]').text()).toContain('❌')
+    await wrapper.get('[data-testid="candy-detail-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="candy-output"]').text()).toBe('Final answer: 23')
+    expect(api.startPelicanTests).not.toHaveBeenCalled()
+    expect(api.restartPelicanTest).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { id: 'wrong-id', test_type: 'candy', status: 'succeeded' },
+    { id: 'candy', test_type: 'pelican', status: 'succeeded' },
+    { id: 'candy', test_type: 'candy', status: 'running' }
+  ])('rejects candy details with mismatched identity, type or terminal status: %j', async response => {
+    const item = run('candy', { test_type: 'candy', status: 'succeeded', answer: 21, passed: true })
+    api.getPelicanCurrent.mockResolvedValue({ items: [item] })
+    api.getPelicanResult.mockResolvedValue({ ...item, ...response, html: '', text_output: 'unexpected output' })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get('[data-testid="candy-details"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('回答加载失败')
+    expect(wrapper.text()).not.toContain('unexpected output')
+  })
+
+  it.each(['pelican', 'candy'] as const)('retries %s without stopping or replacing its sibling test', async kind => {
+    const source = run('failed', { test_type: kind, status: 'failed' })
+    const sibling = run('sibling', { test_type: kind === 'pelican' ? 'candy' : 'pelican' })
+    const next = run('retry', { test_type: kind, source_id: source.id, status: 'queued', created_at: '2026-09-09T12:02:00Z' })
+    api.getPelicanCurrent.mockResolvedValue({ items: [source, sibling] })
+    api.getPelicanResult.mockResolvedValue(source)
+    api.restartPelicanTest.mockResolvedValue({ items: [next] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get('[data-testid="retry-failed"]').trigger('click')
+    await flushPromises()
+    expect(api.stopPelicanTests).not.toHaveBeenCalled()
+    expect(api.restartPelicanTest).toHaveBeenCalledExactlyOnceWith(source.id, 'retry', expect.any(AbortSignal))
+    expect(wrapper.findAll('[data-testid^="run-"]')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="run-sibling"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="run-retry"]').exists()).toBe(true)
+  })
+
+  it('stops only the clicked test when both types are running', async () => {
+    const html = run('html', { test_type: 'pelican' })
+    const candy = run('candy', { test_type: 'candy' })
+    api.getPelicanCurrent.mockResolvedValue({ items: [html, candy] })
+    api.stopPelicanTests.mockResolvedValue({ items: [{ ...candy, status: 'canceled' }] })
+    const wrapper = render()
+    await flushPromises()
+    await currentTab(wrapper)
+    await wrapper.get('[data-testid="stop-candy"]').trigger('click')
+    await flushPromises()
+    expect(api.stopPelicanTests).toHaveBeenCalledExactlyOnceWith(['candy'], expect.any(AbortSignal))
+    expect(wrapper.find('[data-testid="stop-html"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-candy"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="continue-candy"]').exists()).toBe(false)
   })
   afterEach(() => {
     for (const wrapper of wrappers.splice(0)) wrapper.unmount()

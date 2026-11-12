@@ -814,7 +814,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
 	if pelicanProbe(c) != nil {
 		payload["input"] = pelicanMessages(ctx, true)
-		payload["instructions"] = "Return only the requested HTML document."
+		payload["instructions"] = pelicanInstructions(ctx)
 	}
 	payloadBytes, _ := json.Marshal(payload)
 

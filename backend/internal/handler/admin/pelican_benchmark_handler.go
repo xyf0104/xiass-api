@@ -77,13 +77,15 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		Models     map[int64]string `json:"models"`
 		SourceID   string           `json:"source_id"`
 		Action     string           `json:"action"`
+		TestTypes  []string         `json:"test_types"`
+		Prompt     *string          `json:"prompt"`
 	}
 	single := c.Param("id") != ""
 	if !pelicanJSON(c, &req, single) {
 		return
 	}
 	if req.SourceID != "" || req.Action != "" {
-		if single || req.All || len(req.AccountIDs) > 0 || req.Model != "" || len(req.Models) > 0 ||
+		if single || req.All || len(req.AccountIDs) > 0 || req.Model != "" || len(req.Models) > 0 || req.TestTypes != nil || req.Prompt != nil ||
 			(req.Action != "continue" && req.Action != "retry") {
 			response.BadRequest(c, "invalid benchmark follow-up")
 			return
@@ -92,7 +94,7 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			response.BadRequest(c, "invalid source benchmark")
 			return
 		}
-		source, err := h.store.Get(c.Request.Context(), req.SourceID)
+		source, err := h.store.Detail(c.Request.Context(), req.SourceID)
 		if err != nil {
 			pelicanError(c, err)
 			return
@@ -101,7 +103,35 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			response.Error(c, http.StatusConflict, "stop the current test and wait for it to exit first")
 			return
 		}
+		if benchmark.NormalizeTestType(source.TestType) == benchmark.TestCandy && req.Action == "continue" {
+			response.BadRequest(c, "candy tests support retry only")
+			return
+		}
 		req.AccountIDs, req.Model = []int64{source.AccountID}, source.Model
+		req.TestTypes, req.Prompt = []string{benchmark.NormalizeTestType(source.TestType)}, &source.Prompt
+	}
+	if req.TestTypes == nil {
+		req.TestTypes = []string{benchmark.TestPelican}
+	}
+	if len(req.TestTypes) < 1 || len(req.TestTypes) > 2 {
+		response.BadRequest(c, "select pelican and/or candy")
+		return
+	}
+	seenTypes := map[string]bool{}
+	for _, testType := range req.TestTypes {
+		if !benchmark.ValidTestType(testType) || seenTypes[testType] {
+			response.BadRequest(c, "invalid or duplicate test type")
+			return
+		}
+		seenTypes[testType] = true
+	}
+	prompt := ""
+	if req.Prompt != nil {
+		prompt = *req.Prompt
+	}
+	if !benchmark.ValidPrompt(prompt) {
+		response.BadRequest(c, "prompt must be valid text of at most 8000 characters and 32000 bytes")
+		return
 	}
 	if single {
 		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -194,8 +224,14 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 			result.Skipped = append(result.Skipped, benchmark.Skipped{AccountID: account.ID, Reason: reason})
 			continue
 		}
-		tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: model,
-			SourceID: req.SourceID, Action: req.Action})
+		for _, testType := range req.TestTypes {
+			taskPrompt := benchmark.ResolvePrompt(testType, prompt)
+			if req.SourceID != "" {
+				taskPrompt = benchmark.SnapshotPrompt(testType, prompt)
+			}
+			tasks = append(tasks, benchmark.Task{ID: uuid.NewString(), BatchID: result.BatchID, AccountID: account.ID, AccountName: account.Name, Model: model,
+				SourceID: req.SourceID, Action: req.Action, TestType: testType, Prompt: taskPrompt})
+		}
 	}
 	for _, id := range req.AccountIDs {
 		if !seen[id] {
@@ -204,7 +240,12 @@ func (h *PelicanBenchmarkHandler) Create(c *gin.Context) {
 		}
 	}
 	// Stable insertion order avoids reversed multi-account unique-index waits.
-	sort.Slice(tasks, func(i, j int) bool { return tasks[i].AccountID < tasks[j].AccountID })
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].AccountID == tasks[j].AccountID {
+			return tasks[i].TestType < tasks[j].TestType
+		}
+		return tasks[i].AccountID < tasks[j].AccountID
+	})
 	if len(tasks) > 0 {
 		created, skipped, err := h.store.Create(ctx, tasks)
 		if err != nil {
@@ -284,8 +325,11 @@ func (h *PelicanBenchmarkHandler) Detail(c *gin.Context) {
 	}
 	// gin.JSON escapes HTML. Never render this string through a template or
 	// expose a same-origin HTML document, including on the detail endpoint.
-	detail := dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML}
-	if result.Status == "succeeded" {
+	detail := dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML,
+		Prompt: benchmark.SnapshotPrompt(result.TestType, result.Prompt), TextOutput: result.TextOutput}
+	if detail.TestType == benchmark.TestCandy {
+		detail.HTML = ""
+	} else if result.Status == "succeeded" {
 		detail.PreviewHTML = benchmark.RepairPreviewHTML(result.HTML)
 		if detail.PreviewHTML != "" {
 			// Already-open clients only read html. Serve the same runnable preview

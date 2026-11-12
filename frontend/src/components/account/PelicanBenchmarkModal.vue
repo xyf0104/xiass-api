@@ -16,15 +16,40 @@
       <p v-if="busy" role="status" class="text-xs text-amber-700 dark:text-amber-300">{{ t(`${prefix}.${waitingForExit ? 'waitingForExit' : 'busy'}`) }}</p>
 
       <section :id="`pelican-panel-${tab}`" role="tabpanel" :aria-labelledby="`pelican-tab-${tab}`" :aria-busy="loading">
+        <div v-if="tab === 'new'" class="mb-4 space-y-3 border-b border-gray-200 pb-4 dark:border-dark-600">
+          <fieldset :disabled="busy" class="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-2">
+            <legend class="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ t(`${prefix}.testTypes`) }}</legend>
+            <label v-for="kind in testKinds" :key="kind" class="flex min-h-9 items-center gap-2 text-sm">
+              <input v-model="selectedTestTypes" type="checkbox" :value="kind" :data-testid="`test-type-${kind}`">
+              {{ t(`${prefix}.testNames.${kind}`) }}
+            </label>
+          </fieldset>
+          <div v-if="selectedTestTypes.includes('pelican')" class="space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <label for="intelligence-html-prompt" class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ t(`${prefix}.htmlPrompt`) }}</label>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-secondary min-h-9 !py-1 text-xs" :disabled="busy" data-testid="prompt-3d" @click="htmlPrompt = t(`${prefix}.threeDPrompt`)">{{ t(`${prefix}.threeDPreset`) }}</button>
+                <button type="button" class="btn btn-secondary min-h-9 !py-1 text-xs" :disabled="busy" data-testid="prompt-reset" @click="htmlPrompt = DEFAULT_PELICAN_PROMPT"><Icon name="refresh" size="sm" />{{ t(`${prefix}.resetPrompt`) }}</button>
+              </div>
+            </div>
+            <textarea id="intelligence-html-prompt" v-model="htmlPrompt" class="input min-h-24 w-full resize-y text-sm" rows="3" :disabled="busy" :aria-invalid="htmlPromptLength > maxPromptCharacters || undefined" aria-describedby="intelligence-prompt-length" data-testid="html-prompt" />
+            <p id="intelligence-prompt-length" class="text-right text-xs tabular-nums" :class="htmlPromptLength > maxPromptCharacters ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'" data-testid="prompt-length">{{ t(`${prefix}.promptLength`, { count: htmlPromptLength, max: maxPromptCharacters }) }}</p>
+          </div>
+          <details v-if="selectedTestTypes.includes('candy')" class="min-w-0 text-sm" data-testid="candy-problem">
+            <summary class="cursor-pointer py-1 font-medium text-gray-900 dark:text-gray-100">{{ t(`${prefix}.candyProblemTitle`) }}</summary>
+            <p class="mt-2 whitespace-pre-line text-gray-600 [overflow-wrap:anywhere] dark:text-gray-300">{{ t(`${prefix}.candyProblem`) }}</p>
+          </details>
+          <p v-if="settingsError" class="text-xs text-amber-700 dark:text-amber-300" role="status" data-testid="test-settings-error">{{ t(`${prefix}.${settingsError}`, { count: htmlPromptLength, max: maxPromptCharacters }) }}</p>
+        </div>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(`${prefix}.count`, { count: tab === 'new' ? accounts.length : tab === 'history' ? historyTotal : current.length }) }}</span>
           <div class="flex flex-wrap items-center gap-2">
             <template v-if="tab === 'new'">
               <label class="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="select-all" :checked="allSelected" :indeterminate="selectedStartable.length > 0 && !allSelected" :disabled="busy || loading || loadingModels.size > 0 || !ready || !startable.length" @change="selectAll(($event.target as HTMLInputElement).checked)">{{ t(`${prefix}.selectAll`) }}</label>
-              <button type="button" class="btn btn-primary" data-testid="start-selected" :disabled="!ready || busy || loading || !selectedStartable.length" @click="start(selectedStartable)"><Icon name="play" size="sm" />{{ t(`${prefix}.startSelected`, { count: selectedStartable.length }) }}</button>
+              <button type="button" class="btn btn-primary" data-testid="start-selected" :disabled="!testSettingsValid || !ready || busy || loading || !selectedStartable.length" @click="start(selectedStartable)"><Icon name="play" size="sm" />{{ t(`${prefix}.startSelected`, { count: selectedStartable.length }) }}</button>
             </template>
             <Select v-else-if="tab === 'current'" v-model="filters.current" class="w-32" :options="filterOptions" :aria-label="t(`${prefix}.filter`)" data-testid="result-filter" />
-            <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!ready || busy || loading || loadingModels.size > 0 || !startable.length" @click="start(startable)">
+            <button v-if="tab === 'new'" type="button" class="btn btn-primary" data-testid="start-all" :disabled="!testSettingsValid || !ready || busy || loading || loadingModels.size > 0 || !startable.length" @click="start(startable)">
               <Icon name="play" size="sm" />{{ t(`${prefix}.startAll`) }}
             </button>
             <button v-if="tab === 'current'" type="button" class="btn btn-secondary" data-testid="stop-all" :disabled="busy || !stoppable.length" @click="stop(stoppable, true)">
@@ -49,22 +74,23 @@
             </div>
             <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(account.plan_type) }}</span>
             <span class="run-status text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.status.${account.status}`) }}</span>
-            <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :loading="loadingModels.has(account.id)" :placeholder="loadingModels.has(account.id) ? t('common.loading') : t(`${prefix}.model`)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || loading || loadingModels.has(account.id) || isAccountRunning(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
+            <Select v-model="models[account.id]" class="model-select min-w-0" :options="modelOptions(account)" :loading="loadingModels.has(account.id)" :placeholder="loadingModels.has(account.id) ? t('common.loading') : t(`${prefix}.model`)" :aria-label="`${account.name}: ${t(`${prefix}.model`)}`" :disabled="busy || loading || loadingModels.has(account.id) || !hasAvailableTest(account.id) || !account.can_test" :data-testid="`model-${account.id}`" @pointerdown="loadModels(account)" @focusin="loadModels(account)" />
             <span class="hidden text-gray-400 lg:block">--</span><span class="hidden text-gray-400 lg:block">--</span>
-            <button type="button" class="row-action btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${canStart(account) ? 'start' : 'unavailable'}`)" :aria-label="`${account.name}: ${t(`${prefix}.start`)}`" :disabled="!ready || busy || loading || !canStart(account)" :data-testid="`start-${account.id}`" @click="start([account])"><Icon name="play" size="sm" /></button>
+            <button type="button" class="row-action btn btn-secondary h-11 w-11 !p-0" :title="t(`${prefix}.${canStart(account) ? 'start' : 'unavailable'}`)" :aria-label="`${account.name}: ${t(`${prefix}.start`)}`" :disabled="!testSettingsValid || !ready || busy || loading || !canStart(account)" :data-testid="`start-${account.id}`" @click="start([account])"><Icon name="play" size="sm" /></button>
           </div>
         </template>
         <template v-else>
-          <div v-for="run in rows" :key="tab === 'current' ? run.account_id : run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
+          <div v-for="run in rows" :key="run.id" class="border-b border-gray-100 dark:border-dark-700" :data-testid="`run-${run.id}`">
             <div class="benchmark-row grid items-center gap-2 py-2 text-sm">
-              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}</div>
+              <div class="account-name min-w-0 break-words font-medium text-gray-900 dark:text-gray-100">{{ run.account_name }}<span class="mt-1 block text-xs font-normal text-gray-500 dark:text-gray-400">{{ t(`${prefix}.testNames.${testType(run)}`) }}</span></div>
               <span class="plan-label text-xs font-semibold text-primary-700 dark:text-primary-300">{{ planLabel(accounts.find(account => account.id === run.account_id)?.plan_type ?? null) }}</span>
-              <span class="run-status min-w-0 text-xs" :class="statusClass(run.status)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
+              <span class="run-status min-w-0 text-xs" :class="statusClass(run)" :title="run.error_code ? errorLabel(run.error_code) : undefined">{{ t(`${prefix}.status.${run.status}`) }}</span>
               <span class="model-select min-w-0 break-all text-xs text-gray-700 dark:text-gray-300">{{ run.model }}</span>
               <time class="run-date min-w-0 break-words text-xs text-gray-500 dark:text-gray-400" :datetime="run.created_at">{{ formatDate(run.created_at) }}</time>
               <span class="run-duration text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ formatDuration(run) }}</span>
               <div class="row-action flex flex-col items-end gap-1">
                 <button v-if="active(run)" type="button" class="btn btn-secondary h-11 w-11 !p-0" :disabled="busy" :title="t(`${prefix}.stop`)" :aria-label="`${run.account_name}: ${t(`${prefix}.stop`)}`" :data-testid="`stop-${run.id}`" @click="stop([run])"><Icon name="xCircle" size="sm" /></button>
+                <CandyResult v-else-if="run.status === 'succeeded' && testType(run) === 'candy'" :run="run" />
                 <PelicanResultPreview v-else-if="run.status === 'succeeded' && run.html_bytes > 0" :id="run.id" :title="`${run.account_name}: ${t(`${prefix}.preview`)}`" />
                 <Icon v-else :name="run.status === 'failed' ? 'exclamationCircle' : 'clock'" size="sm" class="m-3 text-gray-400" :title="(run.error_code ? errorLabel(run.error_code) : '') || t(`${prefix}.status.${run.status}`)" />
                 <div v-if="tab === 'current' && followupAction(run)" class="flex items-center gap-1">
@@ -94,16 +120,43 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PelicanResultPreview from './PelicanResultPreview.vue'
+import CandyResult from './CandyResult.vue'
 import {
-  DEFAULT_PELICAN_MODEL, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
+  DEFAULT_PELICAN_MODEL, DEFAULT_PELICAN_PROMPT, getPelicanAccounts, getPelicanCurrent, getPelicanHistory,
   getPelicanModels, isPelicanTextModelCandidate, getPelicanResult, restartPelicanTest, startPelicanTests, stopPelicanTests, stopAllPelicanTests, PelicanPartialStartError,
-  type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkStatus, type PelicanBenchmarkSkipped
+  type PelicanBenchmarkAccount, type PelicanBenchmarkRun, type PelicanBenchmarkTestType, type PelicanBenchmarkSkipped
 } from '@/api/admin/pelicanBenchmark'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
 const { t, locale } = useI18n()
 const prefix = 'admin.accounts.pelicanBenchmark'
+const settingsKey = 'xiass:intelligence-test:settings:v1'
+const testKinds: PelicanBenchmarkTestType[] = ['pelican', 'candy']
+const selectedTestTypes = ref<PelicanBenchmarkTestType[]>(['pelican'])
+const htmlPrompt = ref(DEFAULT_PELICAN_PROMPT)
+try {
+  const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null')
+  if (saved && Array.isArray(saved.test_types) && saved.test_types.every((kind: unknown) => kind === 'pelican' || kind === 'candy')) {
+    selectedTestTypes.value = [...new Set<PelicanBenchmarkTestType>(saved.test_types)]
+  }
+  if (typeof saved?.prompt === 'string') htmlPrompt.value = saved.prompt
+} catch { /* Storage may be unavailable; defaults remain usable. */ }
+watch([selectedTestTypes, htmlPrompt], () => {
+  try {
+    localStorage.setItem(settingsKey, JSON.stringify({ test_types: selectedTestTypes.value, prompt: htmlPrompt.value }))
+  } catch { /* Settings persistence is optional. */ }
+}, { deep: true })
+const maxPromptCharacters = 8000
+// Match the backend's rune count; HTML maxlength counts UTF-16 units instead.
+const htmlPromptLength = computed(() => [...htmlPrompt.value].length)
+const settingsError = computed(() => {
+  if (!selectedTestTypes.value.length) return 'testRequired'
+  if (!selectedTestTypes.value.includes('pelican')) return ''
+  if (htmlPromptLength.value > maxPromptCharacters) return 'promptTooLong'
+  return htmlPrompt.value.trim().length ? '' : 'promptRequired'
+})
+const testSettingsValid = computed(() => !settingsError.value)
 const tabs = ['new', 'current', 'history'] as const
 type Tab = typeof tabs[number]
 const tab = ref<Tab>('new')
@@ -139,11 +192,14 @@ let modelQueue: { account: PelicanBenchmarkAccount; selection: string | undefine
 let activeModelRequests = 0
 
 const active = (run: PelicanBenchmarkRun) => ['queued', 'running', 'canceling'].includes(run.status)
-const canContinuePartial = (run: PelicanBenchmarkRun) => run.html_bytes > 0 && (run.status === 'interrupted' ||
+const testType = (run: PelicanBenchmarkRun) => run.test_type ?? 'pelican'
+const canContinuePartial = (run: PelicanBenchmarkRun) => testType(run) === 'pelican' && run.html_bytes > 0 && (run.status === 'interrupted' ||
   (run.status === 'failed' && ['upstream_incomplete', 'upstream_stream_error', 'timeout'].includes(run.error_code)))
-const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => run.status === 'canceled' || canContinuePartial(run) ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
-const isAccountRunning = (id: number) => current.value.some(run => run.account_id === id && active(run))
-const canStart = (account: PelicanBenchmarkAccount) => account.can_test && !isAccountRunning(account.id) && account.model_ids.includes(models.value[account.id])
+const followupAction = (run: PelicanBenchmarkRun): 'continue' | 'retry' | undefined => testType(run) === 'candy'
+  ? (!active(run) ? 'retry' : undefined)
+  : run.status === 'canceled' || canContinuePartial(run) ? 'continue' : run.status === 'failed' || run.status === 'interrupted' ? 'retry' : undefined
+const hasAvailableTest = (id: number) => selectedTestTypes.value.some(kind => !current.value.some(run => run.account_id === id && testType(run) === kind && active(run)))
+const canStart = (account: PelicanBenchmarkAccount) => account.can_test && hasAvailableTest(account.id) && account.model_ids.includes(models.value[account.id])
 const startable = computed(() => accounts.value.filter(canStart))
 const selectedStartable = computed(() => startable.value.filter(account => selectedIds.value.includes(account.id)))
 const allSelected = computed(() => startable.value.length > 0 && selectedStartable.value.length === startable.value.length)
@@ -154,7 +210,7 @@ function planRank(plan: string | null | undefined) {
   return ({ pro: 0, prolite: 1, plus: 2, team: 3 } as Record<string, number>)[normalized ?? ''] ?? 4
 }
 const sortedAccounts = computed(() => [...accounts.value].sort((a, b) => planRank(a.plan_type) - planRank(b.plan_type) || a.id - b.id))
-const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value.filter(run => !filters.value.current || run.status === filters.value.current))].sort((a, b) =>
+const rows = computed(() => [...(tab.value === 'history' ? history.value : current.value.filter(run => !filters.value.current || (run.status === 'succeeded' && (testType(run) !== 'candy' || run.passed === true))))].sort((a, b) =>
   planRank(accounts.value.find(item => item.id === a.account_id)?.plan_type) - planRank(accounts.value.find(item => item.id === b.account_id)?.plan_type)))
 const planLabel = (plan: string | null) => plan?.trim().toUpperCase() || '--'
 
@@ -218,20 +274,23 @@ async function fetchModels(account: PelicanBenchmarkAccount, selection: string |
 }
 
 function mergeCurrent(items: PelicanBenchmarkRun[]) {
-  current.value = uniqueAccounts([...current.value, ...items])
+  current.value = uniqueAccountTests([...current.value, ...items])
 }
 
-function uniqueAccounts(items: PelicanBenchmarkRun[]) {
-  const selected = new Map<number, PelicanBenchmarkRun>()
+function uniqueAccountTests(items: PelicanBenchmarkRun[]) {
+  const selected = new Map<string, PelicanBenchmarkRun>()
   for (const run of items) {
-    const old = selected.get(run.account_id)
+    const identity = `${run.account_id}:${testType(run)}`
+    const old = selected.get(identity)
     if (!old || old.id === run.id || run.source_id === old.id || (active(run) && !active(old)) ||
-      (active(run) === active(old) && old.source_id !== run.id && run.created_at > old.created_at)) selected.set(run.account_id, run)
+      (active(run) === active(old) && old.source_id !== run.id && run.created_at > old.created_at)) selected.set(identity, run)
   }
   return [...selected.values()]
 }
 
-function statusClass(status: PelicanBenchmarkStatus) {
+function statusClass(run: PelicanBenchmarkRun) {
+  const status = run.status
+  if (status === 'succeeded' && testType(run) === 'candy' && run.passed !== true) return run.passed === false ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'
   if (status === 'succeeded') return 'text-emerald-700 dark:text-emerald-400'
   if (status === 'failed') return 'text-red-600 dark:text-red-400'
   if (status === 'running') return 'text-primary-600 dark:text-primary-400'
@@ -280,7 +339,7 @@ async function loadCurrent(discover = false) {
   try {
     const result = await getPelicanCurrent(request.signal, [...new Set(current.value.map(run => run.batch_id))], discover)
     if (session !== ownSession || request.signal.aborted || version !== currentVersion) return false
-    current.value = uniqueAccounts(result.items)
+    current.value = uniqueAccountTests(result.items)
     schedulePoll()
     return true
   } catch (cause) {
@@ -372,10 +431,13 @@ async function mutate(operation: (signal: AbortSignal) => Promise<{ items: Pelic
 }
 
 async function start(selected: PelicanBenchmarkAccount[]) {
-  if (!ready.value || busy.value || loading.value) return
+  if (!ready.value || busy.value || loading.value || !testSettingsValid.value) return
   const tests = selected.filter(canStart).map(account => ({ account_id: account.id, model: models.value[account.id] }))
   if (!tests.length) return
-  await mutate(signal => startPelicanTests(tests, signal), 'startFailed')
+  const test_types = testKinds.filter(kind => selectedTestTypes.value.includes(kind))
+  const prompt = test_types.includes('pelican') && htmlPrompt.value !== DEFAULT_PELICAN_PROMPT ? htmlPrompt.value : undefined
+  const legacyDefaults = test_types.length === 1 && test_types[0] === 'pelican' && prompt === undefined
+  await mutate(signal => legacyDefaults ? startPelicanTests(tests, signal) : startPelicanTests(tests, signal, { test_types, ...(prompt === undefined ? {} : { prompt }) }), 'startFailed')
 }
 
 async function stop(selected: PelicanBenchmarkRun[], all = false) {
@@ -417,7 +479,7 @@ async function restart(run: PelicanBenchmarkRun, action: 'continue' | 'retry') {
       const snapshot = await getPelicanCurrent(signal, [...new Set(current.value.map(item => item.batch_id))], true)
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
       mergeCurrent(snapshot.items)
-      const pending = new Map(snapshot.items.filter(item => item.account_id === run.account_id && active(item)).map(item => [item.id, item]))
+      const pending = new Map(snapshot.items.filter(item => item.account_id === run.account_id && testType(item) === testType(run) && active(item)).map(item => [item.id, item]))
       const source = await getPelicanResult(run.id, signal)
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
       if (active(source)) pending.set(source.id, source)

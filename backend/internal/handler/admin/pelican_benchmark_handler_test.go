@@ -41,6 +41,7 @@ type pelicanHandlerStore struct {
 	stops         int
 	html          string
 	detailStatus  string
+	textOutput    string
 	source        *benchmark.Task
 	stopAccountID int64
 }
@@ -53,7 +54,103 @@ func (s *pelicanHandlerStore) List(context.Context, benchmark.Filter) (*benchmar
 	return &benchmark.Page{Items: []benchmark.Task{{ID: "test", AccountID: 1, ExecutionNodeID: "legacy", Status: "running", HTMLBytes: len(s.html)}}, Total: 1, Page: 1, PageSize: 100}, nil
 }
 func (s *pelicanHandlerStore) Detail(context.Context, string) (*benchmark.Detail, error) {
+	if s.source != nil {
+		return &benchmark.Detail{Task: *s.source, HTML: s.html, TextOutput: s.textOutput}, nil
+	}
 	return &benchmark.Detail{Task: benchmark.Task{ID: "test", ExecutionNodeID: "legacy", Status: s.detailStatus}, HTML: s.html}, nil
+}
+
+func TestIQHandlerCreatesBothTypesInOneBatchWithPromptSnapshots(t *testing.T) {
+	for _, selector := range []string{`"all":true`, `"account_ids":[7,7]`} {
+		store := &pelicanHandlerStore{}
+		h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{items: []*service.Account{
+			{ID: 7, Name: "test", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey},
+		}}}
+		w := pelicanHandlerRequest("POST", "/", `{`+selector+`,"models":{"7":"claude-opus-5-5"},"test_types":["pelican","candy"],"prompt":"custom 3D HTML"}`, h.Create, nil)
+		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+		require.Len(t, store.tasks, 2)
+		require.Equal(t, store.tasks[0].BatchID, store.tasks[1].BatchID)
+		require.NotEqual(t, store.tasks[0].ID, store.tasks[1].ID)
+		for _, task := range store.tasks {
+			require.EqualValues(t, 7, task.AccountID)
+			require.Equal(t, "claude-opus-5-5", task.Model)
+			require.Equal(t, benchmark.ResolvePrompt(task.TestType, "custom 3D HTML"), task.Prompt)
+		}
+		require.Contains(t, w.Body.String(), `"test_type":"candy"`)
+		require.Contains(t, w.Body.String(), `"test_type":"pelican"`)
+		require.Contains(t, w.Body.String(), `"answer":null`)
+		require.Contains(t, w.Body.String(), `"passed":null`)
+		require.NotContains(t, w.Body.String(), "custom 3D HTML")
+	}
+}
+
+func TestIQHandlerTestAndPromptValidation(t *testing.T) {
+	for _, extra := range []string{
+		`"test_types":[]`, `"test_types":["unknown"]`, `"test_types":["pelican","pelican"]`,
+		`"test_types":["pelican","candy","candy"]`, `"test_types":"candy"`,
+		`"prompt":"a\u0000b"`, `"prompt":42`, `"prompt":"` + strings.Repeat("糖", 8001) + `"`,
+	} {
+		h := &PelicanBenchmarkHandler{}
+		w := pelicanHandlerRequest("POST", "/", `{"account_ids":[7],`+extra+`}`, h.Create, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code, extra[:min(len(extra), 100)])
+	}
+	store := &pelicanHandlerStore{}
+	h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{items: []*service.Account{
+		{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+	}}}
+	w := pelicanHandlerRequest("POST", "/", `{"test_types":["candy"],"prompt":"ignored HTML prompt"}`, h.Create, gin.Params{{Key: "id", Value: "7"}})
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Len(t, store.tasks, 1)
+	require.Equal(t, benchmark.CandyPrompt, store.tasks[0].Prompt)
+	w = pelicanHandlerRequest("POST", "/", `{"prompt":"`+strings.Repeat("糖", 8000)+`"}`, h.Create, gin.Params{{Key: "id", Value: "7"}})
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Equal(t, strings.Repeat("糖", 8000), store.tasks[0].Prompt)
+}
+
+func TestIQHandlerFollowupInheritsTypePromptAndRejectsCandyContinue(t *testing.T) {
+	for _, testType := range []string{benchmark.TestCandy, benchmark.TestPelican} {
+		for _, action := range []string{"retry", "continue"} {
+			source := &benchmark.Task{ID: uuid.NewString(), AccountID: 7, Model: "claude-opus-5-5", Status: "failed", TestType: testType,
+				Prompt: "stored question snapshot"}
+			store := &pelicanHandlerStore{source: source}
+			h := &PelicanBenchmarkHandler{store: store, accounts: &pelicanHandlerAccounts{items: []*service.Account{
+				{ID: 7, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey},
+			}}}
+			w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+source.ID+`","action":"`+action+`"}`, h.Create, nil)
+			if testType == benchmark.TestCandy && action == "continue" {
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				require.Empty(t, store.tasks)
+			} else {
+				require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+				require.Len(t, store.tasks, 1)
+				require.Equal(t, source.TestType, store.tasks[0].TestType)
+				require.Equal(t, source.Prompt, store.tasks[0].Prompt)
+			}
+		}
+	}
+	for _, override := range []string{`,"test_types":["candy"]`, `,"test_types":[]`, `,"prompt":""`, `,"prompt":"new"`} {
+		w := pelicanHandlerRequest("POST", "/", `{"source_id":"`+uuid.NewString()+`","action":"retry"`+override+`}`, (&PelicanBenchmarkHandler{}).Create, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestIQHandlerCandyDetailDoesNotRepairOrExposeHTML(t *testing.T) {
+	answer, passed := 22, false
+	store := &pelicanHandlerStore{source: &benchmark.Task{ID: uuid.NewString(), TestType: benchmark.TestCandy, Status: "succeeded", Answer: &answer, Passed: &passed},
+		html: "<html>must not expose</html>", textOutput: "最终答案：22"}
+	h := &PelicanBenchmarkHandler{store: store}
+	w := pelicanHandlerRequest("GET", "/", "", h.Detail, gin.Params{{Key: "id", Value: store.source.ID}})
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, "", response.Data["html"])
+	require.NotContains(t, response.Data, "preview_html")
+	require.Equal(t, "最终答案：22", response.Data["text_output"])
+	require.Equal(t, benchmark.CandyPrompt, response.Data["prompt"])
+	require.Equal(t, float64(22), response.Data["answer"])
+	require.Equal(t, false, response.Data["passed"])
 }
 func (s *pelicanHandlerStore) Get(context.Context, string) (*benchmark.Task, error) {
 	if s.source != nil {
@@ -136,8 +233,8 @@ func TestPelicanHandlerCreateFiltersAndDefaults(t *testing.T) {
 	}
 }
 
-func TestPelicanHandlerRejectsPromptAndAmbiguousSelectors(t *testing.T) {
-	for _, body := range []string{`{"all":true,"prompt":"override"}`, `{"all":true,"account_ids":[1]}`, `{}`, `{"account_ids":[-1]}`, `{"all":true,"model":"invalid\nmodel"}`, `{"all":true} {}`, `null`} {
+func TestPelicanHandlerRejectsAmbiguousSelectors(t *testing.T) {
+	for _, body := range []string{`{"all":true,"account_ids":[1]}`, `{}`, `{"account_ids":[-1]}`, `{"all":true,"model":"invalid\nmodel"}`, `{"all":true} {}`, `null`} {
 		store := &pelicanHandlerStore{}
 		h := &PelicanBenchmarkHandler{store: store}
 		w := pelicanHandlerRequest("POST", "/", body, h.Create, nil)

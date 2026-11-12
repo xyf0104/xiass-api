@@ -16,10 +16,11 @@ import (
 
 type pelicanManagerStore struct {
 	Store
-	mu         sync.Mutex
-	status     string
-	finished   chan string
-	finishHTML string
+	mu           sync.Mutex
+	status       string
+	finished     chan string
+	finishHTML   string
+	finishOutput Output
 }
 
 func (s *pelicanManagerStore) Get(context.Context, string) (*Task, error) {
@@ -30,14 +31,15 @@ func (s *pelicanManagerStore) Get(context.Context, string) (*Task, error) {
 func (s *pelicanManagerStore) SetUpstreamModel(context.Context, string, string, string) error {
 	return nil
 }
-func (s *pelicanManagerStore) Finish(_ context.Context, _, _, status, _, html string) error {
+func (s *pelicanManagerStore) Finish(_ context.Context, _, _, status string, output Output) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.status == "canceling" {
 		status = "canceled"
 	}
 	s.status = status
-	s.finishHTML = html
+	s.finishHTML = output.HTML
+	s.finishOutput = output
 	s.finished <- status
 	return nil
 }
@@ -207,7 +209,7 @@ func (s *pelicanTransientStore) Get(context.Context, string) (*Task, error) {
 	return &task, nil
 }
 
-func (s *pelicanTransientStore) Finish(_ context.Context, _, _, status, _, html string) error {
+func (s *pelicanTransientStore) Finish(_ context.Context, _, _, status string, output Output) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.finishAttempts++
@@ -215,10 +217,10 @@ func (s *pelicanTransientStore) Finish(_ context.Context, _, _, status, _, html 
 		return s.finishErr
 	}
 	if s.status == "canceling" {
-		s.status, s.finishHTML = "canceled", html
+		s.status, s.finishHTML = "canceled", output.HTML
 		return nil
 	}
-	s.status, s.finishHTML = status, html
+	s.status, s.finishHTML = status, output.HTML
 	return nil
 }
 
@@ -350,7 +352,7 @@ func (s *pelicanDispatchStore) Get(_ context.Context, id string) (*Task, error) 
 	return nil, ErrNotFound
 }
 
-func (s *pelicanDispatchStore) Finish(_ context.Context, id, owner, status, _, _ string) error {
+func (s *pelicanDispatchStore) Finish(_ context.Context, id, owner, status string, _ Output) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.owners[id] != owner {

@@ -112,11 +112,19 @@ func pelicanMessages(ctx context.Context, responses bool) []map[string]any {
 		}
 		return map[string]any{"role": role, "content": content}
 	}
-	messages := []map[string]any{message("user", benchmark.Prompt)}
+	messages := []map[string]any{message("user", benchmark.RequestPrompt(ctx))}
 	if previous, ok := benchmark.Continuation(ctx); ok {
 		messages = append(messages, message("assistant", previous), message("user", "继续"))
 	}
 	return messages
+}
+
+func pelicanInstructions(ctx context.Context) string {
+	testType, _, _ := benchmark.TestFromContext(ctx)
+	if testType == benchmark.TestCandy {
+		return "Solve the requested problem. End with the final answer in the format requested by the user."
+	}
+	return "Return only the requested HTML document."
 }
 
 func (s *AccountTestService) pelicanError(c *gin.Context, code string) error {
@@ -194,6 +202,13 @@ func PelicanBenchmarkEligibility(account *Account, model string) string {
 }
 
 func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID int64, model string, beforeSend func(string) error) (benchmark.Output, error) {
+	testType, prompt, err := benchmark.TestFromContext(ctx)
+	if err != nil {
+		return benchmark.Output{ErrorCode: "invalid_test"}, err
+	}
+	if _, continuing := benchmark.Continuation(ctx); testType == benchmark.TestCandy && continuing {
+		return benchmark.Output{ErrorCode: "invalid_continuation_source"}, errors.New("candy tests cannot continue HTML")
+	}
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return benchmark.Output{ErrorCode: "account_unavailable"}, errors.New("account_unavailable")
@@ -227,13 +242,26 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 	c.Request = c.Request.WithContext(context.WithValue(ctx, pelicanContextKey{}, probe))
 	// Call the existing protocol adapters, bypassing TestAccountConnection's
 	// last_used write and the admin handler's scheduling recovery.
-	err = s.testAccountProtocolConnection(c, &local, model, benchmark.Prompt, AccountTestModeDefault)
-	text := pelicanUnwrapHTML(capture.text.String())
-	if !pelicanCompleteHTML(text) {
-		text = pelicanUnwrapHTML(pelicanUnwrapHTML(previous) + text)
+	err = s.testAccountProtocolConnection(c, &local, model, prompt, AccountTestModeDefault)
+	text := capture.text.String()
+	if testType != benchmark.TestCandy {
+		text = pelicanUnwrapHTML(text)
+		if !pelicanCompleteHTML(text) {
+			text = pelicanUnwrapHTML(pelicanUnwrapHTML(previous) + text)
+		}
+	}
+	output := benchmark.Output{}
+	if testType == benchmark.TestCandy {
+		output.TextOutput = pelicanBoundedText(text)
+	} else {
+		output.HTML = pelicanBoundedText(text)
 	}
 	if capture.tooLarge || len(text) > benchmark.MaxHTMLBytes {
-		return benchmark.Output{HTML: pelicanBoundedText(text), ErrorCode: "html_too_large"}, benchmark.ErrTooLarge
+		output.ErrorCode = "html_too_large"
+		if testType == benchmark.TestCandy {
+			output.ErrorCode = "text_too_large"
+		}
+		return output, benchmark.ErrTooLarge
 	}
 	if err != nil || !capture.complete || capture.failed {
 		code := probe.errorCode
@@ -243,7 +271,11 @@ func (s *AccountTestService) RunPelicanBenchmark(ctx context.Context, accountID 
 				code = "upstream_failed"
 			}
 		}
-		return benchmark.Output{HTML: text, ErrorCode: code, ErrorMessage: probe.errorMessage}, errors.New(code)
+		output.ErrorCode, output.ErrorMessage = code, probe.errorMessage
+		return output, errors.New(code)
+	}
+	if testType == benchmark.TestCandy {
+		return output, nil
 	}
 	html := pelicanUnwrapHTML(text)
 	if !pelicanCompleteHTML(html) {

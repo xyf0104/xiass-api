@@ -156,6 +156,63 @@ describe('Pelican benchmark backend contract', () => {
     expect(post).toHaveBeenCalledExactlyOnceWith('/admin/accounts/1/pelican-benchmark', { model: 'gpt-6-astra' }, { signal })
   })
 
+  it('submits both test kinds in one account request and returns both results unchanged', async () => {
+    const tasks = [task({ test_type: 'pelican' }), task({ id: 'candy-1', test_type: 'candy' })]
+    post.mockResolvedValue({ data: { batch_id: 'batch-1', tasks, skipped: [] } })
+    const signal = new AbortController().signal
+    const result = await startPelicanTests([{ account_id: 1, model: 'gpt-6-astra' }], signal, { test_types: ['pelican', 'candy'], prompt: 'Make a 3D animated HTML using window.THREE.' })
+    expect(result.items).toEqual(tasks)
+    expect(post).toHaveBeenCalledExactlyOnceWith('/admin/accounts/1/pelican-benchmark', {
+      model: 'gpt-6-astra', test_types: ['pelican', 'candy'], prompt: 'Make a 3D animated HTML using window.THREE.'
+    }, { signal })
+  })
+
+  it('preserves test options and partial results across mixed-model batches', async () => {
+    const tasks = [task({ test_type: 'pelican' }), task({ id: 'candy', test_type: 'candy' })]
+    post.mockResolvedValueOnce({ data: { batch_id: 'batch-1', tasks, skipped: [{ account_id: 3, reason: 'already_running' }] } })
+      .mockRejectedValueOnce({ status: 503 })
+    const options = { test_types: ['pelican', 'candy'] as ('pelican' | 'candy')[], prompt: 'Custom HTML scene' }
+    const error = await startPelicanTests([
+      { account_id: 1, model: 'gpt-6-astra' }, { account_id: 2, model: 'claude-opus-5-5' }, { account_id: 3, model: 'gpt-6-astra' }
+    ], undefined, options).catch(error => error)
+    expect(error).toBeInstanceOf(PelicanPartialStartError)
+    expect(error.items).toEqual(tasks)
+    expect(error.skipped).toEqual([{ account_id: 3, reason: 'already_running' }])
+    expect(error.cause).toEqual({ status: 503 })
+    expect(post.mock.calls.map(([, body]) => body)).toEqual([
+      { account_ids: [1, 3], model: 'gpt-6-astra', ...options },
+      { account_ids: [2], model: 'claude-opus-5-5', ...options }
+    ])
+  })
+
+  it('never sends an HTML prompt or an expected answer with a candy-only request', async () => {
+    post.mockResolvedValue({ data: { batch_id: 'batch-1', tasks: [], skipped: [] } })
+    await startPelicanTests([{ account_id: 1, model: 'gpt-6-astra' }], undefined, { test_types: ['candy'], prompt: 'Old HTML draft' })
+    expect(post).toHaveBeenCalledExactlyOnceWith('/admin/accounts/1/pelican-benchmark', { model: 'gpt-6-astra', test_types: ['candy'] }, { signal: undefined })
+  })
+
+  it('stops dispatching new batches on cancellation while retaining accepted tasks of both types', async () => {
+    const controller = new AbortController()
+    const tasks = [task(), task({ id: 'candy', test_type: 'candy' })]
+    post.mockImplementationOnce(async () => {
+      controller.abort()
+      return { data: { tasks, skipped: [] } }
+    })
+    const error = await startPelicanTests([{ account_id: 1, model: 'gpt-6-astra' }, { account_id: 2, model: 'claude-opus-5-5' }], controller.signal, { test_types: ['pelican', 'candy'] }).catch(error => error)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(error).toBeInstanceOf(PelicanPartialStartError)
+    expect(error.items).toEqual(tasks)
+    expect(error.cause.name).toBe('AbortError')
+  })
+
+  it('keeps completed wrong candy answers in history and preserves detail fields', async () => {
+    const wrong = task({ test_type: 'candy', status: 'succeeded', answer: 23, passed: false })
+    get.mockResolvedValueOnce({ data: { items: [wrong], total: 1, page: 1, page_size: 20 } })
+      .mockResolvedValueOnce({ data: { ...wrong, html: '', prompt: 'Fixed candy problem', text_output: 'Final answer: 23' } })
+    expect((await getPelicanHistory()).items).toEqual([wrong])
+    expect(await getPelicanResult(wrong.id)).toEqual({ ...wrong, html: '', prompt: 'Fixed candy problem', text_output: 'Final answer: 23' })
+  })
+
   it('groups per-account models into the server account_ids/model contract and retains skipped outcomes', async () => {
     post.mockResolvedValueOnce({ data: { batch_id: 'batch-1', tasks: [task()], skipped: [{ account_id: 3, reason: 'account_access_denied' }] } })
       .mockResolvedValueOnce({ data: { batch_id: 'batch-2', tasks: [task({ id: 'task-2', batch_id: 'batch-2', account_id: 2, model: 'gpt-5.6-luna' })], skipped: [] } })

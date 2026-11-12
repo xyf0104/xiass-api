@@ -20,6 +20,8 @@ afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount())
   document.querySelectorAll('script[data-test-nonce]').forEach(script => script.remove())
   vi.clearAllMocks()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
@@ -46,7 +48,8 @@ describe('PelicanResultPreview', () => {
     const wrapper = await render(html, '<html><script>const point = { x:1 };</script></html>')
     expect(wrapper.get('iframe').attributes('srcdoc')).toContain('const point = { x:1 };')
     expect((await api.getPelicanResult.mock.results.at(-1)!.value).html).toBe(html)
-    expect(wrapper.get('[data-testid="result-thumbnail"]').element.children).toHaveLength(1)
+    expect(wrapper.get('[data-testid="result-thumbnail"]').findAll('iframe')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="enlarge-preview"]').exists()).toBe(true)
   })
 
   it.each(['', ' \n\t'])('uses original HTML for an empty repaired preview (%j)', async previewHTML => {
@@ -106,6 +109,93 @@ describe('PelicanResultPreview', () => {
     const active = api.getPelicanResult.mock.calls.at(-1)![1] as AbortSignal
     wrapper.unmount()
     expect(active.aborted).toBe(true)
+  })
+
+  it('enlarges the prepared HTML without refetching or replacing the live thumbnail', async () => {
+    const wrapper = await render('<html><body><canvas id="scene"></canvas><script>window.drawn=true</script></body></html>')
+    const original = wrapper.get('[data-testid="result-preview"]').element
+    await wrapper.get('[data-testid="enlarge-preview"]').trigger('click')
+    await flushPromises()
+    const large = document.querySelector<HTMLIFrameElement>('[data-testid="enlarged-preview"]')!
+    expect(large).not.toBeNull()
+    expect(large.sandbox?.value ?? large.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(large.srcdoc).toContain('id="scene"')
+    expect(large.srcdoc).not.toContain('function sizePreview')
+    expect(wrapper.get('[data-testid="result-preview"]').element).toBe(original)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens a sandboxed standalone HTML tab with no opener and downloads the same document', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const blobs: Blob[] = []
+    const revoke = vi.fn()
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL(blob: Blob) { blobs.push(blob); return 'blob:isolated-preview' }
+      static revokeObjectURL = revoke
+    })
+    const tab = { opener: window, location: { replace: vi.fn() } }
+    vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const wrapper = await render('<html><body><h1>Animated result</h1><script>requestAnimationFrame(()=>{})</script></body></html>')
+    await wrapper.get('[data-testid="open-preview"]').trigger('click')
+    expect(tab.opener).toBeNull()
+    expect(tab.location.replace).toHaveBeenCalledWith('blob:isolated-preview')
+    await wrapper.get('[data-testid="download-preview"]').trigger('click')
+    expect(click).toHaveBeenCalledTimes(1)
+    const anchor = click.mock.instances[0] as HTMLAnchorElement
+    expect(anchor.download).toBe('xiass-test-result.html')
+    expect(anchor.isConnected).toBe(false)
+    expect(blobs).toHaveLength(2)
+    const read = (blob: Blob) => new Promise<string>(resolve => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsText(blob)
+    })
+    const first = await read(blobs[0])
+    expect(await read(blobs[1])).toBe(first)
+    const doc = new DOMParser().parseFromString(first, 'text/html')
+    expect(doc.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(doc.querySelector('iframe')?.getAttribute('srcdoc')).toContain('Animated result')
+    expect(doc.querySelectorAll('script')).toHaveLength(0)
+    expect(revoke).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(revoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a blocked browser tab and keeps download available', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    const wrapper = await render('<html><body>Result</body></html>')
+    await wrapper.get('[data-testid="open-preview"]').trigger('click')
+    expect(wrapper.get('[role="alert"]').text()).toContain('popupBlocked')
+    expect(wrapper.get('[data-testid="download-preview"]').exists()).toBe(true)
+  })
+
+  it('limits offscreen 3D contexts without delaying ordinary HTML or refetching results', async () => {
+    const callbacks: IntersectionObserverCallback[] = []
+    const disconnect = vi.fn()
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) { callbacks.push(callback) }
+      observe() {}
+      disconnect = disconnect
+    })
+    const ordinary = await render('<html><body>Immediate HTML</body></html>')
+    expect(ordinary.get('iframe').attributes('srcdoc')).toContain('Immediate HTML')
+    const three = await render('<html><body><script>const scene=new THREE.Scene()</script></body></html>')
+    await vi.waitFor(() => expect(three.find('[data-testid="enlarge-preview"]').exists()).toBe(true))
+    expect(three.find('iframe').exists()).toBe(false)
+    const notify = (visible: boolean) => callbacks.at(-1)!([{ isIntersecting: visible } as IntersectionObserverEntry], {} as IntersectionObserver)
+    notify(true)
+    await flushPromises()
+    expect(three.get('iframe').attributes('srcdoc')).toContain('window.THREE=exports')
+    notify(false)
+    await flushPromises()
+    expect(three.find('iframe').exists()).toBe(false)
+    notify(true)
+    await flushPromises()
+    expect(three.find('iframe').exists()).toBe(true)
+    expect(api.getPelicanResult).toHaveBeenCalledTimes(2)
+    three.unmount()
+    expect(disconnect).toHaveBeenCalled()
   })
 })
 

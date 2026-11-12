@@ -18,7 +18,7 @@ const (
 
 var (
 	ErrNotFound  = errors.New("benchmark not found")
-	ErrBusy      = errors.New("account already has an active benchmark")
+	ErrBusy      = errors.New("account already has an active benchmark of this type")
 	ErrTooLarge  = errors.New("benchmark HTML exceeds 1 MiB")
 	ErrStopped   = errors.New("benchmark no longer running")
 	modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+\[\]-]{0,199}$`)
@@ -34,13 +34,17 @@ func ValidStatus(status string) bool {
 	return false
 }
 
-// Task intentionally cannot serialize HTML. Only Detail exposes the untrusted text.
+// Task cannot serialize prompts or generated output. Detail DTOs expose that text.
 type Task struct {
 	ID              string     `json:"id"`
 	BatchID         string     `json:"batch_id"`
 	AccountID       int64      `json:"account_id"`
 	AccountName     string     `json:"account_name"`
 	Model           string     `json:"model"`
+	TestType        string     `json:"test_type"`
+	Answer          *int       `json:"answer"`
+	Passed          *bool      `json:"passed"`
+	Prompt          string     `json:"-"`
 	ExecutionNodeID string     `json:"execution_node_id"`
 	SourceID        string     `json:"source_id"`
 	Action          string     `json:"action"`
@@ -58,7 +62,8 @@ type Task struct {
 
 type Detail struct {
 	Task
-	HTML string `json:"html"`
+	HTML       string `json:"html"`
+	TextOutput string `json:"text_output"`
 }
 
 type Filter struct {
@@ -87,7 +92,7 @@ type Created struct {
 	Skipped []Skipped `json:"skipped"`
 }
 
-// Store transitions and its active-account unique index are the authority,
+// Store transitions and its active account/test-type index are the authority,
 // including when the admin request and the runner use different processes.
 type Store interface {
 	Create(context.Context, []Task) ([]Task, []Skipped, error)
@@ -96,25 +101,15 @@ type Store interface {
 	Detail(context.Context, string) (*Detail, error)
 	List(context.Context, Filter) (*Page, error)
 	SetUpstreamModel(context.Context, string, string, string) error
-	Finish(context.Context, string, string, string, string, string) error
+	Finish(context.Context, string, string, string, Output) error
 	Stop(context.Context, string, int64) (int64, error)
 }
 
 type Output struct {
 	HTML         string
+	TextOutput   string
 	ErrorCode    string
 	ErrorMessage string
-}
-
-type errorMessageKey struct{}
-
-func WithErrorMessage(ctx context.Context, message string) context.Context {
-	return context.WithValue(ctx, errorMessageKey{}, message)
-}
-
-func ErrorMessage(ctx context.Context) string {
-	message, _ := ctx.Value(errorMessageKey{}).(string)
-	return message
 }
 
 type Runner interface {

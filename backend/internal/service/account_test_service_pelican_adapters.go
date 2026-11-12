@@ -246,9 +246,9 @@ func (s *AccountTestService) testPelicanAntigravityConnection(c *gin.Context, a 
 	}
 	var body []byte
 	if strings.HasPrefix(model, "gemini-") {
-		body, err = gateway.buildGeminiTestRequestWithPrompt(project, mapped, benchmark.Prompt)
+		body, err = gateway.buildGeminiTestRequestWithPrompt(project, mapped, benchmark.RequestPrompt(ctx))
 	} else {
-		body, err = gateway.buildClaudeTestRequestWithPrompt(project, mapped, benchmark.Prompt)
+		body, err = gateway.buildClaudeTestRequestWithPrompt(project, mapped, benchmark.RequestPrompt(ctx))
 	}
 	if err != nil {
 		return s.pelicanError(c, "invalid_request")

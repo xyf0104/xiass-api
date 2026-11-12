@@ -31,10 +31,10 @@ function sizePreview() {
   })
 }
 
-export function buildPelicanPreviewDocument(html: string): string {
+export function buildPelicanPreviewDocument(html: string, options: { fit?: boolean; nonce?: string } = {}): string {
   // srcdoc inherits the panel's nonce policy. Authorize inline scripts inside
   // this isolated document, without relaxing the panel or allowing external JS.
-  const nonce = document.querySelector<HTMLScriptElement>('script[nonce]')?.nonce || ''
+  const nonce = options.nonce ?? (document.querySelector<HTMLScriptElement>('script[nonce]')?.nonce || '')
   const preview = new DOMParser().parseFromString(`<meta http-equiv="Content-Security-Policy" content="${policy}">${html}`, 'text/html')
   for (const script of preview.querySelectorAll('script')) {
     script.removeAttribute('nonce')
@@ -68,6 +68,27 @@ export function buildPelicanPreviewDocument(html: string): string {
     else if (adjacentScriptElements.has(element.tagName)) element.after(script)
     else element.prepend(script)
   }
-  preview.body.appendChild(createScript(`(${sizePreview.toString()})();`))
+  if (options.fit !== false) preview.body.appendChild(createScript(`(${sizePreview.toString()})();`))
   return `<!doctype html>${preview.documentElement.outerHTML}`
+}
+
+/** Open with noopener/noreferrer; never open raw generated HTML on the app origin. */
+export function buildPelicanStandaloneDocument(html: string, title: string): string {
+  const nonce = document.querySelector<HTMLScriptElement>('script[nonce]')?.nonce || ''
+  const outerPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src about:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';"
+  const outer = new DOMParser().parseFromString(`<meta http-equiv="Content-Security-Policy" content="${outerPolicy}"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">`, 'text/html')
+  const titleElement = outer.createElement('title')
+  titleElement.textContent = title
+  outer.head.appendChild(titleElement)
+  const style = outer.createElement('style')
+  style.textContent = 'html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;border:0;width:100%;height:100%}'
+  outer.head.appendChild(style)
+  const frame = outer.createElement('iframe')
+  frame.setAttribute('sandbox', 'allow-scripts')
+  frame.setAttribute('referrerpolicy', 'no-referrer')
+  frame.setAttribute('title', title)
+  // Blob tabs inherit the app CSP; a downloaded file simply ignores this nonce.
+  frame.setAttribute('srcdoc', buildPelicanPreviewDocument(html, { fit: false, nonce }))
+  outer.body.appendChild(frame)
+  return `<!doctype html>${outer.documentElement.outerHTML}`
 }

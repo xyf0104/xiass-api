@@ -11,7 +11,8 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
  * GET /admin/pelican-benchmarks/:id: Task + untrusted html; successful rows auto-load
  * sandboxed thumbnails. Follow-up actions also read detail to confirm task termination.
  * POST /admin/pelican-benchmarks/:id/stop: Task; POST /.../stop: { all: true } -> { affected }.
- * Standard admin auth/response envelope, server-owned prompt/queue/cancellation.
+ * Standard admin auth/response envelope, server-owned queue/cancellation and candy prompt.
+ * New requests may select test_types and override the HTML prompt; legacy defaults remain unchanged.
  * No separate candidates/current/result routes: use the existing redacted account list
  * and model endpoint. Current rows are active batches or batches started in this modal.
  * Per-account model choices are grouped into bounded create requests. Partial outcomes
@@ -21,6 +22,7 @@ import type { Account, ClaudeModel, PaginatedResponse } from '@/types'
  */
 // Preserve the OpenAI preference only when the account's catalog includes it.
 export const DEFAULT_PELICAN_MODEL = 'gpt-6-astra'
+export const DEFAULT_PELICAN_PROMPT = '创建一个HTML，内容是用SVG绘制一个鹈鹕骑自行车的2D动画，你不能进行任何测试，调用skills，网络检索，直接生成'
 
 export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | 'status' | 'platform' | 'type'> {
   plan_type: string | null
@@ -29,8 +31,17 @@ export interface PelicanBenchmarkAccount extends Pick<Account, 'id' | 'name' | '
 }
 
 export type PelicanBenchmarkStatus = 'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
+export type PelicanBenchmarkTestType = 'pelican' | 'candy'
+
+export interface PelicanBenchmarkOptions {
+  test_types?: PelicanBenchmarkTestType[]
+  prompt?: string
+}
 
 export interface PelicanBenchmarkRun {
+  test_type?: PelicanBenchmarkTestType
+  answer?: number | null
+  passed?: boolean | null
   source_id?: string
   action?: 'continue' | 'retry' | ''
   id: string
@@ -48,6 +59,13 @@ export interface PelicanBenchmarkRun {
   duration_ms: number | null
   html_bytes: number
   thumbnail_url: string | null
+}
+
+export interface PelicanBenchmarkDetail extends PelicanBenchmarkRun {
+  html: string
+  preview_html?: string
+  prompt?: string
+  text_output?: string
 }
 
 export interface PelicanBenchmarkSnapshot { items: PelicanBenchmarkRun[] }
@@ -155,10 +173,13 @@ export async function getPelicanCurrent(signal?: AbortSignal, batchIds: string[]
   return { items: [...items.values()].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)) }
 }
 
-export async function startPelicanTests(tests: PelicanBenchmarkTest[], signal?: AbortSignal): Promise<PelicanBenchmarkSnapshot & { skipped: PelicanBenchmarkSkipped[] }> {
+export async function startPelicanTests(tests: PelicanBenchmarkTest[], signal?: AbortSignal, options?: PelicanBenchmarkOptions): Promise<PelicanBenchmarkSnapshot & { skipped: PelicanBenchmarkSkipped[] }> {
   const items: PelicanBenchmarkRun[] = []
   const skipped: PelicanBenchmarkSkipped[] = []
   const groups = new Map<string, number[]>()
+  const configuration: PelicanBenchmarkOptions = {}
+  if (options?.test_types !== undefined) configuration.test_types = [...new Set(options.test_types)]
+  if (options?.prompt !== undefined && (!configuration.test_types || configuration.test_types.includes('pelican'))) configuration.prompt = options.prompt
   for (const test of tests) {
     const ids = groups.get(test.model) || []
     ids.push(test.account_id)
@@ -167,9 +188,11 @@ export async function startPelicanTests(tests: PelicanBenchmarkTest[], signal?: 
   try {
     for (const [model, ids] of groups) {
       for (let offset = 0; offset < ids.length; offset += 2000) {
+        signal?.throwIfAborted()
         const account_ids = ids.slice(offset, offset + 2000)
         const single = tests.length === 1
-        const { data } = await apiClient.post<PelicanBenchmarkCreated>(single ? `/admin/accounts/${account_ids[0]}/pelican-benchmark` : base, single ? { model } : { account_ids, model }, { signal })
+        const body = single ? { model, ...configuration } : { account_ids, model, ...configuration }
+        const { data } = await apiClient.post<PelicanBenchmarkCreated>(single ? `/admin/accounts/${account_ids[0]}/pelican-benchmark` : base, body, { signal })
         items.push(...data.tasks)
         skipped.push(...data.skipped)
       }
@@ -203,7 +226,7 @@ export async function getPelicanHistory(page = 1, signal?: AbortSignal, status?:
   return { ...data, pages: Math.ceil(data.total / data.page_size) }
 }
 
-export async function getPelicanResult(id: string, signal?: AbortSignal): Promise<PelicanBenchmarkRun & { html: string; preview_html?: string }> {
-  const { data } = await apiClient.get<PelicanBenchmarkRun & { html: string; preview_html?: string }>(`${base}/${encodeURIComponent(id)}`, { signal })
+export async function getPelicanResult(id: string, signal?: AbortSignal): Promise<PelicanBenchmarkDetail> {
+  const { data } = await apiClient.get<PelicanBenchmarkDetail>(`${base}/${encodeURIComponent(id)}`, { signal })
   return data
 }

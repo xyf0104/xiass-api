@@ -216,13 +216,17 @@ func (m *Manager) run(task *Task) {
 	if len(output.HTML) > MaxHTMLBytes {
 		status, code, output.HTML = "failed", "html_too_large", ""
 	}
-	m.finish(task.ID, status, code, output.HTML, output.ErrorMessage)
+	if len(output.TextOutput) > MaxHTMLBytes {
+		status, code, output.TextOutput = "failed", "text_too_large", ""
+	}
+	output.ErrorCode = code
+	m.finish(task.ID, status, output)
 }
 
 // finish retries only the terminal database write. The upstream call has
 // already returned, so this cannot create another request or release the
 // account guard before the store acknowledges the transition.
-func (m *Manager) finish(id, status, code, html, message string) {
+func (m *Manager) finish(id, status string, output Output) {
 	delay := finishRetryInitialDelay
 	shutdownAttempt := false
 	for {
@@ -233,7 +237,7 @@ func (m *Manager) finish(id, status, code, html, message string) {
 			finishParent = context.Background()
 		}
 		finishCtx, finishCancel := context.WithTimeout(finishParent, finishAttemptTimeout)
-		err := m.store.Finish(WithErrorMessage(finishCtx, message), id, m.owner, status, code, html)
+		err := m.store.Finish(finishCtx, id, m.owner, status, output)
 		finishCancel()
 		if err == nil {
 			return
@@ -276,14 +280,23 @@ func (m *Manager) invoke(ctx context.Context, task *Task) (out Output, err error
 			err = errors.New("benchmark runner panic")
 		}
 	}()
+	testType := NormalizeTestType(task.TestType)
+	if !ValidTestType(testType) || !ValidPrompt(task.Prompt) {
+		return Output{ErrorCode: "invalid_test"}, errors.New("invalid benchmark test or prompt")
+	}
+	ctx = WithTest(ctx, testType, task.Prompt)
 	if task.Action == "continue" {
+		if testType == TestCandy {
+			return Output{ErrorCode: "invalid_continuation_source"}, errors.New("candy tests cannot continue HTML")
+		}
 		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		detail, err := m.store.Detail(readCtx, task.SourceID)
 		cancel()
 		if err != nil {
 			return Output{ErrorCode: "continuation_source_unavailable"}, err
 		}
-		if detail == nil || task.SourceID == "" || detail.AccountID != task.AccountID || !ValidStatus(detail.Status) ||
+		if detail == nil || task.SourceID == "" || detail.AccountID != task.AccountID || NormalizeTestType(detail.TestType) != testType ||
+			SnapshotPrompt(testType, detail.Prompt) != SnapshotPrompt(testType, task.Prompt) || !ValidStatus(detail.Status) ||
 			detail.Status == "queued" || detail.Status == "running" || detail.Status == "canceling" || len(detail.HTML) > MaxHTMLBytes {
 			return Output{ErrorCode: "invalid_continuation_source"}, errors.New("invalid benchmark continuation source")
 		}

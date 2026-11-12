@@ -1,7 +1,24 @@
-import { defineConfig, loadEnv, Plugin } from 'vite'
+import { defineConfig, loadEnv, Plugin, transformWithEsbuild } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
+import { readFile } from 'node:fs/promises'
+
+function minifyPelicanThreeRuntime(): Plugin {
+  return {
+    name: 'pelican-three-runtime',
+    enforce: 'pre',
+    apply: 'build',
+    async load(id) {
+      if (!id.endsWith('/three/build/three.cjs?raw')) return
+      const source = await readFile(id.slice(0, -4), 'utf8')
+      const result = await transformWithEsbuild(source, 'three.cjs', {
+        loader: 'js', minify: true, target: 'es2020', legalComments: 'inline'
+      })
+      return `export default ${JSON.stringify(result.code)};`
+    }
+  }
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -85,6 +102,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      minifyPelicanThreeRuntime(),
       vue(),
       checker({
         vueTsc: true
@@ -113,6 +131,8 @@ export default defineConfig(({ mode }) => {
          * 分离第三方库并按功能合并应用代码，避免循环依赖
          */
         manualChunks(id: string) {
+          // Keep the optional source string out of eagerly loaded vendor code.
+          if (id.endsWith('/three/build/three.cjs?raw')) return 'pelican-three-runtime'
           if (id.includes('node_modules')) {
             // Vue 核心库
             if (

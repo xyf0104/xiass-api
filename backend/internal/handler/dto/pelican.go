@@ -13,6 +13,9 @@ type PelicanTask struct {
 	AccountID     int64      `json:"account_id"`
 	AccountName   string     `json:"account_name"`
 	Model         string     `json:"model"`
+	TestType      string     `json:"test_type"`
+	Answer        *int       `json:"answer"`
+	Passed        *bool      `json:"passed"`
 	SourceID      string     `json:"source_id"`
 	Action        string     `json:"action"`
 	UpstreamModel string     `json:"upstream_model"`
@@ -31,6 +34,8 @@ type PelicanDetail struct {
 	PelicanTask
 	HTML        string `json:"html"`
 	PreviewHTML string `json:"preview_html,omitempty"`
+	Prompt      string `json:"prompt"`
+	TextOutput  string `json:"text_output"`
 }
 
 func PelicanTaskFromService(task benchmark.Task) PelicanTask {
@@ -41,6 +46,7 @@ func PelicanTaskFromService(task benchmark.Task) PelicanTask {
 		ErrorCode: task.ErrorCode, ErrorMessage: task.ErrorMessage, CreatedAt: task.CreatedAt,
 		StartedAt: task.StartedAt, FinishedAt: task.FinishedAt, DurationMS: task.DurationMS,
 		HTMLBytes: task.HTMLBytes, ThumbnailURL: task.ThumbnailURL,
+		TestType: benchmark.NormalizeTestType(task.TestType), Answer: task.Answer, Passed: task.Passed,
 	}
 }
 
