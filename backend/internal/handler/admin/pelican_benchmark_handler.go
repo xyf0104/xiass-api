@@ -287,6 +287,11 @@ func (h *PelicanBenchmarkHandler) Detail(c *gin.Context) {
 	detail := dto.PelicanDetail{PelicanTask: dto.PelicanTaskFromService(result.Task), HTML: result.HTML}
 	if result.Status == "succeeded" {
 		detail.PreviewHTML = benchmark.RepairPreviewHTML(result.HTML)
+		if detail.PreviewHTML != "" {
+			// Already-open clients only read html. Serve the same runnable preview
+			// through both fields; the store retains the original for continuation.
+			detail.HTML = detail.PreviewHTML
+		}
 	}
 	response.Success(c, detail)
 }

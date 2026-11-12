@@ -193,7 +193,7 @@ func TestPelicanHandlerInvalidFilters(t *testing.T) {
 	}
 }
 
-func TestPelicanDetailRepairsOnlySuccessfulPreviewAndPreservesOriginal(t *testing.T) {
+func TestPelicanDetailRepairsLegacyAndCurrentPreviewsAndPreservesStoredOriginal(t *testing.T) {
 	original := `<html><script>const drawing={stroke='red'};</script></html>`
 	for _, status := range []string{"succeeded", "failed", "running", "interrupted", "canceled"} {
 		t.Run(status, func(t *testing.T) {
@@ -205,11 +205,20 @@ func TestPelicanDetailRepairsOnlySuccessfulPreviewAndPreservesOriginal(t *testin
 				Data map[string]any `json:"data"`
 			}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-			require.Equal(t, original, result.Data["html"])
 			require.Equal(t, status, result.Data["status"])
 			if status == "succeeded" {
-				require.Equal(t, strings.Replace(original, "stroke=", "stroke:", 1), result.Data["preview_html"])
+				expected := strings.Replace(original, "stroke=", "stroke:", 1)
+				require.Equal(t, expected, result.Data["html"])
+				require.Equal(t, expected, result.Data["preview_html"])
+				var legacy struct {
+					Data struct {
+						HTML string `json:"html"`
+					} `json:"data"`
+				}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &legacy))
+				require.Equal(t, expected, legacy.Data.HTML)
 			} else {
+				require.Equal(t, original, result.Data["html"])
 				require.NotContains(t, result.Data, "preview_html")
 			}
 			require.NotContains(t, w.Body.String(), "<script>")
@@ -218,6 +227,26 @@ func TestPelicanDetailRepairsOnlySuccessfulPreviewAndPreservesOriginal(t *testin
 			require.Empty(t, store.tasks)
 			require.Zero(t, store.stops)
 		})
+	}
+}
+
+func TestPelicanDetailLeavesValidAndUnsupportedHTMLUnchanged(t *testing.T) {
+	for _, original := range []string{
+		`<html><script>const drawing={stroke:'red'};</script></html>`,
+		`<html><script>const drawing={stroke:};</script></html>`,
+		``,
+	} {
+		store := &pelicanHandlerStore{html: original, detailStatus: "succeeded"}
+		h := &PelicanBenchmarkHandler{store: store}
+		w := pelicanHandlerRequest("GET", "/", "", h.Detail, gin.Params{{Key: "id", Value: uuid.NewString()}})
+		require.Equal(t, http.StatusOK, w.Code)
+		var result struct {
+			Data map[string]any `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Equal(t, original, result.Data["html"])
+		require.NotContains(t, result.Data, "preview_html")
+		require.Equal(t, original, store.html)
 	}
 }
 
