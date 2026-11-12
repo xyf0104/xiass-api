@@ -120,9 +120,17 @@ func TestIQCustomContinuationAndInvalidTestFailBeforeNetwork(t *testing.T) {
 	out, err := pelicanTestService(a, u).RunPelicanBenchmark(ctx, a.ID, benchmark.DefaultModel, nil)
 	require.NoError(t, err)
 	require.Equal(t, "<html>partial</html>", out.HTML)
-	inputs := u.body["input"].([]any)
+	inputs, ok := u.body["input"].([]any)
+	require.True(t, ok)
 	require.Len(t, inputs, 3)
-	require.Equal(t, custom, inputs[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"])
+	message, ok := inputs[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := message["content"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, content)
+	part, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, custom, part["text"])
 	for _, ctx := range []context.Context{
 		benchmark.WithTest(context.Background(), "invalid", ""),
 		benchmark.WithTest(context.Background(), benchmark.TestPelican, strings.Repeat("x", benchmark.MaxPromptChars+1)),
