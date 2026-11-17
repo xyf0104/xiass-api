@@ -272,17 +272,18 @@
           <template #cell-account_count="{ row }">
             <div class="space-y-0.5 text-xs">
               <div>
-                <span class="text-gray-500 dark:text-gray-400">{{
-                  t("admin.groups.accountsAvailable")
-                }}</span>
-                <span
-                  class="ml-1 font-medium text-emerald-600 dark:text-emerald-400"
-                  >{{ row.active_account_count || 0 }}</span
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-sm text-left transition-colors hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:text-emerald-300"
+                  :title="t('admin.groups.groupAccounts.open')"
+                  :aria-label="t('admin.groups.groupAccounts.openForGroup', { name: row.name, count: row.active_account_count || 0 })"
+                  :data-test="`group-available-accounts-${row.id}`"
+                  @click.stop="openGroupAccounts(row)"
                 >
-                <span
-                  class="ml-1 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
-                  >{{ t("admin.groups.accountsUnit") }}</span
-                >
+                  <span class="text-gray-500 dark:text-gray-400">{{ t("admin.groups.accountsAvailable") }}</span>
+                  <span class="ml-1 font-medium text-emerald-600 dark:text-emerald-400">{{ row.active_account_count || 0 }}</span>
+                  <span class="ml-1 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300">{{ t("admin.groups.accountsUnit") }}</span>
+                </button>
               </div>
               <div v-if="row.rate_limited_account_count">
                 <span class="text-gray-500 dark:text-gray-400">{{
@@ -4904,6 +4905,14 @@
       @save="saveUserAccountAllowlist"
       @restore="restoreUserAccountAllowlist"
     />
+
+    <GroupAccountsDialog
+      v-if="showGroupAccountsDialog"
+      :show="showGroupAccountsDialog"
+      :group="groupAccountsTarget"
+      @close="closeGroupAccountsDialog"
+      @saved="handleGroupAccountsSaved"
+    />
   </AppLayout>
 </template>
 
@@ -4955,6 +4964,7 @@ import Icon from "@/components/icons/Icon.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import UserAccountAllowlistDialog from "@/components/admin/group/UserAccountAllowlistDialog.vue";
+import GroupAccountsDialog from "@/components/admin/group/GroupAccountsDialog.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
 import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
@@ -5487,6 +5497,8 @@ const allowlistAccountIDs = ref<number[]>([]);
 const allowlistCandidates = ref<UserGroupAccountAllowlistCandidate[]>([]);
 const allowlistLoading = ref(false);
 const allowlistSaving = ref(false);
+const showGroupAccountsDialog = ref(false);
+const groupAccountsTarget = ref<AdminGroup | null>(null);
 const RUNTIME_USER_SEARCH_DEBOUNCE_MS = 300;
 const RUNTIME_USER_SEARCH_PAGE_SIZE = 50;
 const RUNTIME_CONCURRENCY_REFRESH_INTERVAL_MS = 5_000;
@@ -5729,6 +5741,21 @@ const closeUserAccountAllowlistDialog = () => {
   allowlistAccountIDs.value = [];
   allowlistCandidates.value = [];
   allowlistLoading.value = false;
+};
+
+const openGroupAccounts = (group: AdminGroup) => {
+  groupAccountsTarget.value = group;
+  showGroupAccountsDialog.value = true;
+};
+
+const closeGroupAccountsDialog = () => {
+  showGroupAccountsDialog.value = false;
+  groupAccountsTarget.value = null;
+};
+
+const handleGroupAccountsSaved = async () => {
+  closeGroupAccountsDialog();
+  await loadGroups();
 };
 
 const openUserAccountRuntime = async (

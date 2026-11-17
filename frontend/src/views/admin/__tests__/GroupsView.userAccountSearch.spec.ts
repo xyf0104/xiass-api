@@ -200,6 +200,21 @@ const UserAccountAllowlistDialogStub = {
     </div>
   `,
 };
+const GroupAccountsDialogStub = {
+  props: ["show", "group"],
+  emits: ["close", "saved"],
+  template: '<div v-if="show" data-test="group-accounts-dialog-stub" :data-group-id="String(group?.id)" />',
+};
+const DataTableStub = {
+  props: ["data"],
+  template: `
+    <div>
+      <div v-for="row in data" :key="row.id">
+        <slot name="cell-account_count" :row="row" />
+      </div>
+    </div>
+  `,
+};
 
 let wrapper: ReturnType<typeof mount> | null = null;
 
@@ -209,7 +224,7 @@ const mountView = async () => {
       stubs: {
         AppLayout: AppLayoutStub,
         TablePageLayout: TablePageLayoutStub,
-        DataTable: true,
+        DataTable: DataTableStub,
         Pagination: true,
         BaseDialog: BaseDialogStub,
         ConfirmDialog: true,
@@ -221,6 +236,7 @@ const mountView = async () => {
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
         UserAccountAllowlistDialog: UserAccountAllowlistDialogStub,
+        GroupAccountsDialog: GroupAccountsDialogStub,
         ReasoningEffortPolicyFields: true,
         PricingEntryCard: true,
         VueDraggable: { template: "<div><slot /></div>" },
@@ -347,6 +363,14 @@ describe("GroupsView group user account search", () => {
 
     expect(getUserAccountAllowlist).toHaveBeenCalledWith(10, 1);
     expect(wrapper!.get('[data-test="allowlist-dialog-stub"]').exists()).toBe(true);
+  });
+
+  it("opens the account-binding dialog from the available-account count", async () => {
+    await mountView();
+
+    await wrapper!.get('[data-test="group-available-accounts-10"]').trigger("click");
+
+    expect(wrapper!.get('[data-test="group-accounts-dialog-stub"]').attributes("data-group-id")).toBe("10");
   });
 
   it("keeps an active account visible after it becomes unavailable", async () => {
