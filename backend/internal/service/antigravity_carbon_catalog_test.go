@@ -67,7 +67,10 @@ func TestPelicanAntigravityCarbonCatalogRoutes(t *testing.T) {
 			require.Equal(t, "<html></html>", result.HTML)
 			require.Equal(t, id, upstream.body["model"])
 			require.Equal(t, id, billedModel)
-			generation := upstream.body["request"].(map[string]any)["generationConfig"].(map[string]any)
+			request, ok := upstream.body["request"].(map[string]any)
+			require.True(t, ok)
+			generation, ok := request["generationConfig"].(map[string]any)
+			require.True(t, ok)
 			require.Equal(t, float64(16384), generation["maxOutputTokens"])
 		})
 	}
