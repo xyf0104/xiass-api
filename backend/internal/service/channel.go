@@ -104,6 +104,7 @@ type ChannelModelPricing struct {
 	CacheReadPrice               *float64          `json:"cache_read_price"`
 	FastMultiplier               *float64          `json:"fast_multiplier,omitempty"`
 	FlexMultiplier               *float64          `json:"flex_multiplier,omitempty"`
+	UltrafastMultiplier          *float64          `json:"ultrafast_multiplier,omitempty"`
 	MaxReasoningEffortMultiplier *float64          `json:"max_reasoning_effort_multiplier,omitempty"`
 	ImageInputPrice              *float64          `json:"image_input_price"`
 	ImageOutputPrice             *float64          `json:"image_output_price"`
@@ -165,6 +166,7 @@ func (p *ChannelModelPricing) UnmarshalJSON(data []byte) error {
 		"OutputPrice": "output_price", "CacheWritePrice": "cache_write_price",
 		"CacheWrite1hPrice": "cache_write_1h_price", "CacheWrite12hPrice": "cache_write_12h_price", "CacheReadPrice": "cache_read_price",
 		"FastMultiplier": "fast_multiplier", "FlexMultiplier": "flex_multiplier",
+		"UltrafastMultiplier":          "ultrafast_multiplier",
 		"MaxReasoningEffortMultiplier": "max_reasoning_effort_multiplier",
 		"ImageInputPrice":              "image_input_price", "ImageOutputPrice": "image_output_price",
 		"PerRequestPrice": "per_request_price", "Intervals": "intervals",

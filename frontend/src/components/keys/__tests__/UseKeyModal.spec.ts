@@ -310,7 +310,7 @@ describe('UseKeyModal', () => {
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
   })
 
-  it('renders GPT-5.6 and GPT-6 Astra aliases with max variants in OpenCode config', async () => {
+  it('renders GPT-6.2 and existing GPT aliases with upstream reasoning variants in OpenCode config', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -355,6 +355,17 @@ describe('UseKeyModal', () => {
     expect(models['gpt-6-astra'].name).toBe('GPT-6 Astra')
     expect(models['gpt-6-sol'].name).toBe('GPT-6 Sol')
     expect(models['gpt-6-luna'].name).toBe('GPT-6 Luna')
+    for (const [model, name] of [['gpt-6.2-sol', 'GPT-6.2 Sol'], ['gpt-6.2-astra', 'GPT-6.2 Astra']]) {
+      expect(models[model]).toEqual({
+        name,
+        limit: { context: 1050000, output: 128000 },
+        options: { store: false },
+        variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
+      })
+      expect(models[model].variants).not.toHaveProperty('none')
+      expect(models[model].variants).not.toHaveProperty('minimal')
+    }
+    expect(parsed.provider.openai.options).toEqual({ baseURL: 'https://example.com/v1', apiKey: 'sk-test' })
   })
 
   it('exports Claude 5.5 models on the Anthropic provider', async () => {
@@ -428,6 +439,23 @@ describe('UseKeyModal', () => {
     expect(models['gemini-4-argon-high'].options.thinking).toEqual({ budgetTokens: -1, type: 'enabled' })
     expect(models['gemini-4-argon-medium'].options.thinking).toEqual({ budgetTokens: 4000, type: 'enabled' })
     expect(models['gemini-4-argon-low'].options.thinking).toEqual({ budgetTokens: 1000, type: 'enabled' })
+  })
+
+  it.each(['gemini', 'antigravity'] as const)('exports base Carbon without invented tiers or limits for %s', async (platform) => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: true } }
+    })
+    const opencodeTab = wrapper.findAll('button').find(button =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )!
+    await opencodeTab.trigger('click')
+    const provider = platform === 'antigravity' ? 'antigravity-gemini' : 'gemini'
+    const config = wrapper.findAll('pre code').map(code => code.text()).find(content => content.includes(`"${provider}"`))!
+    const models = JSON.parse(config).provider[provider].models
+    expect(models['gemini-4-carbon']).toEqual({ name: 'Gemini 4 Carbon' })
+    expect(Object.keys(models).filter(model => model.startsWith('gemini-4-carbon'))).toEqual(['gemini-4-carbon'])
+    wrapper.unmount()
   })
 
   it('provides DeepSeek V4 models for OpenCode and Codex', async () => {

@@ -1740,12 +1740,89 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 	return nil
 }
 
-func openAIGroupForcesFast(ctx context.Context, account *Account) bool {
-	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
-		return false
+func openAIModelSupportsUltrafast(model string) bool {
+	normalized := normalizeKnownOpenAICodexModel(model)
+	return isOpenAIGPT6AstraModel(normalized) || normalized == "gpt-6.1-sol" || openai.GPT62ModelID(normalized) != ""
+}
+
+// The ingress body can still contain a public alias before model mapping.
+// Resolve it without rewriting the requested model used by XIASS usage logs.
+func normalizeOpenAIResponsesReasoningModeForAccount(account *Account, body []byte, compact bool) ([]byte, bool, error) {
+	if account != nil && account.IsOpenAIOAuthLike() {
+		model := gjson.GetBytes(body, "model").String()
+		if !account.IsOpenAIPassthroughEnabled() {
+			model = resolveOpenAIForwardModel(account, model, "")
+		}
+		if compact {
+			model = resolveOpenAICompactForwardModel(account, model)
+		}
+		if openai.GPT62ModelID(normalizeOpenAIModelForUpstream(account, model)) != "" {
+			return body, false, nil
+		}
+	}
+	return normalizeOpenAIResponsesReasoningMode(body)
+}
+
+func openAIGroupForcedServiceTier(ctx context.Context, account *Account, model string) string {
+	if ctx == nil || account == nil || !account.IsOpenAI() {
+		return ""
 	}
 	group, _ := ctx.Value(ctxkey.Group).(*Group)
-	return IsGroupContextValid(group) && groupSupportsOpenAIFast(group.Platform) && group.ForceOpenAIFast
+	if !IsGroupContextValid(group) || !groupSupportsOpenAIFast(group.Platform) {
+		return ""
+	}
+	if group.ForceOpenAIUltrafast && openAIModelSupportsUltrafast(model) {
+		if base := openai.GPT62ModelID(model); base != "" && account.IsOpenAIOAuthLike() {
+			if gpt62PlanIncludesUltrafast(account, base) {
+				return OpenAIFastTierUltrafast
+			}
+			metadata, ok := account.GetUpstreamModelMetadata(base)
+			if ok && gjson.GetBytes(metadata.CodexToolCapabilities["service_tiers"], `#(id=="ultrafast")`).Exists() {
+				return OpenAIFastTierUltrafast
+			}
+		} else {
+			return OpenAIFastTierUltrafast
+		}
+	}
+	if group.ForceOpenAIFast {
+		return OpenAIFastTierPriority
+	}
+	return ""
+}
+
+// This port only changes GPT-6.2. Other models retain XIASS's existing sampling policy.
+func normalizeGPT6ResponsesSampling(body []byte, model string) ([]byte, bool, error) {
+	if openai.GPT62ModelID(model) == "" {
+		return body, false, nil
+	}
+	out := body
+	changed := false
+	for _, key := range []string{"temperature", "top_p", "top_logprobs", "logprobs"} {
+		if !gjson.GetBytes(out, key).Exists() {
+			continue
+		}
+		var err error
+		out, err = sjson.DeleteBytes(out, key)
+		if err != nil {
+			return body, false, fmt.Errorf("remove GPT-6.2 sampling parameter %s: %w", key, err)
+		}
+		changed = true
+	}
+	if include := gjson.GetBytes(out, "include"); include.IsArray() {
+		items := include.Array()
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].String() != "message.output_text.logprobs" {
+				continue
+			}
+			var err error
+			out, err = sjson.DeleteBytes(out, fmt.Sprintf("include.%d", i))
+			if err != nil {
+				return body, false, fmt.Errorf("remove GPT-6.2 logprobs include: %w", err)
+			}
+			changed = true
+		}
+	}
+	return out, changed, nil
 }
 
 // applyOpenAIFastPolicyToBody applies the OpenAI fast policy to a raw request
@@ -1763,10 +1840,16 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 	if len(body) == 0 {
 		return body, nil
 	}
-	if openAIGroupForcesFast(ctx, account) {
-		updated, err := sjson.SetBytes(body, "service_tier", OpenAIFastTierPriority)
+	// Every HTTP forwarding path reaches this boundary with its final mapped model.
+	if normalized, _, err := normalizeGPT6ResponsesSampling(body, model); err != nil {
+		return body, err
+	} else {
+		body = normalized
+	}
+	if forcedTier := openAIGroupForcedServiceTier(ctx, account, model); forcedTier != "" {
+		updated, err := sjson.SetBytes(body, "service_tier", forcedTier)
 		if err != nil {
-			return body, fmt.Errorf("force group service_tier priority on body: %w", err)
+			return body, fmt.Errorf("force group service_tier %s on body: %w", forcedTier, err)
 		}
 		body = updated
 	}
@@ -1888,10 +1971,15 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
-	if openAIGroupForcesFast(ctx, account) {
-		updated, err := sjson.SetBytes(frame, "service_tier", OpenAIFastTierPriority)
+	if normalized, _, err := normalizeGPT6ResponsesSampling(frame, model); err != nil {
+		return frame, nil, err
+	} else {
+		frame = normalized
+	}
+	if forcedTier := openAIGroupForcedServiceTier(ctx, account, model); forcedTier != "" {
+		updated, err := sjson.SetBytes(frame, "service_tier", forcedTier)
 		if err != nil {
-			return frame, nil, fmt.Errorf("force group service_tier priority in ws frame: %w", err)
+			return frame, nil, fmt.Errorf("force group service_tier %s in ws frame: %w", forcedTier, err)
 		}
 		frame = updated
 	}
@@ -2283,9 +2371,19 @@ func validateGPT61CompatRequest(body []byte, model string) error {
 	return nil
 }
 
+// Native Responses policies run in the handler, before account mapping and
+// compatibility cleanup. Validate both the post-policy input and the wire body
+// against the actual upstream model without applying the policy a second time.
+func validateOpenAIResponsesFinalReasoning(policyBody, wireBody []byte, model string) error {
+	if err := validateGPT61CompatRequest(policyBody, model); err != nil {
+		return err
+	}
+	return validateGPT61CompatRequest(wireBody, model)
+}
+
 // Explicit invalid effort cannot be hidden by conversion or a later mapping.
 func validateGPT61RawEffort(body []byte, model string) error {
-	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) {
+	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) && openai.GPT62ModelID(model) == "" {
 		return nil
 	}
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {

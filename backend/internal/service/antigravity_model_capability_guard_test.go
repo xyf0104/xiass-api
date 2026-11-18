@@ -16,12 +16,11 @@ func TestAntigravityCarbonCapabilityGuard(t *testing.T) {
 					"gemini-4-carbon-*": "gemini-4-carbon-high", "alias": "gemini-4-carbon-low",
 					"gemini-3.7-flash-high": "gemini-3.7-flash-high",
 				}}}
-			ultra := plan == "Ultra" || plan == "g1-ultra-tier" || plan == "g1-ultra-lite-tier"
 			for _, model := range []string{"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low", "alias"} {
-				require.Equal(t, ultra, account.IsModelSupported(model), model)
-				require.Equal(t, ultra, mapAntigravityModel(account, model) != "", model)
+				require.False(t, account.IsModelSupported(model), model)
+				require.Empty(t, mapAntigravityModel(account, model), model)
 			}
-			require.Equal(t, ultra, mapAntigravityModel(account, "models/gemini-4-carbon-high") != "")
+			require.Empty(t, mapAntigravityModel(account, "models/gemini-4-carbon-high"))
 			require.True(t, account.IsModelSupported("gemini-3.7-flash-high"))
 			require.False(t, antigravityAccountAllowsModel(account, "gemini-4-carbon-disabled"))
 			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
@@ -71,7 +70,7 @@ func TestAntigravityCarbonCapabilityEvidenceIsExactAndIdentityBound(t *testing.T
 		"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
 	}})
 	require.True(t, account.IsModelSupported("gemini-4-carbon-high"))
-	require.False(t, account.IsModelSupported("gemini-4-carbon-medium"))
+	require.True(t, account.IsModelSupported("gemini-4-carbon-medium"), "legacy aliases use the same canonical Carbon capability")
 	account.Credentials["access_token"] = "new-test-token"
 	require.False(t, account.IsModelSupported("gemini-4-carbon-high"), "stale credentials must invalidate affirmative capability evidence")
 	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
@@ -118,8 +117,8 @@ func TestAntigravityCarbonDefaultCatalogRequiresCapability(t *testing.T) {
 			account := &Account{Platform: PlatformAntigravity, Type: AccountTypeOAuth,
 				Credentials: map[string]any{"plan_type": plan}}
 			for _, model := range []string{"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low"} {
-				require.Equal(t, plan == "Ultra", account.IsModelSupported(model), model)
-				require.Equal(t, plan == "Ultra", mapAntigravityModel(account, model) != "", model)
+				require.False(t, account.IsModelSupported(model), model)
+				require.Empty(t, mapAntigravityModel(account, model), model)
 			}
 		})
 	}
@@ -139,6 +138,9 @@ func TestAntigravityCarbonGeminiCatalogUsesAccountCapabilities(t *testing.T) {
 		Credentials: map[string]any{"plan_type": "Pro"}}
 	ultra := Account{Platform: PlatformAntigravity, Type: AccountTypeOAuth,
 		Credentials: map[string]any{"plan_type": "Ultra"}}
+	ultra.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
+		"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
+	}})
 	for _, tc := range []struct {
 		name     string
 		accounts []Account
@@ -157,7 +159,7 @@ func TestAntigravityCarbonGeminiCatalogUsesAccountCapabilities(t *testing.T) {
 			svc := &GeminiMessagesCompatService{accountRepo: &antigravityCapabilityCatalogRepo{accounts: tc.accounts}}
 			models, err := svc.AntigravityGeminiModelIDs(context.Background(), nil, false)
 			require.NoError(t, err)
-			for _, model := range []string{"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low"} {
+			for _, model := range []string{"gemini-4-carbon"} {
 				if tc.carbon {
 					require.Contains(t, models, model)
 				} else {

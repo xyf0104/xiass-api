@@ -18,6 +18,15 @@ import (
 
 func TestMessagesEffortPolicyHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra"} {
+		t.Run(model, func(t *testing.T) {
+			testMessagesEffortPolicyHTTP(t, model)
+		})
+	}
+}
+
+func testMessagesEffortPolicyHTTP(t *testing.T, upstreamModel string) {
+	t.Helper()
 	noneToLow := []ReasoningEffortMapping{{From: "none", To: "low"}}
 	for _, chat := range []bool{false, true} {
 		for _, auth := range []string{AccountTypeAPIKey, AccountTypeOAuth} {
@@ -30,6 +39,7 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 					overLimit  string
 					model      string
 					terminal   bool
+					maxTokens  int
 					want       string
 					status     int
 				}{
@@ -41,6 +51,7 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 					{name: "omitted above ceiling none mapping leaves default", mappings: []ReasoningEffortMapping{{From: "none", To: "xhigh"}}, ceiling: "low", overLimit: ReasoningEffortOverLimitDeny, want: "medium"},
 					{name: "omitted none mapping leaves default", mappings: noneToLow, want: "medium"},
 					{name: "disabled omitted mapped", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, want: "low"},
+					{name: "disabled mapped keeps output floor", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, maxTokens: 10, want: "low"},
 					{name: "disabled synthesized ceiling downgrade", preference: `,"thinking":{"type":"disabled"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "high"}}, ceiling: "low", want: "low"},
 					{name: "disabled synthesized ceiling deny", preference: `,"thinking":{"type":"disabled"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "high"}}, ceiling: "low", overLimit: ReasoningEffortOverLimitDeny, status: 403},
 					{name: "disabled synthesized xhigh capped", preference: `,"thinking":{"type":"disabled"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "xhigh"}}, ceiling: "low", want: "low"},
@@ -59,9 +70,9 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 					{name: "raw minimal cannot be mapped away", preference: `,"output_config":{"effort":"minimal"}`, mappings: []ReasoningEffortMapping{{From: "minimal", To: "low"}}, status: 400},
 					{name: "raw reasoning none cannot be hidden", preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"high"},"reasoning":{"effort":"none"}`, mappings: noneToLow, status: 400},
 					{name: "raw chat minimal cannot be hidden", preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"high"},"reasoning_effort":"minimal"`, mappings: noneToLow, status: 400},
-					{name: "raw alias cannot be hidden", model: "gpt-6.1-sol-minimal", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
-					{name: "underscore minimal cannot be hidden", model: "gpt-6.1-sol_minimal", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
-					{name: "underscore none cannot be hidden", model: "gpt-6.1-sol_none", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
+					{name: "raw alias cannot be hidden", model: upstreamModel + "-minimal", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
+					{name: "underscore minimal cannot be hidden", model: upstreamModel + "_minimal", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
+					{name: "underscore none cannot be hidden", model: upstreamModel + "_none", preference: `,"thinking":{"type":"disabled"}`, mappings: noneToLow, status: 400},
 					{name: "one hop mapping", preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"high"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low"}, {From: "low", To: "high"}}, want: "low"},
 					{name: "mapping final unsupported rejected", preference: `,"thinking":{"type":"disabled"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "minimal"}}, status: 400},
 					{name: "mapping deny preserved", preference: `,"thinking":{"type":"disabled"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "deny"}}, status: 403},
@@ -70,17 +81,17 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 					{name: "canonical explicit high preserved", preference: `,"output_config":{"effort":"high"}`, mappings: noneToLow, want: "high"},
 					{name: "adaptive explicit mapped", preference: `,"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}`, mappings: []ReasoningEffortMapping{{From: "high", To: "low"}, {From: "low", To: "medium"}}, want: "low"},
 					{name: "explicit ceiling preserved", preference: `,"output_config":{"effort":"high"}`, ceiling: "medium", want: "medium"},
-					{name: "terminal override not mapped twice", terminal: true, preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"high"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", Model: "gpt-6.1-sol", MatchType: "exact"}}, want: "low"},
+					{name: "terminal override not mapped twice", terminal: true, preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"high"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", Model: upstreamModel, MatchType: "exact"}}, want: "low"},
 					{name: "terminal override raw rejected", terminal: true, preference: `,"thinking":{"type":"disabled"},"output_config":{"effort":"none"}`, mappings: noneToLow, status: 400},
 				} {
 					t.Run(fmt.Sprintf("chat=%t/%s/stream=%t/%s", chat, auth, stream, test.name), func(t *testing.T) {
 						model := test.model
 						if model == "" {
-							model = "gpt-6.1-sol"
+							model = upstreamModel
 						}
-						account := rawGPT56ResponsesAPIKeyAccount(model, "gpt-6.1-sol")
+						account := rawGPT56ResponsesAPIKeyAccount(model, upstreamModel)
 						if auth == AccountTypeOAuth {
-							account = rawGPT56ResponsesOAuthAccount(model, "gpt-6.1-sol")
+							account = rawGPT56ResponsesOAuthAccount(model, upstreamModel)
 						}
 						if chat {
 							account.Extra = map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions)}
@@ -88,23 +99,27 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 						defaultMapped := ""
 						if test.terminal {
 							model = "public-alias"
-							defaultMapped = "gpt-6.1-sol"
-							account.Credentials["model_mapping"] = map[string]any{"gpt-6.1-sol": "gpt-6-sol"}
+							defaultMapped = upstreamModel
+							account.Credentials["model_mapping"] = map[string]any{upstreamModel: "gpt-6-sol"}
 						}
 						usesChat := chat && auth == AccountTypeAPIKey
-						response := openAICompatSSECompletedResponse("resp_effort", "gpt-6.1-sol")
+						response := openAICompatSSECompletedResponse("resp_effort", upstreamModel)
 						if usesChat {
-							payload := `{"id":"chat_effort","model":"gpt-6.1-sol","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`
+							payload := fmt.Sprintf(`{"id":"chat_effort","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`, upstreamModel)
 							contentType := "application/json"
 							if stream {
-								payload = "data: " + `{"id":"chat_effort","model":"gpt-6.1-sol","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}` + "\n\ndata: [DONE]\n\n"
+								payload = "data: " + fmt.Sprintf(`{"id":"chat_effort","model":%q,"choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`, upstreamModel) + "\n\ndata: [DONE]\n\n"
 								contentType = "text/event-stream"
 							}
 							response = &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(payload))}
 						}
 						upstream := &httpUpstreamRecorder{resp: response}
 						svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
-						body := fmt.Sprintf(`{"model":%q,"max_tokens":1024,"messages":[{"role":"user","content":"Hello"}],"stream":%t%s}`, model, stream, test.preference)
+						maxTokens := test.maxTokens
+						if maxTokens == 0 {
+							maxTokens = 1024
+						}
+						body := fmt.Sprintf(`{"model":%q,"max_tokens":%d,"messages":[{"role":"user","content":"Hello"}],"stream":%t%s}`, model, maxTokens, stream, test.preference)
 						var forwardErr error
 						var result *OpenAIForwardResult
 						router := gin.New()
@@ -130,10 +145,17 @@ func TestMessagesEffortPolicyHTTP(t *testing.T) {
 						require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 						require.Len(t, upstream.requests, 1)
 						require.True(t, strings.HasSuffix(upstream.lastReq.URL.Path, endpoint), upstream.lastReq.URL.String())
-						require.Equal(t, "gpt-6.1-sol", gjson.GetBytes(upstream.lastBody, "model").String())
+						require.Equal(t, upstreamModel, gjson.GetBytes(upstream.lastBody, "model").String())
 						require.Equal(t, test.want, gjson.GetBytes(upstream.lastBody, preferredEffortPath).String())
 						require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
 						require.False(t, gjson.GetBytes(upstream.lastBody, "top_p").Exists())
+						if auth == AccountTypeAPIKey {
+							outputLimitPath := "max_output_tokens"
+							if usesChat {
+								outputLimitPath = "max_completion_tokens"
+							}
+							require.Equal(t, int64(max(128, maxTokens)), gjson.GetBytes(upstream.lastBody, outputLimitPath).Int())
+						}
 						require.NotNil(t, result)
 						require.NotNil(t, result.ReasoningEffort)
 						require.Equal(t, test.want, *result.ReasoningEffort)
@@ -249,7 +271,18 @@ func TestMessagesGLMMappedEffortPolicyHTTP(t *testing.T) {
 
 func TestMessagesDisabledThinkingCountTokensHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"gpt-6.1-sol","thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hello"}]}`)
+	for _, model := range []string{"gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra"} {
+		for _, mappedEffort := range []string{"", "low", "deny"} {
+			t.Run(model+"/mapping="+mappedEffort, func(t *testing.T) {
+				testMessagesDisabledThinkingCountTokensHTTP(t, model, mappedEffort)
+			})
+		}
+	}
+}
+
+func testMessagesDisabledThinkingCountTokensHTTP(t *testing.T, model, mappedEffort string) {
+	t.Helper()
+	body := []byte(fmt.Sprintf(`{"model":%q,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hello"}]}`, model))
 	recorder := httptest.NewRecorder()
 	requestContext, _ := gin.CreateTestContext(recorder)
 	requestContext.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(string(body)))
@@ -259,13 +292,18 @@ func TestMessagesDisabledThinkingCountTokensHTTP(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(`{"object":"response.input_tokens","input_tokens":42}`)),
 	}}
 	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
-	account := rawGPT56ResponsesAPIKeyAccount("gpt-6.1-sol", "gpt-6.1-sol")
-	ctx := WithOpenAIReasoningEffortPolicyForMessages(requestContext.Request.Context(), body, "", []ReasoningEffortMapping{{From: "none", To: "low"}}, "")
+	account := rawGPT56ResponsesAPIKeyAccount(model, model)
+	var mappings []ReasoningEffortMapping
+	if mappedEffort != "" {
+		mappings = []ReasoningEffortMapping{{From: "none", To: mappedEffort}}
+	}
+	ctx := WithOpenAIReasoningEffortPolicyForMessages(requestContext.Request.Context(), body, "", mappings, "")
 	require.NoError(t, svc.ForwardCountTokensAsAnthropic(ctx, requestContext, account, body, ""))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, int64(42), gjson.GetBytes(recorder.Body.Bytes(), "input_tokens").Int())
 	require.Len(t, upstream.requests, 1)
 	require.True(t, strings.HasSuffix(upstream.lastReq.URL.Path, "/responses/input_tokens"))
+	require.Equal(t, model, gjson.GetBytes(upstream.lastBody, "model").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning_effort").Exists())
 }

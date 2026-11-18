@@ -1272,6 +1272,8 @@ export default {
       openaiFast: {
         title: 'OpenAI Fast 模式',
         force: '强制使用 Fast（priority）',
+        forceUltrafast: '强制使用 Ultra Fast',
+        ultrafastHint: '仅对模型与账号支持的 Ultra Fast 档位生效，优先于 Fast。GPT-6.2 Sol 需 Pro 200 或 Pro 500，Astra 需 Pro 500；API Key 按上游能力判断。Ultra Fast 费用按对应模型价卡计算。',
         hint: '开启后，此分组的 OpenAI 请求会强制写入 service_tier=priority；全局 Fast/Flex 策略仍可过滤或拦截。保存后新请求立即生效，已建立的 WebSocket 会话需重连。',
         free: '免费 Fast',
         freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'

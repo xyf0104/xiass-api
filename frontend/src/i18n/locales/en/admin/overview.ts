@@ -1274,6 +1274,8 @@ export default {
       openaiFast: {
         title: 'OpenAI Fast mode',
         force: 'Force Fast (priority)',
+        forceUltrafast: 'Force Ultra Fast',
+        ultrafastHint: 'Takes priority over Fast when supported by the model and account. GPT-6.2 Sol requires Pro 200 or Pro 500; Astra requires Pro 500. API keys use upstream capabilities. Ultra Fast uses the corresponding model pricing.',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
         free: 'Free Fast',
         freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'

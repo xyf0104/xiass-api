@@ -129,7 +129,7 @@ func TestPublicAntigravityModelIDs_CarbonCatalogExcludesUnavailableMarkers(t *te
 		"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low",
 		"gemini-4-carbon-high", "gemini-4-carbon-disabled", "gemini-4-argon-disabled",
 	})
-	require.Equal(t, []string{"gemini-4-carbon-high", "gemini-4-carbon-low", "gemini-4-carbon-medium"}, models)
+	require.Equal(t, []string{"gemini-4-carbon"}, models)
 	require.Empty(t, publicAntigravityModelIDs([]string{"gemini-4-carbon-disabled"}))
 }
 
@@ -145,11 +145,11 @@ func TestAntigravityGateway_Gemini38ResponsesUsesPublicIdentityAndTieredRoute(t 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "gemini-3.8-flash-medium", result.Model)
-	require.Equal(t, domain.AntigravityGemini38FlashTieredModel, result.UpstreamModel)
+	require.Equal(t, "gemini-3.8-flash-medium", result.UpstreamModel)
 	require.Len(t, upstream.requestBodies, 1)
 	written := upstream.requestBodies[0]
-	require.Equal(t, domain.AntigravityGemini38FlashTieredModel, gjson.GetBytes(written, "model").String())
-	require.Equal(t, int64(4000), gjson.GetBytes(written, "request.generationConfig.thinkingConfig.thinkingBudget").Int())
+	require.Equal(t, "gemini-3.8-flash-medium", gjson.GetBytes(written, "model").String())
+	require.False(t, gjson.GetBytes(written, "request.generationConfig.thinkingConfig.thinkingBudget").Exists())
 }
 
 func TestAntigravityGateway_CarbonResponsesPreservesSelectedTier(t *testing.T) {
@@ -163,13 +163,18 @@ func TestAntigravityGateway_CarbonResponsesPreservesSelectedTier(t *testing.T) {
 			c := newAntigravityTierContext("/v1/responses", body)
 			account := newAntigravityTierAccount()
 			account.Credentials["plan_type"] = "Ultra"
+			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
+				model: {ID: model},
+			}})
 			result, err := svc.ForwardAsResponses(context.Background(), c, account, body, nil)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, model, result.Model)
-			require.Equal(t, model, result.UpstreamModel)
+			require.Equal(t, domain.AntigravityGemini4CarbonModel, result.UpstreamModel)
 			require.Len(t, upstream.requestBodies, 1)
-			require.Equal(t, model, gjson.GetBytes(upstream.requestBodies[0], "model").String())
+			require.Equal(t, domain.AntigravityGemini4CarbonModel, gjson.GetBytes(upstream.requestBodies[0], "model").String())
+			require.Equal(t, tier, gjson.GetBytes(upstream.requestBodies[0], "request.generationConfig.thinkingConfig.thinkingLevel").String())
+			require.False(t, gjson.GetBytes(upstream.requestBodies[0], "request.generationConfig.thinkingConfig.thinkingBudget").Exists())
 		})
 	}
 }

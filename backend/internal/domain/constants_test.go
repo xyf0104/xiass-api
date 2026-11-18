@@ -71,11 +71,11 @@ func TestDefaultAntigravityModelMapping_Gemini4ArgonTiers(t *testing.T) {
 func TestDefaultAntigravityModelMapping_Gemini4CarbonTiers(t *testing.T) {
 	for _, tier := range []string{"high", "medium", "low"} {
 		model := AntigravityGemini4CarbonModel + "-" + tier
-		if got := DefaultAntigravityModelMapping[model]; got != model {
-			t.Errorf("Carbon tier %q must retain its upstream identity, got %q", model, got)
+		if got := DefaultAntigravityModelMapping[model]; got != AntigravityGemini4CarbonModel {
+			t.Errorf("Carbon alias %q must resolve to the real upstream model, got %q", model, got)
 		}
 	}
-	if got := DefaultAntigravityModelMapping[AntigravityGemini4CarbonModel]; got != "gemini-4-carbon-high" {
+	if got := DefaultAntigravityModelMapping[AntigravityGemini4CarbonModel]; got != AntigravityGemini4CarbonModel {
 		t.Errorf("unexpected Carbon base alias: %q", got)
 	}
 }

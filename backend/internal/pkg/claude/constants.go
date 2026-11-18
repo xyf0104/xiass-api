@@ -20,6 +20,7 @@ const (
 	BetaFastMode                    = "fast-mode-2026-02-01"
 	BetaThinkingBindingControls     = "thinking-binding-controls-2026-08-01"
 	BetaMidConversationOutputConfig = "mid-conversation-output-config-2026-07-01"
+	BetaPerTurnControl              = "per-turn-control-2026-07-01"
 	BetaServerSideFallback          = "server-side-fallback-2026-07-01"
 	BetaFallbackCredit              = "fallback-credit-2026-07-01"
 	BetaFallbackCreditLegacy        = "fallback-credit-2026-06-01"
@@ -238,7 +239,7 @@ func DefaultModelIDs() []string {
 }
 
 // DefaultTestModel 测试时使用的默认模型
-const DefaultTestModel = "claude-sonnet-4-5"
+const DefaultTestModel = "claude-sonnet-4-6"
 
 // ModelIDOverrides Claude OAuth 请求需要的模型 ID 映射
 var ModelIDOverrides = map[string]string{

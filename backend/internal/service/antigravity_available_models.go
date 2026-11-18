@@ -50,7 +50,7 @@ func antigravityAvailableModelOptions(account *Account, catalog *UpstreamModelCa
 		}
 		// Public Flash tiers share one internal generation route. A tier is
 		// advertised only when that exact public tier came from the live catalog.
-		finalID := normalizeAntigravityCompatModel(mapped)
+		finalID := normalizeAntigravityCompatModel(canonicalAntigravityCarbonModel(mapped))
 		if family, ok := antigravityGeminiFlashFamilyForModel(mapped); ok && isAntigravityGeminiFlashInternalModel(mapped) {
 			if source, sourceOK := antigravityGeminiFlashFamilyForModel(id); sourceOK && source.tieredModel == family.tieredModel {
 				finalID = normalizeAntigravityCompatModel(id)

@@ -34,3 +34,38 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	require.True(t, materialized.Group.FreeOpenAIFast)
 	require.Equal(t, apiKeyAuthSnapshotVersion, cached.Snapshot.Version)
 }
+
+func TestAPIKeyAuthSnapshotGroupForceOpenAIUltrafastRoundtrip(t *testing.T) {
+	groupID := int64(51)
+	apiKey := &APIKey{
+		ID: 83, UserID: 40, GroupID: &groupID, Key: "sk-ultrafast-roundtrip", Status: StatusActive,
+		User: &User{ID: 40, Status: StatusActive},
+		Group: &Group{
+			ID: groupID, Name: "ultrafast-roundtrip", Platform: PlatformOpenAI, Status: StatusActive,
+			Hydrated: true, ForceOpenAIUltrafast: true,
+		},
+	}
+	svc := &APIKeyService{}
+
+	payload, err := json.Marshal(&APIKeyAuthCacheEntry{Snapshot: svc.snapshotFromAPIKey(context.Background(), apiKey)})
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"force_openai_ultrafast":true`)
+	var cached APIKeyAuthCacheEntry
+	require.NoError(t, json.Unmarshal(payload, &cached))
+
+	materialized, used, err := svc.applyAuthCacheEntry(apiKey.Key, &cached)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.NotNil(t, materialized.Group)
+	require.True(t, materialized.Group.ForceOpenAIUltrafast)
+	require.False(t, materialized.Group.ForceOpenAIFast)
+}
+
+func TestMultiGroupUltrafastSnapshotRoundtrip(t *testing.T) {
+	group := &Group{ID: 52, Platform: PlatformOpenAI, ForceOpenAIUltrafast: true}
+	snapshot := apiKeyAuthGroupSnapshotFromService(group)
+	require.True(t, snapshot.ForceOpenAIUltrafast)
+	restored := apiKeyAuthGroupFromSnapshot(snapshot)
+	require.True(t, restored.ForceOpenAIUltrafast)
+	require.False(t, restored.ForceOpenAIFast)
+}

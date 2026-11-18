@@ -102,12 +102,13 @@ func TestPelicanBudgetAntigravityPreservesPromptAndTiers(t *testing.T) {
 		model, upstream string
 		thinking        int
 	}{
-		{"gemini-3.8-flash-high", "gemini-3.8-flash-tiered", -1},
-		{"gemini-3.8-flash-medium", "gemini-3.8-flash-tiered", 4000},
-		{"gemini-3.8-flash-low", "gemini-3.8-flash-tiered", 1000},
-		{"gemini-4-carbon-high", "gemini-4-carbon-high", 0},
-		{"gemini-4-carbon-medium", "gemini-4-carbon-medium", 0},
-		{"gemini-4-carbon-low", "gemini-4-carbon-low", 0},
+		{"gemini-3.7-flash-high", "gemini-3.7-flash-tiered", -1},
+		{"gemini-3.7-flash-medium", "gemini-3.7-flash-tiered", 4000},
+		{"gemini-3.7-flash-low", "gemini-3.7-flash-tiered", 1000},
+		{"gemini-3.8-flash-high", "gemini-3.8-flash-high", 0},
+		{"gemini-4-carbon-high", "gemini-4-carbon", 0},
+		{"gemini-4-carbon-medium", "gemini-4-carbon", 0},
+		{"gemini-4-carbon-low", "gemini-4-carbon", 0},
 		{"claude-opus-5-5", "claude-opus-5-5-high", 0},
 		{"claude-opus-5-5-high", "claude-opus-5-5-high", 0},
 		{"claude-opus-5-5-medium", "claude-opus-5-5-medium", 0},
@@ -116,6 +117,11 @@ func TestPelicanBudgetAntigravityPreservesPromptAndTiers(t *testing.T) {
 		t.Run(tc.model, func(t *testing.T) {
 			a, u, s := pelicanAdapterFixture(pelicanAdapterCase{platform: PlatformAntigravity, typ: AccountTypeOAuth, wire: "wrapped"}, "<html></html>")
 			a.Credentials["plan_type"] = "Ultra"
+			if canonicalAntigravityCarbonModel(tc.model) == "gemini-4-carbon" {
+				a.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
+					"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
+				}})
+			}
 			var actual string
 			out, err := s.RunPelicanBenchmark(context.Background(), a.ID, tc.model, func(model string) error { actual = model; return nil })
 			require.NoError(t, err)
@@ -149,11 +155,11 @@ func TestPelicanBudgetAntigravityMetadataLimit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, u, s := pelicanAdapterFixture(pelicanAdapterCase{platform: PlatformAntigravity, typ: AccountTypeOAuth, wire: "wrapped"}, "<html></html>")
-			// Metadata belongs to the resolved route, not the public tier alias.
+			// 3.8 keeps the concrete upstream variant from the account catalog.
 			a.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{
 				Source: "upstream",
 				Models: map[string]UpstreamModelMetadata{
-					"gemini-3.8-flash-tiered": {ID: "gemini-3.8-flash-tiered", MaxOutputTokens: tc.limit},
+					"gemini-3.8-flash-medium": {ID: "gemini-3.8-flash-medium", MaxOutputTokens: tc.limit},
 				},
 			})
 			out, err := s.RunPelicanBenchmark(context.Background(), a.ID, "gemini-3.8-flash-medium", nil)
@@ -165,9 +171,8 @@ func TestPelicanBudgetAntigravityMetadataLimit(t *testing.T) {
 			generation, ok := request["generationConfig"].(map[string]any)
 			require.True(t, ok)
 			require.Equal(t, float64(tc.want), generation["maxOutputTokens"])
-			thinking, ok := generation["thinkingConfig"].(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, float64(4000), thinking["thinkingBudget"])
+			require.Equal(t, "gemini-3.8-flash-medium", u.body["model"])
+			require.NotContains(t, generation, "thinkingConfig")
 		})
 	}
 }

@@ -13,6 +13,9 @@ func TestDefaultModels_ContainsImageModels(t *testing.T) {
 	// 验证默认 Gemini 测试模型列表中包含核心模型
 	required := []string{
 		"gemini-2.5-flash",
+		"gemini-3.8-flash",
+		"gemini-4-argon",
+		"gemini-4-carbon",
 	}
 
 	for _, id := range required {

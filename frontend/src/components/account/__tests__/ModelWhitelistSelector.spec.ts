@@ -174,6 +174,20 @@ describe('ModelWhitelistSelector', () => {
     expect(copyToClipboard).not.toHaveBeenCalled()
   })
 
+  it.each(['gpt-6.2-sol', 'gpt-6.2-astra'])('can search and select the new %s model', async (model) => {
+    const selector = mountSelector()
+    const dropdown = await openDropdown(selector)
+    const search = dropdown?.querySelector<HTMLInputElement>('input')
+    if (!search) throw new Error('Search input not found')
+    search.value = model
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelectorAll('[data-testid="model-option"]')).toHaveLength(1)
+    findModelRow(model).querySelector<HTMLButtonElement>('[data-testid="select-model"]')!.click()
+    await nextTick()
+    expect(selector.emitted('update:modelValue')).toEqual([[[model]]])
+  })
+
   it('offers Grok 4.7 in the Grok model selector', async () => {
     const selector = mountSelector({ platform: 'grok' })
     const dropdown = await openDropdown(selector)

@@ -20,6 +20,11 @@ func TestValidateGPT61ReasoningEffort(t *testing.T) {
 		{"openai/gpt-6.1-terra", " MINIMAL ", true},
 		{"gpt-6.1-terra-openai-compact", "max", false},
 		{"gpt-5.6-luna", "none", false},
+		{"gpt-6.2-sol", "none", true},
+		{"gpt-6.2-astra", "minimal", true},
+		{"openai/gpt-6.2-sol-high", "high", false},
+		{"gpt-6.2-astra-openai-compact", "max", false},
+		{"gpt-6.2-astra-other", "none", false},
 		{"gpt-6.1-terra-other", "minimal", false},
 	} {
 		t.Run(tc.model+"/"+tc.effort, func(t *testing.T) {

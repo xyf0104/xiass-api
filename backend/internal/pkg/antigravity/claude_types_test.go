@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
+func TestDefaultModels_ContainsUpstreamCatalogAndXIASSModels(t *testing.T) {
 	t.Parallel()
 
 	models := DefaultModels()
@@ -14,7 +14,7 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 		byID[m.ID] = m
 	}
 
-	// 只验证经过服务器测试确认可用的核心模型
+	// Static metadata does not replace the account's live capability catalog.
 	requiredIDs := []string{
 		"claude-fable-5-1",
 		"claude-opus-4-6-thinking",
@@ -43,9 +43,7 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 		"gemini-4-argon-high",
 		"gemini-4-argon-medium",
 		"gemini-4-argon-low",
-		"gemini-4-carbon-high",
-		"gemini-4-carbon-medium",
-		"gemini-4-carbon-low",
+		"gemini-4-carbon",
 		"claude-opus-5-5-high",
 		"claude-opus-5-5-medium",
 		"claude-opus-5-5-low",
@@ -58,13 +56,11 @@ func TestDefaultModels_AdvertisesOnlyVerifiedCurrentModels(t *testing.T) {
 	}
 
 	removedIDs := []string{
-		"gemini-2.5-flash-image",
-		"gemini-2.5-flash-image-preview",
-		"gemini-3-pro-low",
-		"gemini-3-pro-high",
-		"gemini-3-pro-preview",
-		"gemini-3-pro-image",
-		"gemini-3.1-flash-image-preview",
+		"gemini-4-carbon-high",
+		"gemini-4-carbon-medium",
+		"gemini-4-carbon-low",
+		"gemini-3.7-flash",
+		"gemini-3.7-flash-tiered",
 	}
 	for _, id := range removedIDs {
 		if _, ok := byID[id]; ok {
@@ -186,9 +182,8 @@ func TestGeminiModels_Gemini35PublicTierLabels(t *testing.T) {
 	}
 }
 
-func TestGeminiModels_CarbonTiersPreserveReasoningSemantics(t *testing.T) {
-	for _, tier := range []string{"high", "medium", "low"} {
-		id := "gemini-4-carbon-" + tier
+func TestGeminiModels_CarbonUsesCanonicalID(t *testing.T) {
+	for _, id := range []string{"gemini-4-carbon", "gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low"} {
 		if !IsGeminiReasoningModel(id) {
 			t.Errorf("%q must use Gemini reasoning request semantics", id)
 		}
@@ -196,13 +191,17 @@ func TestGeminiModels_CarbonTiersPreserveReasoningSemantics(t *testing.T) {
 		for _, model := range DefaultGeminiModels() {
 			if model.Name == "models/"+id {
 				count++
-				if model.DisplayName != "Gemini 4 Carbon ("+strings.ToUpper(tier[:1])+tier[1:]+")" {
+				if model.DisplayName != "Gemini 4 Carbon" {
 					t.Errorf("unexpected Carbon display name: %q", model.DisplayName)
 				}
 			}
 		}
-		if count != 1 {
-			t.Errorf("expected one Gemini entry for %q, got %d", id, count)
+		want := 0
+		if id == "gemini-4-carbon" {
+			want = 1
+		}
+		if count != want {
+			t.Errorf("expected %d Gemini entries for %q, got %d", want, id, count)
 		}
 	}
 }

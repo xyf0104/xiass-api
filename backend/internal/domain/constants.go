@@ -186,11 +186,11 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-4-argon-high":   "gemini-4-argon-high",
 	"gemini-4-argon-medium": "gemini-4-argon-medium",
 	"gemini-4-argon-low":    "gemini-4-argon-low",
-	// Carbon uses explicit upstream tiers, verified against the paid daily catalog.
-	"gemini-4-carbon":        "gemini-4-carbon-high",
-	"gemini-4-carbon-high":   "gemini-4-carbon-high",
-	"gemini-4-carbon-medium": "gemini-4-carbon-medium",
-	"gemini-4-carbon-low":    "gemini-4-carbon-low",
+	// Carbon uses one upstream model; legacy tier names remain compatibility aliases.
+	"gemini-4-carbon":        AntigravityGemini4CarbonModel,
+	"gemini-4-carbon-high":   AntigravityGemini4CarbonModel,
+	"gemini-4-carbon-medium": AntigravityGemini4CarbonModel,
+	"gemini-4-carbon-low":    AntigravityGemini4CarbonModel,
 	// Gemini 3 image 兼容映射（向 3.1 image 迁移）
 	"gemini-3-pro-image":         "gemini-3.1-flash-image",
 	"gemini-3-pro-image-preview": "gemini-3.1-flash-image",

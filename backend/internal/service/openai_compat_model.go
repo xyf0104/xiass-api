@@ -8,6 +8,9 @@ import (
 )
 
 func NormalizeOpenAICompatRequestedModel(model string) string {
+	if base := openai.GPT62ModelID(model); base != "" {
+		return base
+	}
 	if openai.IsGPT61SolModelSpelling(model) {
 		return "gpt-6.1-sol"
 	}
@@ -24,10 +27,11 @@ func NormalizeOpenAICompatRequestedModel(model string) string {
 }
 
 func applyOpenAICompatModelNormalization(req *apicompat.AnthropicRequest) {
-	if req != nil && openai.IsGPT61SolModelSpelling(req.Model) {
+	if req != nil && (openai.IsGPT61SolModelSpelling(req.Model) || openai.GPT62ModelID(req.Model) != "") {
 		canonical := openai.CanonicalizeOpenAIModelAliasSpelling(req.Model)
-		if effort, ok := strings.CutPrefix(canonical, "gpt-6.1-sol-"); ok && effort != "openai-compact" {
-			req.Model = "gpt-6.1-sol"
+		baseModel := NormalizeOpenAICompatRequestedModel(req.Model)
+		if effort, ok := strings.CutPrefix(canonical, baseModel+"-"); ok && effort != "openai-compact" {
+			req.Model = baseModel
 			if req.OutputConfig == nil {
 				req.OutputConfig = &apicompat.AnthropicOutputConfig{}
 			}
@@ -65,6 +69,10 @@ func applyOpenAICompatModelNormalization(req *apicompat.AnthropicRequest) {
 		req.OutputConfig = &apicompat.AnthropicOutputConfig{}
 	}
 	req.OutputConfig.Effort = claudeEffort
+}
+
+func openAIModelRequiresResponsesForToolCalls(model string) bool {
+	return openai.IsGPT61SolModelSpelling(model) || openai.GPT62ModelID(model) != ""
 }
 
 func splitOpenAICompatReasoningModel(model string) (normalizedModel string, reasoningEffort string, ok bool) {

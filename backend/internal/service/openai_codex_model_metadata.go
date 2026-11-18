@@ -3,30 +3,25 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"fmt"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite bool) bool {
 	changed := false
 	for _, field := range codexToolCapabilityFields {
 		value := bytes.TrimSpace(src[field])
-		if len(value) == 0 {
+		if !validCodexToolCapability(field, value) {
 			continue
 		}
-		// These Codex fields are nullable booleans or strings, never arbitrary objects.
-		if !bytes.Equal(value, []byte("null")) {
-			if field == "supports_search_tool" || field == "use_responses_lite" {
-				if !bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false")) {
-					continue
-				}
-			} else {
-				var text string
-				if json.Unmarshal(value, &text) != nil {
-					continue
-				}
-			}
+		if field == "service_tiers" && bytes.Equal(value, []byte("null")) {
+			value = []byte("[]")
 		}
 		current, exists := dst[field]
 		if (exists && !overwrite) || bytes.Equal(current, value) {
@@ -36,6 +31,29 @@ func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite b
 		changed = true
 	}
 	return changed
+}
+
+// Subscription SKU aliases match the account plan picker. Workspace grants
+// are taken from model discovery rather than inferred from the plan name.
+func gpt62PlanIncludesUltrafast(account *Account, base string) bool {
+	if !account.IsOpenAIOAuthLike() || (base != "gpt-6.2-sol" && base != "gpt-6.2-astra") {
+		return false
+	}
+	plan := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '-', '_':
+			return -1
+		}
+		return r
+	}, strings.ToLower(strings.TrimSpace(account.GetCredential("plan_type"))))
+	switch plan {
+	case "pro", "chatgptpro":
+		return base == "gpt-6.2-sol"
+	case "promax":
+		return true
+	default:
+		return false
+	}
 }
 
 func accountCodexToolCapabilities(account *Account, modelID string) map[string]json.RawMessage {
@@ -59,7 +77,7 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 	parsed, err := url.Parse(baseURL)
 	official := err == nil && (strings.EqualFold(parsed.Hostname(), "api.openai.com") ||
 		(account.IsOpenAIOAuth() && strings.EqualFold(parsed.Hostname(), "chatgpt.com")))
-	if account.IsOpenAI() && (isOpenAIGPT6AstraModel(modelID) || openai.IsGPT61SolModelSpelling(modelID)) && official {
+	if account.IsOpenAI() && (openai.GPT62ModelID(modelID) != "" || isOpenAIGPT6AstraModel(modelID) || openai.IsGPT61SolModelSpelling(modelID)) && official {
 		defaults := map[string]json.RawMessage{
 			"supports_search_tool":  json.RawMessage("true"),
 			"apply_patch_tool_type": json.RawMessage(`"freeform"`),
@@ -75,13 +93,36 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 	}
 	if account.IsOpenAIApiKey() {
 		target := modelID
-		if isOpenAIGPT6AstraModel(target) {
+		if base := openai.GPT62ModelID(target); base != "" {
+			target = base
+		} else if isOpenAIGPT6AstraModel(target) {
 			target = "gpt-6-astra"
 		}
 		_, disabled := apiKeyCodexModelsWithoutResponsesLite[target]
-		if disabled && bytes.Equal(capabilities["use_responses_lite"], []byte("true")) {
+		if disabled && (openai.GPT62ModelID(target) != "" || bytes.Equal(capabilities["use_responses_lite"], []byte("true"))) {
 			capabilities["use_responses_lite"] = json.RawMessage("false")
 		}
+	}
+	base := openai.GPT62ModelID(modelID)
+	planIncludesUltra := gpt62PlanIncludesUltrafast(account, base)
+	apiUltra := account.IsOpenAIApiKey() && isOfficialOpenAIModelsBaseURL(baseURL) && (base != "" || isOpenAIGPT6AstraModel(modelID))
+	tiers := capabilities["service_tiers"]
+	if (apiUltra && len(tiers) == 0) || (planIncludesUltra && !gjson.GetBytes(tiers, `#(id=="ultrafast")`).Exists()) {
+		if len(tiers) == 0 {
+			tiers, err = json.Marshal(configuredCodexServiceTiersForModel(modelID))
+			if err != nil {
+				panic(err)
+			}
+		}
+		description := "Lowest latency; increased subscription usage."
+		if apiUltra {
+			description = fmt.Sprintf("Lowest latency; %gx Standard token pricing.", openAIUltrafastMultiplier(modelID, time.Now()))
+		}
+		tiers, err = sjson.SetBytes(tiers, "-1", configuredCodexServiceTier{ID: OpenAIFastTierUltrafast, Name: "Ultrafast", Description: description})
+		if err != nil {
+			panic(err)
+		}
+		capabilities["service_tiers"] = tiers
 	}
 	return capabilities
 }

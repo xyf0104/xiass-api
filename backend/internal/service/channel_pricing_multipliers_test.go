@@ -233,6 +233,8 @@ func TestChannelMultipliersMustBePositive(t *testing.T) {
 	zero := 0.0
 	require.Error(t, checkPricesNotNegative(ChannelModelPricing{FastMultiplier: &zero}))
 	require.Error(t, checkPricesNotNegative(ChannelModelPricing{FlexMultiplier: &zero}))
+	require.Error(t, checkPricesNotNegative(ChannelModelPricing{UltrafastMultiplier: &zero}))
+	require.NoError(t, checkPricesNotNegative(ChannelModelPricing{UltrafastMultiplier: pricingMultiplier(3)}))
 	require.Error(t, ValidateIntervals([]PricingInterval{{
 		MinTokens:       100,
 		InputMultiplier: &zero,

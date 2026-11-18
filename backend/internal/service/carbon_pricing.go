@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// Business rates supplied by the operator's screenshot, not independently
-// verified vendor prices. The cutoff is 2026-12-01 00:00 Asia/Shanghai (UTC+8),
-// independent of the server's local timezone. Output includes thinking tokens.
+// Keep the XIASS business-date cutoff while using the v0.2.23 token rates.
 var carbonStandardPricingAt = time.Date(2026, 12, 1, 0, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 
 func isCarbonPricingModel(model string) bool {
@@ -22,8 +20,6 @@ func carbonIntroductoryPricingAt(at time.Time) bool {
 }
 
 // Resolve on every lookup: never freeze introductory rates in the loaded catalog.
-// The standard cache price assumes the same 95% discount as the introductory
-// screenshot. The screenshot does not quote a post-November cache price.
 func carbonFallbackPricingAt(model string, at time.Time) *LiteLLMModelPricing {
 	if !isCarbonPricingModel(model) {
 		return nil
@@ -35,6 +31,8 @@ func carbonFallbackPricingAt(model string, at time.Time) *LiteLLMModelPricing {
 	return &LiteLLMModelPricing{
 		InputCostPerToken: input, OutputCostPerToken: output,
 		CacheReadInputTokenCost: cache, SupportsPromptCaching: true,
+		InputCostPerTokenPriority: input * 1.8, OutputCostPerTokenPriority: output * 1.8,
+		CacheReadInputTokenCostPriority: cache * 1.8, SupportsServiceTier: true,
 		LiteLLMProvider: "gemini", Mode: "chat",
 	}
 }

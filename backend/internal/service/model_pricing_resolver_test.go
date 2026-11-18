@@ -290,6 +290,21 @@ func TestResolve_WithChannelOverride_TokenPartialOverride(t *testing.T) {
 	require.InDelta(t, 15e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
 
+func TestResolve_ChannelUltrafastMultiplierPreservesFastAndIntervals(t *testing.T) {
+	r := newResolverWithChannel(t, nil)
+	pricing := &ChannelModelPricing{
+		Platform: "openai", Models: []string{"gpt-6.2-sol"}, BillingMode: BillingModeToken,
+		FastMultiplier: testPtrFloat64(2.5), UltrafastMultiplier: testPtrFloat64(4),
+		Intervals: []PricingInterval{{MinTokens: 272000, InputMultiplier: testPtrFloat64(2)}},
+	}
+	resolved := &ResolvedPricing{BasePricing: &ModelPricing{InputPricePerToken: 2e-6}}
+	r.applyTokenOverrides(pricing, resolved)
+	require.Equal(t, 4.0, *resolved.BasePricing.UltrafastMultiplierOverride)
+	require.Equal(t, 2.5, *resolved.BasePricing.FastMultiplier)
+	require.Len(t, resolved.Intervals, 1)
+	require.Equal(t, 2.0, *resolved.Intervals[0].InputMultiplier)
+}
+
 func TestResolve_WithChannelOverride_TokenWithIntervals(t *testing.T) {
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
 		Platform:    "anthropic",

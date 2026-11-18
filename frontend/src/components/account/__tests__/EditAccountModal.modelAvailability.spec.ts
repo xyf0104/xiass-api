@@ -116,7 +116,7 @@ describe('EditAccountModal account-specific model suggestions', () => {
       { from: 'gemini-4-argon-high', to: 'gemini-4-argon-high' },
       { from: 'my-custom-alias', to: 'custom-upstream-target' }
     ])
-    editState(wrapper).addAntigravityPresetMapping('gemini-4-carbon-high', 'gemini-4-carbon-high')
+    editState(wrapper).addAntigravityPresetMapping('gemini-4-carbon', 'gemini-4-carbon')
     expect(editState(wrapper).antigravityModelMappings).toHaveLength(2)
 
     await wrapper.setProps({ account: { ...existing, name: 'Refreshed name' } })
@@ -126,6 +126,32 @@ describe('EditAccountModal account-specific model suggestions', () => {
     await wrapper.setProps({ show: true })
     await flushPromises()
     expect(syncUpstreamModels).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers base Carbon only after discovery and preserves saved tier aliases when adding it', async () => {
+    const savedMapping = {
+      'gemini-4-carbon-high': 'gemini-4-carbon-high',
+      'gemini-4-carbon-medium': 'gemini-4-carbon-medium',
+      'gemini-4-carbon-low': 'gemini-4-carbon-low'
+    }
+    const pending = deferred<SyncUpstreamModelsResult>()
+    syncUpstreamModels.mockReturnValueOnce(pending.promise)
+    const wrapper = mountEditor(account({ credentials: { model_mapping: savedMapping } }))
+    expect(suggestionIds(wrapper)).toEqual([])
+    expect(editState(wrapper).antigravityPresetMappings).toEqual([])
+    pending.resolve(models('gemini-4-carbon', 'gemini-3.7-flash-low'))
+    await flushPromises()
+    expect(suggestionIds(wrapper)).toEqual(['gemini-4-carbon', 'gemini-3.7-flash-low'])
+    expect(editState(wrapper).antigravityPresetMappings.filter(({ from }) => from.startsWith('gemini-4-carbon'))).toEqual([
+      expect.objectContaining({ from: 'gemini-4-carbon', to: 'gemini-4-carbon' })
+    ])
+    const preset = wrapper.findAll('[data-testid="antigravity-model-preset"]').find(button => button.text().includes('Carbon'))!
+    await preset.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccount.mock.calls[0][1].credentials.model_mapping).toEqual({
+      ...savedMapping, 'gemini-4-carbon': 'gemini-4-carbon'
+    })
   })
 
   it('discovers A+B from the live catalog when only A is mapped and adds B only on explicit sync', async () => {
@@ -358,6 +384,16 @@ const openSelector = (wrapper: VueWrapper) => wrapper.get('div.cursor-pointer').
 const optionIds = (wrapper: VueWrapper) => selectorState(wrapper).availableOptions.map(option => option.value)
 
 describe('ModelWhitelistSelector existing Antigravity accounts', () => {
+  it.each([[], ['gemini-3.7-flash-low'], ['gemini-4-carbon']])('uses only the fetched catalog %j while keeping legacy Carbon selection', async (...ids) => {
+    syncUpstreamModels.mockResolvedValueOnce(models(...ids))
+    const wrapper = mountSelector({ modelValue: ['gemini-4-carbon-high'] })
+    await openSelector(wrapper)
+    await flushPromises()
+    expect(optionIds(wrapper)).toEqual(ids)
+    expect(wrapper.text()).toContain('gemini-4-carbon-high')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
   it('discovers B absent from the saved whitelist and appends it only after explicit sync', async () => {
     syncUpstreamModels.mockResolvedValue(models('model-A', 'model-B'))
     const wrapper = mountSelector({ modelValue: ['model-A'] })

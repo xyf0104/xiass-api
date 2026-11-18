@@ -19,6 +19,9 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	// The handler has already applied the group effort policy. Retain that
+	// result so compatibility cleanup cannot hide an unsupported final effort.
+	reasoningValidationBody := body
 	captureOpenAIRequestOwnership(c, body)
 	captureOpenAIWSExecutionScope(c, body, getAPIKeyIDFromContext(c))
 	beginUpstreamResponseModelObservation(c)
@@ -60,7 +63,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		body = normalizedBody
 	}
 	if account.IsOpenAIOAuthLike() {
-		reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningMode(body)
+		reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningModeForAccount(account, body, isOpenAIResponsesCompactPath(c))
 		if reasoningErr != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning.mode: %w", reasoningErr)
 		}
@@ -625,6 +628,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	if err := validateOpenAIResponsesFinalReasoning(reasoningValidationBody, body, upstreamModel); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
+		return nil, err
+	}
 	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, body)
 	if policyErr != nil {
 		var blocked *OpenAIFastBlockedError

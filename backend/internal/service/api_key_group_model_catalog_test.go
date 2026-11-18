@@ -29,13 +29,18 @@ func TestModelsForAPIKeyGroupCarbonRequiresCapableAccount(t *testing.T) {
 		Status: StatusActive, Schedulable: true, Credentials: map[string]any{"plan_type": "Pro"}}
 	ultra := Account{ID: 2, Platform: PlatformAntigravity, Type: AccountTypeOAuth,
 		Status: StatusActive, Schedulable: true, Credentials: map[string]any{"plan_type": "Ultra"}}
+	ultra.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
+		"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
+	}})
 	for _, platform := range []string{"", PlatformAntigravity} {
 		proModels := modelIDsFromAvailableAccounts([]Account{pro}, platform)
 		mixedModels := modelIDsFromAvailableAccounts([]Account{pro, ultra}, platform)
+		require.NotContains(t, proModels, "gemini-4-carbon")
+		require.Contains(t, mixedModels, "gemini-4-carbon")
 		for _, tier := range []string{"high", "medium", "low"} {
 			model := "gemini-4-carbon-" + tier
 			require.NotContains(t, proModels, model)
-			require.Contains(t, mixedModels, model)
+			require.NotContains(t, mixedModels, model)
 		}
 		require.Contains(t, proModels, "gemini-3.7-flash-high")
 	}

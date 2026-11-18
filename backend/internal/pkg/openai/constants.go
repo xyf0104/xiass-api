@@ -22,6 +22,8 @@ type Model struct {
 var DefaultModels = []Model{
 	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
 	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
+	{ID: "gpt-6.2-sol", Object: "model", Created: 1794873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.2 Sol"},
+	{ID: "gpt-6.2-astra", Object: "model", Created: 1794873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.2 Astra"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
@@ -45,6 +47,8 @@ var DefaultModels = []Model{
 var defaultAccountTestModelIDs = []string{
 	"gpt-5.6-sol",
 	"gpt-6.1-sol",
+	"gpt-6.2-sol",
+	"gpt-6.2-astra",
 	"gpt-6-sol",
 	"gpt-6-astra",
 	"gpt-6-luna",
@@ -115,6 +119,12 @@ var instructionsGPT55 string
 //go:embed instructions_gpt6_astra.txt
 var instructionsGPT6Astra string
 
+//go:embed codex_gpt62_sol.json
+var CodexGPT62SolMetadata []byte
+
+//go:embed codex_gpt62_astra.json
+var CodexGPT62AstraMetadata []byte
+
 // CodexGPT61SolMetadata is the official Codex descriptor used to complete
 // the client model manifest without replacing XIASS routing metadata.
 //
@@ -130,6 +140,18 @@ func latestCodexInstructions() string {
 	return DefaultInstructions
 }
 
+func codexInstructionsTemplate(descriptor []byte) string {
+	var metadata struct {
+		ModelMessages struct {
+			InstructionsTemplate string `json:"instructions_template"`
+		} `json:"model_messages"`
+	}
+	if err := json.Unmarshal(descriptor, &metadata); err != nil {
+		panic(err)
+	}
+	return metadata.ModelMessages.InstructionsTemplate
+}
+
 // CodexBaseInstructionsForModel 按模型返回最匹配的真实 Codex base instructions：
 //   - gpt-6 / gpt-6-sol / gpt-6-astra / gpt-6-luna（含供应商前缀与日期变体）→ GPT-6 prompt
 //   - 含 "codex" 的模型（gpt-5-codex / gpt-5.x-codex / codex-max / spark 等）→ GPT-5-Codex prompt
@@ -142,6 +164,10 @@ func latestCodexInstructions() string {
 func CodexBaseInstructionsForModel(model string) string {
 	m := CanonicalizeOpenAIModelAliasSpelling(model)
 	switch {
+	case GPT62ModelID(m) == "gpt-6.2-sol":
+		return codexInstructionsTemplate(CodexGPT62SolMetadata)
+	case GPT62ModelID(m) == "gpt-6.2-astra":
+		return codexInstructionsTemplate(CodexGPT62AstraMetadata)
 	case IsGPT61SolModelSpelling(m):
 		var metadata struct {
 			ModelMessages struct {
@@ -224,6 +250,23 @@ func IsGPT61SolModelSpelling(model string) bool {
 	default:
 		return false
 	}
+}
+
+func GPT62ModelID(model string) string {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	for _, base := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
+		if canonical == base {
+			return base
+		}
+		suffix, ok := strings.CutPrefix(canonical, base+"-")
+		if ok {
+			switch suffix {
+			case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+				return base
+			}
+		}
+	}
+	return ""
 }
 
 // ValidateGPT61SolReasoningEffort rejects disabled reasoning instead of

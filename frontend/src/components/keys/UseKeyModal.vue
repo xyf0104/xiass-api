@@ -874,7 +874,14 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       }
     }
   }
+  const solAstraOptions = {
+    limit: { context: 1050000, output: 128000 },
+    options: { store: false },
+    variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
+  }
   const openaiModels = {
+    'gpt-6.2-sol': { name: 'GPT-6.2 Sol', ...solAstraOptions },
+    'gpt-6.2-astra': { name: 'GPT-6.2 Astra', ...solAstraOptions },
     'gpt-6': {
       name: 'GPT-6 (Astra)',
       limit: {
@@ -1103,6 +1110,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     }
   }
   const geminiModels = {
+    'gemini-4-carbon': { name: 'Gemini 4 Carbon' },
     'gemini-2.0-flash': {
       name: 'Gemini 2.0 Flash',
       limit: {
@@ -1219,6 +1227,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
   }
 
   const antigravityGeminiModels = {
+    'gemini-4-carbon': { name: 'Gemini 4 Carbon' },
     'gemini-2.5-flash': {
       name: 'Gemini 2.5 Flash',
       limit: {

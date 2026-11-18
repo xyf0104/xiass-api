@@ -423,9 +423,10 @@ func TestPricingRequestToService_NilPriceFields(t *testing.T) {
 
 func TestPricingRequestToService_Multipliers(t *testing.T) {
 	req := channelModelPricingRequest{
-		Models:         []string{"gpt-5"},
-		FastMultiplier: float64Ptr(2.5),
-		FlexMultiplier: float64Ptr(0.5),
+		Models:              []string{"gpt-5"},
+		FastMultiplier:      float64Ptr(2.5),
+		FlexMultiplier:      float64Ptr(0.5),
+		UltrafastMultiplier: float64Ptr(4),
 		Intervals: []pricingIntervalRequest{{
 			MinTokens:            272000,
 			InputMultiplier:      float64Ptr(2),
@@ -438,12 +439,14 @@ func TestPricingRequestToService_Multipliers(t *testing.T) {
 	allowed := pricingRequestToService([]channelModelPricingRequest{req}, true)
 	require.Equal(t, float64Ptr(2.5), allowed[0].FastMultiplier)
 	require.Equal(t, float64Ptr(0.5), allowed[0].FlexMultiplier)
+	require.Equal(t, float64Ptr(4), allowed[0].UltrafastMultiplier)
 	require.Equal(t, float64Ptr(2), allowed[0].Intervals[0].InputMultiplier)
 	require.Equal(t, float64Ptr(1.5), allowed[0].Intervals[0].OutputMultiplier)
 
 	dropped := pricingRequestToService([]channelModelPricingRequest{req}, false)
 	require.Nil(t, dropped[0].FastMultiplier)
 	require.Nil(t, dropped[0].FlexMultiplier)
+	require.Nil(t, dropped[0].UltrafastMultiplier)
 	require.Nil(t, dropped[0].Intervals[0].InputMultiplier)
 	require.Nil(t, dropped[0].Intervals[0].OutputMultiplier)
 	require.Nil(t, dropped[0].Intervals[0].CacheWriteMultiplier)
@@ -452,11 +455,13 @@ func TestPricingRequestToService_Multipliers(t *testing.T) {
 
 func TestPricingToResponse_Multipliers(t *testing.T) {
 	response := pricingToResponse(&service.ChannelModelPricing{
-		FastMultiplier: float64Ptr(2),
-		FlexMultiplier: float64Ptr(0.5),
+		FastMultiplier:      float64Ptr(2),
+		FlexMultiplier:      float64Ptr(0.5),
+		UltrafastMultiplier: float64Ptr(4),
 	})
 	require.Equal(t, float64Ptr(2), response.FastMultiplier)
 	require.Equal(t, float64Ptr(0.5), response.FlexMultiplier)
+	require.Equal(t, float64Ptr(4), response.UltrafastMultiplier)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,6 @@
 package service
 
-import (
-	"strings"
-
-	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
-)
+import "strings"
 
 // antigravityAccountAllowsModel validates the final target, including aliases.
 // A disabled catalog placeholder is not a callable model or a quota shortage.
@@ -16,30 +12,55 @@ func antigravityAccountAllowsModel(account *Account, model string) bool {
 	if strings.HasSuffix(model, "-disabled") {
 		return false
 	}
-	if model != "gemini-4-carbon" && !strings.HasPrefix(model, "gemini-4-carbon-") {
+	isCarbon := canonicalAntigravityCarbonModel(model) == "gemini-4-carbon"
+	if !isCarbon && model != "gemini-4-argon" && !strings.HasPrefix(model, "gemini-4-argon-") {
 		return true
 	}
-	const disabled = "gemini-4-carbon-disabled"
 	// Inspect only a snapshot validated against the current credentials/proxy.
 	if snapshot := account.GetUpstreamModelMetadataSnapshot(); snapshot != nil {
-		for _, model := range snapshot.DisabledModels {
-			if normalizeAntigravityModelName(model) == disabled {
+		for _, disabled := range snapshot.DisabledModels {
+			if antigravityCatalogModelMatches(strings.TrimSuffix(normalizeAntigravityModelName(disabled), "-disabled"), model) {
 				return false
 			}
 		}
-		if _, found := snapshot.Models[disabled]; found {
-			return false
+		allowed := false
+		for id := range snapshot.Models {
+			id = normalizeAntigravityModelName(id)
+			if strings.HasSuffix(id, "-disabled") {
+				if antigravityCatalogModelMatches(strings.TrimSuffix(id, "-disabled"), model) {
+					return false
+				}
+				continue
+			}
+			allowed = allowed || antigravityCatalogModelMatches(id, model)
 		}
-		if _, found := snapshot.Models[model]; found {
-			return true
+		if len(snapshot.Models) > 0 || isCarbon {
+			return allowed
 		}
+	}
+	if !isCarbon {
+		return true
 	}
 	for source, target := range stringMappingFromRaw(account.Credentials["model_mapping"]) {
-		if normalizeAntigravityModelName(source) == disabled || normalizeAntigravityModelName(target) == disabled {
+		if normalizeAntigravityModelName(source) == "gemini-4-carbon-disabled" || normalizeAntigravityModelName(target) == "gemini-4-carbon-disabled" {
 			return false
 		}
 	}
-	// Only Ultra has verified default access. Other/unknown plans require an
-	// affirmative exact-model entry bound to their current credentials/proxy.
-	return strings.EqualFold(strings.TrimSpace(antigravity.TierIDToPlanType(account.GetCredential("plan_type"))), "Ultra")
+	// A plan name is not evidence that this identity can call Carbon.
+	return false
+}
+
+func antigravityCatalogModelMatches(catalogModel, target string) bool {
+	catalogModel = canonicalAntigravityCarbonModel(normalizeAntigravityModelName(catalogModel))
+	target = canonicalAntigravityCarbonModel(normalizeAntigravityModelName(target))
+	if catalogModel == target {
+		return true
+	}
+	family, ok := antigravityGeminiFlashFamilyForModel(catalogModel)
+	if !ok {
+		return false
+	}
+	targetFamily, targetOK := antigravityGeminiFlashFamilyForModel(target)
+	return targetOK && family.baseModel == targetFamily.baseModel &&
+		(isAntigravityGeminiFlashInternalModel(catalogModel) || isAntigravityGeminiFlashInternalModel(target))
 }

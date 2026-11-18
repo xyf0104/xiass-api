@@ -9,6 +9,7 @@ import (
 )
 
 var codexToolCapabilityFields = []string{
+	"service_tiers",
 	"supports_search_tool", "apply_patch_tool_type", "comp_hash", "tool_mode", "use_responses_lite",
 	"multi_agent_reasoning_effort", "multi_agent_version",
 }
@@ -151,6 +152,10 @@ func validCodexToolCapability(field string, value []byte) bool {
 	}
 	if bytes.Equal(value, []byte("null")) {
 		return true
+	}
+	if field == "service_tiers" {
+		var tiers []configuredCodexServiceTier
+		return json.Unmarshal(value, &tiers) == nil
 	}
 	if field == "supports_search_tool" || field == "use_responses_lite" {
 		return bytes.Equal(value, []byte("true")) || bytes.Equal(value, []byte("false"))

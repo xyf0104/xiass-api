@@ -13,6 +13,7 @@ import (
 type antigravityWrappedModelProfile struct {
 	upstreamModel  string
 	thinkingBudget *int
+	thinkingLevel  string
 	ensureThinking bool
 }
 
@@ -46,8 +47,23 @@ var antigravityGeminiFlashFamilies = []antigravityGeminiFlashFamily{
 func resolveAntigravityWrappedModelProfile(requestedModel, mappedModel string) antigravityWrappedModelProfile {
 	requested := normalizeAntigravityCompatModel(requestedModel)
 	mapped := normalizeAntigravityCompatModel(mappedModel)
+	if canonicalAntigravityCarbonModel(mapped) == domain.AntigravityGemini4CarbonModel {
+		profile := antigravityWrappedModelProfile{upstreamModel: domain.AntigravityGemini4CarbonModel}
+		for _, candidate := range []string{requested, mapped} {
+			if candidate != domain.AntigravityGemini4CarbonModel && canonicalAntigravityCarbonModel(candidate) == domain.AntigravityGemini4CarbonModel {
+				profile.thinkingLevel = candidate[strings.LastIndex(candidate, "-")+1:]
+				break
+			}
+		}
+		return profile
+	}
 
 	if family, ok := antigravityGeminiFlashFamilyForModel(mapped); ok {
+		// Only 3.7 requires the XIASS tiered route. For 3.8, preserve the
+		// catalog's concrete variant unless the account explicitly maps to tiered.
+		if family.baseModel == "gemini-3.8-flash" && mapped != family.tieredModel {
+			return antigravityWrappedModelProfile{}
+		}
 		tier := mapped
 		if _, requestedOK := antigravityGeminiFlashFamilyForModel(requested); requestedOK {
 			tier = requested
@@ -96,9 +112,30 @@ func applyAntigravityWrappedModelProfile(body []byte, profile antigravityWrapped
 		return nil, fmt.Errorf("set Antigravity upstream model: %w", err)
 	}
 	if profile.thinkingBudget != nil {
+		updated, err = sjson.DeleteBytes(updated, "request.generationConfig.thinkingConfig.thinkingLevel")
+		if err != nil {
+			return nil, err
+		}
 		updated, err = sjson.SetBytes(updated, "request.generationConfig.thinkingConfig.thinkingBudget", *profile.thinkingBudget)
 		if err != nil {
 			return nil, fmt.Errorf("set Antigravity thinking budget: %w", err)
+		}
+	}
+	if profile.upstreamModel == domain.AntigravityGemini4CarbonModel {
+		level := profile.thinkingLevel
+		config := gjson.GetBytes(updated, "request.generationConfig.thinkingConfig")
+		if level == "" && !config.Get("thinkingLevel").Exists() && config.Get("thinkingBudget").Exists() {
+			level = geminiThinkingLevelFromBody([]byte(gjson.GetBytes(updated, "request").Raw))
+		}
+		updated, err = sjson.DeleteBytes(updated, "request.generationConfig.thinkingConfig.thinkingBudget")
+		if err != nil {
+			return nil, err
+		}
+		if level != "" {
+			updated, err = sjson.SetBytes(updated, "request.generationConfig.thinkingConfig.thinkingLevel", level)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if profile.ensureThinking {
@@ -121,6 +158,9 @@ func applyAntigravityWrappedModelProfile(body []byte, profile antigravityWrapped
 }
 
 func profileAppliesToWrappedModel(profile antigravityWrappedModelProfile, currentModel string) bool {
+	if profile.upstreamModel == domain.AntigravityGemini4CarbonModel {
+		return canonicalAntigravityCarbonModel(currentModel) == domain.AntigravityGemini4CarbonModel
+	}
 	if family, ok := antigravityGeminiFlashFamilyForModel(profile.upstreamModel); ok {
 		currentFamily, currentOK := antigravityGeminiFlashFamilyForModel(currentModel)
 		return currentOK && currentFamily.baseModel == family.baseModel
@@ -160,13 +200,48 @@ func publicAntigravityModelIDs(models []string) []string {
 			publicModels = append(publicModels, family.publicModels...)
 			continue
 		}
-		publicModels = append(publicModels, model)
+		publicModels = append(publicModels, canonicalAntigravityCarbonModel(model))
 	}
 	return dedupeAndSortModelIDs(publicModels)
 }
 
 func antigravityWrappedRequestModel(body []byte) string {
 	return strings.TrimSpace(gjson.GetBytes(body, "model").String())
+}
+
+func canonicalAntigravityCarbonModel(model string) string {
+	switch normalizeAntigravityCompatModel(model) {
+	case "gemini-4-carbon", "gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low":
+		return domain.AntigravityGemini4CarbonModel
+	default:
+		return model
+	}
+}
+
+func antigravityProtocolModelMapping(account *Account, model string) map[string]string {
+	if strings.HasPrefix(normalizeAntigravityCompatModel(model), "gemini-3.8-flash") {
+		// Account.GetModelMapping retains old XIASS aliases for other consumers.
+		// Forward the administrator's stored 3.8 targets without forcing tiered.
+		if mapping := stringMappingFromRaw(account.Credentials["model_mapping"]); len(mapping) > 0 {
+			// Historical subscriptions may store only the internal tiered route.
+			// Expand that explicit capability, but keep concrete configured variants.
+			target := mapping[domain.AntigravityGemini38FlashTieredModel]
+			if target == "" && mapping["gemini-3.8-flash"] == domain.AntigravityGemini38FlashTieredModel {
+				target = domain.AntigravityGemini38FlashTieredModel
+			}
+			if target != "" {
+				for _, level := range []string{"high", "medium", "low"} {
+					id := "gemini-3.8-flash-" + level
+					if _, exists := mapping[id]; !exists {
+						mapping[id] = target
+					}
+				}
+			}
+			return mapping
+		}
+		return domain.DefaultAntigravityModelMapping
+	}
+	return account.GetModelMapping()
 }
 
 func normalizeAntigravityCompatModel(model string) string {

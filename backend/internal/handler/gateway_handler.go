@@ -1538,6 +1538,11 @@ func defaultModelIDsForPlatform(platform string) []string {
 		seen := make(map[string]struct{})
 		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo} {
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
+				// Composite catalogs expose XIASS Flash tiers, not internal aliases.
+				switch id {
+				case "gemini-3.7-flash", "gemini-3.7-flash-tiered", "gemini-3.8-flash", "gemini-3.8-flash-tiered":
+					continue
+				}
 				if _, ok := seen[id]; ok {
 					continue
 				}

@@ -13,7 +13,7 @@ func TestAvailableAntigravityModelsUsesAccountCatalog(t *testing.T) {
 		t.Run(plan, func(t *testing.T) {
 			body := `{"models":{"gemini-3.8-flash-tiered":{"supportsThinking":true,"maxTokens":1048576},"gemini-4-argon-disabled":{},"gemini-4-carbon-disabled":{}}}`
 			if plan == "Ultra" {
-				body = `{"models":{"gemini-3.8-flash-tiered":{"supportsThinking":true,"maxTokens":1048576},"gemini-4-argon-medium":{"supportsThinking":true,"maxTokens":1048576},"gemini-4-carbon-high":{"supportsThinking":true,"maxTokens":1048576},"claude-opus-5-5-medium":{"supportsThinking":true,"maxTokens":200000}}}`
+				body = `{"models":{"gemini-3.8-flash-tiered":{"supportsThinking":true,"maxTokens":1048576},"gemini-4-argon-medium":{"supportsThinking":true,"maxTokens":1048576},"gemini-4-carbon":{"supportsThinking":true,"maxTokens":1048576},"claude-opus-5-5-medium":{"supportsThinking":true,"maxTokens":200000}}}`
 			}
 			repo := &upstreamModelCapabilityRepo{}
 			svc, account, registry := antigravityCapabilitySyncFixture(t, body, repo)
@@ -34,7 +34,10 @@ func TestAvailableAntigravityModelsUsesAccountCatalog(t *testing.T) {
 			require.NotContains(t, ids, "gemini-3.8-flash-tiered")
 			require.NotContains(t, ids, "gemini-4-carbon-disabled")
 			if plan == "Ultra" {
-				require.Contains(t, ids, "gemini-4-carbon-high")
+				require.Contains(t, ids, "gemini-4-carbon")
+				require.NotContains(t, ids, "gemini-4-carbon-high")
+				require.NotContains(t, ids, "gemini-4-carbon-medium")
+				require.NotContains(t, ids, "gemini-4-carbon-low")
 				require.Contains(t, ids, "gemini-4-argon-medium")
 				require.Contains(t, ids, "claude-opus-5-5-medium")
 			} else {

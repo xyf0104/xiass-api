@@ -47,9 +47,10 @@ describe('useModelWhitelist', () => {
 
   it('合并的新模型在平台白名单中只出现一次', () => {
     const expectations: Array<[string, string[]]> = [
-      ['openai', ['gpt-6.1-sol']],
+      ['openai', ['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.2-astra']],
       ['antigravity', ['gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low']],
-      ['antigravity', ['gemini-4-carbon-high', 'gemini-4-carbon-medium', 'gemini-4-carbon-low']],
+      ['antigravity', ['gemini-4-carbon']],
+      ['gemini', ['gemini-4-carbon']],
       ['claude', ['claude-fable-5-2', 'claude-mythos-5-2']],
       ['claude', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']],
       ['deepseek', ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']],
@@ -74,14 +75,38 @@ describe('useModelWhitelist', () => {
     expect(getDefaultSelectedModelsByPlatform('anthropic', 'apikey')).toEqual(getModelsByPlatform('anthropic'))
   })
 
-  it('Carbon presets retain all three exact upstream tier IDs', () => {
-    const presets = getPresetMappingsByPlatform('antigravity')
-    for (const tier of ['high', 'medium', 'low']) {
-      const model = `gemini-4-carbon-${tier}`
-      expect(presets).toContainEqual(expect.objectContaining({ from: model, to: model }))
+  it('offers GPT-6.2 Sol/Astra identity presets without changing Luna defaults', () => {
+    for (const model of ['gpt-6.2-sol', 'gpt-6.2-astra']) {
+      expect(getPresetMappingsByPlatform('openai')).toContainEqual(
+        expect.objectContaining({ from: model, to: model })
+      )
+      expect(allModels.filter(({ value }) => value === model)).toHaveLength(1)
     }
-    expect(getModelsByPlatform('antigravity')).not.toContain('gemini-4-carbon-tiered')
-    expect(getModelsByPlatform('antigravity')).not.toContain('gemini-4-carbon-disabled')
+  })
+
+  it('offers only the upstream base Carbon model as a new preset', () => {
+    const presets = getPresetMappingsByPlatform('antigravity')
+    expect(presets).toContainEqual(expect.objectContaining({ from: 'gemini-4-carbon', to: 'gemini-4-carbon' }))
+    for (const suffix of ['high', 'medium', 'low', 'tiered', 'disabled']) {
+      const model = `gemini-4-carbon-${suffix}`
+      expect(getModelsByPlatform('antigravity')).not.toContain(model)
+      expect(allModels.map(({ value }) => value)).not.toContain(model)
+      expect(presets.some(({ from, to }) => from === model || to === model)).toBe(false)
+    }
+    expect(normalizeAntigravityModelsForDisplay(['gemini-4-carbon', 'gemini-4-carbon'])).toEqual(['gemini-4-carbon'])
+    expect(normalizeAntigravityModelsForDisplay(['gemini-3.7-flash-low'])).toEqual(['gemini-3.7-flash-low'])
+  })
+
+  it('round-trips stored Carbon tier mappings without removing or rewriting user data', () => {
+    const mapping = {
+      'gemini-4-carbon-high': 'gemini-4-carbon-high',
+      'gemini-4-carbon-medium': 'gemini-4-carbon-medium',
+      'gemini-4-carbon-low': 'gemini-4-carbon-low',
+      'my-carbon': 'gemini-4-carbon-high'
+    }
+    expect(buildModelMappingObject('mapping', [], normalizeAntigravityMappingsForDisplay(mapping))).toEqual(mapping)
+    const { allowedModels, modelMappings } = splitModelMappingObject(mapping)
+    expect(buildModelMappingObject('combined', allowedModels, modelMappings)).toEqual(mapping)
   })
 
   it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {

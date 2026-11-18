@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 const compatPromptCacheKeyPrefix = "compat_cc_"
@@ -16,7 +17,7 @@ func shouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	canonical := canonicalizeOpenAIModelAliasSpelling(trimmed)
 	// All explicit GPT-6 Codex families use the same Responses-compatible
 	// prompt-cache contract; keep the public gpt-6 alias mapped to Astra.
-	if canonical == "gpt-6" || canonical == "gpt-6-sol" || canonical == "gpt-6-astra" || canonical == "gpt-6-luna" {
+	if openai.GPT62ModelID(canonical) != "" || canonical == "gpt-6" || canonical == "gpt-6-sol" || canonical == "gpt-6-astra" || canonical == "gpt-6-luna" {
 		return true
 	}
 	// 仅对 Codex OAuth 路径支持的 GPT-5 族开启自动注入，避免 normalizeCodexModel

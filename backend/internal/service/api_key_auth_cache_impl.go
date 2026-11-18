@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 24 // v24: force refresh of pricing-sensitive group snapshots
+const apiKeyAuthSnapshotVersion = 25 // v25: group force_openai_ultrafast
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -421,6 +421,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			AllowLive:                       apiKey.Group.AllowLive,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            apiKey.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
 			RequireOAuthOnly:                apiKey.Group.RequireOAuthOnly,
 			RequirePrivacySet:               apiKey.Group.RequirePrivacySet,
@@ -545,6 +546,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			AllowLive:                       snapshot.Group.AllowLive,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            snapshot.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
 			RequireOAuthOnly:                snapshot.Group.RequireOAuthOnly,
 			RequirePrivacySet:               snapshot.Group.RequirePrivacySet,
