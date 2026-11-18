@@ -12,8 +12,10 @@ func antigravityAccountAllowsModel(account *Account, model string) bool {
 	if strings.HasSuffix(model, "-disabled") {
 		return false
 	}
-	isCarbon := canonicalAntigravityCarbonModel(model) == "gemini-4-carbon"
-	if !isCarbon && model != "gemini-4-argon" && !strings.HasPrefix(model, "gemini-4-argon-") {
+	if canonicalAntigravityCarbonModel(model) == "gemini-4-carbon" {
+		return resolveAntigravityCarbonCatalogModel(account, model, model, "") != ""
+	}
+	if model != "gemini-4-argon" && !strings.HasPrefix(model, "gemini-4-argon-") {
 		return true
 	}
 	// Inspect only a snapshot validated against the current credentials/proxy.
@@ -34,20 +36,11 @@ func antigravityAccountAllowsModel(account *Account, model string) bool {
 			}
 			allowed = allowed || antigravityCatalogModelMatches(id, model)
 		}
-		if len(snapshot.Models) > 0 || isCarbon {
+		if len(snapshot.Models) > 0 {
 			return allowed
 		}
 	}
-	if !isCarbon {
-		return true
-	}
-	for source, target := range stringMappingFromRaw(account.Credentials["model_mapping"]) {
-		if normalizeAntigravityModelName(source) == "gemini-4-carbon-disabled" || normalizeAntigravityModelName(target) == "gemini-4-carbon-disabled" {
-			return false
-		}
-	}
-	// A plan name is not evidence that this identity can call Carbon.
-	return false
+	return true
 }
 
 func antigravityCatalogModelMatches(catalogModel, target string) bool {

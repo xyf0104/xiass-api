@@ -244,6 +244,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		Metadata: make(map[string]UpstreamModelMetadata),
 	}
 	var disabledModels []string
+	var carbonCapabilities map[string]UpstreamModelMetadata
 	if mappingFallback {
 		catalog.Warnings = append(catalog.Warnings, UpstreamModelSyncWarning{
 			Code:    UpstreamModelListFallbackCode,
@@ -255,6 +256,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		if parseErr == nil {
 			catalog.Metadata = directMetadata
 			if antigravityOAuth {
+				carbonCapabilities = antigravityCarbonCatalogMetadata(directModels, directMetadata)
 				for _, modelID := range directModels {
 					if strings.HasSuffix(strings.ToLower(modelID), "-disabled") {
 						disabledModels = append(disabledModels, modelID)
@@ -311,6 +313,17 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 	}
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
+	if carbonCapabilities != nil {
+		// Public Carbon aliases must not become evidence of upstream route IDs.
+		for id := range completeMetadata {
+			if canonicalAntigravityCarbonModel(id) == "gemini-4-carbon" {
+				delete(completeMetadata, id)
+			}
+		}
+		for id, metadata := range carbonCapabilities {
+			completeMetadata[id] = metadata
+		}
+	}
 	persistedCapabilities := false
 	if (len(completeMetadata) > 0 || len(disabledModels) > 0) && account.ID > 0 && s != nil && s.accountRepo != nil {
 		snapshot := UpstreamModelMetadataSnapshot{
@@ -393,7 +406,7 @@ func publicAntigravityModelMetadata(metadata map[string]UpstreamModelMetadata) m
 			public[modelID] = projected
 		}
 	}
-	return public
+	return publicAntigravityCarbonMetadata(public)
 }
 
 func validateUpstreamModelMetadataSnapshot(snapshot UpstreamModelMetadataSnapshot) error {

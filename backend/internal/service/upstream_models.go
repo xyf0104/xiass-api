@@ -544,18 +544,6 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 	for modelID := range modelsResp.Models {
 		models = append(models, strings.TrimSpace(modelID))
 	}
-	// Keep IDs and metadata under the same canonical Carbon key during sync.
-	// A real base entry wins; old tier catalogs supply compatibility evidence.
-	if entries, ok := raw["models"].(map[string]any); ok {
-		for _, alias := range []string{"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low"} {
-			if entry, exists := entries[alias]; exists {
-				if _, hasBase := entries["gemini-4-carbon"]; !hasBase {
-					entries["gemini-4-carbon"] = entry
-				}
-				delete(entries, alias)
-			}
-		}
-	}
 	body, err := json.Marshal(raw)
 	if err != nil {
 		return nil, nil, newUpstreamModelSyncUpstreamError("Failed to encode Antigravity model catalog", err)

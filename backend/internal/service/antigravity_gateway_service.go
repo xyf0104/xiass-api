@@ -266,6 +266,10 @@ func (s *AntigravityGatewayService) handleAntigravityModelRateLimitBeforePolicy(
 // 完全依赖映射配置：账户映射（通配符）→ 默认映射兜底（DefaultAntigravityModelMapping）
 // 注意：返回空字符串表示模型不被支持，调度时会过滤掉该账号
 func mapAntigravityModel(account *Account, requestedModel string) string {
+	return mapAntigravityModelForThinkingLevel(account, requestedModel, "")
+}
+
+func mapAntigravityModelForThinkingLevel(account *Account, requestedModel, thinkingLevel string) string {
 	if account == nil {
 		return ""
 	}
@@ -286,10 +290,27 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 		}
 	}
 	if !matched {
-		mapped, matched = resolveGeminiThinkingVariantForLevel(account, requestedModel, "")
+		if requestedModel == domain.AntigravityGemini4CarbonModel {
+			for _, level := range []string{thinkingLevel, "high", "medium", "low"} {
+				if level == "" {
+					continue
+				}
+				alias := requestedModel + "-" + level
+				if target, ok := resolveRequestedModelInMapping(mapping, alias); ok && canonicalAntigravityCarbonModel(target) == domain.AntigravityGemini4CarbonModel {
+					if actual := resolveAntigravityCarbonCatalogModel(account, alias, target, level); actual != "" {
+						return actual
+					}
+				}
+			}
+			return ""
+		}
+		mapped, matched = resolveGeminiThinkingVariantForLevel(account, requestedModel, thinkingLevel)
 	}
 	if !matched {
 		return ""
+	}
+	if canonicalAntigravityCarbonModel(mapped) == domain.AntigravityGemini4CarbonModel {
+		return resolveAntigravityCarbonCatalogModel(account, requestedModel, mapped, thinkingLevel)
 	}
 	if !antigravityAccountAllowsModel(account, mapped) {
 		return ""
@@ -313,7 +334,7 @@ func (s *AntigravityGatewayService) getMappedModelForThinkingLevel(account *Acco
 			return ""
 		}
 	}
-	return mapAntigravityModel(account, requestedModel)
+	return mapAntigravityModelForThinkingLevel(account, requestedModel, thinkingLevel)
 }
 
 func resolveAntigravityProjectID(account *Account) (string, error) {
@@ -402,7 +423,7 @@ func (s *AntigravityGatewayService) TestConnectionWithPrompt(ctx context.Context
 	if mappedModel == "" {
 		return nil, fmt.Errorf("model %s not in whitelist", modelID)
 	}
-	modelProfile := resolveAntigravityWrappedModelProfile(modelID, mappedModel)
+	modelProfile := resolveAntigravityAccountModelProfile(account, modelID, mappedModel)
 	if modelProfile.upstreamModel != "" {
 		mappedModel = modelProfile.upstreamModel
 	}

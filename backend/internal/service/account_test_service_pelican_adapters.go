@@ -240,7 +240,7 @@ func (s *AccountTestService) testPelicanAntigravityConnection(c *gin.Context, a 
 	if mapped == "" {
 		return s.pelicanError(c, "model_not_supported")
 	}
-	profile := resolveAntigravityWrappedModelProfile(model, mapped)
+	profile := resolveAntigravityAccountModelProfile(a, model, mapped)
 	if profile.upstreamModel != "" {
 		mapped = profile.upstreamModel
 	}

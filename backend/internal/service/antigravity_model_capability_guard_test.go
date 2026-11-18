@@ -70,7 +70,7 @@ func TestAntigravityCarbonCapabilityEvidenceIsExactAndIdentityBound(t *testing.T
 		"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
 	}})
 	require.True(t, account.IsModelSupported("gemini-4-carbon-high"))
-	require.True(t, account.IsModelSupported("gemini-4-carbon-medium"), "legacy aliases use the same canonical Carbon capability")
+	require.False(t, account.IsModelSupported("gemini-4-carbon-medium"), "an absent explicit tier must not invent a callable route")
 	account.Credentials["access_token"] = "new-test-token"
 	require.False(t, account.IsModelSupported("gemini-4-carbon-high"), "stale credentials must invalidate affirmative capability evidence")
 	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{

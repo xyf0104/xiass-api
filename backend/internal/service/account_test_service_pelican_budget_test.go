@@ -119,7 +119,7 @@ func TestPelicanBudgetAntigravityPreservesPromptAndTiers(t *testing.T) {
 			a.Credentials["plan_type"] = "Ultra"
 			if canonicalAntigravityCarbonModel(tc.model) == "gemini-4-carbon" {
 				a.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
-					"gemini-4-carbon-high": {ID: "gemini-4-carbon-high"},
+					"gemini-4-carbon": {ID: "gemini-4-carbon"},
 				}})
 			}
 			var actual string

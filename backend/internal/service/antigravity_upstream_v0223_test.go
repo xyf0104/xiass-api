@@ -18,60 +18,78 @@ import (
 
 func TestAntigravityCarbonV023AllProtocols(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, tc := range []struct{ model, target, level string }{
-		{"gemini-4-carbon", "gemini-4-carbon", "medium"},
-		{"gemini-4-carbon-high", "gemini-4-carbon-high", "high"},
-		{"legacy-carbon", "gemini-4-carbon-low", "low"},
-	} {
-		for _, protocol := range []string{"messages", "native", "chat", "responses", "probe"} {
-			t.Run(tc.model+"/"+protocol, func(t *testing.T) {
-				upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
-				svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, upstream)
-				account := newAntigravityTierAccount()
-				account.Credentials["plan_type"] = "Pro"
-				account.Credentials["model_mapping"] = map[string]any{tc.model: tc.target}
-				account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{
-					"gemini-4-carbon": {ID: "gemini-4-carbon"},
-				}})
-				var result *ForwardResult
-				var err error
-				switch protocol {
-				case "messages":
-					body := []byte(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ok"}],"max_tokens":64,"output_config":{"effort":"medium"},"stream":true}`, tc.model))
-					result, err = svc.Forward(context.Background(), newAntigravityTierContext("/v1/messages", body), account, body, false)
-				case "native":
-					body := []byte(`{"contents":[{"role":"user","parts":[{"text":"ok"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":4096}}}`)
-					result, err = svc.ForwardGemini(context.Background(), newAntigravityTierContext("/v1beta/models/"+tc.model+":streamGenerateContent", body), account, tc.model, "streamGenerateContent", true, body, false)
-				case "chat":
-					body := []byte(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ok"}],"reasoning_effort":"medium","stream":true}`, tc.model))
-					result, err = svc.ForwardAsChatCompletions(context.Background(), newAntigravityTierContext("/v1/chat/completions", body), account, body, nil)
-				case "responses":
-					body := []byte(fmt.Sprintf(`{"model":%q,"input":"ok","reasoning":{"effort":"medium"},"stream":true}`, tc.model))
-					result, err = svc.ForwardAsResponses(context.Background(), newAntigravityTierContext("/v1/responses", body), account, body, nil)
-				case "probe":
-					probe, probeErr := svc.TestConnection(context.Background(), account, tc.model)
-					err = probeErr
-					if probe != nil {
-						require.Equal(t, "gemini-4-carbon", probe.MappedModel)
+	for _, catalogKind := range []string{"canonical", "variants"} {
+		for _, tc := range []struct{ model, target, level string }{
+			{"gemini-4-carbon", "gemini-4-carbon", "medium"},
+			{"gemini-4-carbon", "gemini-4-carbon", "low"},
+			{"gemini-4-carbon", "gemini-4-carbon", "high"},
+			{"gemini-4-carbon-high", "gemini-4-carbon-high", "high"},
+			{"gemini-4-carbon-medium", "gemini-4-carbon-medium", "medium"},
+			{"gemini-4-carbon-low", "gemini-4-carbon-low", "low"},
+			{"legacy-carbon", "gemini-4-carbon-low", "low"},
+		} {
+			for _, protocol := range []string{"messages", "native", "chat", "responses", "probe"} {
+				t.Run(catalogKind+"/"+tc.model+"/"+tc.level+"/"+protocol, func(t *testing.T) {
+					upstream := &queuedHTTPUpstreamStub{responses: []*http.Response{antigravityCompatSuccessResponse()}}
+					svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, upstream)
+					account := newAntigravityTierAccount()
+					account.Credentials["plan_type"] = "Pro"
+					account.Credentials["model_mapping"] = map[string]any{tc.model: tc.target}
+					models := map[string]UpstreamModelMetadata{"gemini-4-carbon": {ID: "gemini-4-carbon"}}
+					if catalogKind == "variants" {
+						models = map[string]UpstreamModelMetadata{}
+						for _, level := range []string{"high", "medium", "low"} {
+							id := "gemini-4-carbon-" + level
+							models[id] = UpstreamModelMetadata{ID: id}
+						}
 					}
-				}
-				require.NoError(t, err)
-				if protocol != "probe" {
-					require.NotNil(t, result)
-					require.Equal(t, tc.model, result.Model)
-					require.Equal(t, "gemini-4-carbon", result.UpstreamModel)
-				}
-				require.Len(t, upstream.requestBodies, 1)
-				body := upstream.requestBodies[0]
-				require.Equal(t, "gemini-4-carbon", gjson.GetBytes(body, "model").String())
-				cfg := gjson.GetBytes(body, "request.generationConfig.thinkingConfig")
-				require.False(t, cfg.Get("thinkingBudget").Exists(), string(body))
-				level := tc.level
-				if protocol == "probe" && tc.model == "gemini-4-carbon" {
-					level = ""
-				}
-				require.Equal(t, level, cfg.Get("thinkingLevel").String())
-			})
+					account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: models})
+					wantModel, wantLevel := "gemini-4-carbon", tc.level
+					if protocol == "probe" && tc.model == "gemini-4-carbon" {
+						wantLevel = ""
+						if catalogKind == "variants" {
+							wantLevel = "high"
+						}
+					}
+					if catalogKind == "variants" {
+						wantModel += "-" + wantLevel
+					}
+					var result *ForwardResult
+					var err error
+					switch protocol {
+					case "messages":
+						body := []byte(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ok"}],"max_tokens":64,"output_config":{"effort":%q},"stream":true}`, tc.model, tc.level))
+						result, err = svc.Forward(context.Background(), newAntigravityTierContext("/v1/messages", body), account, body, false)
+					case "native":
+						body := []byte(fmt.Sprintf(`{"contents":[{"role":"user","parts":[{"text":"ok"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":%q,"thinkingBudget":4096}}}`, tc.level))
+						result, err = svc.ForwardGemini(context.Background(), newAntigravityTierContext("/v1beta/models/"+tc.model+":streamGenerateContent", body), account, tc.model, "streamGenerateContent", true, body, false)
+					case "chat":
+						body := []byte(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ok"}],"reasoning_effort":%q,"stream":true}`, tc.model, tc.level))
+						result, err = svc.ForwardAsChatCompletions(context.Background(), newAntigravityTierContext("/v1/chat/completions", body), account, body, nil)
+					case "responses":
+						body := []byte(fmt.Sprintf(`{"model":%q,"input":"ok","reasoning":{"effort":%q},"stream":true}`, tc.model, tc.level))
+						result, err = svc.ForwardAsResponses(context.Background(), newAntigravityTierContext("/v1/responses", body), account, body, nil)
+					case "probe":
+						probe, probeErr := svc.TestConnection(context.Background(), account, tc.model)
+						err = probeErr
+						if probe != nil {
+							require.Equal(t, wantModel, probe.MappedModel)
+						}
+					}
+					require.NoError(t, err)
+					if protocol != "probe" {
+						require.NotNil(t, result)
+						require.Equal(t, tc.model, result.Model)
+						require.Equal(t, wantModel, result.UpstreamModel)
+					}
+					require.Len(t, upstream.requestBodies, 1)
+					body := upstream.requestBodies[0]
+					require.Equal(t, wantModel, gjson.GetBytes(body, "model").String())
+					cfg := gjson.GetBytes(body, "request.generationConfig.thinkingConfig")
+					require.False(t, cfg.Get("thinkingBudget").Exists(), string(body))
+					require.Equal(t, wantLevel, cfg.Get("thinkingLevel").String())
+				})
+			}
 		}
 	}
 }
@@ -139,7 +157,7 @@ func TestAntigravityV023PreflightCatalogCapabilities(t *testing.T) {
 			}
 			if tc.carbon {
 				profile := resolveAntigravityWrappedModelProfile("gemini-4-carbon-low", mapAntigravityModel(account, "gemini-4-carbon-low"))
-				require.Equal(t, "gemini-4-carbon", profile.upstreamModel)
+				require.Equal(t, "gemini-4-carbon-low", profile.upstreamModel)
 				require.Equal(t, "low", profile.thinkingLevel)
 			}
 		})
@@ -150,7 +168,7 @@ func TestAntigravityCarbonV023RefreshLegacyCatalog(t *testing.T) {
 	for _, catalogModel := range []string{"gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low", "gemini-4-carbon"} {
 		t.Run(catalogModel, func(t *testing.T) {
 			svc, account, registry := antigravityCapabilitySyncFixture(t, fmt.Sprintf(`{"models":{%q:{"supportsThinking":true,"supportsImages":true,"maxTokens":1048576,"maxOutputTokens":65536}}}`, catalogModel), &upstreamModelCapabilityRepo{})
-			account.Credentials["model_mapping"] = map[string]any{"gemini-4-carbon-high": "gemini-4-carbon-high", "gemini-4-carbon-low": "gemini-4-carbon-low"}
+			account.Credentials["model_mapping"] = map[string]any{"gemini-4-carbon": "gemini-4-carbon"}
 			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Source: "upstream", Models: map[string]UpstreamModelMetadata{"gemini-4-argon-high": {ID: "gemini-4-argon-high"}}})
 			models, err := svc.AvailableAntigravityModels(context.Background(), account)
 			require.NoError(t, err)
@@ -159,9 +177,13 @@ func TestAntigravityCarbonV023RefreshLegacyCatalog(t *testing.T) {
 			require.Empty(t, registry.requests)
 			snapshot := account.GetUpstreamModelMetadataSnapshot()
 			require.NotNil(t, snapshot)
-			require.Contains(t, snapshot.Models, "gemini-4-carbon")
+			require.Contains(t, snapshot.Models, catalogModel)
+			if catalogModel != "gemini-4-carbon" {
+				require.NotContains(t, snapshot.Models, "gemini-4-carbon", "public projection must not invent a callable base route")
+			}
 			require.NotContains(t, snapshot.Models, "gemini-4-argon-high", "live catalog must replace stale capability IDs")
-			require.Equal(t, int64(65536), snapshot.Models["gemini-4-carbon"].MaxOutputTokens)
+			require.Equal(t, int64(65536), snapshot.Models[catalogModel].MaxOutputTokens)
+			require.Equal(t, catalogModel, mapAntigravityModel(account, "gemini-4-carbon"))
 			require.True(t, account.IsModelSupported("gemini-4-carbon"), "old tier whitelist must admit the canonical route")
 			require.False(t, account.IsModelSupported("gemini-4-argon-high"))
 		})
@@ -202,7 +224,7 @@ func TestAntigravityV023ConnectionProbeAutoEndpoints(t *testing.T) {
 				}
 				require.Equal(t, []string{strings.TrimPrefix(prod, "https://"), strings.TrimPrefix(daily, "https://")}, urls)
 				require.Len(t, upstream.requestBodies, 2)
-				wantModel := canonicalAntigravityCarbonModel(model)
+				wantModel := model
 				for _, body := range upstream.requestBodies {
 					require.Equal(t, wantModel, gjson.GetBytes(body, "model").String())
 				}

@@ -48,8 +48,9 @@ func resolveAntigravityWrappedModelProfile(requestedModel, mappedModel string) a
 	requested := normalizeAntigravityCompatModel(requestedModel)
 	mapped := normalizeAntigravityCompatModel(mappedModel)
 	if canonicalAntigravityCarbonModel(mapped) == domain.AntigravityGemini4CarbonModel {
-		profile := antigravityWrappedModelProfile{upstreamModel: domain.AntigravityGemini4CarbonModel}
-		for _, candidate := range []string{requested, mapped} {
+		// Mapping already selected an actual ID from this account's catalog.
+		profile := antigravityWrappedModelProfile{upstreamModel: mapped}
+		for _, candidate := range []string{mapped, requested} {
 			if candidate != domain.AntigravityGemini4CarbonModel && canonicalAntigravityCarbonModel(candidate) == domain.AntigravityGemini4CarbonModel {
 				profile.thinkingLevel = candidate[strings.LastIndex(candidate, "-")+1:]
 				break
@@ -121,7 +122,7 @@ func applyAntigravityWrappedModelProfile(body []byte, profile antigravityWrapped
 			return nil, fmt.Errorf("set Antigravity thinking budget: %w", err)
 		}
 	}
-	if profile.upstreamModel == domain.AntigravityGemini4CarbonModel {
+	if canonicalAntigravityCarbonModel(profile.upstreamModel) == domain.AntigravityGemini4CarbonModel {
 		level := profile.thinkingLevel
 		config := gjson.GetBytes(updated, "request.generationConfig.thinkingConfig")
 		if level == "" && !config.Get("thinkingLevel").Exists() && config.Get("thinkingBudget").Exists() {
@@ -158,7 +159,7 @@ func applyAntigravityWrappedModelProfile(body []byte, profile antigravityWrapped
 }
 
 func profileAppliesToWrappedModel(profile antigravityWrappedModelProfile, currentModel string) bool {
-	if profile.upstreamModel == domain.AntigravityGemini4CarbonModel {
+	if canonicalAntigravityCarbonModel(profile.upstreamModel) == domain.AntigravityGemini4CarbonModel {
 		return canonicalAntigravityCarbonModel(currentModel) == domain.AntigravityGemini4CarbonModel
 	}
 	if family, ok := antigravityGeminiFlashFamilyForModel(profile.upstreamModel); ok {

@@ -298,7 +298,7 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 	thinkingEnabled := claudeRequest.Thinking != nil &&
 		(claudeRequest.Thinking.Type == "enabled" || claudeRequest.Thinking.Type == "adaptive")
 	mappedModel = applyThinkingModelSuffix(mappedModel, thinkingEnabled)
-	modelProfile := resolveAntigravityWrappedModelProfile(request.originalModel, mappedModel)
+	modelProfile := resolveAntigravityAccountModelProfile(account, request.originalModel, mappedModel)
 	if modelProfile.upstreamModel != "" {
 		mappedModel = modelProfile.upstreamModel
 	}

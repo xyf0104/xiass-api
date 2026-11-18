@@ -91,7 +91,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		return nil, s.writeGoogleError(c, http.StatusForbidden, fmt.Sprintf("model %s not in whitelist", originalModel))
 	}
-	modelProfile := resolveAntigravityWrappedModelProfile(originalModel, mappedModel)
+	modelProfile := resolveAntigravityAccountModelProfile(account, originalModel, mappedModel)
 	if modelProfile.upstreamModel != "" {
 		mappedModel = modelProfile.upstreamModel
 	}
