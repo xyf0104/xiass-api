@@ -21,6 +21,8 @@ const {
   confirmOfficialMemberRemoval,
   completeReauthorizationOnlyNodes,
   completeWorkflowNode,
+  closeManualBrowserSession,
+  createManualBrowserSession,
   createPrivateBrowserSession,
   createReauthorizationWorkflow,
   createWorkflow,
@@ -28,7 +30,9 @@ const {
   encryptWorkflowState,
   fillOAuthInputValue,
   fillVerificationCode,
+  getManualBrowserSession,
   markWorkflowInviteSubmitted,
+  normalizeManualBrowserProxy,
   pauseWorkflowState,
   pendingInviteEmailsFromTexts,
   pendingInviteRecord,
@@ -58,6 +62,69 @@ const automationDirectory = path.dirname(fileURLToPath(import.meta.url))
 const deployDirectory = path.dirname(automationDirectory)
 
 describe('Team child OAuth automation state', () => {
+  it('validates manual browser egress and isolates each operator in a private context', async () => {
+    assert.deepEqual(normalizeManualBrowserProxy(null), undefined)
+    assert.deepEqual(normalizeManualBrowserProxy({ server: 'socks5://127.0.0.1:1080', username: 'proxy-user', password: 'proxy-pass' }), {
+      server: 'socks5://127.0.0.1:1080', username: 'proxy-user', password: 'proxy-pass'
+    })
+    assert.throws(() => normalizeManualBrowserProxy({ server: 'file:///etc/passwd' }), /仅支持 HTTP、HTTPS 或 SOCKS5/)
+    assert.throws(() => normalizeManualBrowserProxy({ server: 'socks5://proxy.invalid' }), /仅支持 HTTP、HTTPS 或 SOCKS5/)
+
+    const createdContexts = []
+    const connectedBrowser = {
+      newContext: async options => {
+        const context = {
+          options,
+          pages: () => [],
+          newPage: async () => ({
+            url: () => 'about:blank',
+            goto: async () => ({ ok: () => true, text: async () => '{"ip":"203.0.113.9"}' })
+          }),
+          close: async () => undefined
+        }
+        createdContexts.push(context)
+        return context
+      }
+    }
+    const first = await createManualBrowserSession(910001, null, connectedBrowser)
+    const second = await createManualBrowserSession(910002, { server: 'http://proxy.invalid:8080', username: 'u', password: 'p' }, connectedBrowser)
+    const resumed = await createManualBrowserSession(910001, null, connectedBrowser)
+    assert.equal(resumed, first)
+    assert.equal(await getManualBrowserSession(910002, first.id), null)
+    await assert.rejects(
+      createManualBrowserSession(910001, { server: 'http://other-proxy.invalid:8080' }, connectedBrowser),
+      /结束当前浏览器会话后才能切换代理出口/
+    )
+    assert.notEqual(first.context, second.context)
+    assert.equal(createdContexts.length, 2)
+    assert.match(createdContexts[0].options.proxy.server, /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.ok(createdContexts[0].options.proxy.username)
+    assert.deepEqual(createdContexts[1].options.proxy, { server: 'http://proxy.invalid:8080', username: 'u', password: 'p' })
+    await closeManualBrowserSession(first)
+    await closeManualBrowserSession(second)
+  })
+
+  it('fails closed and destroys a private context when the selected egress cannot be verified', async () => {
+    let closed = 0
+    const connectedBrowser = {
+      newContext: async () => ({
+        pages: () => [],
+        newPage: async () => ({
+          url: () => 'about:blank',
+          goto: async () => ({ ok: () => false, text: async () => '' })
+        }),
+        close: async () => { closed += 1 }
+      })
+    }
+
+    await assert.rejects(
+      createManualBrowserSession(910003, { server: 'http://proxy.invalid:8080' }, connectedBrowser),
+      /当前浏览器网络出口无法验证/
+    )
+    assert.equal(closed, 1)
+    assert.equal(await getManualBrowserSession(910003, 'missing-session-id-012345678901'), null)
+  })
+
   it('classifies current OpenAI phone rejection and transient error copy', () => {
     for (const text of [
       'This phone number is already associated with another account.',

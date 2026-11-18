@@ -30,6 +30,20 @@
       <span>{{ errorMessage }}</span>
     </div>
 
+    <ManualBrowserWorkspace
+      :configured="browserConfigured"
+      :session-id="manualBrowserSessionID"
+      :loading="manualBrowserLoading"
+      :error="manualBrowserError"
+      :proxies="manualBrowserProxies"
+      :expires-at="manualBrowserExpiresAt"
+      :initial-proxy-id="manualBrowserProxyID"
+      :initial-proxy-name="manualBrowserProxyName"
+      :initial-egress-ip="manualBrowserEgressIP"
+      @open="openManualBrowser"
+      @end="endManualBrowser"
+    />
+
     <div class="team-child-layout grid min-w-0 gap-5 xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
       <TeamChildOAuthWorkspace
         v-if="displayWorkflow"
@@ -279,6 +293,7 @@ import TeamChildMembersWorkspace from '@/components/admin/account/TeamChildMembe
 import TeamChildHistoryPanel from '@/components/admin/account/TeamChildHistoryPanel.vue'
 import TeamChildMailboxShareDialog from '@/components/admin/account/TeamChildMailboxShareDialog.vue'
 import TeamChildAccountSuccessDialog from '@/components/admin/account/TeamChildAccountSuccessDialog.vue'
+import ManualBrowserWorkspace from '@/components/admin/account/ManualBrowserWorkspace.vue'
 import OpenAIOAuthReauthorizationPanel from '@/components/admin/account/OpenAIOAuthReauthorizationPanel.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -296,8 +311,9 @@ import {
 } from '@/api/admin/teamChild'
 import { accountsAPI } from '@/api/admin/accounts'
 import { groupsAPI } from '@/api/admin/groups'
+import proxiesAPI from '@/api/admin/proxies'
 import appRouter from '@/router'
-import type { Account, AccountUsageInfo, AdminGroup } from '@/types'
+import type { Account, AccountUsageInfo, AdminGroup, Proxy } from '@/types'
 
 type FlowStatus = 'idle' | 'creating' | 'ready' | 'workflow' | 'waiting' | 'polling' | 'received' | 'callback' | 'importing' | 'completed' | 'error'
 type TeamChildHistoryEntry = { email: string; account: Account | null; usage: AccountUsageInfo | null; passwordAvailable: boolean }
@@ -316,6 +332,14 @@ const browserControllerID = ref('')
 const browserControlConflict = ref(false)
 const browserTakeOverConfirmOpen = ref(false)
 const browserHeartbeatFailures = ref(0)
+const manualBrowserSessionID = ref('')
+const manualBrowserExpiresAt = ref('')
+const manualBrowserProxyID = ref<number | null>(null)
+const manualBrowserProxyName = ref('')
+const manualBrowserEgressIP = ref('')
+const manualBrowserLoading = ref(false)
+const manualBrowserError = ref('')
+const manualBrowserProxies = ref<Proxy[]>([])
 const membersReady = ref(false)
 const membersLoading = ref(false)
 const membersError = ref('')
@@ -1130,6 +1154,42 @@ async function openBrowserWorkspace() {
   await reloadBrowserWorkspace()
 }
 
+async function openManualBrowser(proxyID: number | null = null) {
+  if (manualBrowserLoading.value) return
+  manualBrowserLoading.value = true
+  manualBrowserError.value = ''
+  manualBrowserProxyID.value = proxyID
+  try {
+    const session = await teamChildAPI.createManualBrowserSession({ proxy_id: proxyID })
+    manualBrowserSessionID.value = session.session_id || ''
+    manualBrowserExpiresAt.value = session.expires_at || ''
+    manualBrowserProxyID.value = session.proxy_id ?? null
+    manualBrowserProxyName.value = session.proxy_name || ''
+    manualBrowserEgressIP.value = session.egress_ip || ''
+  } catch (error) {
+    manualBrowserError.value = extractApiErrorMessage(error, '临时浏览器启动失败，请检查服务器浏览器服务。')
+  } finally {
+    manualBrowserLoading.value = false
+  }
+}
+
+async function endManualBrowser() {
+  manualBrowserLoading.value = true
+  manualBrowserError.value = ''
+  try {
+    await teamChildAPI.endManualBrowserSession()
+    manualBrowserSessionID.value = ''
+    manualBrowserExpiresAt.value = ''
+    manualBrowserProxyID.value = null
+    manualBrowserProxyName.value = ''
+    manualBrowserEgressIP.value = ''
+  } catch (error) {
+    manualBrowserError.value = extractApiErrorMessage(error, '结束浏览器会话失败，请重试。')
+  } finally {
+    manualBrowserLoading.value = false
+  }
+}
+
 async function forceReloadBrowserWorkspace() {
   await reloadBrowserWorkspace({ forceReload: true })
 }
@@ -1904,13 +1964,28 @@ onMounted(async () => {
   teamChildViewUnmounted = false
   workflowExecutionArmed.value = false
   mailboxPollingRequested.value = false
-  const [statusResult, groupsResult] = await Promise.allSettled([
+  const [statusResult, groupsResult, proxyResult, manualBrowserResult] = await Promise.allSettled([
     teamChildAPI.getMailboxStatus(),
-    groupsAPI.getAll('openai')
+    groupsAPI.getAll('openai'),
+    proxiesAPI.getAll(),
+    teamChildAPI.getManualBrowserSession()
   ])
   mailboxConfigured.value = statusResult.status === 'fulfilled' && Boolean(statusResult.value.configured)
   browserConfigured.value = statusResult.status === 'fulfilled' && Boolean(statusResult.value.browser_configured)
   if (groupsResult.status === 'fulfilled') groups.value = groupsResult.value
+  if (proxyResult.status === 'fulfilled') {
+    const now = Date.now()
+    manualBrowserProxies.value = proxyResult.value.filter(proxy =>
+      proxy.status === 'active' && (!proxy.expires_at || Date.parse(proxy.expires_at) > now)
+    )
+  }
+  if (manualBrowserResult.status === 'fulfilled' && manualBrowserResult.value.active) {
+    manualBrowserSessionID.value = manualBrowserResult.value.session_id || ''
+    manualBrowserExpiresAt.value = manualBrowserResult.value.expires_at || ''
+    manualBrowserProxyID.value = manualBrowserResult.value.proxy_id ?? null
+    manualBrowserProxyName.value = manualBrowserResult.value.proxy_name || ''
+    manualBrowserEgressIP.value = manualBrowserResult.value.egress_ip || ''
+  }
   await loadKnownMailboxes()
   await restoreActiveMailbox()
   await restoreActiveWorkflow()

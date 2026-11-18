@@ -210,6 +210,66 @@ func TestTeamChildBrowserRedisStorePersistsAndConsumesTicketAcrossHandlers(t *te
 	require.False(t, ok)
 }
 
+func TestManualBrowserOwnersAreIsolatedAndExpiredInMemory(t *testing.T) {
+	store := newOpenAITeamBrowserStore()
+	now := time.Now().UTC()
+	store.now = func() time.Time { return now }
+	firstID, secondID := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	first := persistedManualBrowserOwner{SessionID: firstID, ExpiresAt: now.Add(time.Minute)}
+	second := persistedManualBrowserOwner{SessionID: secondID, ExpiresAt: now.Add(2 * time.Minute)}
+
+	require.NoError(t, store.setManualOwner(t.Context(), 42, first, time.Minute))
+	require.NoError(t, store.setManualOwner(t.Context(), 99, second, 2*time.Minute))
+	loaded, found, err := store.getManualOwner(t.Context(), 42)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, firstID, loaded.SessionID)
+	loaded, found, err = store.getManualOwner(t.Context(), 99)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, secondID, loaded.SessionID)
+
+	now = now.Add(61 * time.Second)
+	_, found, err = store.getManualOwner(t.Context(), 42)
+	require.NoError(t, err)
+	require.False(t, found)
+	_, found, err = store.getManualOwner(t.Context(), 99)
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
+func TestManualBrowserOwnerPersistsAcrossHandlersInRedis(t *testing.T) {
+	miniRedis := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: miniRedis.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	first := newOpenAITeamBrowserStore()
+	first.configureRedis(client)
+	second := newOpenAITeamBrowserStore()
+	second.configureRedis(client)
+	owner := persistedManualBrowserOwner{
+		SessionID: strings.Repeat("c", 32),
+		ProxyID:   int64Pointer(29),
+		ProxyName: "JP exit",
+		EgressIP:  "203.0.113.9",
+	}
+	require.NoError(t, first.setManualOwner(t.Context(), 42, owner, time.Minute))
+	loaded, found, err := second.getManualOwner(t.Context(), 42)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, owner.SessionID, loaded.SessionID)
+	require.Equal(t, owner.ProxyID, loaded.ProxyID)
+	require.Equal(t, owner.ProxyName, loaded.ProxyName)
+	require.Equal(t, owner.EgressIP, loaded.EgressIP)
+
+	require.NoError(t, second.deleteManualOwner(t.Context(), 42))
+	_, found, err = first.getManualOwner(t.Context(), 42)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func int64Pointer(value int64) *int64 { return &value }
+
 func TestTeamChildBrowserControllerLeaseCoordinatesInMemorySessions(t *testing.T) {
 	store := newOpenAITeamBrowserStore()
 	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)

@@ -18,6 +18,20 @@ export interface TeamChildBrowserSessionRequest {
   controller_id?: string
   /** Explicitly replace the current graphical-browser controller. */
   take_over?: boolean
+  /** Open an isolated, manually controlled Chromium context instead of the Team workflow profile. */
+  manual_browser?: boolean
+  /** Omitted selects direct server egress. */
+  proxy_id?: number | null
+}
+
+export interface ManualBrowserSession {
+  active: boolean
+  session_id?: string
+  proxy_id?: number | null
+  proxy_name?: string
+  egress_ip?: string
+  expires_at?: string
+  current_url?: string
 }
 
 export interface TeamChildBrowserControl {
@@ -241,6 +255,35 @@ export async function createBrowserSession(payload: TeamChildBrowserSessionReque
     payload
   )
   return data
+}
+
+export async function createManualBrowserSession(payload: TeamChildBrowserSessionRequest = {}): Promise<ManualBrowserSession> {
+  const { data } = await apiClient.post<ManualBrowserSession>('/admin/openai/manual-browser/session', payload, { timeout: 65000 })
+  return data
+}
+
+export async function getManualBrowserSession(): Promise<ManualBrowserSession> {
+  const { data } = await apiClient.get<ManualBrowserSession>('/admin/openai/manual-browser/session', { timeout: 65000 })
+  return data
+}
+
+export async function endManualBrowserSession(): Promise<{ ended: boolean }> {
+  const { data } = await apiClient.delete<{ ended: boolean }>('/admin/openai/manual-browser/session')
+  return data
+}
+
+export async function manualBrowserCommand<T = Record<string, unknown>>(sessionID: string, action: string, payload?: unknown): Promise<T> {
+  const { data } = await apiClient.request<T>({
+    method: action === 'tabs' ? 'GET' : 'POST',
+    url: `/admin/openai/manual-browser/sessions/${encodeURIComponent(sessionID)}/${action}`,
+    ...(payload === undefined ? {} : { data: payload })
+  })
+  return data
+}
+
+export async function manualBrowserScreenshotURL(sessionID: string): Promise<string> {
+  const { data } = await apiClient.get<Blob>(`/admin/openai/manual-browser/sessions/${encodeURIComponent(sessionID)}/screenshot`, { responseType: 'blob' })
+  return URL.createObjectURL(data)
 }
 
 export async function heartbeatTeamChildBrowserControl(controllerID: string): Promise<TeamChildBrowserControl> {
@@ -474,6 +517,11 @@ export async function createOpenAIAccountFromOAuth(payload: TeamChildCreateAccou
 export const teamChildAPI = {
   getMailboxStatus,
   createBrowserSession,
+  createManualBrowserSession,
+  getManualBrowserSession,
+  endManualBrowserSession,
+  manualBrowserCommand,
+  manualBrowserScreenshotURL,
   heartbeatTeamChildBrowserControl,
   releaseTeamChildBrowserControl,
   getTeamChildMailboxShare,

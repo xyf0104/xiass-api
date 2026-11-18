@@ -1,6 +1,36 @@
 import { randomBytes } from 'node:crypto'
 import { Server } from 'proxy-chain'
 
+// An omitted context proxy inherits Chromium's launch proxy. An authenticated
+// direct bridge explicitly overrides it without changing the Team browser.
+export async function createManualProxyContext(browser, options = {}) {
+  if (options.proxy?.server) return createProxyContext(browser, options)
+  const username = randomBytes(16).toString('hex')
+  const password = randomBytes(24).toString('hex')
+  const bridge = new Server({
+    host: '127.0.0.1', port: 0, verbose: false,
+    prepareRequestFunction: request => ({
+      requestAuthentication: request.username !== username || request.password !== password
+    })
+  })
+  bridge.on('requestFailed', () => {})
+  await bridge.listen()
+  try {
+    const context = await browser.newContext({ ...options, proxy: { server: `http://127.0.0.1:${bridge.port}`, username, password } })
+    let closing
+    const closeBridge = () => (closing ??= bridge.close(true))
+    context.once?.('close', () => { closeBridge().catch(() => {}) })
+    const close = context.close.bind(context)
+    context.close = async (...args) => {
+      try { return await close(...args) } finally { await closeBridge() }
+    }
+    return context
+  } catch (error) {
+    await bridge.close(true)
+    throw error
+  }
+}
+
 // Chromium cannot authenticate a SOCKS5 proxy itself. This listener shares the
 // browser/automation network namespace and exists only for one private context.
 export async function createProxyContext(browser, options = {}) {

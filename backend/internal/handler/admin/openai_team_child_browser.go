@@ -34,15 +34,17 @@ const (
 	teamChildBrowserSessionRedisPrefix = "xiass:team-child:browser:session:"
 	teamChildBrowserTicketRedisPrefix  = "xiass:team-child:browser:ticket:"
 	teamChildBrowserControlRedisKey    = "xiass:team-child:browser:controller"
+	manualBrowserOwnerPrefix           = "xiass:manual-browser:owner:"
 )
 
 type openAITeamBrowserStore struct {
-	mu       sync.Mutex
-	sessions map[string]openAITeamBrowserSession
-	tickets  map[string]openAITeamBrowserTicket
-	control  *openAITeamBrowserControllerLease
-	redis    *redisclient.Client
-	now      func() time.Time
+	mu           sync.Mutex
+	sessions     map[string]openAITeamBrowserSession
+	tickets      map[string]openAITeamBrowserTicket
+	manualOwners map[int64]persistedManualBrowserOwner
+	control      *openAITeamBrowserControllerLease
+	redis        *redisclient.Client
+	now          func() time.Time
 }
 
 type openAITeamBrowserSession struct {
@@ -108,9 +110,10 @@ var errTeamChildBrowserControlHeld = errors.New("browser workspace is controlled
 
 func newOpenAITeamBrowserStore() *openAITeamBrowserStore {
 	return &openAITeamBrowserStore{
-		sessions: make(map[string]openAITeamBrowserSession),
-		tickets:  make(map[string]openAITeamBrowserTicket),
-		now:      time.Now,
+		sessions:     make(map[string]openAITeamBrowserSession),
+		tickets:      make(map[string]openAITeamBrowserTicket),
+		manualOwners: make(map[int64]persistedManualBrowserOwner),
+		now:          time.Now,
 	}
 }
 
@@ -502,6 +505,11 @@ func (s *openAITeamBrowserStore) pruneLocked(now time.Time) {
 	}
 	if s.control != nil && !s.control.expiresAt.After(now) {
 		s.control = nil
+	}
+	for adminID, owner := range s.manualOwners {
+		if !owner.ExpiresAt.After(now) {
+			delete(s.manualOwners, adminID)
+		}
 	}
 }
 

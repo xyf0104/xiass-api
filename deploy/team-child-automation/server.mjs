@@ -1,12 +1,13 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
+import { isIP } from 'node:net'
 import path from 'node:path'
 
 import { chromium } from '@playwright/test'
 import { generateTOTP, normalizeTOTPSecret, isAuthenticatorChallenge } from './totp.mjs'
 import { BatchOAuthRunner, profileFormInputs } from './batch-oauth.mjs'
-import { createProxyContext } from './browser-proxy.mjs'
+import { createProxyContext, createManualProxyContext } from './browser-proxy.mjs'
 
 const port = Number(process.env.PORT || 8090)
 const cdpURL = process.env.BROWSER_CDP_URL || 'http://127.0.0.1:9222'
@@ -20,6 +21,7 @@ const serviceToken = String(process.env.TEAM_CHILD_AUTOMATION_TOKEN || '').trim(
 const browserConnectTimeout = boundedDuration(process.env.BROWSER_CONNECT_TIMEOUT_MS, 30000, 1000, 120000)
 const browserConnectRetryDelay = boundedDuration(process.env.BROWSER_CONNECT_RETRY_DELAY_MS, 750, 100, 5000)
 const workflowTTL = boundedDuration(process.env.WORKFLOW_TTL_MS, 45 * 60 * 1000, 5 * 60 * 1000, 2 * 60 * 60 * 1000)
+const manualBrowserTTL = boundedDuration(process.env.MANUAL_BROWSER_TTL_MS, 12 * 60 * 60 * 1000, 5 * 60 * 1000, 24 * 60 * 60 * 1000)
 const workflowStateFile = process.env.NODE_ENV === 'test'
   ? ''
   : String(process.env.WORKFLOW_STATE_FILE || '/app/data/workflows.enc').trim()
@@ -50,6 +52,11 @@ let browserPromise
 let operation = Promise.resolve()
 let activeWorkflowID = ''
 const workflows = new Map()
+const manualBrowserSessions = new Map()
+const manualBrowserOwners = new Map()
+const manualBrowserCreationByOwner = new Map()
+const manualBrowserRestores = new Map()
+const manualBrowserStateDirectory = path.join(path.dirname(workflowStateFile || '/app/data/workflows.enc'), 'manual-browser')
 // Member administration and OpenAI OAuth have separate, persistent tabs. The
 // member tab keeps the ChatGPT administrator session and must never be
 // navigated to auth.openai.com; the OAuth tab may move through login,
@@ -195,6 +202,380 @@ function boundedDuration(value, fallback, minimum, maximum) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback
 }
+
+function manualBrowserStatePath(id) {
+  return path.join(manualBrowserStateDirectory, `${id}.enc`)
+}
+
+function normalizeManualBrowserProxy(proxy) {
+  if (proxy == null) return undefined
+  if (!proxy || typeof proxy !== 'object' || Array.isArray(proxy)) throw new Error('代理配置无效')
+  const server = String(proxy.server || '').trim()
+  let parsed
+  try { parsed = new URL(server) } catch { throw new Error('代理地址无效') }
+  if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.hostname || !parsed.port) {
+    throw new Error('仅支持 HTTP、HTTPS 或 SOCKS5 代理')
+  }
+  return {
+    server,
+    username: String(proxy.username || ''),
+    password: String(proxy.password || '')
+  }
+}
+
+async function persistManualBrowserSession(session, required = false) {
+  if (!session?.context || session.closed) return
+  if (!workflowStateFile || !serviceToken) {
+    if (required && process.env.NODE_ENV !== 'test') throw new Error('manual browser session persistence is unavailable')
+    return
+  }
+  const persist = async () => {
+    if (session.closed) return
+    const pages = session.context.pages()
+    const state = await session.context.storageState({ indexedDB: true })
+    const encrypted = encryptWorkflowState(JSON.stringify({
+      version: 1,
+      id: session.id,
+      ownerID: session.ownerID,
+      proxy: session.proxy || null,
+      egressIP: session.egressIP || '',
+      expiresAt: session.expiresAt,
+      pages: pages.map(page => page.url()).filter(url => url && url !== 'about:blank'),
+      activePageIndex: Math.max(0, pages.indexOf(session.page)),
+      state
+    }))
+    fs.mkdirSync(manualBrowserStateDirectory, { recursive: true, mode: 0o700 })
+    const target = manualBrowserStatePath(session.id)
+    const temporary = `${target}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
+    try {
+      fs.writeFileSync(temporary, encrypted, { encoding: 'utf8', mode: 0o600 })
+      fs.renameSync(temporary, target)
+    } finally {
+      try { fs.rmSync(temporary, { force: true }) } catch {}
+    }
+  }
+  const pending = (session.persistPromise || Promise.resolve()).catch(() => {}).then(persist)
+  session.persistPromise = pending
+  try {
+    await pending
+  } catch (error) {
+    if (required) throw error
+    console.error('manual browser session could not be persisted')
+  }
+}
+
+async function closeManualBrowserSession(session, removeSavedState = true) {
+  if (!session) return
+  session.closed = true
+  if (session.persistTimer) clearInterval(session.persistTimer)
+  manualBrowserSessions.delete(session.id)
+  if (manualBrowserOwners.get(session.ownerID) === session.id) manualBrowserOwners.delete(session.ownerID)
+  await session.persistPromise?.catch(() => {})
+  try { await session.context?.close() } catch {}
+  if (removeSavedState) {
+    try { fs.rmSync(manualBrowserStatePath(session.id), { force: true }) } catch {}
+  }
+}
+
+function trackManualBrowserSession(session) {
+  manualBrowserSessions.set(session.id, session)
+  manualBrowserOwners.set(session.ownerID, session.id)
+  session.persistTimer = setInterval(() => { void persistManualBrowserSession(session) }, 15_000)
+  session.persistTimer.unref?.()
+  session.context.on?.('page', page => {
+    if (session.context.pages().length > 8) { void page.close().catch(() => {}); return }
+    session.page = page
+  })
+  session.context.once?.('close', () => {
+    session.closed = true
+    clearInterval(session.persistTimer)
+    manualBrowserSessions.delete(session.id)
+    if (manualBrowserOwners.get(session.ownerID) === session.id) manualBrowserOwners.delete(session.ownerID)
+  })
+}
+
+async function restoreManualBrowserSession(ownerID, sessionID) {
+  const savedPath = manualBrowserStatePath(sessionID)
+  if (!workflowStateFile || !fs.existsSync(savedPath)) return null
+  let context
+  try {
+    const saved = JSON.parse(decryptWorkflowState(fs.readFileSync(savedPath, 'utf8')))
+    if (Number(saved.ownerID) !== ownerID) return null
+    if (saved?.version !== 1 || saved.id !== sessionID || saved.expiresAt <= Date.now()) {
+      fs.rmSync(savedPath, { force: true })
+      return null
+    }
+    const connected = await browser()
+    const proxy = normalizeManualBrowserProxy(saved.proxy)
+    context = await createManualProxyContext(connected, {
+      viewport: { width: 1280, height: 800 },
+      acceptDownloads: true,
+      ...(proxy ? { proxy } : {}),
+      storageState: saved.state
+    })
+    const session = { id: sessionID, ownerID, proxy, egressIP: String(saved.egressIP || ''), context, expiresAt: saved.expiresAt, page: null, closed: false }
+    const probe = await context.newPage()
+    session.egressIP = await verifyManualBrowserEgress(probe)
+    await probe.close()
+    for (const url of Array.isArray(saved.pages) ? saved.pages.slice(0, 8) : []) {
+      if (!/^https?:\/\//i.test(url)) continue
+      const page = await context.newPage()
+      void page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
+    }
+    const pages = context.pages()
+    session.page = pages[Math.min(Number(saved.activePageIndex) || 0, Math.max(0, pages.length - 1))] || await context.newPage()
+    trackManualBrowserSession(session)
+    return session
+  } catch {
+    await context?.close().catch(() => {})
+    console.error('manual browser session could not be restored')
+    throw new Error('浏览器会话恢复失败，请检查当前出口后重试')
+  }
+}
+
+async function getManualBrowserSession(ownerID, sessionID) {
+  let session = manualBrowserSessions.get(sessionID)
+  if (!session) {
+    const key = `${ownerID}:${sessionID}`
+    let pending = manualBrowserRestores.get(key)
+    if (!pending) {
+      pending = restoreManualBrowserSession(ownerID, sessionID)
+      manualBrowserRestores.set(key, pending)
+    }
+    try { session = await pending } finally { if (manualBrowserRestores.get(key) === pending) manualBrowserRestores.delete(key) }
+  }
+  if (!session) return null
+  if (session.ownerID !== ownerID) return null
+  if (session.expiresAt <= Date.now()) {
+    await closeManualBrowserSession(session)
+    return null
+  }
+  if (!session.page || session.page.isClosed?.()) session.page = session.context.pages()[0] || await session.context.newPage()
+  return session
+}
+
+async function createManualBrowserSession(ownerID, proxyInput, connectedBrowser = null) {
+  const proxy = normalizeManualBrowserProxy(proxyInput)
+  const pending = manualBrowserCreationByOwner.get(ownerID)
+  if (pending) {
+    const existing = await pending
+    if (JSON.stringify(existing.proxy || null) !== JSON.stringify(proxy || null)) {
+      const error = new Error('结束当前浏览器会话后才能切换代理出口')
+      error.statusCode = 409
+      throw error
+    }
+    return existing
+  }
+  const creation = createManualBrowserSessionLocked(ownerID, proxy, connectedBrowser)
+  manualBrowserCreationByOwner.set(ownerID, creation)
+  try {
+    return await creation
+  } finally {
+    if (manualBrowserCreationByOwner.get(ownerID) === creation) manualBrowserCreationByOwner.delete(ownerID)
+  }
+}
+
+async function createManualBrowserSessionLocked(ownerID, proxy, connectedBrowser) {
+  const existingID = manualBrowserOwners.get(ownerID)
+  if (existingID) {
+    const existing = await getManualBrowserSession(ownerID, existingID)
+    if (existing) {
+      if (JSON.stringify(existing.proxy || null) !== JSON.stringify(proxy || null)) {
+        const error = new Error('结束当前浏览器会话后才能切换代理出口')
+        error.statusCode = 409
+        throw error
+      }
+      return existing
+    }
+  }
+  const connected = connectedBrowser || await browser()
+  const context = await createManualProxyContext(connected, {
+    viewport: { width: 1280, height: 800 },
+    acceptDownloads: true,
+    ...(proxy ? { proxy } : {})
+  })
+  let page
+  let egressIP
+  try {
+    page = await context.newPage()
+    egressIP = await verifyManualBrowserEgress(page)
+    await page.goto('about:blank')
+  } catch (error) {
+    await context.close().catch(() => {})
+    throw error
+  }
+  const session = {
+    id: crypto.randomBytes(24).toString('base64url'),
+    ownerID,
+    proxy,
+    egressIP,
+    context,
+    page,
+    expiresAt: Date.now() + manualBrowserTTL,
+    closed: false
+  }
+  manualBrowserSessions.set(session.id, session)
+  manualBrowserOwners.set(ownerID, session.id)
+  try {
+    await persistManualBrowserSession(session, true)
+  } catch (error) {
+    await closeManualBrowserSession(session)
+    throw error
+  }
+  trackManualBrowserSession(session)
+  return session
+}
+
+function manualBrowserSummary(session) {
+  return { session_id: session.id, active: true, expires_at: new Date(session.expiresAt).toISOString(), current_url: session.page?.url() || 'about:blank', egress_ip: session.egressIP || '' }
+}
+
+async function verifyManualBrowserEgress(page) {
+  const probes = ['https://api.ipify.org?format=json', 'https://ifconfig.me/ip']
+  for (const url of probes) {
+    try {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+      if (!response?.ok()) continue
+      const body = (await response.text()).trim()
+      let address = body
+      try { address = String(JSON.parse(body)?.ip || body) } catch {}
+      address = address.trim().split(/\s+/)[0]
+      if (isIP(address)) return address
+    } catch {}
+  }
+  throw new Error('当前浏览器网络出口无法验证，请检查直连网络或所选代理节点')
+}
+
+async function handleManualBrowser(req, res, pathname) {
+  if (req.method === 'POST' && pathname === '/manual-browser/sessions') {
+    try {
+      const body = await readBody(req)
+      const ownerID = Number(body?.owner_id)
+      if (!Number.isSafeInteger(ownerID) || ownerID <= 0) return json(res, 400, { error: '浏览器用户无效' })
+      const existingID = manualBrowserOwners.get(ownerID)
+      if (existingID) {
+        const existing = await getManualBrowserSession(ownerID, existingID)
+        if (existing) {
+          if (JSON.stringify(existing.proxy || null) !== JSON.stringify(normalizeManualBrowserProxy(body.proxy) || null)) {
+            const error = new Error('结束当前浏览器会话后才能切换代理出口')
+            error.statusCode = 409
+            throw error
+          }
+          return json(res, 200, manualBrowserSummary(existing))
+        }
+      }
+      const session = await createManualBrowserSession(ownerID, body.proxy)
+      return json(res, 200, manualBrowserSummary(session))
+    } catch (error) {
+      return json(res, error?.statusCode === 409 ? 409 : 503, { error: error?.statusCode === 409 ? '结束当前浏览器会话后才能切换代理出口' : '独立浏览器启动失败，请检查所选出口和浏览器服务' })
+    }
+  }
+
+  const match = pathname.match(/^\/manual-browser\/sessions\/([A-Za-z0-9_-]{32,64})(?:\/(screenshot|navigate|action|tabs|select-tab|resize))?$/)
+  if (!match) return json(res, 404, { error: 'not found' })
+  const [, id, action] = match
+  const ownerID = Number(new URL(req.url, 'http://127.0.0.1').searchParams.get('owner_id'))
+  if (!Number.isSafeInteger(ownerID) || ownerID <= 0) return json(res, 400, { error: '浏览器用户无效' })
+  const session = await getManualBrowserSession(ownerID, id)
+  if (!session) return json(res, 404, { error: '浏览器会话不存在或已过期' })
+  if (req.method === 'GET' && !action) return json(res, 200, manualBrowserSummary(session))
+  if (req.method === 'DELETE' && !action) {
+    await closeManualBrowserSession(session)
+    return json(res, 200, { ended: true })
+  }
+  if (req.method === 'GET' && action === 'screenshot') {
+    try {
+      session.screenshotPromise ||= session.page.screenshot({ type: 'jpeg', quality: 78, timeout: 10000 }).finally(() => { session.screenshotPromise = null })
+      const screenshot = await session.screenshotPromise
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'x-browser-width': '1280', 'x-browser-height': '800' })
+      return res.end(screenshot)
+    } catch {
+      return json(res, 503, { error: '浏览器画面暂时不可用' })
+    }
+  }
+  if (req.method === 'GET' && action === 'tabs') {
+    return json(res, 200, { tabs: session.context.pages().map((page, index) => ({ index, title: '', url: page.url() })), active_index: session.context.pages().indexOf(session.page) })
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+  try {
+    const body = await readBody(req)
+    if (action === 'navigate') {
+      const target = String(body.url || '').trim()
+      if (target !== 'about:blank') {
+        const parsed = new URL(target)
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('仅支持普通 HTTP/HTTPS 网页地址')
+      }
+      await session.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 20000 })
+    } else if (action === 'action') {
+      const type = String(body.type || '')
+      if (type === 'click' || type === 'move') {
+        const x = Math.max(0, Math.min(1280, Number(body.x) || 0))
+        const y = Math.max(0, Math.min(800, Number(body.y) || 0))
+        await session.page.mouse[type](x, y, type === 'click' ? { button: body.button === 'right' ? 'right' : 'left', clickCount: Math.max(1, Math.min(3, Number(body.click_count) || 1)) } : undefined)
+      } else if (type === 'wheel') {
+        await session.page.mouse.wheel(Number(body.delta_x) || 0, Number(body.delta_y) || 0)
+      } else if (type === 'press') {
+        const key = String(body.key || '')
+        if (key.length > 40) throw new Error('键盘操作无效')
+        await session.page.keyboard.press(key)
+      } else if (type === 'type') {
+        const text = String(body.text || '')
+        if (text.length > 8192) throw new Error('输入内容过长')
+        await session.page.keyboard.insertText(text)
+      } else if (type === 'back') {
+        await session.page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      } else if (type === 'forward') {
+        await session.page.goForward({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      } else if (type === 'reload') {
+        await session.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {})
+      } else if (type === 'new-tab') {
+        if (session.context.pages().length >= 8) throw new Error('每个会话最多打开 8 个标签页')
+        session.page = await session.context.newPage()
+      } else if (type === 'close-tab') {
+        const pages = session.context.pages()
+        if (pages.length > 1) await session.page.close()
+        session.page = session.context.pages().at(-1) || await session.context.newPage()
+      } else {
+        throw new Error('不支持的浏览器操作')
+      }
+    } else if (action === 'tabs') {
+      return json(res, 200, { tabs: session.context.pages().map((page, index) => ({ index, title: '', url: page.url() })), active_index: session.context.pages().indexOf(session.page) })
+    } else if (action === 'select-tab') {
+      const index = Number(body.index)
+      const selected = session.context.pages()[index]
+      if (!selected) throw new Error('浏览器标签不存在')
+      session.page = selected
+    } else if (action === 'resize') {
+      const width = Math.round(Number(body.width) || 1280)
+      const height = Math.round(Number(body.height) || 800)
+      await session.page.setViewportSize({ width: Math.max(640, Math.min(1920, width)), height: Math.max(480, Math.min(1200, height)) })
+    }
+    if (action === 'navigate' || action === 'select-tab') void persistManualBrowserSession(session)
+    return json(res, 200, manualBrowserSummary(session))
+  } catch (error) {
+    return json(res, 400, { error: '浏览器操作未完成，请检查网址和当前出口后重试' })
+  }
+}
+
+const manualBrowserCleanupTimer = process.env.NODE_ENV === 'test' ? null : setInterval(() => {
+  const now = Date.now()
+  for (const session of manualBrowserSessions.values()) {
+    if (session.expiresAt <= now) void closeManualBrowserSession(session)
+  }
+  if (workflowStateFile && fs.existsSync(manualBrowserStateDirectory)) {
+    for (const file of fs.readdirSync(manualBrowserStateDirectory)) {
+      if (!/^[A-Za-z0-9_-]{32,64}\.enc$/.test(file)) continue
+      const target = path.join(manualBrowserStateDirectory, file)
+      try {
+        const saved = JSON.parse(decryptWorkflowState(fs.readFileSync(target, 'utf8')))
+        if (saved?.expiresAt <= now) fs.rmSync(target, { force: true })
+      } catch {
+        fs.rmSync(target, { force: true })
+      }
+    }
+  }
+}, 60_000)
+manualBrowserCleanupTimer?.unref()
 
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -3407,6 +3788,12 @@ async function handle(req, res) {
   }
   if (!authorized(req)) return json(res, 401, { error: 'automation service authentication required' })
 
+  if (path === '/manual-browser/sessions' || path.startsWith('/manual-browser/sessions/')) {
+    try { return await handleManualBrowser(req, res, path) } catch {
+      return json(res, 503, { error: '浏览器会话暂时不可用，请重试' })
+    }
+  }
+
   if (path === '/batch-oauth/tasks' || path.startsWith('/batch-oauth/tasks/')) {
     try {
       if (req.method === 'POST' && path === '/batch-oauth/tasks') {
@@ -3570,6 +3957,13 @@ if (process.env.NODE_ENV !== 'test') {
 
 export {
   handle,
+  closeManualBrowserSession,
+  createManualBrowserSession,
+  getManualBrowserSession,
+  handleManualBrowser,
+  normalizeManualBrowserProxy,
+  verifyManualBrowserEgress,
+  persistManualBrowserSession,
   activateBrowserPage,
   callbackURLFromNavigationEntries,
   cancelWorkflowState,

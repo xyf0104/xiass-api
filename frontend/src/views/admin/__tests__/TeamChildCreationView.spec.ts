@@ -14,6 +14,11 @@ const { teamChildAPI, accountsAPI, groupsAPI, proxiesAPI, appStore, nativeGenera
     deleteMailboxSession: vi.fn(),
     importMailboxConfig: vi.fn(),
     createBrowserSession: vi.fn(),
+    createManualBrowserSession: vi.fn(),
+    getManualBrowserSession: vi.fn(),
+    endManualBrowserSession: vi.fn(),
+    manualBrowserCommand: vi.fn(),
+    manualBrowserScreenshotURL: vi.fn(),
     heartbeatTeamChildBrowserControl: vi.fn(),
     releaseTeamChildBrowserControl: vi.fn(),
     listTeamChildMembers: vi.fn(),
@@ -256,6 +261,17 @@ describe('TeamChildCreationView', () => {
       controller_id: 'controller-token-abcdefghijklmnop',
       control_expires_at: '2026-08-22T12:02:00.000Z'
     })
+    teamChildAPI.createManualBrowserSession.mockResolvedValue({
+      active: true,
+      session_id: 'manual-browser-session-1234567890',
+      expires_at: '2026-08-22T12:30:00.000Z',
+      proxy_id: 29,
+      proxy_name: 'JP exit'
+    })
+    teamChildAPI.getManualBrowserSession.mockResolvedValue({ active: false })
+    teamChildAPI.endManualBrowserSession.mockResolvedValue({ ended: true })
+    teamChildAPI.manualBrowserScreenshotURL.mockResolvedValue('blob:manual-browser')
+    teamChildAPI.manualBrowserCommand.mockResolvedValue({ current_url: 'about:blank', tabs: [], active_index: 0 })
     teamChildAPI.startTeamChildWorkflow.mockResolvedValue(currentWorkflow())
     teamChildAPI.getTeamChildWorkflow.mockResolvedValue(currentWorkflow())
     teamChildAPI.continueTeamChildWorkflow.mockResolvedValue(currentWorkflow({ status: 'running', manual_required: false, current_node: 'signup' }))
@@ -317,6 +333,28 @@ describe('TeamChildCreationView', () => {
 
     wrapper.unmount()
     expect(teamChildAPI.releaseTeamChildBrowserControl).toHaveBeenCalledWith('controller-token-abcdefghijklmnop')
+  })
+
+  it('opens an isolated manual browser with the selected proxy without starting Team automation', async () => {
+    proxiesAPI.getAll.mockResolvedValue([{
+      id: 29,
+      name: 'JP exit',
+      status: 'active',
+      expires_at: null
+    }])
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="manual-browser-proxy"]').setValue('29')
+    await wrapper.get('[data-testid="manual-browser-open"]').trigger('click')
+    await flushPromises()
+
+    expect(teamChildAPI.createManualBrowserSession).toHaveBeenCalledWith({ proxy_id: 29 })
+    expect(teamChildAPI.createBrowserSession).not.toHaveBeenCalled()
+    expect(teamChildAPI.startTeamChildWorkflow).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="manual-browser-frame"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="manual-browser-frame"]').find('img').exists()).toBe(true)
+    wrapper.unmount()
   })
 
   it('describes workspace confirmation as readiness-based without a fixed ten-second wait', async () => {
