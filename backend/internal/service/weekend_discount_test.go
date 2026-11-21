@@ -47,7 +47,7 @@ func TestWeekendDiscountCustomSchedule(t *testing.T) {
 	s := WeekendDiscountSettings{Enabled: true, Mode: DiscountModeCustom, StartsAt: &start, EndsAt: &end}
 	require.NoError(t, s.Validate())
 	for _, tt := range []struct {
-		at time.Time
+		at   time.Time
 		want float64
 		next *time.Time
 	}{
@@ -192,37 +192,37 @@ func TestWeekendDiscountOpenAIRecordUsage(t *testing.T) {
 		{`{"enabled":true}`, "2026-11-20T12:00:00+08:00", "2026-11-21T12:00:00+08:00"},
 		{`{"enabled":true,"mode":"custom","starts_at":"2026-11-20T13:00:00+08:00"}`, "2026-11-20T12:00:00+08:00", "2026-11-20T13:00:00+08:00"},
 	} {
-	for _, finalPrice := range []bool{false, true} {
-		var normal *UsageLog
-		for _, at := range []string{schedule.normal, schedule.discounted} {
-			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-			billRepo := &openAIRecordUsageBillingRepoStub{}
-			svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
-			svc.settingService = NewSettingService(&panelRateLimitSettingRepo{values: map[string]string{SettingKeyWeekendDiscount: schedule.config}}, nil)
-			svc.resolver = NewModelPricingResolver(nil, svc.billingService)
-			group := &Group{ID: 1, Platform: PlatformOpenAI, RateMultiplier: .218, LongContextPricingEnabled: true}
-			if finalPrice {
-				price := 2e-6
-				group.ModelPricing = []ChannelModelPricing{{Models: []string{"gpt-5.1"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal, InputPrice: &price}}
+		for _, finalPrice := range []bool{false, true} {
+			var normal *UsageLog
+			for _, at := range []string{schedule.normal, schedule.discounted} {
+				usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+				billRepo := &openAIRecordUsageBillingRepoStub{}
+				svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+				svc.settingService = NewSettingService(&panelRateLimitSettingRepo{values: map[string]string{SettingKeyWeekendDiscount: schedule.config}}, nil)
+				svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+				group := &Group{ID: 1, Platform: PlatformOpenAI, RateMultiplier: .218, LongContextPricingEnabled: true}
+				if finalPrice {
+					price := 2e-6
+					group.ModelPricing = []ChannelModelPricing{{Models: []string{"gpt-5.1"}, BillingMode: BillingModeToken, PriceMode: PriceModeFinal, InputPrice: &price}}
+				}
+				err := svc.RecordUsage(ctx, &OpenAIRecordUsageInput{
+					PricingAt: weekendTime(at),
+					Result:    &OpenAIForwardResult{RequestID: at, Model: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 500_000, OutputTokens: 1000, CacheReadInputTokens: 100_000}, Duration: time.Second},
+					APIKey:    &APIKey{ID: 2, UserID: 3, GroupID: &group.ID, Group: group}, User: &User{ID: 3}, Account: &Account{ID: 4, Platform: PlatformOpenAI},
+				})
+				require.NoError(t, err)
+				require.NotNil(t, billRepo.lastCmd)
+				require.Greater(t, billRepo.lastCmd.BalanceCost, 0.0)
+				require.NoError(t, billRepo.lastCtxErr, "billing survives a disconnected client")
+				if normal == nil {
+					normal = usageRepo.lastLog
+					continue
+				}
+				require.InDelta(t, normal.ActualCost*.8, billRepo.lastCmd.BalanceCost, 1e-10)
+				require.InDelta(t, normal.ActualCost*.8, usageRepo.lastLog.ActualCost, 1e-10)
+				require.Equal(t, normal.TotalCost, usageRepo.lastLog.TotalCost)
+				require.Equal(t, normal.CacheReadTokens, usageRepo.lastLog.CacheReadTokens)
 			}
-			err := svc.RecordUsage(ctx, &OpenAIRecordUsageInput{
-				PricingAt: weekendTime(at),
-				Result:    &OpenAIForwardResult{RequestID: at, Model: "gpt-5.1", Usage: OpenAIUsage{InputTokens: 500_000, OutputTokens: 1000, CacheReadInputTokens: 100_000}, Duration: time.Second},
-				APIKey:    &APIKey{ID: 2, UserID: 3, GroupID: &group.ID, Group: group}, User: &User{ID: 3}, Account: &Account{ID: 4, Platform: PlatformOpenAI},
-			})
-			require.NoError(t, err)
-			require.NotNil(t, billRepo.lastCmd)
-			require.Greater(t, billRepo.lastCmd.BalanceCost, 0.0)
-			require.NoError(t, billRepo.lastCtxErr, "billing survives a disconnected client")
-			if normal == nil {
-				normal = usageRepo.lastLog
-				continue
-			}
-			require.InDelta(t, normal.ActualCost*.8, billRepo.lastCmd.BalanceCost, 1e-10)
-			require.InDelta(t, normal.ActualCost*.8, usageRepo.lastLog.ActualCost, 1e-10)
-			require.Equal(t, normal.TotalCost, usageRepo.lastLog.TotalCost)
-			require.Equal(t, normal.CacheReadTokens, usageRepo.lastLog.CacheReadTokens)
 		}
-	}
 	}
 }

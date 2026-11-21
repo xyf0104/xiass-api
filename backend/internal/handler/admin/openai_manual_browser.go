@@ -20,10 +20,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	manualBrowserSessionTTL = 12 * time.Hour
-)
-
 type persistedManualBrowserOwner struct {
 	SessionID string    `json:"session_id"`
 	ProxyID   *int64    `json:"proxy_id,omitempty"`
@@ -343,7 +339,7 @@ func (h *OpenAIOAuthHandler) manualBrowserAutomationRaw(ctx context.Context, own
 	if err != nil {
 		return nil, "", err
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(result.Body, 16<<20))
 	if err != nil {
 		return nil, "", err
