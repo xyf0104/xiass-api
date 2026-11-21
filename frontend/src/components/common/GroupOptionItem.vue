@@ -27,7 +27,11 @@
       <div class="flex shrink-0 flex-col items-end gap-1">
         <!-- Rate pill (platform color) -->
         <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
-          <template v-if="hasCustomRate">
+          <template v-if="discountMultiplier < 1">
+            <span class="mr-1 line-through opacity-50">{{ userRateMultiplier ?? rateMultiplier }}x</span>
+            <span class="inline-flex items-center gap-1 font-bold text-orange-700 dark:text-orange-400" title="活动八折倍率" data-test="discount-rate"><DiscountIcon />{{ Number(((userRateMultiplier ?? rateMultiplier) * discountMultiplier).toFixed(8)) }}x</span>
+          </template>
+          <template v-else-if="hasCustomRate">
             <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
             <span class="font-bold">{{ userRateMultiplier }}x</span>
           </template>
@@ -62,6 +66,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
+import DiscountIcon from './DiscountIcon.vue'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
@@ -73,6 +78,7 @@ interface Props {
   platform: GroupPlatform
   subscriptionType?: SubscriptionType
   rateMultiplier?: number
+  discountMultiplier?: number
   userRateMultiplier?: number | null
   peakRateEnabled?: boolean
   peakStart?: string
@@ -85,6 +91,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
+  discountMultiplier: 1,
   selected: false,
   showCheckmark: true,
   userRateMultiplier: null,

@@ -151,6 +151,7 @@
                     :platform="group.platform"
                     :subscription-type="group.subscription_type"
                     :rate-multiplier="group.rate_multiplier"
+                    :discount-multiplier="weekendMultiplier"
                     :user-rate-multiplier="userGroupRates[group.id]"
                     :peak-rate-enabled="group.peak_rate_enabled"
                     :peak-start="group.peak_start"
@@ -166,6 +167,7 @@
                   :platform="row.group.platform"
                   :subscription-type="row.group.subscription_type"
                   :rate-multiplier="row.group.rate_multiplier"
+                  :discount-multiplier="weekendMultiplier"
                   :user-rate-multiplier="userGroupRates[row.group.id]"
                   :peak-rate-enabled="row.group.peak_rate_enabled"
                   :peak-start="row.group.peak_start"
@@ -487,6 +489,7 @@
             v-model="formData.group_ids"
             :groups="sortedGroups"
             :user-group-rates="userGroupRates"
+            :discount-multiplier="weekendMultiplier"
             :searchable="true"
             single-column
           />
@@ -1099,6 +1102,7 @@
                 :platform="option.platform"
                 :subscription-type="option.subscriptionType"
                 :rate-multiplier="option.rate"
+                :discount-multiplier="weekendMultiplier"
                 :user-rate-multiplier="option.userRate"
                 :peak-rate-enabled="option.peakRateEnabled"
                 :peak-start="option.peakStart"
@@ -1140,6 +1144,9 @@
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useWeekendDiscount } from '@/composables/useWeekendDiscount'
+
+const { multiplier: weekendMultiplier } = useWeekendDiscount()
 
 const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'

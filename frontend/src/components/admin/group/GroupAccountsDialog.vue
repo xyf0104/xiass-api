@@ -53,6 +53,10 @@
         <span>{{ text('admin.groups.groupAccounts.mixedRisk', '这些账号可能让同一渠道混用不同平台。再次点击保存表示确认继续。') }}</span>
       </div>
 
+      <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+        <input v-model="customOrder" type="checkbox" class="h-4 w-4 rounded text-primary-600" data-test="custom-order" :disabled="loading || saving || !selectedAccountIds.length" />
+        {{ text('admin.groups.groupAccounts.customOrder', '自定义本组调用顺序') }}
+      </label>
       <div v-if="loading" class="flex justify-center py-10">
         <Icon name="refresh" size="lg" class="animate-spin text-primary-500" />
       </div>
@@ -67,6 +71,9 @@
                 <th class="w-12 px-3 py-2 text-center">
                   <span class="sr-only">{{ text('common.select', '选择') }}</span>
                 </th>
+                <th v-if="customOrder" class="w-36 px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {{ text('admin.groups.groupAccounts.callOrder', '调用顺序') }}
+                </th>
                 <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ text('admin.groups.groupAccounts.account', '账号') }}
                 </th>
@@ -78,9 +85,15 @@
                 </th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100 dark:divide-dark-600">
+            <component
+              :is="bucket.members ? VueDraggable : 'tbody'"
+              v-for="bucket in rowBuckets" :key="String(bucket.members)"
+              v-bind="bucket.members ? { tag: 'tbody', modelValue: selectedAccountIds, disabled: !dragEnabled, handle: '.group-order-handle', animation: 120, ghostClass: 'opacity-40' } : {}"
+              class="divide-y divide-gray-100 dark:divide-dark-600"
+              @update:model-value="applyDragOrder"
+            >
               <tr
-                v-for="account in visibleAccounts"
+                v-for="account in bucket.rows"
                 :key="account.id"
                 class="transition-colors hover:bg-gray-50 dark:hover:bg-dark-700/50"
                 :class="isSelected(account.id) ? 'bg-primary-50/40 dark:bg-primary-900/10' : ''"
@@ -95,7 +108,18 @@
                     @change="toggleAccount(account.id)"
                   />
                 </td>
-                <td class="min-w-0 px-3 py-2.5">
+                <td v-if="customOrder" class="px-2">
+                  <div v-if="isSelected(account.id)" class="inline-flex items-center gap-0.5">
+                    <button type="button" class="group-order-handle inline-flex h-8 w-7 touch-none items-center justify-center rounded text-gray-500 enabled:cursor-grab enabled:active:cursor-grabbing focus-visible:ring-2 disabled:opacity-30 dark:text-gray-400" :disabled="!dragEnabled" :data-test="'drag-' + account.id" :title="dragLabel" :aria-label="dragLabel + ': ' + account.name" @keydown.up.prevent="moveAccount(account.id, -1)" @keydown.down.prevent="moveAccount(account.id, 1)">
+                      <Icon name="menu" size="sm" />
+                    </button>
+                    <span class="min-w-5 text-center text-xs font-semibold tabular-nums text-primary-700 dark:text-primary-300">{{ selectedRank.get(account.id)! + 1 }}</span>
+                    <button v-for="step in ([-1, 1] as const)" :key="step" type="button" class="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-gray-100 focus-visible:ring-2 disabled:opacity-30 dark:hover:bg-dark-600" :data-test="'order-' + account.id + '-' + (step < 0 ? 'up' : 'down')" :disabled="saving || !!normalizedSearch || !canMove(account.id, step)" :title="moveLabel(step)" :aria-label="moveLabel(step) + ': ' + account.name" @click="moveAccount(account.id, step)">
+                      <Icon :name="step < 0 ? 'chevronUp' : 'chevronDown'" size="sm" />
+                    </button>
+                  </div>
+                </td>
+                <td class="min-w-0 px-3 py-2.5" :class="bucket.members && dragEnabled ? 'group-order-handle cursor-grab active:cursor-grabbing' : ''">
                   <div class="flex min-w-0 items-center gap-2">
                     <span class="truncate font-medium text-gray-900 dark:text-white" :title="account.name">{{ account.name }}</span>
                     <span class="shrink-0 font-mono text-xs text-gray-400 dark:text-gray-500">#{{ account.id }}</span>
@@ -120,7 +144,7 @@
                   </span>
                 </td>
               </tr>
-            </tbody>
+            </component>
           </table>
         </div>
         <div v-if="candidateLoading" class="flex justify-center border-t border-gray-100 py-3 dark:border-dark-600">
@@ -163,6 +187,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { VueDraggable } from 'vue-draggable-plus'
 import { adminAPI } from '@/api/admin'
 import type { Account, AdminGroup } from '@/types'
 import { useAppStore } from '@/stores/app'
@@ -194,6 +219,11 @@ const candidateRows = ref<Account[]>([])
 const accountCache = ref<Account[]>([])
 const selectedAccountIds = ref<number[]>([])
 const originalAccountIds = ref<number[]>([])
+const customOrder = ref(false)
+const originalOrder = ref<number[]>([])
+const selectedRank = computed(() => new Map(selectedAccountIds.value.map((id, index) => [id, index])))
+const desiredOrder = computed(() => customOrder.value ? selectedAccountIds.value : [])
+const orderChanged = computed(() => desiredOrder.value.length !== originalOrder.value.length || desiredOrder.value.some((id, i) => originalOrder.value[i] !== id))
 const candidatePage = ref(0)
 const candidatePages = ref(0)
 const riskAccountIds = ref<number[]>([])
@@ -218,10 +248,23 @@ const visibleAccounts = computed(() => {
   return [...merged.values()].sort((a, b) => {
     const aSelected = selectedSet.value.has(a.id)
     const bSelected = selectedSet.value.has(b.id)
+    if (aSelected && bSelected) return selectedRank.value.get(a.id)! - selectedRank.value.get(b.id)!
     return Number(bSelected) - Number(aSelected) || a.name.localeCompare(b.name) || a.id - b.id
   })
 })
 const allVisibleSelected = computed(() => visibleAccounts.value.length > 0 && visibleAccounts.value.every((account) => selectedSet.value.has(account.id)))
+const rowBuckets = computed(() => [
+  { members: true, rows: visibleAccounts.value.filter(a => selectedSet.value.has(a.id)) },
+  { members: false, rows: visibleAccounts.value.filter(a => !selectedSet.value.has(a.id)) },
+])
+const dragEnabled = computed(() => customOrder.value && !normalizedSearch.value && !saving.value && !loading.value && selectedAccountIds.value.length > 1)
+const dragLabel = computed(() => text('admin.groups.groupAccounts.dragOrder', '拖动调整调用顺序'))
+
+function applyDragOrder(ids: number[]) {
+  if (dragEnabled.value && ids.length === selectedSet.value.size && new Set(ids).size === ids.length && ids.every(id => selectedSet.value.has(id))) {
+    selectedAccountIds.value = [...ids]
+  }
+}
 const partiallyVisibleSelected = computed(() =>
   visibleAccounts.value.some((account) => selectedSet.value.has(account.id)) && !allVisibleSelected.value,
 )
@@ -232,7 +275,7 @@ const changeCount = computed(() => {
   let count = 0
   for (const id of original) if (!selected.has(id)) count++
   for (const id of selected) if (!original.has(id)) count++
-  return count
+  return count || Number(orderChanged.value)
 })
 const selectedSchedulableCount = computed(() =>
   accountCache.value.filter((account) => selectedSet.value.has(account.id) && isSchedulable(account)).length,
@@ -246,6 +289,33 @@ function upsertAccounts(accounts: Account[]) {
   const byID = new Map(accountCache.value.map((account) => [account.id, account]))
   for (const account of accounts) byID.set(account.id, account)
   accountCache.value = [...byID.values()]
+}
+
+function setMembers(members: Account[], order: number[]) {
+  const ranks = new Map(order.map((id, i) => [id, i]))
+  const sorted = [...members].sort((a, b) => (ranks.get(a.id) ?? ranks.size) - (ranks.get(b.id) ?? ranks.size) || a.priority - b.priority || a.id - b.id)
+  const ids = [...new Set(sorted.map(a => a.id))]
+  originalAccountIds.value = ids
+  selectedAccountIds.value = [...ids]
+  customOrder.value = order.length > 0 && ids.length > 0
+  originalOrder.value = customOrder.value ? [...ids] : []
+}
+
+function canMove(id: number, step: number) {
+  const index = selectedRank.value.get(id)
+  return index !== undefined && index + step >= 0 && index + step < selectedAccountIds.value.length
+}
+
+function moveLabel(step: number) {
+  return step < 0 ? text('admin.groups.groupAccounts.moveUp', '优先调用：上移') : text('admin.groups.groupAccounts.moveDown', '降低顺序：下移')
+}
+
+function moveAccount(id: number, step: number) {
+  if (normalizedSearch.value || !canMove(id, step)) return
+  const ids = [...selectedAccountIds.value]
+  const index = selectedRank.value.get(id)!
+  ids.splice(index + step, 0, ...ids.splice(index, 1))
+  selectedAccountIds.value = ids
 }
 
 async function fetchGroupMembers(groupID: number, revision: number): Promise<Account[]> {
@@ -298,6 +368,8 @@ async function loadDialogData() {
   accountCache.value = []
   selectedAccountIds.value = []
   originalAccountIds.value = []
+  customOrder.value = false
+  originalOrder.value = []
   riskAccountIds.value = []
   candidatePage.value = 0
   candidatePages.value = 0
@@ -307,9 +379,7 @@ async function loadDialogData() {
       adminAPI.accounts.list(1, PAGE_SIZE, group.platform === 'composite' ? {} : { platform: group.platform }),
     ])
     if (revision !== loadRevision || props.group?.id !== group.id) return
-    const memberIDs = [...new Set(members.map((account) => account.id))]
-    originalAccountIds.value = memberIDs
-    selectedAccountIds.value = [...memberIDs]
+    setMembers(members, group.account_call_order ?? [])
     upsertAccounts([...members, ...candidates.items])
     candidateRows.value = candidates.items
     candidatePage.value = candidates.page
@@ -427,9 +497,7 @@ async function reloadMembersAfterPartialSave(groupID: number) {
   const members = await fetchGroupMembers(groupID, revision)
   if (revision !== loadRevision || props.group?.id !== groupID) return
   upsertAccounts(members)
-  const ids = [...new Set(members.map((account) => account.id))]
-  originalAccountIds.value = ids
-  selectedAccountIds.value = ids
+  setMembers(members, props.group?.account_call_order ?? [])
 }
 
 async function saveSelection() {
@@ -502,6 +570,16 @@ async function saveSelection() {
       return
     }
 
+    if (orderChanged.value) {
+      // Membership was saved above. An order-only retry must not rewrite account bindings.
+      originalAccountIds.value = [...selectedAccountIds.value]
+      const order = [...desiredOrder.value]
+      const updated = await adminAPI.groups.update(group.id, { account_call_order: order })
+      if (order.length !== (updated.account_call_order?.length ?? 0) || order.some((id, i) => updated.account_call_order?.[i] !== id)) {
+        throw new Error(text('admin.groups.groupAccounts.orderNotSaved', '服务器未保存本组调用顺序'))
+      }
+      originalOrder.value = order
+    }
     appStore.showSuccess(text('admin.groups.groupAccounts.saved', '分组账号已更新'))
     emit('saved')
   } catch (error: unknown) {

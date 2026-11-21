@@ -844,6 +844,12 @@ export default {
       accountsTotal: '总量:',
       accountsUnit: '个账号',
       groupAccounts: {
+        customOrder: '自定义本组调用顺序',
+        dragOrder: '拖动调整调用顺序',
+        callOrder: '调用顺序',
+        moveUp: '优先调用：上移',
+        moveDown: '降低顺序：下移',
+        orderNotSaved: '服务器未保存本组调用顺序',
         title: '分组账号',
         open: '查看并配置本分组账号',
         openForGroup: '查看分组 {name} 的 {count} 个可用账号',

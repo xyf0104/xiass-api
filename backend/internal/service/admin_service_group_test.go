@@ -849,6 +849,32 @@ func TestAdminService_UpdateGroup_RejectsNegativeVideoRateMultiplier(t *testing.
 	require.Nil(t, repo.updated)
 }
 
+func TestAdminService_GroupCallOrderSaveAndCache(t *testing.T) {
+	repo := &groupRepoStubForAdmin{getByID: &Group{ID: 33, Platform: PlatformOpenAI, Status: StatusActive}, getAccountIDsByGroupIDsFn: func(ids []int64) ([]int64, error) {
+		require.Equal(t, []int64{33}, ids)
+		return []int64{621, 622}, nil
+	}}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{groupRepo: repo, authCacheInvalidator: invalidator}
+	for _, invalid := range [][]int64{{621, 621}, {999}, {0}} {
+		_, err := svc.UpdateGroup(context.Background(), 33, &UpdateGroupInput{AccountCallOrder: invalid})
+		require.Error(t, err)
+		require.Nil(t, repo.updated)
+	}
+	order := []int64{622, 621}
+	g, err := svc.UpdateGroup(context.Background(), 33, &UpdateGroupInput{AccountCallOrder: order})
+	require.NoError(t, err)
+	require.Equal(t, []int64{33}, invalidator.groupIDs)
+	require.Equal(t, order, apiKeyAuthGroupFromSnapshot(apiKeyAuthGroupSnapshotFromService(g)).AccountCallOrder)
+	g, err = svc.UpdateGroup(context.Background(), 33, &UpdateGroupInput{})
+	require.NoError(t, err)
+	require.Equal(t, order, g.AccountCallOrder)
+	g, err = svc.UpdateGroup(context.Background(), 33, &UpdateGroupInput{AccountCallOrder: []int64{}})
+	require.NoError(t, err)
+	require.NotNil(t, g.AccountCallOrder)
+	require.Empty(t, g.AccountCallOrder)
+}
+
 func TestAdminService_UpdateGroup_InvalidatesAuthCacheOnRPMLimitChange(t *testing.T) {
 	existingGroup := &Group{
 		ID:       1,

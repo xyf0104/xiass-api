@@ -173,6 +173,23 @@ func TestAntigravityModels_FiltersByAllowlist(t *testing.T) {
 	require.Equal(t, "gemini-2.5-flash-thinking", got.Data[1].ID)
 }
 
+func TestAntigravityModelsListsNewModelForSingleGroupKey(t *testing.T) {
+	const id int64 = 22
+	const model = "gemini-4-neon-xhigh"
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{byGroup: map[int64][]service.Account{
+		id: {{ID: 617, Platform: service.PlatformAntigravity, Credentials: map[string]any{
+			"model_mapping": map[string]any{model: model},
+		}}},
+	}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/antigravity/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{ID: id, Platform: service.PlatformAntigravity}})
+	h.AntigravityModels(c)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), model)
+}
+
 func TestFilterUpstreamGeminiModelsBody(t *testing.T) {
 	allowlist := service.GroupModelAllowlist{Enabled: true, Models: []string{"gemini-2.5-pro"}}
 

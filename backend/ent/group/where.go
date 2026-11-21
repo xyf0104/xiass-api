@@ -2215,6 +2215,16 @@ func ModelRoutingPoolsNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldModelRoutingPools))
 }
 
+// AccountCallOrderIsNil applies the IsNil predicate on the "account_call_order" field.
+func AccountCallOrderIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldAccountCallOrder))
+}
+
+// AccountCallOrderNotNil applies the NotNil predicate on the "account_call_order" field.
+func AccountCallOrderNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldAccountCallOrder))
+}
+
 // ModelRoutingEnabledEQ applies the EQ predicate on the "model_routing_enabled" field.
 func ModelRoutingEnabledEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldModelRoutingEnabled, v))

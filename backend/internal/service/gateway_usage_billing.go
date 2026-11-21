@@ -76,16 +76,18 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	PricingAt              time.Time
+	weekendDiscountApplied bool
+	Cost                   *CostBreakdown
+	User                   *User
+	APIKey                 *APIKey
+	Account                *Account
+	Subscription           *UserSubscription
+	RequestPayloadHash     string
+	IsSubscriptionBill     bool
+	AccountRateMultiplier  float64
+	APIKeyService          APIKeyQuotaUpdater
+	Platform               string // 来自 APIKey 关联 Group 的平台标识
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -300,15 +302,17 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if p == nil || deps == nil {
 		return false, nil
 	}
+	billingCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	if err := applyWeekendUsageDiscount(billingCtx, deps.settingService, usageLog, p); err != nil {
+		return false, err
+	}
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		postUsageBilling(ctx, p, deps)
 		return true, nil
 	}
-
-	billingCtx, cancel := detachedBillingContext(ctx)
-	defer cancel()
 
 	result, attempts, err := retryUsageBillingWithUsageLog(billingCtx, repo, cmd, usageLog)
 	if err != nil {
@@ -574,6 +578,7 @@ func detachUpstreamContext(ctx context.Context) (context.Context, context.Cancel
 
 // billingDeps 扣费逻辑依赖的服务（由各 gateway service 提供）
 type billingDeps struct {
+	settingService        *SettingService
 	accountRepo           AccountRepository
 	userRepo              UserRepository
 	userSubRepo           UserSubscriptionRepository
@@ -586,6 +591,7 @@ type billingDeps struct {
 
 func (s *GatewayService) billingDeps() *billingDeps {
 	return &billingDeps{
+		settingService:        s.settingService,
 		accountRepo:           s.accountRepo,
 		userRepo:              s.userRepo,
 		userSubRepo:           s.userSubRepo,
@@ -864,6 +870,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	requestID := usageLog.RequestID
 	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+		PricingAt:             pricingAt,
 		Cost:                  cost,
 		User:                  user,
 		APIKey:                apiKey,

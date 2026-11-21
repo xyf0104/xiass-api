@@ -94,6 +94,7 @@ func RegisterUserRoutes(
 		{
 			channels.GET("/available", h.AvailableChannel.List)
 			channels.GET("/pricing", h.AvailableChannel.Pricing)
+			channels.GET("/weekend-discount", h.AvailableChannel.WeekendDiscount)
 		}
 
 		// Paid OAuth SMS receiver. Members can operate only their own opaque

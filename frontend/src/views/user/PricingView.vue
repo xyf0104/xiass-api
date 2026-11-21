@@ -10,6 +10,17 @@
       </div>
 
       <!-- 产品类别 Tab -->
+      <div v-if="weekendScheduled && weekendStatus" class="border-y border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-800 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200" data-test="weekend-promotion">
+        <strong class="inline-flex items-center gap-1.5"><DiscountIcon />{{ weekendActive ? (weekendStatus.mode === 'custom' ? '限时八折生效中' : '周末八折生效中') : (weekendStatus.mode === 'custom' ? '限时八折活动' : '周末八折活动') }}</strong>
+        <span class="ml-2">{{ weekendStatus.mode === 'custom' ? '活动时段内，全部分组在原价基础上再享 8 折。' : '北京时间每周六、周日，全部分组在原价基础上再享 8 折。' }}</span>
+        <span v-if="weekendStatus.starts_at" class="ml-2">开始：{{ promotionDate(weekendStatus.starts_at) }}</span>
+        <span v-if="weekendStatus.ends_at" class="ml-2">结束：{{ promotionDate(weekendStatus.ends_at) }}</span>
+        <div v-if="weekendCountdown !== null && weekendNextChange !== null" class="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-test="promotion-countdown">
+          <span>{{ weekendActive ? '优惠剩余时间' : '距优惠开启' }}</span>
+          <strong class="whitespace-nowrap text-base font-bold tabular-nums text-orange-700 dark:text-orange-400" role="timer" aria-live="off">{{ weekendCountdown }}</strong>
+          <span class="text-xs text-orange-700/80 dark:text-orange-300/80">{{ weekendActive ? '截止' : '开启' }}：{{ promotionDate(weekendNextChange) }}（北京时间）</span>
+        </div>
+      </div>
       <div class="custom-scrollbar flex max-w-full items-center gap-3 overflow-x-auto rounded-xl border border-gray-200/60 bg-white/40 p-2 shadow-sm backdrop-blur-sm dark:border-dark-700/60 dark:bg-dark-800/40">
         <button
           v-for="cat in productCategories"
@@ -93,7 +104,8 @@
                 <span class="text-base font-bold text-gray-900 dark:text-white truncate">
                   {{ group.name }}
                 </span>
-                <span class="rounded-full bg-primary-500 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                <span class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" :class="weekendActive ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' : 'bg-primary-500 text-white'">
+                  <DiscountIcon v-if="weekendActive" size="xs" />
                   {{ formatDisplayDiscount(group) }}折
                 </span>
                 <span
@@ -113,8 +125,11 @@
                 </div>
               </div>
               <!-- 倍率描述 -->
-              <span class="mt-2 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap truncate w-full text-left">
-                {{ formatDisplayMultiplier(group) }}x 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
+              <span class="mt-2 w-full text-left text-sm leading-6 text-gray-500 dark:text-gray-400">
+                <span v-if="weekendActive" class="mr-2 line-through">{{ formatPromotionRate(effectiveTextMultiplier(group)) }}x</span>
+                <span :class="{ 'font-bold text-orange-700 dark:text-orange-400': weekendActive }">
+                  <span class="inline-flex items-center gap-1 whitespace-nowrap align-middle" data-test="group-discounted-rate"><DiscountIcon v-if="weekendActive" /><span>{{ formatDisplayMultiplier(group) }}x</span></span> 倍率 · 相当于约 {{ formatDisplayDiscount(group) }}折
+                </span>
               </span>
               <span
                 v-if="hasPeakRate(group)"
@@ -170,6 +185,7 @@
                           :group-base-price="finalTokenPriceFor(model, 'input_price')"
                           :multiplier="priceMultiplierFor(model, 'input_price')"
                           :mode="priceMode"
+                          :discount-multiplier="weekendMultiplier"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-output`" class="px-6 py-5">
@@ -178,6 +194,7 @@
                           :group-base-price="finalTokenPriceFor(model, 'output_price')"
                           :multiplier="priceMultiplierFor(model, 'output_price')"
                           :mode="priceMode"
+                          :discount-multiplier="weekendMultiplier"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-cache-write`" class="px-6 py-5">
@@ -186,6 +203,7 @@
                           :group-base-price="finalTokenPriceFor(model, 'cache_write_price')"
                           :multiplier="priceMultiplierFor(model, 'cache_write_price')"
                           :mode="priceMode"
+                          :discount-multiplier="weekendMultiplier"
                         />
                       </td>
                       <td :data-test="`price-${model.name}-cache-read`" class="px-6 py-5">
@@ -194,6 +212,7 @@
                           :group-base-price="finalTokenPriceFor(model, 'cache_read_price')"
                           :multiplier="priceMultiplierFor(model, 'cache_read_price')"
                           :mode="priceMode"
+                          :discount-multiplier="weekendMultiplier"
                         />
                       </td>
                     </template>
@@ -219,6 +238,7 @@
                               :group-base-price="item.groupBasePrice"
                               :multiplier="item.groupBasePrice != null ? 1 : multiplierFor(model)"
                               :mode="priceMode"
+                              :discount-multiplier="weekendMultiplier"
                               :scale="item.scale"
                               :unit="item.unit"
                             />
@@ -261,6 +281,7 @@
                             :group-base-price="item.groupBasePrice"
                             :multiplier="item.groupBasePrice != null ? 1 : multiplierFor(model)"
                             :mode="priceMode"
+                            :discount-multiplier="weekendMultiplier"
                             :scale="item.scale"
                             :unit="item.unit"
                           />
@@ -300,8 +321,10 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import DiscountIcon from '@/components/common/DiscountIcon.vue'
 import PlatformBrandIcon from '@/components/common/PlatformBrandIcon.vue'
 import PriceCell from '@/components/pricing/PriceCell.vue'
+import { useWeekendDiscount, formatPromotionRate } from '@/composables/useWeekendDiscount'
 import userChannelsAPI, {
   type UserAvailableChannel,
   type UserAvailableGroup,
@@ -326,6 +349,8 @@ import {
 } from '@/views/admin/groupsImagePricing'
 
 const appStore = useAppStore()
+const { status: weekendStatus, multiplier: weekendMultiplier, scheduled: weekendScheduled, active: weekendActive, nextChangeAt: weekendNextChange, countdown: weekendCountdown } = useWeekendDiscount()
+const promotionDate = (value: string | number) => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'medium', hour12: false }).format(new Date(value))
 
 // ==================== 状态 ====================
 
@@ -442,13 +467,13 @@ function effectiveTextMultiplier(group: PricingGroup): number {
 }
 
 function formatDisplayMultiplier(group: PricingGroup): string {
-  return effectiveTextMultiplier(group).toString()
+  return formatPromotionRate(effectiveTextMultiplier(group) * weekendMultiplier.value)
 }
 
 function formatDisplayDiscount(group: PricingGroup): string {
   // 折扣计算：(groupPrice / officialPrice) * 10
   // officialPrice 包含 *7 的换算，groupPrice 是真实的，所以折扣是 (multiplier / 7) * 10
-  const discount = (effectiveTextMultiplier(group) / 7) * 10
+  const discount = (effectiveTextMultiplier(group) * weekendMultiplier.value / 7) * 10
   return discount % 1 === 0 ? discount.toFixed(0) : discount.toFixed(1)
 }
 
@@ -505,7 +530,7 @@ function modelSavingsPercent(model: UserSupportedModel): number | null {
     .some(value => normalizedPrice(value) != null)) {
     return null
   }
-  return savingsPercent(multiplierFor(model))
+  return savingsPercent(multiplierFor(model) * weekendMultiplier.value)
 }
 
 function normalizedPrice(value: number | null | undefined): number | null {

@@ -21,6 +21,8 @@ type Route struct {
 	StableID    string
 	DisplayName string
 	Protocol    string
+	// Set before Start. Counts forwarded tunnel bytes, excluding SOCKS negotiation.
+	RecordTraffic func(upload, download int64)
 
 	outbound       *upstream.Route
 	listener       net.Listener
@@ -136,7 +138,7 @@ func (r *Route) serve(client net.Conn) {
 	if _, err = client.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
 		return
 	}
-	proxyBothDirections(client, upstreamConn)
+	proxyBothDirectionsCounted(client, upstreamConn, r.RecordTraffic)
 }
 
 func (r *Route) track(conn net.Conn) bool {
@@ -157,6 +159,34 @@ func (r *Route) untrackAndClose(conn net.Conn) {
 }
 
 func proxyBothDirections(left, right net.Conn) {
+	proxyBothDirectionsCounted(left, right, nil)
+}
+
+type trafficConn struct {
+	net.Conn
+	record func(int64, int64)
+}
+
+func (c trafficConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.record(int64(n), 0)
+	}
+	return n, err
+}
+
+func (c trafficConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.record(0, int64(n))
+	}
+	return n, err
+}
+
+func proxyBothDirectionsCounted(left, right net.Conn, record func(int64, int64)) {
+	if record != nil {
+		right = trafficConn{right, record}
+	}
 	done := make(chan struct{}, 2)
 	copyDirection := func(dst net.Conn, src net.Conn) {
 		_, _ = io.Copy(dst, src)

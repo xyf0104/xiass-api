@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/xyf0104/xiass-proxy-agent/internal/proxyroute"
@@ -61,7 +62,29 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/subscriptions/sync", s.subscriptionSync)
 	mux.HandleFunc("/v1/routes", s.routes)
 	mux.HandleFunc("/v1/routes/", s.route)
+	mux.HandleFunc("/v1/traffic", s.traffic)
 	return authMiddleware(s.token, mux)
+}
+
+func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	days := 30
+	if raw := r.URL.Query().Get("days"); raw != "" {
+		var err error
+		days, err = strconv.Atoi(raw)
+		if err != nil || (days != 1 && days != 7 && days != 30) {
+			writeError(w, http.StatusBadRequest, "days must be 1, 7 or 30")
+			return
+		}
+	}
+	if s.manager.Traffic == nil {
+		writeError(w, http.StatusServiceUnavailable, "traffic history is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.manager.Traffic.Report(days))
 }
 
 func (s *Server) subscriptionPreview(w http.ResponseWriter, r *http.Request) {

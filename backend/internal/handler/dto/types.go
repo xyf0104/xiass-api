@@ -189,6 +189,7 @@ type AdminGroup struct {
 	// 模型优先路由配置（anthropic/openai 平台使用）
 	ModelRouting        map[string][]int64 `json:"model_routing"`
 	ModelRoutingPools   map[string][]int64 `json:"model_routing_pools"`
+	AccountCallOrder    []int64            `json:"account_call_order,omitempty"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
 
 	// MCP XML 协议注入（仅 antigravity 平台使用）

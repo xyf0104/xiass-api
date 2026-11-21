@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 import type { AdminGroup } from '@/types'
 import GroupsView from '../GroupsView.vue'
+import { getWeekendDiscount } from '@/api/weekendDiscount'
+
+enableAutoUnmount(afterEach)
+vi.mock('@/api/weekendDiscount', () => ({ getWeekendDiscount: vi.fn() }))
 
 const {
   listGroups,
@@ -158,6 +162,7 @@ const DataTableStub = {
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div data-test="rows">{{ data.map((row) => row.name).join(',') }}</div>
+      <div v-for="row in data" :key="row.id"><slot name="cell-rate_multiplier" :value="row.rate_multiplier" /></div>
     </div>
   `,
 }
@@ -231,6 +236,7 @@ const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: strin
 describe('admin GroupsView column settings', () => {
   beforeEach(() => {
     localStorage.clear()
+    vi.mocked(getWeekendDiscount).mockResolvedValue({ enabled: false, starts_at: null, ends_at: null, timezone: 'Asia/Shanghai', discount_multiplier: .8, applied_multiplier: 1, active: false, server_time: '2026-11-20T12:00:00+08:00', next_change_at: null })
 
     listGroups.mockReset()
     getAllGroups.mockReset()
@@ -259,6 +265,16 @@ describe('admin GroupsView column settings', () => {
     getLiveCapability.mockResolvedValue({ supported: false })
     listAccounts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('shows the discounted multiplier in the management table without changing base rates', async () => {
+    vi.mocked(getWeekendDiscount).mockResolvedValue({ enabled: true, mode: 'custom', starts_at: null, ends_at: null, timezone: 'Asia/Shanghai', discount_multiplier: .8, applied_multiplier: .8, active: true, server_time: '2026-11-20T12:00:00+08:00', next_change_at: null })
+    const wrapper = await mountView()
+    const rate = wrapper.get('[data-test="group-promotion-rate"]')
+    expect(rate.get('.line-through').text()).toBe('1x')
+    expect(rate.get('.text-orange-700').text()).toContain('0.8x')
+    expect(rate.find('[data-test="discount-icon"]').exists()).toBe(true)
+    await expect(listGroups.mock.results[0]?.value).resolves.toMatchObject({ items: [{ rate_multiplier: 1 }] })
   })
 
   it('does not call advanced group APIs or expose the exclusive filter in simple mode', async () => {

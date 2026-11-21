@@ -21,6 +21,9 @@
             @create="showCreate = true"
           >
             <template #beforeCreate>
+              <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="proxy-traffic" @click="openProxyTraffic()">
+                <Icon name="chart" size="sm" /><span>{{ t('admin.accounts.traffic.title') }}</span>
+              </button>
               <button type="button" class="btn btn-secondary flex items-center gap-2" data-testid="account-priority-settings" @click="openAccountPrioritySettings">
                 <Icon name="sort" size="sm" /><span>{{ t('admin.modelPriority.accountRoutingTitle') }}</span>
               </button>
@@ -420,7 +423,7 @@
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
               <div v-if="row.proxy" class="flex items-center gap-2">
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ formatProxyDisplayName(row.proxy.name) }}</span>
+                <button type="button" class="min-h-11 text-left text-sm text-primary-600 hover:underline dark:text-primary-400" :title="t('admin.accounts.traffic.title')" @click="openProxyTraffic(row)">{{ formatProxyDisplayName(row.proxy.name) }}</button>
                 <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
                   ({{ row.proxy.country_code }})
                 </span>
@@ -554,6 +557,7 @@
       @account-state-changed="handleAccountTestStateChanged"
     />
     <PelicanBenchmarkModal v-if="showPelicanBenchmark" :show="showPelicanBenchmark" @close="showPelicanBenchmark = false" />
+    <ProxyTrafficDialog v-if="showProxyTraffic" :account="trafficAccount" @close="showProxyTraffic = false" />
     <AccountPoolsModal v-if="showAccountPools" :show="showAccountPools" :proxies="proxies" @close="showAccountPools = false" @updated="handleAccountPoolsUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <CodexTicketStatusModal :show="showCodexTicket" :account="codexTicketAcc" @close="closeCodexTicket" @updated="handleCodexTicketUpdated" />
@@ -564,7 +568,7 @@
       @close="closeOAuthBillingDetails"
     />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @codex-ticket="openCodexTicket" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @proxy-traffic="openProxyTraffic" @codex-ticket="openCodexTicket" @schedule="handleSchedule" @manage-user-allowlist="openAccountUserAllowlist" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <BaseDialog
       :show="showAccountAllowlistGroupPicker"
       :title="t('admin.groups.userAccountAllowlist.title')"
@@ -694,6 +698,13 @@ const CreateAccountModal = defineAsyncComponent(loadCreateAccountModal)
 const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
 const BulkEditAccountModal = defineAsyncComponent(loadBulkEditAccountModal)
 const AccountPoolsModal = defineAsyncComponent(() => import('@/components/account/AccountPoolsModal.vue'))
+const ProxyTrafficDialog = defineAsyncComponent(() => import('@/components/admin/account/ProxyTrafficDialog.vue'))
+const showProxyTraffic = ref(false)
+const trafficAccount = ref<Account | null>(null)
+function openProxyTraffic(account: Account | null = null) {
+  trafficAccount.value = account
+  showProxyTraffic.value = true
+}
 
 const { t } = useI18n()
 const appStore = useAppStore()

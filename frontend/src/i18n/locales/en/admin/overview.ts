@@ -851,6 +851,12 @@ export default {
       accountsTotal: 'Total:',
       accountsUnit: 'accounts',
       groupAccounts: {
+        customOrder: 'Custom call order for this group',
+        dragOrder: 'Drag to change call order',
+        callOrder: 'Call order',
+        moveUp: 'Move earlier',
+        moveDown: 'Move later',
+        orderNotSaved: 'The server did not save the group call order',
         title: 'Group Accounts',
         open: 'View and configure accounts in this group',
         openForGroup: 'View {count} available accounts in {name}',

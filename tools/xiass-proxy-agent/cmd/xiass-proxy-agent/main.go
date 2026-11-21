@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/xyf0104/xiass-proxy-agent/internal/control"
+	"github.com/xyf0104/xiass-proxy-agent/internal/traffic"
 )
 
 const defaultListenAddress = "127.0.0.1:37941"
@@ -20,6 +23,7 @@ func main() {
 	listen := flag.String("listen", envOr("XIASS_PROXY_AGENT_LISTEN", defaultListenAddress), "loopback control API address")
 	token := flag.String("token", os.Getenv("XIASS_PROXY_AGENT_TOKEN"), "local control API bearer token")
 	tokenFile := flag.String("token-file", os.Getenv("XIASS_PROXY_AGENT_TOKEN_FILE"), "file containing the local control API bearer token")
+	trafficFile := flag.String("traffic-file", envOr("XIASS_PROXY_TRAFFIC_FILE", filepath.Join(envOr("DATA_DIR", "data"), "proxy-traffic.json")), "persistent tunnel traffic history")
 	flag.Parse()
 
 	if !controlAddressIsLoopback(*listen) {
@@ -37,6 +41,28 @@ func main() {
 	}
 
 	manager := control.NewManager()
+	trafficStore, trafficErr := traffic.Open(*trafficFile)
+	if trafficErr != nil {
+		fmt.Fprintln(os.Stderr, "xiass-proxy-agent: traffic history unavailable; proxy forwarding remains enabled")
+	} else {
+		manager.Traffic = trafficStore
+		stopTraffic, trafficDone := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(trafficDone)
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					_ = trafficStore.Flush()
+				case <-stopTraffic:
+					_ = trafficStore.Flush()
+					return
+				}
+			}
+		}()
+		defer func() { close(stopTraffic); <-trafficDone }()
+	}
 	defer manager.Close()
 	api, err := control.NewServer(*token, manager)
 	if err != nil {

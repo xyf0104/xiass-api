@@ -26,6 +26,8 @@ type keyBillingInfoResponse struct {
 	PeakRateMultiplier      *float64  `json:"peak_rate_multiplier,omitempty"`
 	AppliedPeakMultiplier   *float64  `json:"applied_peak_multiplier,omitempty"`
 	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
+	PromotionMultiplier     float64   `json:"promotion_multiplier"`
+	OriginalRateMultiplier  float64   `json:"original_rate_multiplier"`
 	Timezone                *string   `json:"timezone,omitempty"`
 	ObservedAt              time.Time `json:"observed_at"`
 }
@@ -58,7 +60,11 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 	}
 
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now()))
+	now := timezone.Now()
+	info := buildKeyBillingInfo(apiKey, resolvedRate, now)
+	info.PromotionMultiplier = h.settingService.WeekendMultiplierAt(c.Request.Context(), now)
+	info.EffectiveRateMultiplier *= info.PromotionMultiplier
+	c.JSON(http.StatusOK, info)
 }
 
 func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (float64, bool) {
@@ -94,6 +100,8 @@ func buildKeyBillingInfo(apiKey *service.APIKey, resolvedRate float64, now time.
 		ResolvedRateMultiplier:  resolvedRate,
 		PeakRateEnabled:         apiKey.Group.PeakRateEnabled,
 		EffectiveRateMultiplier: resolvedRate * appliedPeak,
+		OriginalRateMultiplier:  resolvedRate * appliedPeak,
+		PromotionMultiplier:     1,
 		ObservedAt:              now.UTC(),
 	}
 	if apiKey.Group.PeakRateEnabled {

@@ -952,6 +952,25 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.ModelRoutingEnabled != nil {
 		group.ModelRoutingEnabled = *input.ModelRoutingEnabled
 	}
+	if input.AccountCallOrder != nil {
+		if len(input.AccountCallOrder) > 0 {
+			members, err := s.groupRepo.GetAccountIDsByGroupIDs(ctx, []int64{id})
+			if err != nil {
+				return nil, err
+			}
+			available := make(map[int64]bool, len(members))
+			for _, id := range members {
+				available[id] = true
+			}
+			for _, id := range input.AccountCallOrder {
+				if !available[id] {
+					return nil, infraerrors.BadRequest("INVALID_ACCOUNT_CALL_ORDER", "call order must contain distinct accounts belonging to this group")
+				}
+				delete(available, id)
+			}
+		}
+		group.AccountCallOrder = input.AccountCallOrder
+	}
 	if input.MCPXMLInject != nil {
 		group.MCPXMLInject = *input.MCPXMLInject
 	}

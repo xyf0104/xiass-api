@@ -26,6 +26,32 @@ import type {
 
 const SUBSCRIPTION_REQUEST_TIMEOUT_MS = 180_000
 
+export interface ProxyTrafficNode {
+  id: string
+  name: string
+  protocol: string
+  proxy_ids: number[]
+  started_at: string
+  upload_bytes: number
+  download_bytes: number
+  total_bytes: number
+}
+
+export interface ProxyTrafficReport {
+  started_at: string
+  period_start: string
+  period_end: string
+  last_saved_at: string | null
+  persistence_ok: boolean
+  days: number
+  nodes: ProxyTrafficNode[]
+}
+
+export async function getTraffic(days: number = 30, signal?: AbortSignal): Promise<ProxyTrafficReport> {
+  const { data } = await apiClient.get<ProxyTrafficReport>('/admin/proxies/traffic', { params: { days }, signal, timeout: 10000 })
+  return data
+}
+
 function assertProxyArray(value: unknown): asserts value is Proxy[] {
   if (!Array.isArray(value)) {
     throw new Error('Invalid proxy list response')
@@ -389,6 +415,7 @@ export async function refreshSubscriptions(): Promise<ProxySubscriptionOverview>
 }
 
 export const proxiesAPI = {
+  getTraffic,
   list,
   getAll,
   getAllWithCount,

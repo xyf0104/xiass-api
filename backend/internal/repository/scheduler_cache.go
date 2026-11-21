@@ -1180,7 +1180,7 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 			Proxy:          bindingProxy,
 		})
 	}
-	return service.Account{
+	metadata := service.Account{
 		ID:                      account.ID,
 		Name:                    account.Name,
 		Platform:                account.Platform,
@@ -1213,6 +1213,15 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		Credentials:             filterSchedulerCredentials(account.Credentials),
 		Extra:                   filterSchedulerExtra(account.Extra),
 	}
+	if account.Platform == service.PlatformAntigravity {
+		// Validate against the full identity before projecting capabilities onto
+		// the credential-free scheduler view. Never revalidate a stale catalog.
+		if snapshot := account.GetUpstreamModelMetadataSnapshot(); snapshot != nil {
+			snapshot.Identity = ""
+			metadata.SetUpstreamModelMetadataSnapshot(*snapshot)
+		}
+	}
+	return metadata
 }
 
 func filterSchedulerAccountGroups(accountGroups []service.AccountGroup) []service.AccountGroup {

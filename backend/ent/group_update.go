@@ -906,6 +906,24 @@ func (_u *GroupUpdate) ClearModelRoutingPools() *GroupUpdate {
 	return _u
 }
 
+// SetAccountCallOrder sets the "account_call_order" field.
+func (_u *GroupUpdate) SetAccountCallOrder(v []int64) *GroupUpdate {
+	_u.mutation.SetAccountCallOrder(v)
+	return _u
+}
+
+// AppendAccountCallOrder appends value to the "account_call_order" field.
+func (_u *GroupUpdate) AppendAccountCallOrder(v []int64) *GroupUpdate {
+	_u.mutation.AppendAccountCallOrder(v)
+	return _u
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (_u *GroupUpdate) ClearAccountCallOrder() *GroupUpdate {
+	_u.mutation.ClearAccountCallOrder()
+	return _u
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_u *GroupUpdate) SetModelRoutingEnabled(v bool) *GroupUpdate {
 	_u.mutation.SetModelRoutingEnabled(v)
@@ -1881,6 +1899,17 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ModelRoutingPoolsCleared() {
 		_spec.ClearField(group.FieldModelRoutingPools, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AccountCallOrder(); ok {
+		_spec.SetField(group.FieldAccountCallOrder, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountCallOrder(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldAccountCallOrder, value)
+		})
+	}
+	if _u.mutation.AccountCallOrderCleared() {
+		_spec.ClearField(group.FieldAccountCallOrder, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)
@@ -3162,6 +3191,24 @@ func (_u *GroupUpdateOne) ClearModelRoutingPools() *GroupUpdateOne {
 	return _u
 }
 
+// SetAccountCallOrder sets the "account_call_order" field.
+func (_u *GroupUpdateOne) SetAccountCallOrder(v []int64) *GroupUpdateOne {
+	_u.mutation.SetAccountCallOrder(v)
+	return _u
+}
+
+// AppendAccountCallOrder appends value to the "account_call_order" field.
+func (_u *GroupUpdateOne) AppendAccountCallOrder(v []int64) *GroupUpdateOne {
+	_u.mutation.AppendAccountCallOrder(v)
+	return _u
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (_u *GroupUpdateOne) ClearAccountCallOrder() *GroupUpdateOne {
+	_u.mutation.ClearAccountCallOrder()
+	return _u
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_u *GroupUpdateOne) SetModelRoutingEnabled(v bool) *GroupUpdateOne {
 	_u.mutation.SetModelRoutingEnabled(v)
@@ -4167,6 +4214,17 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.ModelRoutingPoolsCleared() {
 		_spec.ClearField(group.FieldModelRoutingPools, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AccountCallOrder(); ok {
+		_spec.SetField(group.FieldAccountCallOrder, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountCallOrder(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldAccountCallOrder, value)
+		})
+	}
+	if _u.mutation.AccountCallOrderCleared() {
+		_spec.ClearField(group.FieldAccountCallOrder, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)

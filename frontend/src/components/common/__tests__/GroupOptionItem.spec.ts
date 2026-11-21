@@ -16,6 +16,14 @@ vi.mock('@/stores/app', () => ({
 }))
 
 describe('GroupOptionItem description layout', () => {
+  it('applies promotion to the user-specific rate without losing original price', () => {
+    const wrapper = mount(GroupOptionItem, { props: { name: 'Pro', platform: 'openai', rateMultiplier: .3, userRateMultiplier: .218, discountMultiplier: .8 }, global: { stubs: { GroupBadge: true } } })
+    expect(wrapper.get('.line-through').text()).toBe('0.218x')
+    expect(wrapper.text()).toContain('0.1744x')
+    expect(wrapper.text()).not.toContain('0.24x')
+    expect(wrapper.get('[data-test="discount-rate"]').classes()).toContain('text-orange-700')
+    expect(wrapper.get('[data-test="discount-rate"] [data-test="discount-icon"]').exists()).toBe(true)
+  })
   it('applies multiline and overflow-safe text styles', () => {
     const description = 'First section\nvery-long-unbroken-description-value-that-must-not-overflow'
     const wrapper = mount(GroupOptionItem, {

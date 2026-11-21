@@ -655,6 +655,7 @@ export interface AdminGroup extends Group {
   model_routing: Record<string, number[]> | null
   model_routing_pools?: Record<string, number[]> | null
   model_routing_enabled: boolean
+  account_call_order?: number[]
 
   // MCP XML 协议注入（仅 antigravity 平台使用）
   mcp_xml_inject: boolean
@@ -878,6 +879,7 @@ export interface CreateGroupRequest {
 }
 
 export interface UpdateGroupRequest {
+  account_call_order?: number[]
   name?: string
   description?: string | null
   platform?: GroupPlatform

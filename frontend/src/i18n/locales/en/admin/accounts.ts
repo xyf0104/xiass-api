@@ -1,5 +1,17 @@
 export default {
     accounts: {
+      traffic: {
+        title: 'Node Traffic', period: 'Period', today: 'Today', days: 'Last {days} days',
+        accountScope: 'Totals for current nodes, including other accounts', allNodes: 'All nodes', accountNodes: 'Account nodes only',
+        search: 'Search node names', node: 'Exit node', upload: 'Upload', download: 'Download', total: 'Total',
+        since: 'Since {time}', range: '{start} to {end} (UTC+8, including today)',
+        history: 'Collection started on this server: {time}. Earlier traffic was not recorded and cannot be reconstructed.',
+        scope: 'Tunnel bytes forwarded through subscription nodes, including API and browser traffic. Aliases are counted once. Excludes outer HY2/QUIC encapsulation and retransmissions; apply provider multipliers separately. 1 GB = 1,000,000,000 bytes. Saved every 5 seconds; sudden power loss may lose the last interval.',
+        empty: 'No measured subscription nodes in this selection. Direct connections and other proxies are not measured here.',
+        error: 'Node traffic is temporarily unavailable. Retry shortly. Proxy forwarding is unaffected.',
+        persistenceWarning: 'Traffic could not be saved. Current counters are not durable; check disk storage.',
+        unitPrice: 'Effective price / GB (optional)', estimate: 'Estimated cost for filtered traffic:'
+      },
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',

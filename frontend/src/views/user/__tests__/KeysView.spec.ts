@@ -5,6 +5,9 @@ import { defineComponent, nextTick } from 'vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
+import { updateWeekendDiscountStatus } from '@/composables/useWeekendDiscount'
+
+vi.mock('@/api/weekendDiscount', () => ({ getWeekendDiscount: vi.fn().mockResolvedValue({ enabled: false, starts_at: null, ends_at: null, discount_multiplier: .8, server_time: '2026-11-20T12:00:00+08:00' }) }))
 
 const {
   listKeys,
@@ -233,7 +236,7 @@ const IconStub = {
 
 const GroupBadgeStub = {
   name: 'GroupBadge',
-  props: ['name', 'userRateMultiplier'],
+  props: ['name', 'userRateMultiplier', 'discountMultiplier'],
   template: '<span data-test="group-badge">{{ name }}</span>',
 }
 
@@ -334,6 +337,28 @@ describe('user KeysView column settings', () => {
     createKey.mockResolvedValue(createApiKey())
     updateKey.mockResolvedValue(createApiKey())
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('updates every selected key group and dropdown when a custom activity starts or stops', async () => {
+    const groups = [
+      { id: 1, name: 'OpenAI', platform: 'openai', rate_multiplier: .3, is_exclusive: false },
+      { id: 2, name: 'Claude', platform: 'anthropic', rate_multiplier: 1.5, is_exclusive: false },
+    ]
+    getAvailableGroups.mockResolvedValue(groups)
+    listKeys.mockResolvedValueOnce({ items: [{ ...createApiKey(), group_id: 1, group_ids: [1, 2], group: groups[0], groups }], total: 1 })
+    const wrapper = await mountView()
+    try {
+      const promotion = { enabled: true, mode: 'custom' as const, starts_at: null, ends_at: null, timezone: 'Asia/Shanghai', discount_multiplier: .8, applied_multiplier: .8, active: true, server_time: '2026-11-20T12:00:00+08:00', next_change_at: null }
+      updateWeekendDiscountStatus(promotion)
+      await nextTick()
+      expect(wrapper.findAllComponents(GroupBadgeStub).map(badge => badge.props('discountMultiplier'))).toEqual([.8, .8])
+      await wrapper.get('[data-test="group-cell"] button').trigger('click')
+      expect(wrapper.findAllComponents(GroupOptionItem).map(option => option.props('discountMultiplier'))).toEqual([.8, .8])
+      updateWeekendDiscountStatus({ ...promotion, enabled: false, active: false, applied_multiplier: 1 })
+      await nextTick()
+      expect(wrapper.get('[data-test="group-cell"]').findAllComponents(GroupBadgeStub).map(badge => badge.props('discountMultiplier'))).toEqual([1, 1])
+      expect(wrapper.findAllComponents(GroupOptionItem).map(option => option.props('discountMultiplier'))).toEqual([1, 1])
+    } finally { wrapper.unmount() }
   })
 
   it('uses the default API key columns with low-frequency columns hidden', async () => {

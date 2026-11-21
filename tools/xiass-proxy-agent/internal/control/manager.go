@@ -9,13 +9,15 @@ import (
 	"sync"
 
 	"github.com/xyf0104/xiass-proxy-agent/internal/proxyroute"
+	"github.com/xyf0104/xiass-proxy-agent/internal/traffic"
 )
 
 type Manager struct {
 	opMu sync.Mutex
 	mu   sync.RWMutex
 
-	routes map[string]*activeRoute
+	routes  map[string]*activeRoute
+	Traffic *traffic.Store
 }
 
 type activeRoute struct {
@@ -70,6 +72,7 @@ func (m *Manager) Create(input string, index int) (RouteInfo, error) {
 	if err != nil {
 		return RouteInfo{}, err
 	}
+	m.attachTraffic(route)
 	if err := route.Start(""); err != nil {
 		route.Close()
 		return RouteInfo{}, err
@@ -220,6 +223,9 @@ func (m *Manager) Sync(ctx context.Context, opaque string, selectedIDs []string,
 		candidate := candidateByID[id]
 		desired := listenAddresses[id]
 		if current := existing[id]; current != nil && (desired == "" || desired == current.route.Addr()) {
+			if m.Traffic != nil {
+				m.Traffic.Register(id, candidate.Name, candidate.Protocol)
+			}
 			candidate.Outbound.Close()
 			candidate.Outbound = nil
 			ensured[id] = &activeRoute{
@@ -230,6 +236,7 @@ func (m *Manager) Sync(ctx context.Context, opaque string, selectedIDs []string,
 		}
 		route := proxyroute.NewRoute(*candidate)
 		candidate.Outbound = nil
+		m.attachTraffic(route)
 		if err := route.Start(desired); err != nil {
 			route.Close()
 			closeLoopbackRoutes(created)
@@ -367,4 +374,12 @@ func info(entry *activeRoute) RouteInfo {
 		ID: entry.route.ID, StableID: entry.route.StableID, SourceID: entry.sourceID, SourceName: entry.sourceName,
 		Name: entry.name, Protocol: entry.protocol, SOCKS5: entry.route.Addr(),
 	}
+}
+
+func (m *Manager) attachTraffic(route *proxyroute.Route) {
+	if m.Traffic == nil {
+		return
+	}
+	m.Traffic.Register(route.ID, route.DisplayName, route.Protocol)
+	route.RecordTraffic = func(up, down int64) { m.Traffic.Add(route.ID, up, down) }
 }

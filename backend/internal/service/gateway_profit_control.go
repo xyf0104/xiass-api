@@ -42,6 +42,7 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
+	downstream *= s.settingService.WeekendMultiplierAt(ctx, pricingAt)
 	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
 
 	gate := &openAIProfitControlGate{

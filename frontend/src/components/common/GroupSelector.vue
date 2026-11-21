@@ -44,6 +44,7 @@
           :platform="group.platform"
           :subscription-type="group.subscription_type || undefined"
           :rate-multiplier="group.rate_multiplier == null ? undefined : group.rate_multiplier"
+          :discount-multiplier="discountMultiplier"
           :user-rate-multiplier="userGroupRates[group.id]"
           :peak-rate-enabled="group.peak_rate_enabled"
           :peak-start="group.peak_start"
@@ -85,12 +86,14 @@ interface Props {
   mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
   searchable?: boolean | 'auto'
   singleColumn?: boolean
+  discountMultiplier?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
   userGroupRates: () => ({}),
   searchable: 'auto',
-  singleColumn: false
+  singleColumn: false,
+  discountMultiplier: 1
 })
 const emit = defineEmits<{
   'update:modelValue': [value: number[]]

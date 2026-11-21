@@ -180,6 +180,8 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	weekendDiscountMu                  sync.Mutex
+	weekendDiscountCache               *cachedWeekendDiscount
 	settingRepo                        SettingRepository
 	defaultSubGroupReader              DefaultSubscriptionGroupReader
 	proxyRepo                          ProxyRepository // for resolving websearch provider proxy URLs

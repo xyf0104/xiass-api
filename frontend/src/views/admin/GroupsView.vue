@@ -48,6 +48,9 @@
           <div
             class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto"
           >
+            <button class="btn btn-secondary" @click="showWeekendDiscount = true">
+              <DiscountIcon size="md" class="mr-2" />八折活动
+            </button>
             <button
               @click="loadGroups"
               :disabled="loading"
@@ -256,7 +259,11 @@
           </template>
 
           <template #cell-rate_multiplier="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300"
+            <span v-if="weekendActive" class="inline-flex flex-wrap items-center gap-1.5 text-sm" data-test="group-promotion-rate">
+              <span class="text-gray-400 line-through">{{ value }}x</span>
+              <span class="inline-flex items-center gap-1 font-semibold text-orange-700 dark:text-orange-400" title="活动八折倍率"><DiscountIcon />{{ formatPromotionRate(value * weekendMultiplier) }}x</span>
+            </span>
+            <span v-else class="text-sm text-gray-700 dark:text-gray-300"
               >{{ value }}x</span
             >
           </template>
@@ -4939,11 +4946,16 @@
       @close="closeGroupAccountsDialog"
       @saved="handleGroupAccountsSaved"
     />
+    <WeekendDiscountDialog v-if="showWeekendDiscount" @close="showWeekendDiscount = false" />
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from "vue";
+import { useWeekendDiscount, formatPromotionRate } from '@/composables/useWeekendDiscount';
+const { multiplier: weekendMultiplier, active: weekendActive } = useWeekendDiscount();
+const WeekendDiscountDialog = defineAsyncComponent(() => import('@/components/admin/group/WeekendDiscountDialog.vue'));
+const showWeekendDiscount = ref(false);
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { useAppStore } from "@/stores/app";
@@ -4987,6 +4999,7 @@ import EmptyState from "@/components/common/EmptyState.vue";
 import Select from "@/components/common/Select.vue";
 import PlatformIcon from "@/components/common/PlatformIcon.vue";
 import Icon from "@/components/icons/Icon.vue";
+import DiscountIcon from "@/components/common/DiscountIcon.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import UserAccountAllowlistDialog from "@/components/admin/group/UserAccountAllowlistDialog.vue";

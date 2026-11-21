@@ -1,5 +1,17 @@
 export default {
     accounts: {
+      traffic: {
+        title: '节点流量', period: '统计周期', today: '今日', days: '近 {days} 天',
+        accountScope: '当前绑定节点的总流量，包含其他账号', allNodes: '全部节点', accountNodes: '仅当前账号节点',
+        search: '搜索节点名称', node: '出口节点', upload: '上传', download: '下载', total: '合计',
+        since: '始于 {time}', range: '{start} 至 {end}（北京时间，含今日）',
+        history: '本机统计启用时间：{time}。启用前的历史流量未记录，不能补算。',
+        scope: '统计经订阅节点转发的隧道字节，包含 API 和内置浏览器。同一节点不重复计数。不含 HY2/QUIC 外层封装及重传；费用需另计供应商倍率。1 GB = 1,000,000,000 字节。每 5 秒保存，异常断电可能丢失最后一小段。',
+        empty: '该范围内没有已统计的订阅节点。直连及非订阅代理暂无此统计。',
+        error: '暂时无法读取节点流量，请稍后重试。代理转发不受影响。',
+        persistenceWarning: '流量记录保存失败，当前数值尚未持久化，请检查磁盘。',
+        unitPrice: '有效单价 / GB（可选）', estimate: '已筛选流量估算费用：'
+      },
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',

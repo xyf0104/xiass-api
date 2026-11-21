@@ -32,6 +32,7 @@
                   :platform="key.group.platform"
                   :subscription-type="key.group.subscription_type"
                   :rate-multiplier="key.group.rate_multiplier"
+                  :discount-multiplier="weekendMultiplier"
                   :peak-rate-enabled="key.group.peak_rate_enabled"
                   :peak-start="key.group.peak_start"
                   :peak-end="key.group.peak_end"
@@ -92,6 +93,7 @@
             :platform="group.platform"
             :subscription-type="group.subscription_type"
             :rate-multiplier="group.rate_multiplier"
+            :discount-multiplier="weekendMultiplier"
             :peak-rate-enabled="group.peak_rate_enabled"
             :peak-start="group.peak_start"
             :peak-end="group.peak_end"
@@ -115,6 +117,9 @@ import type { AdminUser, AdminGroup, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import { useWeekendDiscount } from '@/composables/useWeekendDiscount'
+
+const { multiplier: weekendMultiplier } = useWeekendDiscount()
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close'])

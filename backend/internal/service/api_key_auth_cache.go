@@ -100,6 +100,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// Model routing is used by gateway account selection, so it must be part of auth cache snapshot.
 	ModelRouting        map[string][]int64 `json:"model_routing,omitempty"`
 	ModelRoutingPools   map[string][]int64 `json:"model_routing_pools,omitempty"`
+	AccountCallOrder    []int64            `json:"account_call_order,omitempty"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
 	MCPXMLInject        bool               `json:"mcp_xml_inject"`
 

@@ -83,6 +83,7 @@ type Group struct {
 	// value: 优先账号 ID 列表
 	ModelRouting        map[string][]int64
 	ModelRoutingPools   map[string][]int64
+	AccountCallOrder    []int64
 	ModelRoutingEnabled bool
 
 	// MCP XML 协议注入开关（仅 antigravity 平台使用）

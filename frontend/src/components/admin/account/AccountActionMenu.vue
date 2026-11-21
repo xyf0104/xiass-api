@@ -19,6 +19,10 @@
               <Icon name="chart" size="sm" class="text-indigo-500" />
               {{ t('admin.accounts.viewStats') }}
             </button>
+            <button @click="$emit('proxy-traffic', account); $emit('close')" class="flex min-h-11 w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
+              <Icon name="chart" size="sm" class="text-primary-500" />
+              {{ t('admin.accounts.traffic.title') }}
+            </button>
             <button v-if="isOpenAICodexAccount" @click="$emit('codex-ticket', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
               <Icon name="shield" size="sm" class="text-emerald-500" />
               {{ t('admin.accounts.codexTicket.viewStatus') }}
@@ -86,7 +90,7 @@ const props = withDefaults(defineProps<{
   position: null,
   anchorRect: null
 })
-const emit = defineEmits(['close', 'test', 'stats', 'codex-ticket', 'schedule', 'manage-user-allowlist', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
+const emit = defineEmits(['close', 'test', 'stats', 'proxy-traffic', 'codex-ticket', 'schedule', 'manage-user-allowlist', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
 const { t } = useI18n()
 const menuRef = ref<HTMLElement | null>(null)
 const { width: viewportWidth, height: viewportHeight } = useWindowSize()

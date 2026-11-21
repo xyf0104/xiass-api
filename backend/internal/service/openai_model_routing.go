@@ -16,6 +16,7 @@ type openAIModelRoutingPreference struct {
 	accountIDs   map[int64]struct{}
 	poolIDs      map[string]struct{}
 	accountRanks map[int64]int
+	groupRanks   map[int64]int
 }
 
 func newOpenAIModelRoutingPreference(accountIDs, poolIDs []int64) openAIModelRoutingPreference {
@@ -42,10 +43,19 @@ func newOpenAIModelRoutingPreference(accountIDs, poolIDs []int64) openAIModelRou
 }
 
 func (p openAIModelRoutingPreference) configured() bool {
-	return len(p.accountIDs) > 0 || len(p.poolIDs) > 0
+	return len(p.accountIDs) > 0 || len(p.poolIDs) > 0 || len(p.groupRanks) > 0
 }
 
 func (p openAIModelRoutingPreference) matches(account *Account) bool {
+	if account != nil {
+		if _, ok := p.groupRanks[account.ID]; ok {
+			return true
+		}
+	}
+	return p.matchesExplicit(account)
+}
+
+func (p openAIModelRoutingPreference) matchesExplicit(account *Account) bool {
 	if account == nil || !p.configured() {
 		return false
 	}
@@ -70,12 +80,12 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	if ctx != nil {
 		bypassModelPreference, _ = ctx.Value(openAIModelRotationFallbackKey{}).(bool)
 	}
-	if s == nil || strings.TrimSpace(requestedModel) == "" ||
-		normalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
+	if s == nil {
 		return openAIModelRoutingPreference{}
 	}
 	preference := openAIModelRoutingPreference{}
-	if s.settingService != nil {
+	isOpenAI := normalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI
+	if isOpenAI && requestedModel != "" && s.settingService != nil {
 		var userID int64
 		if ctx != nil {
 			userID, _ = ctx.Value(ctxkey.UserID).(int64)
@@ -86,7 +96,7 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 		}
 		preference = s.settingService.resolveOpenAIAccountPriorityPreference(ctx, priorityModel, userID)
 	}
-	if groupID == nil || bypassModelPreference {
+	if groupID == nil {
 		return preference
 	}
 
@@ -100,7 +110,10 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 	if group == nil && s.schedulerSnapshot != nil {
 		group, _ = s.schedulerSnapshot.GetGroupByID(ctx, *groupID)
 	}
-	if group == nil || !group.ModelRoutingEnabled ||
+	if group != nil {
+		preference.groupRanks = groupCallRanks(group.AccountCallOrder)
+	}
+	if group == nil || bypassModelPreference || !isOpenAI || !group.ModelRoutingEnabled ||
 		(group.Platform != PlatformOpenAI && group.Platform != PlatformComposite) {
 		return preference
 	}
@@ -116,18 +129,33 @@ func (s *OpenAIGatewayService) resolveOpenAIModelRoutingPreference(
 		groupPreference.accountIDs[accountID] = struct{}{}
 	}
 	groupPreference.accountRanks = preference.accountRanks
+	groupPreference.groupRanks = preference.groupRanks
 	return groupPreference
 }
 
 // Explicit model order precedes account-global priority. Legacy preferences
 // remain one tier; group/pool additions follow explicitly ordered accounts.
 func (p openAIModelRoutingPreference) tier(account *Account) int {
+	base := p.explicitTier(account)
+	if len(p.groupRanks) == 0 {
+		return base
+	}
+	rank := len(p.groupRanks)
+	if account != nil {
+		if r, ok := p.groupRanks[account.ID]; ok {
+			rank = r
+		}
+	}
+	return base*(len(p.groupRanks)+1) + rank
+}
+
+func (p openAIModelRoutingPreference) explicitTier(account *Account) int {
 	if account != nil {
 		if rank, ok := p.accountRanks[account.ID]; ok {
 			return rank
 		}
 	}
-	if p.matches(account) {
+	if p.matchesExplicit(account) {
 		return len(p.accountRanks)
 	}
 	return len(p.accountRanks) + 1

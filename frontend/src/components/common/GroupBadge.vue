@@ -11,7 +11,11 @@
     <span :class="wrapName ? 'min-w-0 whitespace-normal break-words text-left' : 'truncate'">{{ name }}</span>
     <!-- Right side label -->
     <span v-if="showLabel" :class="[labelClass, { 'shrink-0 whitespace-nowrap': wrapName }]">
-      <template v-if="hasCustomRate">
+      <template v-if="discountMultiplier < 1 && rateMultiplier !== undefined && (!isSubscription || alwaysShowRate)">
+        <span class="mr-1 line-through opacity-50">{{ userRateMultiplier ?? rateMultiplier }}x</span>
+        <span class="inline-flex items-center gap-1 font-bold text-orange-700 dark:text-orange-400" title="活动八折倍率" data-test="discount-rate"><DiscountIcon size="xs" />{{ Number(((userRateMultiplier ?? rateMultiplier) * discountMultiplier).toFixed(8)) }}x</span>
+      </template>
+      <template v-else-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
         <span class="font-bold">{{ userRateMultiplier }}x</span>
@@ -33,12 +37,14 @@ import type { SubscriptionType, GroupPlatform } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import PlatformIcon from './PlatformIcon.vue'
+import DiscountIcon from './DiscountIcon.vue'
 
 interface Props {
   name: string
   platform?: GroupPlatform
   subscriptionType?: SubscriptionType
   rateMultiplier?: number
+  discountMultiplier?: number
   userRateMultiplier?: number | null // 用户专属倍率
   peakRateEnabled?: boolean
   peakStart?: string
@@ -57,6 +63,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
+  discountMultiplier: 1,
   showRate: true,
   wrapName: false,
   daysRemaining: null,

@@ -816,7 +816,11 @@ func (s *GatewayService) filterAccountCandidates(ctx context.Context, groupID *i
 	if s == nil {
 		return accounts, nil
 	}
-	return filterAccountCandidatesWithPolicy(ctx, s.candidatePolicy, groupID, accounts)
+	allowed, err := filterAccountCandidatesWithPolicy(ctx, s.candidatePolicy, groupID, accounts)
+	if err != nil {
+		return nil, err
+	}
+	return groupOrderedCandidates(ctx, groupID, allowed, s.groupRepo), nil
 }
 
 func (s *GatewayService) requireAccountCandidate(ctx context.Context, groupID *int64, accountID int64) error {

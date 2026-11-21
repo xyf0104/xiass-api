@@ -3,7 +3,9 @@
     <!-- 分组价格模式 -->
     <template v-if="mode === 'group'">
       <div class="whitespace-nowrap font-mono">
-        <span class="text-lg font-bold text-primary-500">
+        <span v-if="discountMultiplier < 1" class="mr-2 text-sm text-gray-500 line-through" data-test="original-price">¥{{ originalGroupPriceFormatted }}</span>
+        <span class="inline-flex items-center gap-1 text-lg font-bold" :class="discountMultiplier < 1 ? 'text-orange-700 dark:text-orange-400' : 'text-primary-500'" :title="discountMultiplier < 1 ? '活动八折价' : undefined" data-test="current-price">
+          <DiscountIcon v-if="discountMultiplier < 1" />
           ¥{{ groupPriceFormatted }}
         </span>
         <span class="ml-1 text-sm text-gray-400 dark:text-gray-500">{{ unit }}</span>
@@ -31,6 +33,7 @@
  * 展示分组价格（高亮大字）和官方价格（删除线），与 apikey.fun 风格一致
  */
 import { computed } from 'vue'
+import DiscountIcon from '@/components/common/DiscountIcon.vue'
 
 const props = withDefaults(defineProps<{
   /** 官方基准单价。 */
@@ -39,6 +42,7 @@ const props = withDefaults(defineProps<{
   groupBasePrice?: number | null
   /** 分组倍率。 */
   multiplier: number
+  discountMultiplier?: number
   /** 显示模式：group=分组价格, official=官方价格。 */
   mode: 'group' | 'official'
   /** 单价缩放；Token 价格按百万换算，按次/图片/视频保持 1。 */
@@ -48,6 +52,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   basePrice: null,
   groupBasePrice: null,
+  discountMultiplier: 1,
   scale: 1_000_000,
   unit: '/ 1M tokens'
 })
@@ -63,8 +68,13 @@ const officialPriceFormatted = computed(() => {
 const groupPriceFormatted = computed(() => {
   const basePrice = props.groupBasePrice ?? props.basePrice
   if (basePrice == null) return '-'
-  const price = basePrice * props.scale * props.multiplier
+  const price = basePrice * props.scale * props.multiplier * props.discountMultiplier
   return formatPrice(price)
+})
+
+const originalGroupPriceFormatted = computed(() => {
+  const base = props.groupBasePrice ?? props.basePrice
+  return base == null ? '-' : formatPrice(base * props.scale * props.multiplier)
 })
 
 /**

@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { VueDraggable } from 'vue-draggable-plus'
 import type { Account, AdminGroup } from '@/types'
 import GroupAccountsDialog from '../GroupAccountsDialog.vue'
 
@@ -14,6 +15,7 @@ const { listAccounts, getAccount, checkRisk, updateAccount, showError, showSucce
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
+    groups: { update: updateGroup },
     accounts: {
       list: listAccounts,
       getById: getAccount,
@@ -70,6 +72,8 @@ function mountDialog() {
   })
 }
 
+const { updateGroup } = vi.hoisted(() => ({ updateGroup: vi.fn() }))
+
 describe('GroupAccountsDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -81,6 +85,7 @@ describe('GroupAccountsDialog', () => {
     getAccount.mockImplementation(async (id: number) => candidates.find((item) => item.id === id))
     checkRisk.mockResolvedValue({ has_risk: false })
     updateAccount.mockResolvedValue({})
+    updateGroup.mockImplementation(async (_id, payload) => payload)
   })
 
   it('shows currently bound accounts checked and allows multiple accounts to be selected', async () => {
@@ -94,6 +99,54 @@ describe('GroupAccountsDialog', () => {
     await wrapper.get('[data-test="group-account-3"]').trigger('change')
 
     expect(wrapper.text()).toContain('待变更: 2')
+  })
+
+  it('reorders only this group, restores saved positions, and can return to account priority', async () => {
+    listAccounts.mockResolvedValue(page([account(1, 'A', [10, 20]), account(2, 'B', [10, 20])]))
+    const wrapper = mountDialog()
+    await flushPromises()
+    await wrapper.get('[data-test="custom-order"]').setValue(true)
+    await wrapper.get('[data-test="order-2-up"]').trigger('click')
+    expect(wrapper.findAll('tbody tr').map(row => row.find('input').attributes('data-test'))).toEqual(['group-account-2', 'group-account-1'])
+    await wrapper.get('[data-test="group-accounts-save"]').trigger('click')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(10, {account_call_order: [2, 1]})
+    expect(updateAccount).not.toHaveBeenCalled()
+    await wrapper.setProps({show:false})
+    await wrapper.setProps({show:true,group:{...group,account_call_order:[2,1]}})
+    await flushPromises()
+    expect(wrapper.get('[data-test="order-2-up"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-test="custom-order"]').setValue(false)
+    await wrapper.get('[data-test="group-accounts-save"]').trigger('click')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenLastCalledWith(10, {account_call_order: []})
+  })
+
+  it('drags only bound rows, previews the order, and saves only on confirmation', async () => {
+    const bound = [account(1, 'A', [10]), account(2, 'B', [10]), account(3, 'C', [10])]
+    listAccounts.mockImplementation(async (_p, _s, filters) => page(filters.group ? bound : [...bound, account(4, 'Other')]))
+    const wrapper = mountDialog()
+    await flushPromises()
+    const sortable = wrapper.getComponent(VueDraggable)
+    expect(sortable.props('disabled')).toBe(true)
+    await wrapper.get('[data-test="custom-order"]').setValue(true)
+    expect(sortable.props('disabled')).toBe(false)
+    expect(sortable.element.tagName).toBe('TBODY')
+    expect(sortable.findAll('tr')).toHaveLength(3)
+    expect(wrapper.find('[data-test="drag-4"]').exists()).toBe(false)
+    sortable.vm.$emit('update:modelValue', [3, 1, 2])
+    await flushPromises()
+    expect(sortable.findAll('input').map(el => el.attributes('data-test'))).toEqual(['group-account-3', 'group-account-1', 'group-account-2'])
+    expect(updateGroup).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="group-accounts-search"]').setValue('A')
+    expect(sortable.props('disabled')).toBe(true)
+    sortable.vm.$emit('update:modelValue', [2, 1, 3])
+    await wrapper.get('[data-test="group-accounts-search"]').setValue('')
+    await wrapper.get('[data-test="group-accounts-save"]').trigger('click')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenCalledWith(10, { account_call_order: [3, 1, 2] })
+    expect(updateAccount).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('searches matching accounts and loads further candidate pages', async () => {

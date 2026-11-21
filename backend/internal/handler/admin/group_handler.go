@@ -314,6 +314,7 @@ type UpdateGroupRequest struct {
 	ModelRouting        map[string][]int64 `json:"model_routing"`
 	ModelRoutingPools   map[string][]int64 `json:"model_routing_pools"`
 	ModelRoutingEnabled *bool              `json:"model_routing_enabled"`
+	AccountCallOrder    []int64            `json:"account_call_order"`
 	MCPXMLInject        *bool              `json:"mcp_xml_inject"`
 	// 支持的模型系列（仅 antigravity 平台使用）
 	SupportedModelScopes *[]string `json:"supported_model_scopes"`
@@ -845,6 +846,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 	}
 
 	group, err := h.adminService.UpdateGroup(c.Request.Context(), groupID, &service.UpdateGroupInput{
+		AccountCallOrder:                req.AccountCallOrder,
 		Name:                            req.Name,
 		Description:                     req.Description,
 		Platform:                        req.Platform,

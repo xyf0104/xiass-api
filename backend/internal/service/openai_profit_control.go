@@ -258,6 +258,7 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
+	downstream *= s.settingService.WeekendMultiplierAt(ctx, pricingAt)
 
 	deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
 	threshold := clampProfitControlThreshold(downstream * (1 - deduction))

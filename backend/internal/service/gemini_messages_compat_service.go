@@ -72,7 +72,11 @@ func (s *GeminiMessagesCompatService) filterAccountCandidates(ctx context.Contex
 	if s == nil {
 		return accounts, nil
 	}
-	return filterAccountCandidatesWithPolicy(ctx, s.candidatePolicy, groupID, accounts)
+	allowed, err := filterAccountCandidatesWithPolicy(ctx, s.candidatePolicy, groupID, accounts)
+	if err != nil {
+		return nil, err
+	}
+	return groupOrderedCandidates(ctx, groupID, allowed, s.groupRepo), nil
 }
 
 func (s *GeminiMessagesCompatService) requireAccountCandidate(ctx context.Context, groupID *int64, accountID int64) error {

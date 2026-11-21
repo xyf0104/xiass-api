@@ -216,6 +216,10 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("模型路由配置：模型模式 -> 优先号池ID列表"),
 
+		field.JSON("account_call_order", []int64{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+
 		// 模型路由开关 (added by migration 041)
 		field.Bool("model_routing_enabled").
 			Default(false).

@@ -6,6 +6,8 @@ import PricingView from '../PricingView.vue'
 const getPricing = vi.hoisted(() => vi.fn())
 const getUserGroupRates = vi.hoisted(() => vi.fn())
 const showError = vi.hoisted(() => vi.fn())
+const getWeekendDiscount = vi.hoisted(() => vi.fn())
+vi.mock('@/api/weekendDiscount', () => ({ getWeekendDiscount }))
 
 vi.mock('@/api/channels', () => ({
   default: { getPricing },
@@ -181,8 +183,70 @@ function multiChannelFixture(): UserAvailableChannel[] {
 
 describe('PricingView', () => {
   beforeEach(() => {
+    getWeekendDiscount.mockResolvedValue({ enabled: false, starts_at: null, ends_at: null, discount_multiplier: .8, server_time: new Date().toISOString() })
     getPricing.mockReset()
     getUserGroupRates.mockReset().mockResolvedValue({})
+  })
+
+  it.each([
+    ['weekends', '2026-11-20T20:00:00+08:00', null, null, '距优惠开启', '04:00:00', '2026/11/21 00:00:00'],
+    ['weekends', '2026-11-21T12:00:00+08:00', null, null, '优惠剩余时间', '1天 12:00:00', '2026/11/23 00:00:00'],
+    ['custom', '2026-11-20T12:00:00+08:00', '2026-11-20T13:00:00+08:00', '2026-11-20T15:00:00+08:00', '距优惠开启', '01:00:00', '2026/11/20 13:00:00'],
+    ['custom', '2026-11-20T14:00:00+08:00', null, '2026-11-20T15:00:00+08:00', '优惠剩余时间', '01:00:00', '2026/11/20 15:00:00']
+  ])('shows the correct %s countdown at %s', async (mode, server_time, starts_at, ends_at, label, countdown, target) => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    getWeekendDiscount.mockResolvedValue({ enabled: true, mode, starts_at, ends_at, discount_multiplier: .8, server_time })
+    const wrapper = mount(PricingView, { global: { stubs: { AppLayout: { template: '<main><slot /></main>' }, Icon: true, PlatformBrandIcon: true } } })
+    try {
+      await flushPromises()
+      const banner = wrapper.get('[data-test="promotion-countdown"]')
+      expect(banner.text()).toContain(label)
+      expect(banner.get('[role="timer"]').text()).toBe(countdown)
+      expect(banner.text()).toContain(target)
+      expect(banner.text()).toContain('北京时间')
+    } finally { wrapper.unmount() }
+  })
+
+  it('does not show a countdown when the activity is disabled', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    const wrapper = mount(PricingView, { global: { stubs: { AppLayout: { template: '<main><slot /></main>' }, Icon: true, PlatformBrandIcon: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.find('[data-test="promotion-countdown"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="weekend-promotion"]').exists()).toBe(false)
+    } finally { wrapper.unmount() }
+  })
+
+  it('shows active promotional group rates and all token prices at 80 percent', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    getWeekendDiscount.mockResolvedValue({ enabled: true, starts_at: null, ends_at: null, discount_multiplier: .8, server_time: '2026-11-21T12:00:00+08:00' })
+    const wrapper = mount(PricingView, { global: { stubs: { AppLayout: { template: '<main><slot /></main>' }, Icon: true, PlatformBrandIcon: true } } })
+    try {
+      await flushPromises()
+      await wrapper.get('[data-test="platform-openai"]').trigger('click')
+      expect(wrapper.get('[data-test="weekend-promotion"]').text()).toContain('周末八折生效中')
+      expect(wrapper.text()).toContain('1.6x 倍率')
+      expect(wrapper.findAll('[data-test="original-price"]').length).toBeGreaterThan(0)
+      const cell = wrapper.findAllComponents({ name: 'PriceCell' })
+      for (const item of cell) expect(item.props('discountMultiplier')).toBe(.8)
+    } finally { wrapper.unmount() }
+  })
+
+  it('shows a custom weekday activity with orange prices and a discount icon', async () => {
+    getPricing.mockResolvedValue(multiChannelFixture())
+    getWeekendDiscount.mockResolvedValue({ enabled: true, mode: 'custom', starts_at: null, ends_at: null, discount_multiplier: .8, server_time: '2026-11-20T12:00:00+08:00' })
+    const wrapper = mount(PricingView, { global: { stubs: { AppLayout: { template: '<main><slot /></main>' }, PlatformBrandIcon: true } } })
+    try {
+      await flushPromises()
+      const banner = wrapper.get('[data-test="weekend-promotion"]')
+      expect(banner.text()).toContain('限时八折生效中')
+      expect(banner.text()).not.toContain('每周六')
+      expect(banner.find('[data-test="discount-icon"]').exists()).toBe(true)
+      const price = wrapper.get('[data-test="current-price"]')
+      expect(price.classes()).toContain('text-orange-700')
+      expect(price.find('[data-test="discount-icon"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('1.6x 倍率')
+    } finally { wrapper.unmount() }
   })
 
   it('shows every group across same-platform channels and selects the second channel model list', async () => {

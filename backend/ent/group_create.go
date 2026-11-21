@@ -634,6 +634,12 @@ func (_c *GroupCreate) SetModelRoutingPools(v map[string][]int64) *GroupCreate {
 	return _c
 }
 
+// SetAccountCallOrder sets the "account_call_order" field.
+func (_c *GroupCreate) SetAccountCallOrder(v []int64) *GroupCreate {
+	_c.mutation.SetAccountCallOrder(v)
+	return _c
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (_c *GroupCreate) SetModelRoutingEnabled(v bool) *GroupCreate {
 	_c.mutation.SetModelRoutingEnabled(v)
@@ -1677,6 +1683,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldModelRoutingPools, field.TypeJSON, value)
 		_node.ModelRoutingPools = value
 	}
+	if value, ok := _c.mutation.AccountCallOrder(); ok {
+		_spec.SetField(group.FieldAccountCallOrder, field.TypeJSON, value)
+		_node.AccountCallOrder = value
+	}
 	if value, ok := _c.mutation.ModelRoutingEnabled(); ok {
 		_spec.SetField(group.FieldModelRoutingEnabled, field.TypeBool, value)
 		_node.ModelRoutingEnabled = value
@@ -2714,6 +2724,24 @@ func (u *GroupUpsert) UpdateModelRoutingPools() *GroupUpsert {
 // ClearModelRoutingPools clears the value of the "model_routing_pools" field.
 func (u *GroupUpsert) ClearModelRoutingPools() *GroupUpsert {
 	u.SetNull(group.FieldModelRoutingPools)
+	return u
+}
+
+// SetAccountCallOrder sets the "account_call_order" field.
+func (u *GroupUpsert) SetAccountCallOrder(v []int64) *GroupUpsert {
+	u.Set(group.FieldAccountCallOrder, v)
+	return u
+}
+
+// UpdateAccountCallOrder sets the "account_call_order" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAccountCallOrder() *GroupUpsert {
+	u.SetExcluded(group.FieldAccountCallOrder)
+	return u
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (u *GroupUpsert) ClearAccountCallOrder() *GroupUpsert {
+	u.SetNull(group.FieldAccountCallOrder)
 	return u
 }
 
@@ -3998,6 +4026,27 @@ func (u *GroupUpsertOne) UpdateModelRoutingPools() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearModelRoutingPools() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelRoutingPools()
+	})
+}
+
+// SetAccountCallOrder sets the "account_call_order" field.
+func (u *GroupUpsertOne) SetAccountCallOrder(v []int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAccountCallOrder(v)
+	})
+}
+
+// UpdateAccountCallOrder sets the "account_call_order" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAccountCallOrder() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAccountCallOrder()
+	})
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (u *GroupUpsertOne) ClearAccountCallOrder() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAccountCallOrder()
 	})
 }
 
@@ -5500,6 +5549,27 @@ func (u *GroupUpsertBulk) UpdateModelRoutingPools() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearModelRoutingPools() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelRoutingPools()
+	})
+}
+
+// SetAccountCallOrder sets the "account_call_order" field.
+func (u *GroupUpsertBulk) SetAccountCallOrder(v []int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAccountCallOrder(v)
+	})
+}
+
+// UpdateAccountCallOrder sets the "account_call_order" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAccountCallOrder() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAccountCallOrder()
+	})
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (u *GroupUpsertBulk) ClearAccountCallOrder() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearAccountCallOrder()
 	})
 }
 

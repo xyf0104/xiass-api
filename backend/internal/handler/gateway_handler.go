@@ -1583,7 +1583,7 @@ func mergeModelIDs(primary, secondary []string) []string {
 // GET /antigravity/models
 // 分组级模型白名单开启时按白名单过滤。
 func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
-	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil && len(apiKey.BoundGroups()) > 1 {
+	if apiKey, ok := middleware2.GetAPIKeyFromContext(c); ok && apiKey != nil && h.gatewayService != nil && len(boundGroupsForAPIKey(apiKey)) > 0 {
 		models, _, err := unionAPIKeyGroupModels(c.Request.Context(), h.gatewayService, boundGroupsForAPIKey(apiKey), service.PlatformAntigravity, func(models []string, group *service.Group) []string {
 			if group.ModelAllowlistEnabled() {
 				return group.ModelAllowlist.FilterForListing(models)

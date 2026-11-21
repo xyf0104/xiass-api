@@ -22241,6 +22241,8 @@ type GroupMutation struct {
 	addfallback_group_id_on_invalid_request *int64
 	model_routing                           *map[string][]int64
 	model_routing_pools                     *map[string][]int64
+	account_call_order                      *[]int64
+	appendaccount_call_order                []int64
 	model_routing_enabled                   *bool
 	mcp_xml_inject                          *bool
 	supported_model_scopes                  *[]string
@@ -24826,6 +24828,71 @@ func (m *GroupMutation) ResetModelRoutingPools() {
 	delete(m.clearedFields, group.FieldModelRoutingPools)
 }
 
+// SetAccountCallOrder sets the "account_call_order" field.
+func (m *GroupMutation) SetAccountCallOrder(i []int64) {
+	m.account_call_order = &i
+	m.appendaccount_call_order = nil
+}
+
+// AccountCallOrder returns the value of the "account_call_order" field in the mutation.
+func (m *GroupMutation) AccountCallOrder() (r []int64, exists bool) {
+	v := m.account_call_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountCallOrder returns the old "account_call_order" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAccountCallOrder(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountCallOrder is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountCallOrder requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountCallOrder: %w", err)
+	}
+	return oldValue.AccountCallOrder, nil
+}
+
+// AppendAccountCallOrder adds i to the "account_call_order" field.
+func (m *GroupMutation) AppendAccountCallOrder(i []int64) {
+	m.appendaccount_call_order = append(m.appendaccount_call_order, i...)
+}
+
+// AppendedAccountCallOrder returns the list of values that were appended to the "account_call_order" field in this mutation.
+func (m *GroupMutation) AppendedAccountCallOrder() ([]int64, bool) {
+	if len(m.appendaccount_call_order) == 0 {
+		return nil, false
+	}
+	return m.appendaccount_call_order, true
+}
+
+// ClearAccountCallOrder clears the value of the "account_call_order" field.
+func (m *GroupMutation) ClearAccountCallOrder() {
+	m.account_call_order = nil
+	m.appendaccount_call_order = nil
+	m.clearedFields[group.FieldAccountCallOrder] = struct{}{}
+}
+
+// AccountCallOrderCleared returns if the "account_call_order" field was cleared in this mutation.
+func (m *GroupMutation) AccountCallOrderCleared() bool {
+	_, ok := m.clearedFields[group.FieldAccountCallOrder]
+	return ok
+}
+
+// ResetAccountCallOrder resets all changes to the "account_call_order" field.
+func (m *GroupMutation) ResetAccountCallOrder() {
+	m.account_call_order = nil
+	m.appendaccount_call_order = nil
+	delete(m.clearedFields, group.FieldAccountCallOrder)
+}
+
 // SetModelRoutingEnabled sets the "model_routing_enabled" field.
 func (m *GroupMutation) SetModelRoutingEnabled(b bool) {
 	m.model_routing_enabled = &b
@@ -26156,7 +26223,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 69)
+	fields := make([]string, 0, 70)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26294,6 +26361,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.model_routing_pools != nil {
 		fields = append(fields, group.FieldModelRoutingPools)
+	}
+	if m.account_call_order != nil {
+		fields = append(fields, group.FieldAccountCallOrder)
 	}
 	if m.model_routing_enabled != nil {
 		fields = append(fields, group.FieldModelRoutingEnabled)
@@ -26464,6 +26534,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.ModelRouting()
 	case group.FieldModelRoutingPools:
 		return m.ModelRoutingPools()
+	case group.FieldAccountCallOrder:
+		return m.AccountCallOrder()
 	case group.FieldModelRoutingEnabled:
 		return m.ModelRoutingEnabled()
 	case group.FieldMcpXMLInject:
@@ -26611,6 +26683,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldModelRouting(ctx)
 	case group.FieldModelRoutingPools:
 		return m.OldModelRoutingPools(ctx)
+	case group.FieldAccountCallOrder:
+		return m.OldAccountCallOrder(ctx)
 	case group.FieldModelRoutingEnabled:
 		return m.OldModelRoutingEnabled(ctx)
 	case group.FieldMcpXMLInject:
@@ -26987,6 +27061,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModelRoutingPools(v)
+		return nil
+	case group.FieldAccountCallOrder:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountCallOrder(v)
 		return nil
 	case group.FieldModelRoutingEnabled:
 		v, ok := value.(bool)
@@ -27584,6 +27665,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRoutingPools) {
 		fields = append(fields, group.FieldModelRoutingPools)
 	}
+	if m.FieldCleared(group.FieldAccountCallOrder) {
+		fields = append(fields, group.FieldAccountCallOrder)
+	}
 	if m.FieldCleared(group.FieldCostRatio) {
 		fields = append(fields, group.FieldCostRatio)
 	}
@@ -27666,6 +27750,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRoutingPools:
 		m.ClearModelRoutingPools()
+		return nil
+	case group.FieldAccountCallOrder:
+		m.ClearAccountCallOrder()
 		return nil
 	case group.FieldCostRatio:
 		m.ClearCostRatio()
@@ -27815,6 +27902,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldModelRoutingPools:
 		m.ResetModelRoutingPools()
+		return nil
+	case group.FieldAccountCallOrder:
+		m.ResetAccountCallOrder()
 		return nil
 	case group.FieldModelRoutingEnabled:
 		m.ResetModelRoutingEnabled()

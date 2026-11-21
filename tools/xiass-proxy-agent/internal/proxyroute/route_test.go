@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -152,6 +153,8 @@ func TestHTTPAdapterSOCKSEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer route.Close()
+	var uploaded, downloaded atomic.Int64
+	route.RecordTraffic = func(up, down int64) { uploaded.Add(up); downloaded.Add(down) }
 	if err := route.Start(""); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +190,13 @@ func TestHTTPAdapterSOCKSEndToEnd(t *testing.T) {
 	echoed := make([]byte, len(payload))
 	if _, err := io.ReadFull(client, echoed); err != nil || string(echoed) != string(payload) {
 		t.Fatalf("echo=%q err=%v", echoed, err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for downloaded.Load() < int64(len(payload)) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if uploaded.Load() != int64(len(payload)) || downloaded.Load() != int64(len(payload)) {
+		t.Fatalf("tunnel accounting includes handshake bytes or misses live data: up=%d down=%d", uploaded.Load(), downloaded.Load())
 	}
 }
 
