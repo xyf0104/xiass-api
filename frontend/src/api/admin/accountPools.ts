@@ -44,6 +44,9 @@ export const accountPoolsAPI = {
   },
   async setProxy(id: number, proxyId: number | null): Promise<AccountPool> {
     return (await apiClient.put<AccountPool>(`${path}/${id}/proxy`, { proxy_id: proxyId })).data
+  },
+  async setMemberProxy(id: number, accountIds: number[], proxyId: number | null): Promise<AccountPool> {
+    return (await apiClient.put<AccountPool>(`${path}/${id}/accounts/proxy`, { account_ids: accountIds, proxy_id: proxyId })).data
   }
 }
 

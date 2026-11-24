@@ -146,6 +146,27 @@ func TestAccountPoolDetachAndDeleteKeepCurrentProxy(t *testing.T) {
 	}
 }
 
+func TestAccountPoolMemberProxyIsScoped(t *testing.T) {
+	ctx := context.Background()
+	p := int64(9)
+	r := &accountPoolRepoStub{pool: AccountPool{ID: 8, AccountIDs: []int64{1, 2}, ProxyID: &p}, accounts: []*Account{{ID: 1}}}
+	s := &adminServiceImpl{accountRepo: r}
+	for _, ids := range [][]int64{nil, {}, {1, 3}} {
+		_, err := s.SetAccountPoolMemberProxy(ctx, 8, ids, nil)
+		require.Error(t, err)
+		require.Empty(t, r.updates)
+	}
+	pool, err := s.SetAccountPoolMemberProxy(ctx, 8, []int64{1, 1}, nil)
+	require.NoError(t, err)
+	require.Equal(t, &p, pool.ProxyID)
+	require.Equal(t, []int64{1}, r.ids)
+	require.Len(t, r.updates, 1)
+	require.Zero(t, *r.updates[0].ProxyID)
+	require.Contains(t, r.updates[0].Extra, AccountMultiProxyExtraKey)
+	require.Nil(t, r.updates[0].Extra[AccountMultiProxyExtraKey])
+	require.NotContains(t, r.updates[0].Extra, AccountPoolExtraKey)
+}
+
 func TestAccountPoolDetachRejectsStaleMembership(t *testing.T) {
 	r := &accountPoolRepoStub{pool: AccountPool{ID: 8, AccountIDs: []int64{2}}, accounts: []*Account{{ID: 1}}}
 	_, err := (&adminServiceImpl{accountRepo: r}).AssignAccountPool(context.Background(), 8, []int64{1}, true)

@@ -66,6 +66,11 @@ describe('account pools API contract', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('sends explicit direct access to the scoped member endpoint', async () => {
+    await accountPoolsAPI.setMemberProxy(7, [1], null)
+    expect(put).toHaveBeenCalledExactlyOnceWith('/admin/account-pools/7/accounts/proxy', { account_ids: [1], proxy_id: null })
+  })
+
   it('preserves server duplicate-name errors', async () => {
     const error = { reason: 'ACCOUNT_POOL_NAME_TAKEN', message: 'account pool name already exists' }
     post.mockRejectedValueOnce(error)

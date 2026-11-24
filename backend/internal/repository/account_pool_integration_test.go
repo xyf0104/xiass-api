@@ -83,6 +83,13 @@ func TestAccountPoolPGMixedPlansLifecyclePreservesAccountConfiguration(t *testin
 	require.Equal(t, before, actual)
 	pool, err = s.RenameAccountPool(ctx, pool.ID, pool.Name+"-renamed")
 	require.NoError(t, err)
+	pool, err = s.SetAccountPoolMemberProxy(ctx, pool.ID, ids[1:2], nil)
+	require.NoError(t, err)
+	require.Equal(t, &p1, pool.ProxyID)
+	require.Equal(t, ids, pool.AccountIDs)
+	require.Nil(t, accountPoolPGRead(t, ids[1])["proxy_id"])
+	require.Equal(t, float64(p1), accountPoolPGRead(t, ids[0])["proxy_id"])
+	require.Equal(t, float64(p1), accountPoolPGRead(t, ids[2])["proxy_id"])
 	pool, err = s.SetAccountPoolProxy(ctx, pool.ID, &p2)
 	require.NoError(t, err)
 	for _, id := range ids {

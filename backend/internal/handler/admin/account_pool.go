@@ -127,6 +127,14 @@ func (h *AccountHandler) AssignAccountPool(c *gin.Context) {
 }
 
 func (h *AccountHandler) SetAccountPoolProxy(c *gin.Context) {
+	h.setAccountPoolProxy(c, false)
+}
+
+func (h *AccountHandler) SetAccountPoolMemberProxy(c *gin.Context) {
+	h.setAccountPoolProxy(c, true)
+}
+
+func (h *AccountHandler) setAccountPoolProxy(c *gin.Context, membersOnly bool) {
 	id, ok := accountPoolID(c)
 	if !ok {
 		return
@@ -136,7 +144,8 @@ func (h *AccountHandler) SetAccountPoolProxy(c *gin.Context) {
 		return
 	}
 	var req struct {
-		ProxyID json.RawMessage `json:"proxy_id"`
+		ProxyID    json.RawMessage `json:"proxy_id"`
+		AccountIDs []int64         `json:"account_ids" binding:"omitempty,min=1,max=5000"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -148,7 +157,17 @@ func (h *AccountHandler) SetAccountPoolProxy(c *gin.Context) {
 		response.BadRequest(c, "proxy_id must be an integer or explicit null")
 		return
 	}
-	pool, err := s.SetAccountPoolProxy(c.Request.Context(), id, proxyID)
+	if membersOnly != (len(req.AccountIDs) > 0) {
+		response.BadRequest(c, "account_ids must be provided only for member proxy changes")
+		return
+	}
+	var pool *service.AccountPool
+	var err error
+	if membersOnly {
+		pool, err = s.SetAccountPoolMemberProxy(c.Request.Context(), id, req.AccountIDs, proxyID)
+	} else {
+		pool, err = s.SetAccountPoolProxy(c.Request.Context(), id, proxyID)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

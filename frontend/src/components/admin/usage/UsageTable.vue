@@ -52,28 +52,24 @@
           <div class="flex min-w-0 flex-col">
             <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
             <div
-              v-if="accountPool(row)"
+              v-if="accountPool(row) || showAccountBilling"
               data-testid="account-affiliation-badges"
               class="mt-1 flex max-w-full flex-nowrap items-center gap-1 overflow-hidden"
             >
               <AccountPoolBadge
                 v-if="accountPool(row)"
-                class="min-w-0 shrink whitespace-nowrap"
+                class="min-w-0 shrink-0 max-w-[60%] whitespace-nowrap"
                 :pool="accountPool(row)!"
               />
-            </div>
-            <div
-              v-if="showAccountBilling"
-              data-testid="account-egress"
-              :data-request-id="row.request_id"
-              class="mt-1 flex min-w-0 max-w-full items-center gap-1 overflow-hidden text-[11px] leading-4"
-              :class="accountEgressPresentation(row).muted
-                ? 'text-gray-400 dark:text-gray-500'
-                : 'text-gray-600 dark:text-gray-400'"
-              :title="accountEgressPresentation(row).title"
-            >
-              <span class="shrink-0 font-medium">{{ t('admin.usage.egressLabel') }}</span>
-              <span class="min-w-0 max-w-full truncate font-mono" dir="ltr">
+              <span
+                v-if="showAccountBilling"
+                data-testid="account-egress"
+                :data-request-id="row.request_id"
+                class="min-w-0 max-w-full truncate text-[11px] leading-4"
+                :class="accountEgressPresentation(row).muted ? 'text-gray-400 dark:text-gray-500' : 'text-gray-600 dark:text-gray-400'"
+                :title="accountEgressPresentation(row).title"
+                dir="auto"
+              >
                 {{ accountEgressPresentation(row).display }}
               </span>
             </div>
@@ -713,7 +709,7 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
   if (egress.route === 'direct') {
     titleLines.push(...egressProbeTitle(egress))
     return {
-      display: [t('admin.usage.egressDirect'), ipAddress].filter(Boolean).join(' · '),
+      display: t('admin.usage.egressDirect'),
       title: titleLines.join('\n'),
       muted: false,
     }
@@ -724,9 +720,6 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
   const proxyFallback = egress.proxy_id != null
     ? `${t('admin.usage.egressProxy')} #${egress.proxy_id}`
     : t('admin.usage.egressProxy')
-  const proxyReference = proxyName || proxyAddress || proxyFallback
-  const displayParts = ipAddress ? [ipAddress, proxyName || proxyReference] : [proxyReference]
-
   if (proxyName) {
     titleLines.push(egressTitleLine('admin.usage.egressProxyName', proxyName))
   }
@@ -736,7 +729,7 @@ const accountEgressPresentation = (row: AdminUsageLog): AccountEgressPresentatio
   titleLines.push(...egressProbeTitle(egress))
 
   return {
-    display: [...new Set(displayParts.filter(Boolean))].join(' · '),
+    display: proxyName || proxyFallback,
     title: titleLines.join('\n'),
     muted: false,
   }

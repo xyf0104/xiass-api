@@ -22,6 +22,7 @@ func TestAccountPoolRoutesInheritAdminAuthentication(t *testing.T) {
 		{http.MethodGet, "/account-pools"}, {http.MethodPost, "/account-pools"},
 		{http.MethodPut, "/account-pools/1"}, {http.MethodDelete, "/account-pools/1"},
 		{http.MethodPost, "/account-pools/1/accounts"}, {http.MethodPut, "/account-pools/1/proxy"},
+		{http.MethodPut, "/account-pools/1/accounts/proxy"},
 	} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(route.method, "/api/v1/admin"+route.path, nil))

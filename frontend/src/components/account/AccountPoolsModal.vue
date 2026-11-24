@@ -43,7 +43,7 @@
           </button>
         </form>
         <div class="min-w-0">
-          <span id="account-pool-proxy-label" class="input-label">号池代理</span>
+          <span id="account-pool-proxy-label" class="input-label">整池默认出口</span>
           <ProxySelector
             :model-value="currentPool ? currentPool.proxy_id : draftProxy" :proxies="proxies"
             :disabled="locked" aria-labelledby="account-pool-proxy-label" @update:model-value="changeProxy"
@@ -66,6 +66,15 @@
               全选可选账号 <span class="text-gray-500 dark:text-gray-400">{{ selected.size }}/{{ selectableAccounts.length }}</span>
             </label>
             <div class="flex flex-wrap gap-2">
+              <select
+                class="input w-auto max-w-full text-sm"
+                :disabled="!removeIds.length || !!addIds.length || removeIds.length > 5000"
+                aria-label="设置所选成员出口" data-testid="pool-member-proxy" @change="askMemberProxy"
+              >
+                <option value="" disabled selected>设置所选成员出口</option>
+                <option value="0">直连（无代理）</option>
+                <option v-for="proxy in proxies" :key="proxy.id" :value="proxy.id">{{ formatProxyDisplayName(proxy.name) }}</option>
+              </select>
               <button type="button" class="btn btn-primary btn-sm" :disabled="!addIds.length || addIds.length > 5000" data-testid="pool-add" @click="askMembers(false)"><Icon name="plus" size="sm" />加入号池<span v-if="addIds.length"> ({{ addIds.length }})</span></button>
               <button type="button" class="btn btn-secondary btn-sm" :disabled="!removeIds.length || removeIds.length > 5000" data-testid="pool-remove" @click="askMembers(true)"><Icon name="x" size="sm" />移出号池<span v-if="removeIds.length"> ({{ removeIds.length }})</span></button>
             </div>
@@ -134,6 +143,7 @@ let generation = 0
 
 type Confirmation = { title: string; message: string; poolId: number } & (
   { kind: 'proxy'; proxyId: number | null } |
+  { kind: 'memberProxy'; proxyId: number | null; accountIds: number[] } |
   { kind: 'add' | 'remove'; accountIds: number[] } |
   { kind: 'delete' }
 )
@@ -287,6 +297,20 @@ function askMembers(remove: boolean) {
   }
 }
 
+function askMemberProxy(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const value = select.value
+  select.value = ''
+  const pool = currentPool.value
+  const ids = removeIds.value
+  if (locked.value || !pool || !value || !ids.length || ids.length > 5000 || addIds.value.length) return
+  const proxyId = value === '0' ? null : Number(value)
+  confirmation.value = {
+    kind: 'memberProxy', poolId: pool.id, accountIds: [...ids], proxyId, title: '设置所选成员出口',
+    message: `仅将选中的 ${ids.length} 个成员固定为${formatProxyDisplayName(proxyName(proxyId))}，替换这些成员已有的多出口配置。其他成员和整池默认出口保持不变。`
+  }
+}
+
 function askDelete() {
   const pool = currentPool.value
   if (locked.value || !pool) return
@@ -303,9 +327,10 @@ function confirmAction() {
   void mutate(async () => {
     if (action.kind === 'delete') { await accountPoolsAPI.delete(action.poolId); return null }
     if (action.kind === 'proxy') await accountPoolsAPI.setProxy(action.poolId, action.proxyId)
+    else if (action.kind === 'memberProxy') await accountPoolsAPI.setMemberProxy(action.poolId, action.accountIds, action.proxyId)
     else await accountPoolsAPI.assign(action.poolId, action.accountIds, action.kind === 'remove')
     return action.poolId
-  }, action.kind === 'delete' ? '号池已删除，账号和代理已保留。' : action.kind === 'remove' ? '成员已移出，账号代理已保留。' : action.kind === 'add' ? '账号已加入号池并继承代理。' : '号池及全部现有成员的代理已更新。')
+  }, action.kind === 'delete' ? '号池已删除，账号和代理已保留。' : action.kind === 'remove' ? '成员已移出，账号代理已保留。' : action.kind === 'add' ? '账号已加入号池并继承代理。' : action.kind === 'memberProxy' ? '所选成员的出口已更新。' : '号池及全部现有成员的代理已更新。')
 }
 
 function toggleAccount(id: number) {

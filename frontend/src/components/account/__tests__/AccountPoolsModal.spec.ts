@@ -7,11 +7,11 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { AccountPool } from '@/api/admin/accountPools'
 import type { Account, Proxy } from '@/types'
 
-const { list, create, rename, del, assign, setProxy, getAccounts } = vi.hoisted(() => ({
-  list: vi.fn(), create: vi.fn(), rename: vi.fn(), del: vi.fn(), assign: vi.fn(), setProxy: vi.fn(), getAccounts: vi.fn()
+const { list, create, rename, del, assign, setProxy, setMemberProxy, getAccounts } = vi.hoisted(() => ({
+  list: vi.fn(), create: vi.fn(), rename: vi.fn(), del: vi.fn(), assign: vi.fn(), setProxy: vi.fn(), setMemberProxy: vi.fn(), getAccounts: vi.fn()
 }))
 vi.mock('@/api/admin/accountPools', () => ({
-  accountPoolsAPI: { list, create, rename, delete: del, assign, setProxy }, getAccountPoolAccounts: getAccounts
+  accountPoolsAPI: { list, create, rename, delete: del, assign, setProxy, setMemberProxy }, getAccountPoolAccounts: getAccounts
 }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -174,6 +174,25 @@ describe('AccountPoolsModal', () => {
     await element('pool-save').trigger('submit')
     await flushPromises()
     expect(create).toHaveBeenCalledWith({ name: '号池分组2', proxy_id: 10 })
+  })
+
+  it.each([['10', 10], ['0', null]])('changes only selected pool members to %s after confirmation', async (option, proxyId) => {
+    pools[0].account_ids.push(2)
+    pools[0].account_count++
+    await open()
+    expect(element('pool-member-proxy').attributes('disabled')).toBeDefined()
+    await selectAccount(1)
+    await element('pool-member-proxy').setValue(option)
+    expect(confirmDialog().text()).toContain('其他成员和整池默认出口保持不变')
+    await confirm(true)
+    expect(setMemberProxy).not.toHaveBeenCalled()
+    await element('pool-member-proxy').setValue(option)
+    await confirm()
+    expect(setMemberProxy).toHaveBeenCalledExactlyOnceWith(7, [1], proxyId)
+    expect(setProxy).not.toHaveBeenCalled()
+    await selectAccount(1)
+    await selectAccount(3)
+    expect(element('pool-member-proxy').attributes('disabled')).toBeDefined()
   })
 
   it('rejects blank and duplicate names locally and exposes server duplicate-name errors without losing the draft', async () => {

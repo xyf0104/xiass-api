@@ -43,6 +43,7 @@ type AccountPoolService interface {
 	DeleteAccountPool(context.Context, int64) error
 	AssignAccountPool(context.Context, int64, []int64, bool) (*AccountPool, error)
 	SetAccountPoolProxy(context.Context, int64, *int64) (*AccountPool, error)
+	SetAccountPoolMemberProxy(context.Context, int64, []int64, *int64) (*AccountPool, error)
 }
 
 // OAuth assignment must compare the browser's egress while holding the same
@@ -294,11 +295,15 @@ func findAccountByID(accounts []*Account, accountID int64) (*Account, bool) {
 }
 
 func (s *adminServiceImpl) updateAccountPoolMembers(ctx context.Context, ids []int64, membership any, proxyID *int64) error {
+	return s.applyAccountPoolMemberUpdates(ctx, ids, map[string]any{AccountPoolExtraKey: membership}, proxyID)
+}
+
+func (s *adminServiceImpl) applyAccountPoolMemberUpdates(ctx context.Context, ids []int64, extra map[string]any, proxyID *int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	result, err := s.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{
-		AccountIDs: ids, ProxyID: proxyID, Extra: map[string]any{AccountPoolExtraKey: membership},
+		AccountIDs: ids, ProxyID: proxyID, Extra: extra,
 	})
 	if err != nil {
 		return err
@@ -310,22 +315,58 @@ func (s *adminServiceImpl) updateAccountPoolMembers(ctx context.Context, ids []i
 }
 
 func (s *adminServiceImpl) SetAccountPoolProxy(ctx context.Context, id int64, proxyID *int64) (*AccountPool, error) {
+	return s.setAccountPoolProxy(ctx, id, nil, proxyID)
+}
+
+func (s *adminServiceImpl) SetAccountPoolMemberProxy(ctx context.Context, id int64, ids []int64, proxyID *int64) (*AccountPool, error) {
+	ids, err := normalizeAccountPoolIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	return s.setAccountPoolProxy(ctx, id, ids, proxyID)
+}
+
+func (s *adminServiceImpl) setAccountPoolProxy(ctx context.Context, id int64, selected []int64, proxyID *int64) (*AccountPool, error) {
 	return s.mutateAccountPool(ctx, id, func(ctx context.Context, txs *adminServiceImpl, r AccountPoolRepository, pool *AccountPool) error {
+		ids := pool.AccountIDs
+		if selected != nil {
+			members := make(map[int64]bool, len(ids))
+			for _, member := range ids {
+				members[member] = true
+			}
+			for _, member := range selected {
+				if !members[member] {
+					return infraerrors.Conflict("ACCOUNT_POOL_MEMBERSHIP_CHANGED", "selected account is no longer in this pool")
+				}
+			}
+			ids = selected
+		}
 		if err := txs.validateAccountPoolProxy(ctx, r, proxyID); err != nil {
 			return err
 		}
-		accounts, err := txs.lockAccountPoolMembers(ctx, r, pool.AccountIDs)
+		accounts, err := txs.lockAccountPoolMembers(ctx, r, ids)
 		if err != nil {
 			return err
 		}
 		if err := txs.validateAccountPoolProxyTargets(ctx, accounts); err != nil {
 			return err
 		}
+		for _, a := range accounts {
+			if a.Extra["read_only"] == true {
+				return infraerrors.BadRequest("ACCOUNT_POOL_READ_ONLY", "read-only account proxy cannot be changed")
+			}
+		}
 		value := int64(0)
 		if proxyID != nil {
 			value = *proxyID
 		}
-		if err := txs.updateAccountPoolMembers(ctx, pool.AccountIDs, strconv.FormatInt(pool.ID, 10), &value); err != nil {
+		if selected != nil {
+			// Multi-proxy bindings take precedence over proxy_id at dispatch.
+			return txs.applyAccountPoolMemberUpdates(ctx, ids, map[string]any{
+				AccountMultiProxyExtraKey: nil, AccountMultiProxyAdaptiveEnabledExtraKey: nil,
+			}, &value)
+		}
+		if err := txs.updateAccountPoolMembers(ctx, ids, strconv.FormatInt(pool.ID, 10), &value); err != nil {
 			return err
 		}
 		return r.UpdateAccountPool(ctx, pool.ID, pool.Name, proxyID)

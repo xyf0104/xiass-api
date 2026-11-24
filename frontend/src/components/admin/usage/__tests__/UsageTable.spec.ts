@@ -152,6 +152,7 @@ describe('admin UsageTable account pool badges', () => {
           ...baseImageRow,
           request_id: 'pooled',
           account_id: 12,
+          egress: { route: 'direct' },
           account: { id: 12, name: 'Pool account' } as any
         }],
         columns: [],
@@ -171,6 +172,7 @@ describe('admin UsageTable account pool badges', () => {
     expect(row.classes()).toContain('flex-nowrap')
     expect(row.get('[title="号池：沐念云"]').text()).toBe('沐念云')
     expect(row.get('[title="号池：沐念云"]').classes()).not.toContain('mt-1')
+    expect(row.get('[title="号池：沐念云"]').element.nextElementSibling).toBe(row.get('[data-testid="account-egress"]').element)
   })
 })
 
@@ -213,7 +215,7 @@ describe('admin UsageTable per-request egress snapshot', () => {
         ip_observed_at: '2026-10-24T08:30:00Z',
         execution_node_id: 'retired-worker-east',
       },
-      display: ['203.0.113.8', 'Tokyo exit'],
+      display: 'Tokyo exit',
       title: ['Public IP: 203.0.113.8', 'Proxy address: 10.0.0.8:1080', 'Last IP probe:'],
     },
     {
@@ -224,7 +226,7 @@ describe('admin UsageTable per-request egress snapshot', () => {
         proxy_name: 'IPv6 exit',
         ip_address: '2001:db8:abcd::19',
       },
-      display: ['2001:db8:abcd::19', 'IPv6 exit'],
+      display: 'IPv6 exit',
       title: ['Public IP: 2001:db8:abcd::19'],
     },
     {
@@ -234,7 +236,7 @@ describe('admin UsageTable per-request egress snapshot', () => {
         route: 'direct',
         ip_address: '198.51.100.44',
       },
-      display: ['Direct', '198.51.100.44'],
+      display: 'Direct',
       title: ['Egress: Direct', 'Public IP: 198.51.100.44'],
     },
     {
@@ -244,7 +246,7 @@ describe('admin UsageTable per-request egress snapshot', () => {
         route: 'direct',
         ip_address: '2001:db8::42',
       },
-      display: ['Direct', '2001:db8::42'],
+      display: 'Direct',
       title: ['Public IP: 2001:db8::42'],
     },
   ])('renders the persisted $name snapshot', ({ requestId, egress, display, title }) => {
@@ -256,14 +258,13 @@ describe('admin UsageTable per-request egress snapshot', () => {
     }])
 
     const line = wrapper.get(`[data-testid="account-egress"][data-request-id="${requestId}"]`)
-    for (const value of display) expect(line.text()).toContain(value)
+    expect(line.text()).toBe(display)
     for (const value of title) expect(line.attributes('title')).toContain(value)
     expect(line.text()).not.toMatch(/api\d*/)
     expect(line.html()).not.toContain('retired-worker-east')
     expect(line.attributes('title')).not.toContain('Execution node')
     expect(line.classes()).toContain('min-w-0')
-    expect(line.classes()).toContain('overflow-hidden')
-    expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
+    expect(line.classes()).toContain('truncate')
   })
 
   it('shortens only the persisted subscription name and ignores later account proxy changes', async () => {
@@ -284,7 +285,7 @@ describe('admin UsageTable per-request egress snapshot', () => {
     const wrapper = mountAccountRows([row])
     const line = wrapper.get('[data-testid="account-egress"]')
     expect(line.text()).toContain('Tokyo / Backup')
-    expect(line.text()).toContain('203.0.113.8')
+    expect(line.text()).toBe('Tokyo / Backup')
     expect(line.attributes('title')).toContain('Proxy name: Tokyo / Backup')
     expect(line.attributes('title')).toContain('Proxy address: 10.0.0.8:1080')
     expect(line.attributes('title')).toContain('Last IP probe:')
@@ -388,10 +389,10 @@ describe('admin UsageTable per-request egress snapshot', () => {
 
       const field = wrapper.get('[data-field="account"]')
       const line = field.get('[data-testid="account-egress"]')
-      expect(line.text()).toContain('2001:db8:1234:5678::99')
-      expect(line.text()).toContain('Mobile IPv6 exit')
+      expect(line.attributes('title')).toContain('2001:db8:1234:5678::99')
+      expect(line.text()).toBe('Mobile IPv6 exit')
       expect(line.classes()).toContain('max-w-full')
-      expect(line.get('span[dir="ltr"]').classes()).toContain('truncate')
+      expect(line.classes()).toContain('truncate')
     } finally {
       matchMedia.mockRestore()
     }

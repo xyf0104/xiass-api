@@ -13,4 +13,5 @@ func registerAccountPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	pools.DELETE("/:id", h.Admin.Account.DeleteAccountPool)
 	pools.POST("/:id/accounts", h.Admin.Account.AssignAccountPool)
 	pools.PUT("/:id/proxy", h.Admin.Account.SetAccountPoolProxy)
+	pools.PUT("/:id/accounts/proxy", h.Admin.Account.SetAccountPoolMemberProxy)
 }
