@@ -3659,6 +3659,39 @@ func TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWro
 	require.Equal(t, "hello", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
 }
 
+func TestNonStreamingJSONWithEventStreamHeaderPreservesUsage(t *testing.T) {
+	const body = `{"id":"resp_json","model":"test","status":"completed","output":[],"usage":{"input_tokens":19,"output_tokens":5,"input_tokens_details":{"cached_tokens":12}}}`
+	for _, mode := range []string{"normal", "passthrough"} {
+		t.Run(mode, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream; charset=utf-8"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			account := &Account{ID: 1, Type: AccountTypeAPIKey}
+			var usage *OpenAIUsage
+			if mode == "passthrough" {
+				result, err := svc.handleNonStreamingResponsePassthrough(c.Request.Context(), resp, c, "test", "test", account)
+				require.NoError(t, err)
+				usage = result.usage
+			} else {
+				result, err := svc.handleNonStreamingResponse(c.Request.Context(), resp, c, account, "test", "test")
+				require.NoError(t, err)
+				usage = result.usage
+			}
+			require.Equal(t, 19, usage.InputTokens)
+			require.Equal(t, 5, usage.OutputTokens)
+			require.Equal(t, 12, usage.CacheReadInputTokens)
+			require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+			require.JSONEq(t, body, rec.Body.String())
+		})
+	}
+}
+
 func TestHandleNonStreamingResponse_OAuthJSONBodyWithDataEventTextKeepsJSONUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

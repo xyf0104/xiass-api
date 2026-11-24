@@ -1461,6 +1461,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
+	normalizeNonStreamingOpenAIContentType(resp.Header, body)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -1565,6 +1566,16 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 func isEventStreamResponse(header http.Header) bool {
 	contentType := strings.ToLower(header.Get("Content-Type"))
 	return strings.Contains(contentType, "text/event-stream")
+}
+
+// Some gateways return a finished JSON response with an event-stream header.
+// Use the JSON parser for its usage and send the matching MIME type to clients.
+func normalizeNonStreamingOpenAIContentType(header http.Header, body []byte) {
+	if isEventStreamResponse(header) {
+		if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '{' && gjson.ValidBytes(trimmed) {
+			header.Set("Content-Type", "application/json; charset=utf-8")
+		}
+	}
 }
 
 // bodyHasSSEFraming reports whether body contains genuine SSE framing by
