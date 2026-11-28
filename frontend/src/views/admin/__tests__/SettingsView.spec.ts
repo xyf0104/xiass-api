@@ -33,6 +33,7 @@ const {
   adminSettingsFetch,
   showError,
   showSuccess,
+  listVisits,
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
@@ -74,7 +75,14 @@ const {
   adminSettingsFetch: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
+  listVisits: vi.fn(),
 }));
+
+vi.mock("@/api/admin/audit", async () => {
+  const actual = await vi.importActual<typeof import("@/api/admin/audit")>("@/api/admin/audit");
+  const auditAPI = { ...actual.auditAPI, list: listVisits };
+  return { ...actual, auditAPI, default: auditAPI };
+});
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
@@ -640,6 +648,8 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    listVisits.mockReset();
+    listVisits.mockResolvedValue({ items: [], total: 0 });
     localeRef.value = "zh-CN";
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
@@ -735,6 +745,39 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.find('[data-testid="settings-save-button"]').exists()).toBe(false);
   });
 
+  it("loads visitor records only on the visitors tab and keeps them outside the settings form", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(listVisits).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="visitor-records"]').exists()).toBe(false);
+
+    await wrapper.get("#settings-tab-visitors").trigger("click");
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="visitor-records"]').exists()).toBe(true));
+    await flushPromises();
+
+    expect(wrapper.get("#settings-tab-visitors").attributes("aria-selected")).toBe("true");
+    expect(wrapper.find('[data-testid="settings-save-button"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="visitor-records"]').element.closest("form")).toBeNull();
+    expect(listVisits).toHaveBeenCalledTimes(1);
+    expect(listVisits).toHaveBeenCalledWith(expect.objectContaining({ action: "site.visit", page: 1 }));
+    await wrapper.get("#visitor-search").trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await wrapper.get("#settings-tab-general").trigger("click");
+    expect(wrapper.find('[data-testid="visitor-records"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="settings-save-button"]').exists()).toBe(true);
+  });
+
+  it("opens visitor records from the settings tab query", async () => {
+    const wrapper = mountView({ query: { tab: "visitors" }, hash: "" });
+    await flushPromises();
+    await vi.waitFor(() => expect(listVisits).toHaveBeenCalledTimes(1));
+
+    expect(wrapper.get("#settings-tab-visitors").attributes("aria-selected")).toBe("true");
+    expect(wrapper.find('[data-testid="settings-save-button"]').exists()).toBe(false);
+  });
+
   it("renders panel rate limit card and saves settings", async () => {
     getPanelRateLimitSettings.mockClear();
     updatePanelRateLimitSettings.mockClear();
@@ -803,6 +846,78 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ passkey_enabled: false }),
     );
+  });
+
+  it("defaults registration limits to false when the backend omits them", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    const ipToggle = wrapper.get('[data-testid="registration-ip-daily-limit-toggle"]');
+    const domainToggle = wrapper.get('[data-testid="registration-email-domain-quota-toggle"]');
+    expect((ipToggle.element as HTMLInputElement).checked).toBe(false);
+    expect((domainToggle.element as HTMLInputElement).checked).toBe(false);
+
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registration_ip_daily_limit_enabled: false,
+        registration_email_domain_quota_enabled: false,
+      }),
+    );
+  });
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])("loads registration limits (IP %s, domain %s) and saves each independently", async (ipEnabled, domainEnabled) => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      registration_ip_daily_limit_enabled: ipEnabled,
+      registration_email_domain_quota_enabled: domainEnabled,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    const ipToggle = wrapper.get('[data-testid="registration-ip-daily-limit-toggle"]');
+    const domainToggle = wrapper.get('[data-testid="registration-email-domain-quota-toggle"]');
+    expect((ipToggle.element as HTMLInputElement).checked).toBe(ipEnabled);
+    expect((domainToggle.element as HTMLInputElement).checked).toBe(domainEnabled);
+
+    await ipToggle.setValue(!ipEnabled);
+    expect((domainToggle.element as HTMLInputElement).checked).toBe(domainEnabled);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        registration_ip_daily_limit_enabled: !ipEnabled,
+        registration_email_domain_quota_enabled: domainEnabled,
+      }),
+    );
+
+    await domainToggle.setValue(!domainEnabled);
+    expect((ipToggle.element as HTMLInputElement).checked).toBe(!ipEnabled);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        registration_ip_daily_limit_enabled: !ipEnabled,
+        registration_email_domain_quota_enabled: !domainEnabled,
+      }),
+    );
+    expect((ipToggle.element as HTMLInputElement).checked).toBe(!ipEnabled);
+    expect((domainToggle.element as HTMLInputElement).checked).toBe(!domainEnabled);
   });
 
   it("人机验证切换到腾讯天御并保存四项配置", async () => {

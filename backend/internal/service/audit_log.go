@@ -37,6 +37,7 @@ const (
 	AuditActionSessionBindingMismatch = "auth.session_binding.mismatch"
 	AuditActionStepUpVerify           = "auth.step_up.verify"
 	AuditActionAuditLogClear          = "admin.audit_log.clear"
+	AuditActionSiteVisit              = "site.visit"
 )
 
 // AuditLog 一条管理面操作审计记录。
@@ -75,7 +76,7 @@ type AuditLogFilter struct {
 	ClientIP    string
 	// Success: nil 全部；true 仅 2xx/3xx；false 仅 >=400。
 	Success *bool
-	// Query 对 path / action / actor_email 做模糊匹配。
+	// Query 对 path / action / actor_email / client_ip 做模糊匹配。
 	Query string
 }
 

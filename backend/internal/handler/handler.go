@@ -60,6 +60,7 @@ type Handlers struct {
 	Gateway          *GatewayHandler
 	OpenAIGateway    *OpenAIGatewayHandler
 	Setting          *SettingHandler
+	Visit            *VisitHandler
 	Totp             *TotpHandler
 	Passkey          *PasskeyHandler
 	Payment          *PaymentHandler

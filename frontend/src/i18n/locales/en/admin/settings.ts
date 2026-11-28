@@ -72,6 +72,20 @@ export default {
         email: 'Email',
         backup: 'Backup',
         payment: 'Payment',
+        visitors: 'Visitor Records',
+      },
+      visitors: {
+        search: 'Account, IP, or page',
+        searchPlaceholder: 'Search email, IP address, or page path',
+        startTime: 'Start time',
+        endTime: 'End time',
+        invalidTimeRange: 'Enter valid times with the end at or after the start.',
+        visitTime: 'Visit time',
+        visitor: 'Visitor',
+        clientIp: 'Client IP',
+        page: 'Page',
+        empty: 'No visitor records found',
+        loadFailed: 'Failed to load visitor records',
       },
       features: {
         channelMonitor: {
@@ -180,6 +194,10 @@ export default {
         enableRegistrationHint: 'Allow new users to register',
         emailVerification: 'Email Verification',
         emailVerificationHint: 'Require email verification for new registrations',
+        ipDailyLimit: 'Daily IP Registration Limit',
+        ipDailyLimitHint: 'One registration per IP per day in the server timezone (default Asia/Shanghai). IPv6 addresses share a /64 quota.',
+        emailDomainQuota: 'Custom Email Domain Registration Limit',
+        emailDomainQuotaHint: 'One account per custom email registrable domain, including subdomains. Public email providers are exempt.',
         emailSuffixWhitelist: 'Email Domain Whitelist',
         emailSuffixWhitelistHint:
           "Only email addresses from the specified domains can register (for example, {'@'}qq.com, {'@'}gmail.com, *.edu.cn)",

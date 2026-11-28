@@ -5,6 +5,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -27,6 +28,11 @@ func RegisterAuthRoutes(
 
 	// 公开接口
 	auth := v1.Group("/auth")
+	auth.Use(func(c *gin.Context) {
+		limits := service.RegistrationLimits{ClientIP: ip.GetTrustedClientIP(c)}
+		c.Request = c.Request.WithContext(service.WithRegistrationLimits(c.Request.Context(), limits))
+		c.Next()
+	})
 	auth.Use(servermiddleware.BackendModeAuthGuard(settingService))
 	// 认证事件（登录/注册/2FA/token 刷新失败）入审计
 	auth.Use(gin.HandlerFunc(auditLog))

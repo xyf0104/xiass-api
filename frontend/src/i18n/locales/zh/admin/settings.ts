@@ -72,6 +72,20 @@ export default {
         email: '邮件设置',
         backup: '数据备份',
         payment: '支付设置',
+        visitors: '访客记录',
+      },
+      visitors: {
+        search: '账号、IP 或页面',
+        searchPlaceholder: '搜索邮箱、IP 地址或页面路径',
+        startTime: '开始时间',
+        endTime: '结束时间',
+        invalidTimeRange: '请输入有效时间，结束时间须晚于或等于开始时间。',
+        visitTime: '访问时间',
+        visitor: '访客',
+        clientIp: '客户端 IP',
+        page: '访问页面',
+        empty: '暂无访客记录',
+        loadFailed: '加载访客记录失败',
       },
       features: {
         channelMonitor: {
@@ -180,6 +194,10 @@ export default {
         enableRegistrationHint: '允许新用户注册',
         emailVerification: '邮箱验证',
         emailVerificationHint: '新用户注册时需要验证邮箱',
+        ipDailyLimit: '每日 IP 注册限制',
+        ipDailyLimitHint: '每个 IP 每日限注册 1 个账号，按服务器时区计日（默认 Asia/Shanghai），IPv6 按 /64 网段计。',
+        emailDomainQuota: '自定义邮箱域名注册限制',
+        emailDomainQuotaHint: '每个自定义邮箱主域名限注册 1 个账号，子域名合并计算，公共邮箱服务商豁免。',
         emailSuffixWhitelist: '邮箱域名白名单',
         emailSuffixWhitelistHint:
           "仅允许使用指定域名的邮箱注册账号（例如 {'@'}qq.com, {'@'}gmail.com, *.edu.cn）",

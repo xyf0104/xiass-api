@@ -87,9 +87,25 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 	}
 
 	lockKeys := []string{normalizedEmailUniquenessLockKey(userIn.Email)}
+	var registrationLimits service.RegistrationLimits
+	var registrationDomain string
 	if guardEmailAlias {
 		// 别名变体的字面量不同，唯一索引无法兜底；用收件箱身份锁把同一收件箱的并发注册串行化。
 		lockKeys = append(lockKeys, emailAliasUniquenessLockKey(userIn.Email))
+		registrationLimits = service.RegistrationLimitsFromContext(ctx)
+		if registrationLimits.ClientIP != "" {
+			lockKeys = append(lockKeys, "registration-ip:"+registrationLimits.ClientIP)
+		}
+		if registrationLimits.EmailDomainQuotaEnabled {
+			var err error
+			registrationDomain, err = service.RegistrationEmailDomain(userIn.Email)
+			if err != nil {
+				return err
+			}
+			if registrationDomain != "" {
+				lockKeys = append(lockKeys, "registration-domain:"+registrationDomain)
+			}
+		}
 	}
 	releaseEmailLock, err := lockRepositoryScopedKeys(
 		txCtx,
@@ -114,6 +130,9 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		if aliasExists {
 			return service.ErrEmailExists
 		}
+		if err := checkRegistrationLimits(txCtx, txClient, registrationLimits, registrationDomain); err != nil {
+			return err
+		}
 	}
 
 	created, err := txClient.User.Create().
@@ -126,6 +145,7 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetConcurrency(userIn.Concurrency).
 		SetStatus(userIn.Status).
 		SetSignupSource(userSignupSourceOrDefault(userIn.SignupSource)).
+		SetRegistrationIP(registrationLimits.ClientIP).
 		SetNillableLastLoginAt(userIn.LastLoginAt).
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).

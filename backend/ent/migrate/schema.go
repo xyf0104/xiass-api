@@ -1811,6 +1811,7 @@ var (
 		{Name: "totp_enabled", Type: field.TypeBool, Default: false},
 		{Name: "totp_enabled_at", Type: field.TypeTime, Nullable: true},
 		{Name: "signup_source", Type: field.TypeString, Default: "email"},
+		{Name: "registration_ip", Type: field.TypeString, Size: 64, Default: ""},
 		{Name: "last_login_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "last_active_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "restrict_public_groups", Type: field.TypeBool, Default: false},
@@ -1836,6 +1837,11 @@ var (
 				Name:    "user_deleted_at",
 				Unique:  false,
 				Columns: []*schema.Column{UsersColumns[3]},
+			},
+			{
+				Name:    "users_registration_ip_created_at_idx",
+				Unique:  false,
+				Columns: []*schema.Column{UsersColumns[17], UsersColumns[1]},
 			},
 		},
 	}

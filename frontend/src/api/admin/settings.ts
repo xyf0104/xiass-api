@@ -364,6 +364,8 @@ export interface SystemSettings {
   // Registration settings
   registration_enabled: boolean;
   email_verify_enabled: boolean;
+  registration_ip_daily_limit_enabled: boolean;
+  registration_email_domain_quota_enabled: boolean;
   registration_email_suffix_whitelist: string[];
   promo_code_enabled: boolean;
   password_reset_enabled: boolean;
@@ -707,6 +709,8 @@ export interface SystemSettings {
 export interface UpdateSettingsRequest {
   registration_enabled?: boolean;
   email_verify_enabled?: boolean;
+  registration_ip_daily_limit_enabled?: boolean;
+  registration_email_domain_quota_enabled?: boolean;
   registration_email_suffix_whitelist?: string[];
   promo_code_enabled?: boolean;
   password_reset_enabled?: boolean;

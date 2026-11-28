@@ -169,7 +169,7 @@ func buildAuditLogsWhere(filter *service.AuditLogFilter) (string, []any) {
 	if v := strings.TrimSpace(filter.Query); v != "" {
 		args = append(args, "%"+escapeLikePattern(v)+"%")
 		idx := itoa(len(args))
-		clauses = append(clauses, "(l.path ILIKE $"+idx+" OR l.action ILIKE $"+idx+" OR l.actor_email ILIKE $"+idx+")")
+		clauses = append(clauses, "(l.path ILIKE $"+idx+" OR l.action ILIKE $"+idx+" OR l.actor_email ILIKE $"+idx+" OR l.client_ip ILIKE $"+idx+")")
 	}
 
 	return "WHERE " + strings.Join(clauses, " AND "), args

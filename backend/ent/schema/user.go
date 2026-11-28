@@ -87,6 +87,9 @@ func (User) Fields() []ent.Field {
 				}
 			}).
 			Default("email"),
+		field.String("registration_ip").
+			MaxLen(64).
+			Default(""),
 		field.Time("last_login_at").
 			Optional().
 			Nillable().
@@ -148,5 +151,6 @@ func (User) Indexes() []ent.Index {
 		// email 字段已在 Fields() 中声明 Unique()，无需重复索引
 		index.Fields("status"),
 		index.Fields("deleted_at"),
+		index.Fields("registration_ip", "created_at").StorageKey("users_registration_ip_created_at_idx"),
 	}
 }

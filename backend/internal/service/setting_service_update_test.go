@@ -593,6 +593,7 @@ func TestSettingService_UpdateSettings_PersistsPublicMonitorAndModelPricingSetti
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
 		RegistrationEmailDomainQuotaEnabled: true,
+		RegistrationIPDailyLimitEnabled:     true,
 		TencentCaptchaRegion:                TencentCaptchaRegionINTL,
 		CompactHomeEnabled:                  true,
 		ChannelMonitorMode:                  ChannelMonitorModeV2,
@@ -609,6 +610,7 @@ func TestSettingService_UpdateSettings_PersistsPublicMonitorAndModelPricingSetti
 	})
 	require.NoError(t, err)
 	require.Equal(t, "true", repo.updates[SettingKeyRegistrationEmailDomainQuotaEnabled])
+	require.Equal(t, "true", repo.updates[SettingKeyRegistrationIPDailyLimitEnabled])
 	require.Equal(t, TencentCaptchaRegionINTL, repo.updates[SettingKeyTencentCaptchaRegion])
 	require.Equal(t, "true", repo.updates[SettingKeyCompactHomeEnabled])
 	require.Equal(t, ChannelMonitorModeV1, repo.updates[SettingKeyChannelMonitorMode])

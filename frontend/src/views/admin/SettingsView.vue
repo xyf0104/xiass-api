@@ -45,7 +45,7 @@
             </nav>
 
             <button
-              v-if="activeTab !== 'backup'"
+              v-if="activeTab !== 'backup' && activeTab !== 'visitors'"
               type="submit"
               data-testid="settings-save-button"
               :disabled="saving || loadFailed"
@@ -1428,6 +1428,52 @@
                   </p>
                 </div>
                 <Toggle v-model="form.email_verify_enabled" />
+              </div>
+
+              <div
+                class="flex items-center justify-between gap-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    for="registration-ip-daily-limit"
+                    class="font-medium text-gray-900 dark:text-white"
+                  >{{ t("admin.settings.registration.ipDailyLimit") }}</label>
+                  <p
+                    id="registration-ip-daily-limit-hint"
+                    class="text-sm text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.registration.ipDailyLimitHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  id="registration-ip-daily-limit"
+                  v-model="form.registration_ip_daily_limit_enabled"
+                  data-testid="registration-ip-daily-limit-toggle"
+                  aria-describedby="registration-ip-daily-limit-hint"
+                />
+              </div>
+
+              <div
+                class="flex items-center justify-between gap-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    for="registration-email-domain-quota"
+                    class="font-medium text-gray-900 dark:text-white"
+                  >{{ t("admin.settings.registration.emailDomainQuota") }}</label>
+                  <p
+                    id="registration-email-domain-quota-hint"
+                    class="text-sm text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.registration.emailDomainQuotaHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  id="registration-email-domain-quota"
+                  v-model="form.registration_email_domain_quota_enabled"
+                  data-testid="registration-email-domain-quota-toggle"
+                  aria-describedby="registration-email-domain-quota-hint"
+                />
               </div>
 
               <!-- Email Suffix Whitelist -->
@@ -8527,6 +8573,12 @@
 
       </form>
 
+      <VisitorRecords
+        v-if="!loading && activeTab === 'visitors'"
+        role="tabpanel"
+        aria-labelledby="settings-tab-visitors"
+      />
+
       <!-- Provider dialogs placed outside the settings form to prevent form submission bubbling -->
       <PaymentProviderDialog
         ref="providerDialogRef"
@@ -8566,7 +8618,7 @@
 
 <script setup lang="ts">
 import OpenAIModelPrioritySettings from "@/components/admin/account/OpenAIModelPrioritySettings.vue";
-import { ref, reactive, computed, onMounted, watch, nextTick, inject } from "vue";
+import { ref, reactive, computed, defineAsyncComponent, onMounted, watch, nextTick, inject } from "vue";
 import { routeLocationKey } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
@@ -8641,6 +8693,8 @@ import {
   type FingerprintSignalRow,
 } from "./codexFingerprintSignals";
 
+const VisitorRecords = defineAsyncComponent(() => import("@/components/admin/VisitorRecords.vue"));
+
 const { t, locale } = useI18n();
 const appStore = useAppStore();
 // 关闭 step-up 开关是敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 码重试
@@ -8673,6 +8727,7 @@ type SettingsTab =
   | "gateway"
   | "payment"
   | "email"
+  | "visitors"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
 const route = inject(routeLocationKey, undefined);
@@ -8685,6 +8740,7 @@ const settingsTabs = [
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
+  { key: "visitors" as SettingsTab, icon: "users" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
 ];
 
@@ -9392,6 +9448,8 @@ function removeRechargeBonusRule(index: number): void {
 const form = reactive<SettingsForm>({
   registration_enabled: true,
   email_verify_enabled: false,
+  registration_ip_daily_limit_enabled: false,
+  registration_email_domain_quota_enabled: false,
   registration_email_suffix_whitelist: [],
   promo_code_enabled: true,
   invitation_code_enabled: false,
@@ -11007,6 +11065,8 @@ async function saveSettings() {
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
+      registration_ip_daily_limit_enabled: form.registration_ip_daily_limit_enabled,
+      registration_email_domain_quota_enabled: form.registration_email_domain_quota_enabled,
       registration_email_suffix_whitelist:
         registrationEmailSuffixWhitelistTags.value.map((suffix) =>
           suffix.startsWith("*.") ? suffix : `@${suffix}`,

@@ -131,6 +131,7 @@ func registerRoutes(
 	// 注册各模块路由
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, auditLog, redisClient, settingService, panelRateLimiter)
 	routes.RegisterToolRoutes(v1, h, redisClient, panelRateLimiter)
+	routes.RegisterVisitRoutes(v1, h, jwtAuth, redisClient)
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, settingService, panelRateLimiter)
 	routes.RegisterTeamChildBrowserRoutes(v1, h)
 	routes.RegisterSoftRouterAgentRoutes(v1, h)
